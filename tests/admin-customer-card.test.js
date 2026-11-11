@@ -2313,6 +2313,113 @@ const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
   await flushComposer(12);
 };
 
+// backlog:d998cf15f011 (giro UX 11/11): the composer draft is kept per
+// customer like Gmail — through ✕ and Esc, through any re-read of the
+// scheda (a save elsewhere, the way back from another screen) — and goes
+// only after a send the server accepted. The state lived inside the quick
+// actions, so every re-read made it new and the draft was lost.
+async function draftView(client = composerClient()) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
+  await view.renderCard('contact', 'c1');
+  const open = async () => {
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+    await flushComposer();
+    return mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  };
+  const type = (panel, value) => {
+    const text = panel.findAll('textarea')[0];
+    text.value = value;
+    text.dispatch('input');
+  };
+  const leaveAndComeBack = async (other = null) => {
+    view.invalidate();
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    if (other !== null) await view.renderCard('contact', other);
+    await view.renderCard('contact', 'c1');
+  };
+  return { mount, view, open, type, leaveAndComeBack };
+}
+
+test('d998cf15f011: the draft survives ✕, Esc and a re-read of the same scheda', async () => {
+  const { mount, view, open, type } = await draftView();
+  let panel = await open();
+  type(panel, 'Ciao Guido, ti confermo');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined, '✕ closes');
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo', 'back after ✕ and a re-read');
+  type(panel, 'Ciao Guido, ti confermo domani');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo domani', 'back after Esc and a re-read');
+});
+
+test('d998cf15f011: the draft survives leaving the scheda and coming back, and stays with its customer', async () => {
+  const { open, type, leaveAndComeBack } = await draftView();
+  const panel = await open();
+  type(panel, 'Bozza per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Bozza per Guido', 'back from another screen');
+});
+
+test('d998cf15f011: another customer opens an empty composer, the first one keeps its draft', async () => {
+  const client = composerClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/card/contact/c2') return { ...CARD, subject: { resource: 'contact', id: 'c2' }, name: 'Altra Persona' };
+    return base(path, options);
+  };
+  const { open, type, view, leaveAndComeBack } = await draftView(client);
+  const panel = await open();
+  type(panel, 'Solo per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  view.invalidate();
+  await view.renderCard('contact', 'c2');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'the other customer starts empty');
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Solo per Guido');
+});
+
+test('d998cf15f011: a sent message empties the draft, also after a re-read', async () => {
+  const { open, type, view } = await draftView();
+  const panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  await view.renderCard('contact', 'c1');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'nothing comes back after the send');
+});
+
+test('d998cf15f011: a send retried after a re-read keeps its message key', async () => {
+  const keys = [];
+  const client = composerClient({
+    onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); },
+  });
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/messages' && options.method === 'POST') keys.push(JSON.parse(options.body).messageKey);
+    return base(path, options);
+  };
+  const { open, type, view } = await draftView(client);
+  let panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Certo, domani alle 18.', 'the unsent text is still there');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1], 'the same message keeps the same key: the server finds its own request');
+});
+
 test('composer window hangs off the view, outside the sticky side columns', async () => {
   const { mount, panel } = await openComposerMount();
   assert.equal(panel.parentNode, mount, 'a fixed window inside a sticky column would sit under the next column');
@@ -3651,15 +3758,43 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   };
   const { panel } = await openComposerMount({ client });
   const { input, go } = aiParts(panel);
-  if (!go) {
-    assert.match(panel.textContent, /Nessun canale collegato/, 'without channels the composer says so');
-    return;
-  }
+  assert.ok(go, 'Genera is in the composer');
   input.value = 'scrivi tu';
   go.dispatch('click');
   await flushComposer();
   assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
-  assert.match(panel.textContent, /Nessun canale collegato/);
+  // backlog:bd9ae1482194 (verifica 11/11): the line says what to do, with
+  // the way to Connettori — never «l’AI scrive per il canale scelto» when
+  // there is no channel to choose.
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.ok(line, 'the AI row has its line');
+  assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente');
+  const go2 = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(go2, 'the line is a link');
+  assert.equal(go2.getAttribute('href'), '#/connettori', 'the link opens the Connettori screen of the /bo');
+  assert.ok(!panel.textContent.includes('canale scelto'), 'no sentence about a channel nobody can pick');
+});
+
+test('backlog:bd9ae1482194: a space with channels but no address for this customer says so, no Connettori line', async () => {
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return { connectors: [{ channel: 'facebook', status: 'active', connectionKey: 'fb-1' }] }; // Messenger linked, no Messenger address on the card
+      if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(inner.drafts.length, 0, 'no draft request without a usable channel');
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.equal(line.textContent, 'Questo cliente non ha un recapito sui canali collegati.');
+  assert.equal(line.findAll('a').length, 0, 'the space has a channel: no Connettori link in the line');
 });
 
 // Dan 06/11: «ho aggiunto una nota ma non si vede e non si capisce dove;

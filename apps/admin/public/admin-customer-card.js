@@ -772,6 +772,31 @@ export function createCustomerCardView(deps) {
   let timelineShown = TIMELINE_PAGE;
   // The scheda on screen, so a re-read of the same customer (after Invia,
   // a note, an edit) redraws in place instead of blanking the page.
+  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
+  // A slow first load never paints over (or crashes on) a newer opening:
+  // stale callbacks return without touching the panel.
+  let composerGeneration = 0;
+  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
+  // close the window, the typed text and subject stay here and come back
+  // when the composer reopens on the same customer. Cleared only by a send
+  // the server accepted. In memory: a reload still drops them, like any
+  // unsent form. backlog:d998cf15f011: this state lives with the view, not
+  // with one painted scheda — declared inside the quick actions it was born
+  // again at every re-read, so a draft was lost on the way back from
+  // another screen or after any save that re-reads the card.
+  const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
+  // The idempotency key of a send whose outcome is not yet known, keyed by
+  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
+  // the server finds its own request instead of mailing twice (production
+  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
+  // A changed text, subject or channel is a new message with a new key; a
+  // definitive answer (sent, refused, failed) drops the key.
+  const composerSendKeys = new Map();
   let shownKey = null;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
@@ -1524,10 +1549,6 @@ export function createCustomerCardView(deps) {
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
-  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
-  // A slow first load never paints over (or crashes on) a newer opening:
-  // stale callbacks return without touching the panel.
-  let composerGeneration = 0;
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
@@ -1627,7 +1648,7 @@ export function createCustomerCardView(deps) {
    * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
-  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
+  function composerAiRow({ spaceId, navCtx, text, channel, spaceLinked, subject, restoreSubject, changed, baseline, setBaseline }) {
     const row = el('div', 'bo-composer-ai');
     // The composer generation this row was built in: Scrivi again, ✕ or Esc
     // supersede it (openComposer bumps the counter on every opening).
@@ -1718,6 +1739,11 @@ export function createCustomerCardView(deps) {
         line.appendChild(back);
       }
     };
+    // No channel connected in the space: the one way forward is Connettori.
+    const sayConnect = () => {
+      say('');
+      line.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+    };
     // The line under an AI draft: reread it, and Annulla when there is a
     // text of the person's own to go back to.
     const sayDrafted = () => {
@@ -1737,7 +1763,11 @@ export function createCustomerCardView(deps) {
         return;
       }
       if (picked === null) {
-        say('Nessun canale collegato: l’AI scrive per il canale scelto.');
+        // backlog:bd9ae1482194 (verifica 11/11): with nothing to pick, the
+        // line says what to do — link a channel in Connettori, or (when the
+        // space has channels) that this customer has no address on them.
+        if (spaceLinked()) say('Questo cliente non ha un recapito sui canali collegati.');
+        else sayConnect();
         return;
       }
       const mine = ++drafting;
@@ -1930,24 +1960,6 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
-  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
-  // close the window, the typed text and subject stay here and come back
-  // when the composer reopens on the same customer. Cleared only by a send
-  // the server accepted. In memory: a reload still drops them, like any
-  // unsent form.
-  const composerDrafts = new Map();
-  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
-  // space, customer, channel and words → requestId (review #664): a close
-  // and reopen of the composer reads the same request back, never a new POST.
-  /** @type {Map<string, string>} */
-  const composerAiPending = new Map();
-  // The idempotency key of a send whose outcome is not yet known, keyed by
-  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
-  // the server finds its own request instead of mailing twice (production
-  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
-  // A changed text, subject or channel is a new message with a new key; a
-  // definitive answer (sent, refused, failed) drops the key.
-  const composerSendKeys = new Map();
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
     // Keyed by space too: a draft never crosses into another workspace
@@ -2065,6 +2077,10 @@ export function createCustomerCardView(deps) {
       offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
       offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     }
+    // backlog:bd9ae1482194: no channel the composer writes on is linked in
+    // the space — the AI line and «A» then point to Connettori, not to a
+    // channel nobody can pick.
+    const spaceUnlinked = !channels.some((entry) => entry.connected === true);
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
     if (offLinked.length > 0) body.appendChild(offLine);
@@ -2074,6 +2090,7 @@ export function createCustomerCardView(deps) {
     const ai = composerAiRow({
       spaceId, navCtx, text,
       channel: () => (selected !== null ? selected.channel : null),
+      spaceLinked: () => !spaceUnlinked,
       subject: () => subjectInput,
       restoreSubject: (value) => {
         if (subjectInput !== null) subjectInput.value = value;
@@ -2094,7 +2111,11 @@ export function createCustomerCardView(deps) {
     if (selected !== null) select(selected);
     else {
       send.setAttribute('disabled', 'disabled');
-      toLine.textContent = 'Nessun canale collegato per questo cliente';
+      // backlog:bd9ae1482194: «A» says which of the two cases it is, in
+      // the same words as the AI line.
+      toLine.textContent = spaceUnlinked
+        ? 'Nessun canale collegato'
+        : 'Nessun recapito di questo cliente sui canali collegati';
       fromRow.setAttribute('data-empty', 'true');
       subjectHolder.setAttribute('data-empty', 'true');
     }

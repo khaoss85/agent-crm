@@ -21,9 +21,9 @@
 #   BASE_REF='<pr base branch>' bash scripts/ci-fast.sh
 #
 # `BASE_REF` names the PR base branch whose tracking ref the truth
-# agreement check diffs against (`origin/$BASE_REF`, fetched by the step
-# before); the touched-tests selection diffs against FETCH_HEAD, left by
-# the same fetch. Each phase keeps its `::group::` log section, prints its
+# agreement check and the touched-tests selection both diff against
+# (`origin/$BASE_REF`, fetched by the step before; the selection uses its
+# merge-base with HEAD). Each phase keeps its `::group::` log section, prints its
 # own elapsed time, and the script prints the total on success — that line
 # is the live evidence for the ten-minute bound. The first failing phase
 # stops the gate with a `::error::` annotation, the way a red Actions step
@@ -102,7 +102,11 @@ run_lane() {
 # 2026-11-08) and gtm:check took 7-15 s on that day's green runs, so the
 # lane ends ~75 s before the 540 s total; the other lanes ended by 196 s.
 touched_then_gtm() {
-  run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base FETCH_HEAD || return
+  # The base is the tracking ref the workflow's explicit fetch step updates,
+  # never FETCH_HEAD: any later fetch (a parallel phase, repo-truth's retry)
+  # rewrites FETCH_HEAD. The script pins it to a sha and diffs against its
+  # merge-base with HEAD, and logs both (backlog:3d560518f3e2).
+  run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base "origin/$BASE_REF" || return
   run_phase_now 'public claims and packaging agree' npm run gtm:check
 }
 

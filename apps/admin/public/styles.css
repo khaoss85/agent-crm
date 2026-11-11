@@ -662,7 +662,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -745,7 +749,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
@@ -915,13 +921,14 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-row[data-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .bo-seq-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bo-seq-name { margin: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
+/* The tint comes from the ui-chip-* class the state picks (backlog:bd9ae1482194). */
+.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .bo-seq-stats { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .bo-seq-open.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-seq-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 18px 20px; }
 .bo-seq-headcard { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
 .bo-seq-headtext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; }
 .bo-seq-headactions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .bo-seq-headactions .ui-btn { height: 38px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 700; }
 .bo-seq-confirm { margin: 0; font-size: 13px; font-weight: 700; }
@@ -966,26 +973,39 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agenti-section > h3, .bo-agenti-sectionhead h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .bo-agenti-sectionhead { display: flex; align-items: center; gap: 10px; }
 .bo-agenti-count { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 99px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--pending-soft); color: var(--pending-ink); }
-.bo-agent-grid, .bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+/* Backlog «Agenti: layout delle card»: auto-fit, so one agent takes the
+   whole width and never sits in a narrow column; more agents share it. */
+.bo-agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .bo-agent-card, .bo-catalog-item, .bo-dafare-item { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
 .bo-agent-card { border-color: var(--agent-line); }
 .bo-agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .bo-agent-avatar { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--agent-soft); color: var(--agent-ink); }
 .bo-agent-avatar-sm { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; }
 .bo-agent-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.bo-agent-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-name { margin: 0; font-size: 17px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .bo-agent-role { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
-.bo-agent-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.bo-agent-fact { min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
-.bo-agent-fact dt { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
-.bo-agent-fact dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.bo-agent-assignment { padding: 8px 10px; border-left: 3px solid var(--agent-line); }
-.bo-agent-phrase { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.bo-agent-when { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* One metric per line: small label, clear value, never a broken word. */
+.bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.bo-agent-fact { min-width: 0; max-width: 100%; display: flex; align-items: baseline; gap: 8px; }
+.bo-agent-fact dt { margin: 0; flex: none; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.bo-agent-fact dd { margin: 0; min-width: 0; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The incarichi: compact rows, secondary to the agent name. */
+.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.bo-agent-assignment { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line-faint); }
+.bo-agent-assignment:first-child { border-top: 0; padding-top: 2px; }
+.bo-agent-run-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-agent-phrase.ui-btn { display: block; width: 100%; min-width: 0; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--ink); font-size: 13.5px; font-weight: 500; line-height: 1.35; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.bo-agent-phrase.ui-btn.is-open { white-space: normal; overflow-wrap: anywhere; }
+.bo-agent-when { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-agent-run-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.bo-agent-outcome.ui-badge { padding: 3px 8px; font-size: 10.5px; white-space: nowrap; }
+.bo-agent-outcome:not([class*="ui-badge-"]) { background: var(--surface-soft); color: var(--muted); }
+.bo-agent-run-date { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.bo-agent-runs-toggle.ui-btn { align-self: flex-start; height: auto; margin: -4px 0 0; padding: 2px 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
 .bo-agent-noassign { margin: 0; }
 .bo-agent-talk { display: flex; gap: 8px; align-items: center; }
 .bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
@@ -1012,7 +1032,6 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 @media (max-width: 420px) {
   .bo-agent-talk { flex-wrap: wrap; }
   .bo-agent-talk .ui-btn { flex: 1 1 100%; }
-  .bo-agent-facts { grid-template-columns: 1fr 1fr; }
 }
 
 /*
@@ -2041,6 +2060,30 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
+/* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
+   card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+.pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
+.pipeline-card.dragging { opacity: .45; }
+.pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+.pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-card > .field-error { display: block; margin-top: 6px; }
+.pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
+.bo-scheda-composer.bo-pipeline-offer { top: 72px; bottom: 16px; width: min(420px, calc(100vw - 48px)); max-height: none; border-bottom: 1px solid var(--line); border-radius: 14px; }
+.bo-pipeline-offer .bo-composer-body.bo-pipeline-offer-body { gap: 16px; padding: 18px 18px 18px; }
+.bo-pipeline-offer .offer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.bo-pipeline-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-pipeline-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-pipeline-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-pipeline-offer-move { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-move label { font-size: 11px; font-weight: 700; color: var(--dim); }
+.bo-pipeline-offer-move-row { display: flex; gap: 8px; }
+.bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
+.bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
+@media (max-width: 560px) {
+  .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+  .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
 }
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }

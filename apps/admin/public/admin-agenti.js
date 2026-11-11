@@ -81,6 +81,24 @@ export const RUN_OUTCOME_LABEL = Object.freeze({
   rejected: 'rifiutato',
 });
 
+/**
+ * Backlog «Agenti: layout delle card»: the outcome of a run as a short chip
+ * on its row — the label the operator reads and the authority tone of the
+ * design system (uiBadge). `artifact` has no authority: it reads neutral.
+ */
+export const RUN_OUTCOME_CHIP = Object.freeze({
+  started: Object.freeze({ label: 'In corso', tone: 'agent' }),
+  proposed: Object.freeze({ label: 'Da approvare', tone: 'pending' }),
+  applied: Object.freeze({ label: 'Applicato', tone: 'accord' }),
+  artifact: Object.freeze({ label: 'Niente da proporre', tone: 'neutral' }),
+  capped: Object.freeze({ label: 'Tetto di spesa', tone: 'pending' }),
+  failed: Object.freeze({ label: 'Non riuscito', tone: 'fault' }),
+  rejected: Object.freeze({ label: 'Rifiutato', tone: 'human' }),
+});
+
+/** How many incarichi a card shows before «Mostra tutti (N)». */
+export const AGENT_RUNS_VISIBLE = 2;
+
 export const ASSIGNMENT_STATUS_LABEL = Object.freeze({
   active: 'Attivo',
   paused: 'In pausa',
@@ -175,6 +193,8 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         schedule: describeSchedule(row),
         status: assignmentStatusLabel(row, runs),
         lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
+        lastOutcome: lastRunOf(runs, String(row.sourceKey ?? ''))?.outcome ?? null,
+        lastStamp: lastRunStamp(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
@@ -224,14 +244,32 @@ export function assignmentStatusLabel(assignment, runs) {
  * @returns {string | null}
  */
 export function lastRunLine(runs, assignmentSourceKey) {
-  if (assignmentSourceKey === '') return null;
-  const at = (run) => String(run?.decidedAt ?? run?.startedAt ?? '');
-  const last = (Array.isArray(runs) ? runs : [])
-    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
-    .sort((a, b) => at(b).localeCompare(at(a)))[0];
+  const last = lastRunOf(runs, assignmentSourceKey);
   if (!last) return null;
-  const stamp = romeStamp(at(last) || null);
+  const stamp = lastRunStamp(runs, assignmentSourceKey);
   return `Ultimo giro: ${RUN_OUTCOME_LABEL[last.outcome]}${stamp === '' ? '' : `, ${stamp}`}`;
+}
+
+/** @param {any} run */
+function runAt(run) {
+  return String(run?.decidedAt ?? run?.startedAt ?? '');
+}
+
+/**
+ * The newest run with a known outcome of one assignment, or null.
+ * @param {Array<any>} runs @param {string} assignmentSourceKey
+ */
+function lastRunOf(runs, assignmentSourceKey) {
+  if (assignmentSourceKey === '') return null;
+  return (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
+    .sort((a, b) => runAt(b).localeCompare(runAt(a)))[0] ?? null;
+}
+
+/** The Rome date of the last run, '' when it never ran. @param {Array<any>} runs @param {string} assignmentSourceKey */
+function lastRunStamp(runs, assignmentSourceKey) {
+  const last = lastRunOf(runs, assignmentSourceKey);
+  return last ? romeStamp(runAt(last) || null) : '';
 }
 
 /**
@@ -694,6 +732,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /** Agents whose card lists every incarico («Mostra tutti»). @type {Set<string>} */
+    expandedRuns: new Set(),
+    /** Incarichi whose phrase is shown whole. @type {Set<string>} */
+    openPhrases: new Set(),
     /**
      * Backlog 31a76b6f19a3: one Approva per run id — busy while the request
      * flies (a double click sends one request), then a done/pending/error
@@ -981,15 +1023,25 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     box.appendChild(facts);
 
     if (card.assignments.length > 0) {
+      // Backlog «Agenti: layout delle card»: the newest two incarichi as
+      // compact rows, the rest behind «Mostra tutti (N)».
+      const all = state.expandedRuns.has(card.sourceKey);
       const list = el(documentNode, 'ul', 'bo-agent-assignments');
-      for (const assignment of card.assignments.slice(0, 5)) {
-        const item = el(documentNode, 'li', 'bo-agent-assignment');
-        item.appendChild(el(documentNode, 'p', 'bo-agent-phrase', `«${assignment.phrase}»`));
-        item.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
-        if (assignment.lastRun) item.appendChild(el(documentNode, 'p', 'bo-agent-lastrun', assignment.lastRun));
-        list.appendChild(item);
-      }
+      const shown = all ? card.assignments : card.assignments.slice(0, AGENT_RUNS_VISIBLE);
+      for (const assignment of shown) list.appendChild(renderAssignmentRow(assignment));
       box.appendChild(list);
+      if (card.assignments.length > AGENT_RUNS_VISIBLE) {
+        const toggle = el(documentNode, 'button', 'bo-agent-runs-toggle', all ? 'Mostra meno' : `Mostra tutti (${card.assignments.length})`);
+        toggle.setAttribute('type', 'button');
+        toggle.setAttribute('data-action', 'runs-toggle');
+        toggle.setAttribute('aria-expanded', all ? 'true' : 'false');
+        toggle.addEventListener('click', () => {
+          if (state.expandedRuns.has(card.sourceKey)) state.expandedRuns.delete(card.sourceKey);
+          else state.expandedRuns.add(card.sourceKey);
+          paint();
+        });
+        box.appendChild(toggle);
+      }
     } else {
       box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-noassign', 'Nessun incarico per ora.'));
     }
@@ -1027,6 +1079,45 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
     if (draft.done !== '') box.appendChild(el(documentNode, 'p', 'bo-agent-done', draft.done));
     return box;
+  }
+
+  /**
+   * One incarico as a compact row: the phrase on one line (cut with an
+   * ellipsis; its full text on hover and on click), schedule and state
+   * under it, the outcome chip and the date of the last run on the right.
+   * @param {any} assignment
+   */
+  function renderAssignmentRow(assignment) {
+    const item = el(documentNode, 'li', 'bo-agent-assignment');
+    if (assignment.lastRun) item.setAttribute('title', assignment.lastRun);
+    const main = el(documentNode, 'div', 'bo-agent-run-main');
+    const open = state.openPhrases.has(assignment.sourceKey);
+    const phrase = el(documentNode, 'button', `bo-agent-phrase${open ? ' is-open' : ''}`, `«${assignment.phrase}»`);
+    phrase.setAttribute('type', 'button');
+    phrase.setAttribute('title', assignment.phrase);
+    phrase.setAttribute('aria-expanded', open ? 'true' : 'false');
+    phrase.addEventListener('click', () => {
+      const next = !state.openPhrases.has(assignment.sourceKey);
+      if (next) state.openPhrases.add(assignment.sourceKey);
+      else state.openPhrases.delete(assignment.sourceKey);
+      phrase.classList.toggle('is-open', next);
+      phrase.setAttribute('aria-expanded', next ? 'true' : 'false');
+    });
+    main.appendChild(phrase);
+    main.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
+    item.appendChild(main);
+    const chip = assignment.lastOutcome ? RUN_OUTCOME_CHIP[assignment.lastOutcome] : null;
+    if (chip) {
+      const side = el(documentNode, 'div', 'bo-agent-run-side');
+      // The design-system badge; `neutral` has no authority colour of its
+      // own and reads as the plain surface chip.
+      const badge = el(documentNode, 'span', null, chip.label);
+      badge.setAttribute('class', `ui-badge${chip.tone === 'neutral' ? '' : ` ui-badge-${chip.tone}`} bo-agent-outcome bo-agent-outcome-${assignment.lastOutcome}`);
+      side.appendChild(badge);
+      if (assignment.lastStamp !== '') side.appendChild(el(documentNode, 'span', 'bo-agent-run-date', assignment.lastStamp));
+      item.appendChild(side);
+    }
+    return item;
   }
 
   function renderMine(page, cards) {
@@ -1274,6 +1365,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (space !== state.space) {
       state.space = space;
       state.drafts = new Map();
+      state.expandedRuns = new Set();
+      state.openPhrases = new Set();
       state.notice = '';
       state.addError = '';
     }
