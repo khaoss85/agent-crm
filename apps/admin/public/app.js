@@ -560,12 +560,9 @@ const catalogView = createCatalogView({
   // Voce 19c2e22a64a1 (1): the Stato sync badge on the Catalogo tab row
   // counts this same live space, like every other space-scoped view.
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
-  // «✦ Aggiungi con l'AI»: same assistant seam as Pipeline and Clienti —
-  // the voice opens the BO-F0-04 panel on the catalog screen.
-  onAskAi: (screenId, description) => {
-    if (assistantPanel) void assistantPanel.open(screenId, description);
-    else toast('Apri la barra AI (⌘K) e descrivi il prodotto che vuoi creare.');
-  },
+  // «✦ Aggiungi con l'AI» drafts a product from one sentence inline, through
+  // the same confirm-gated create route as the manual form; the assistant
+  // panel stays the path for free questions.
 });
 
 // Work (ADR-030): the package-scoped task queue and its activity timeline. The
