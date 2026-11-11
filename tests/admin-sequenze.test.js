@@ -1079,11 +1079,12 @@ test('backlog:bd9ae1482194: the Bozza chip is the neutral ui-chip-plain, and sty
   // The rule that sized the chip also painted it green over any ui-chip-*
   // class (higher specificity): the tint must come from the class alone.
   const { readFile } = await import('node:fs/promises');
-  const css = await readFile(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const css = (await readFile(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...css.matchAll(/([^{}]*\.bo-seq-status[^{}]*)\{([^}]*)\}/g)];
-  assert.ok(rules.length > 0, 'styles.css sizes the sequence chip');
-  for (const [, selector, body] of rules) {
-    if (/\[data-|ui-chip-/.test(selector)) continue;
+  const checked = rules.filter(([, selector]) => !/\[data-|ui-chip-/.test(selector));
+  assert.ok(checked.length >= 2, 'styles.css sizes the chip in the elenco and in the dettaglio');
+  for (const [, selector, body] of checked) {
     assert.doesNotMatch(body, /(^|;|\s)(background|color)\s*:/, `${selector.trim()} must not paint the chip`);
   }
   assert.match(css, /\.ui-chip-plain\s*\{[^}]*background:\s*var\(--surface-soft\)/, 'ui-chip-plain is the neutral system chip');
