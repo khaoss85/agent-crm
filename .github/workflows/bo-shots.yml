@@ -12,10 +12,13 @@
 # account). On sandbox-less Linux the script retries Chromium with
 # --no-sandbox (backlog:cd0ad69b); when no runnable Chromium exists at all
 # the render fails loudly (exit 1) instead of skipping in silence. A green
-# run always carries PNGs: the count step fails the job on zero PNGs and the
-# upload fails the job when the artifact does not land (backlog:cd0ad69b:
-# from 2026-11-10 13:19Z to 2026-11-11 04:49Z this job was green with no
-# screenshot and no artifact, and design checks trusted it).
+# run always carries PNGs (backlog:cd0ad69b: from 2026-11-10 13:19Z to
+# 2026-11-11 04:49Z this job was green with no screenshot and no artifact,
+# and design checks trusted it). The evidence lives on the runner's own
+# disk, ~/accordo-shots/<sha40>/ (ACCORDO_SHOTS_DIR), because the account
+# artifact quota stays full behind the billing lock: the store step copies
+# PNGs and manifest there atomically, prunes folders older than 7 days and
+# fails the job on 0 PNGs or no manifest. The artifact upload is an extra.
 
 name: bo-shots
 
@@ -50,28 +53,54 @@ jobs:
       # render needs no install and no machine lock beyond the runner queue.
       - name: Render every /bo screen at 1440px and 390px
         run: node scripts/bo-shots.js --out "${RUNNER_TEMP}/bo-shots"
-      # Zero PNGs is never a pass (backlog:cd0ad69b): the render must leave
-      # its manifest and at least one PNG, otherwise the job goes red here.
-      - name: Count the PNGs (zero PNGs fails the job)
+      # The server folder is the evidence (backlog:cd0ad69b): the artifact
+      # quota stays full behind the billing lock, so the PNGs land on the
+      # self-hosted runner's disk, one folder per head SHA, written to a temp
+      # folder and moved into place so a reader never sees half a set.
+      # Folders older than 7 days are pruned. 0 PNGs or no manifest is red.
+      - name: Store the PNGs on the server (zero PNGs fails the job)
+        env:
+          SHOTS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          dir="${RUNNER_TEMP}/bo-shots"
-          count=$(find "$dir" -maxdepth 1 -type f -name '*.png' 2>/dev/null | wc -l | tr -d ' ')
+          set -euo pipefail
+          src="${RUNNER_TEMP}/bo-shots"
+          base="${ACCORDO_SHOTS_DIR:-$HOME/accordo-shots}"
+          sha="${SHOTS_SHA}"
+          case "$sha" in
+            *[!0-9a-f]*|'') echo "::error::bo:shots: bad commit sha '$sha'"; exit 1 ;;
+          esac
+          if [ "${#sha}" -ne 40 ]; then echo "::error::bo:shots: sha '$sha' is not 40 hex chars"; exit 1; fi
+          mkdir -p "$base"
+          dest="$base/$sha"
+          tmp="$base/.tmp-$sha-$$"
+          rm -rf "$tmp"
+          mkdir "$tmp"
+          if [ -d "$src" ]; then
+            find "$src" -maxdepth 1 -type f \( -name '*.png' -o -name 'manifest.json' \) -exec cp {} "$tmp/" \;
+          fi
+          rm -rf "$dest.old"
+          if [ -d "$dest" ]; then mv "$dest" "$dest.old"; fi
+          mv "$tmp" "$dest"
+          rm -rf "$dest.old"
+          find "$base" -mindepth 1 -maxdepth 1 -type d -mtime +7 -exec rm -rf {} +
+          count=$(find "$dest" -maxdepth 1 -type f -name '*.png' | wc -l | tr -d ' ')
           if [ "${count:-0}" -eq 0 ]; then
-            echo "::error::bo:shots produced 0 PNGs in $dir: a green shots job must carry screenshots"
+            echo "::error::bo:shots produced 0 PNGs in $dest: a green shots job must carry screenshots"
             exit 1
           fi
-          if [ ! -f "$dir/manifest.json" ]; then
-            echo "::error::bo:shots left no manifest.json in $dir"
+          if [ ! -f "$dest/manifest.json" ]; then
+            echo "::error::bo:shots left no manifest.json in $dest"
             exit 1
           fi
-          echo "bo:shots produced $count PNG(s)"
-      # No continue-on-error (backlog:cd0ad69b): a run whose artifact did not
-      # upload (quota full included) is red, so nobody reads a green job as
-      # visual evidence that does not exist. Re-run once the quota frees up.
+          echo "bo:shots stored $count PNG(s) in $dest"
+      # Extra only: the account artifact quota is full behind the billing
+      # lock, so the upload may fail without turning the job red. The proof
+      # is the server folder above.
       - name: Upload the PNGs for visual review
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: bo-shots
           path: ${{ runner.temp }}/bo-shots/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3

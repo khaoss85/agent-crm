@@ -22,7 +22,7 @@ import test from 'node:test';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -508,48 +508,92 @@ test('in CI (CI=true) without a runnable Chromium bo:shots exits non-zero and sa
 });
 
 /**
- * The workflow's PNG-count step, extracted from bo-shots.yml and run with
- * bash against a given RUNNER_TEMP: the test exercises the exact shell the
- * runner executes, not a copy.
+ * The workflow's store step, extracted from bo-shots.yml and run with bash
+ * against a given RUNNER_TEMP and ACCORDO_SHOTS_DIR: the test exercises the
+ * exact shell the runner executes, not a copy.
  */
-function runCountStep(runnerTemp) {
+function runStoreStep(runnerTemp, shotsDir, sha) {
   const yml = readFileSync(join(root, '.github', 'workflows', 'bo-shots.yml'), 'utf8');
-  const match = yml.match(/- name: Count the PNGs[^\n]*\n\s+run: \|\n((?:\s{10}[^\n]*\n|\s*\n)+)/);
-  assert.ok(match, 'bo-shots.yml has the PNG count step');
+  const match = yml.match(/- name: Store the PNGs on the server[^\n]*\n(?:\s+[^\n]*\n)*?\s+run: \|\n((?:\s{10}[^\n]*\n|\s*\n)+)/);
+  assert.ok(match, 'bo-shots.yml has the store step');
   const script = match[1].split('\n').map((line) => line.replace(/^ {10}/, '')).join('\n');
-  return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: runnerTemp } });
+  return spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, RUNNER_TEMP: runnerTemp, ACCORDO_SHOTS_DIR: shotsDir, SHOTS_SHA: sha },
+  });
 }
 
-test('the CI count step fails the shots job on zero PNGs and passes with PNGs (backlog:cd0ad69b)', () => {
-  const empty = mkdtempSync(join(tmpdir(), 'bo-shots-count-empty-'));
-  const none = runCountStep(empty);
-  assert.notEqual(none.status, 0, 'no output dir at all is red');
+const SHA_A = 'a'.repeat(40);
+const SHA_B = 'b'.repeat(40);
+
+test('the CI store step fails the shots job on zero PNGs or no manifest (backlog:cd0ad69b)', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'bo-shots-store-empty-'));
+  const store = join(temp, 'accordo-shots');
+  const none = runStoreStep(temp, store, SHA_A);
+  assert.notEqual(none.status, 0, 'no render folder at all is red');
   assert.match(String(none.stdout ?? ''), /produced 0 PNGs/);
 
-  mkdirSync(join(empty, 'bo-shots'));
-  writeFileSync(join(empty, 'bo-shots', 'manifest.json'), '{"shots":[]}\n');
-  const zero = runCountStep(empty);
-  assert.notEqual(zero.status, 0, 'an empty output dir (manifest, 0 PNGs) is red');
+  mkdirSync(join(temp, 'bo-shots'));
+  writeFileSync(join(temp, 'bo-shots', 'manifest.json'), '{"shots":[]}\n');
+  const zero = runStoreStep(temp, store, SHA_A);
+  assert.notEqual(zero.status, 0, 'a manifest with 0 PNGs is red');
   assert.match(String(zero.stdout ?? ''), /produced 0 PNGs/);
 
-  const full = mkdtempSync(join(tmpdir(), 'bo-shots-count-full-'));
+  const full = mkdtempSync(join(tmpdir(), 'bo-shots-store-nomanifest-'));
   mkdirSync(join(full, 'bo-shots'));
   writeFileSync(join(full, 'bo-shots', 'login-1440.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
-  const noManifest = runCountStep(full);
+  const noManifest = runStoreStep(full, join(full, 'accordo-shots'), SHA_A);
   assert.notEqual(noManifest.status, 0, 'PNGs without the manifest are red');
-  writeFileSync(join(full, 'bo-shots', 'manifest.json'), '{"shots":[{}]}\n');
-  const ok = runCountStep(full);
-  assert.equal(ok.status, 0, `PNGs plus manifest pass (stdout: ${ok.stdout})`);
-  assert.match(String(ok.stdout ?? ''), /produced 1 PNG/);
+  assert.match(String(noManifest.stdout ?? ''), /no manifest\.json/);
+
+  const bad = runStoreStep(full, join(full, 'accordo-shots'), 'not-a-sha');
+  assert.notEqual(bad.status, 0, 'a malformed sha never becomes a folder name');
 });
 
-test('the shots upload can no longer go green without its artifact (backlog:cd0ad69b)', () => {
+test('the CI store step keeps PNGs and manifest in <dir>/<sha40>, atomically, and prunes after 7 days (backlog:cd0ad69b)', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'bo-shots-store-ok-'));
+  const store = join(temp, 'accordo-shots');
+  mkdirSync(join(temp, 'bo-shots'));
+  writeFileSync(join(temp, 'bo-shots', 'login-1440.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  writeFileSync(join(temp, 'bo-shots', 'login-390.png'), Buffer.from('89504e470d0a1a0a', 'hex'));
+  writeFileSync(join(temp, 'bo-shots', 'manifest.json'), '{"shots":[{},{}]}\n');
+  // An old folder (10 days) is pruned, a recent one (2 days) stays.
+  const old = join(store, SHA_B);
+  const recent = join(store, 'c'.repeat(40));
+  mkdirSync(old, { recursive: true });
+  mkdirSync(recent, { recursive: true });
+  const day = 24 * 3600;
+  const now = Date.now() / 1000;
+  utimesSync(old, now - 10 * day, now - 10 * day);
+  utimesSync(recent, now - 2 * day, now - 2 * day);
+
+  const ok = runStoreStep(temp, store, SHA_A);
+  assert.equal(ok.status, 0, `PNGs plus manifest pass (stdout: ${ok.stdout} stderr: ${ok.stderr})`);
+  assert.match(String(ok.stdout ?? ''), /stored 2 PNG\(s\)/);
+  const dest = join(store, SHA_A);
+  assert.deepEqual(readdirSync(dest).sort(), ['login-1440.png', 'login-390.png', 'manifest.json']);
+  assert.ok(!existsSync(old), 'a folder older than 7 days is pruned');
+  assert.ok(existsSync(recent), 'a recent folder stays');
+  assert.deepEqual(readdirSync(store).filter((name) => name.startsWith('.tmp-') || name.endsWith('.old')), [], 'no temp folder left behind');
+
+  // A re-run on the same sha replaces the set, never nests or mixes it.
+  writeFileSync(join(dest, 'stale.png'), 'stale');
+  const again = runStoreStep(temp, store, SHA_A);
+  assert.equal(again.status, 0, `re-run passes (stderr: ${again.stderr})`);
+  assert.deepEqual(readdirSync(dest).sort(), ['login-1440.png', 'login-390.png', 'manifest.json'], 're-run replaces the folder');
+
+  const yml = readFileSync(join(root, '.github', 'workflows', 'bo-shots.yml'), 'utf8');
+  assert.match(yml, /ACCORDO_SHOTS_DIR:-\$HOME\/accordo-shots/, 'default folder is ~/accordo-shots');
+  assert.match(yml, /mv "\$tmp" "\$dest"/, 'written via temp folder then mv');
+});
+
+test('the artifact upload is only an extra, after the server store (backlog:cd0ad69b)', () => {
   const yml = readFileSync(join(root, '.github', 'workflows', 'bo-shots.yml'), 'utf8');
   const upload = yml.slice(yml.indexOf('- name: Upload the PNGs'));
   assert.ok(upload.includes('actions/upload-artifact@'), 'the upload step exists');
-  assert.ok(!/continue-on-error:\s*true/.test(upload), 'a failed upload turns the job red');
-  assert.match(upload, /if-no-files-found:\s*error/, 'an empty upload turns the job red');
-  assert.ok(yml.indexOf('- name: Count the PNGs') < yml.indexOf('- name: Upload the PNGs'), 'the count runs before the upload');
+  assert.match(upload, /continue-on-error:\s*true/, 'a full artifact quota does not turn the job red');
+  assert.match(upload, /if-no-files-found:\s*warn/, 'the upload only warns');
+  assert.ok(yml.indexOf('- name: Store the PNGs on the server') < yml.indexOf('- name: Upload the PNGs'), 'the store and count run before the upload');
 });
 
 const CHROMIUM = findChromium();
