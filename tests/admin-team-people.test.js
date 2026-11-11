@@ -151,6 +151,19 @@ test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): «Cosa noto» swaps owners
   );
 });
 
+test('review Muse #767 su #750 giro 2 (backlog:e52c5e0dd49f): «Cosa noto» never rewrites inside hyphenated ids or mailboxes', () => {
+  const roster = [{ subject: 'guido', displayName: 'Guido Bianchi' }];
+  const model = {
+    owners: ['guido'], team: [],
+    insights: [{ text: 'aspetta coach-guido-2 domani, scrivi a guido.rossi@example.com; parla con guido.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'aspetta coach-guido-2 domani, scrivi a guido.rossi@example.com; parla con Guido Bianchi.',
+    'a short owner leaves longer hyphenated ids and mailboxes alone',
+  );
+});
+
 test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): a slug-shaped displayName echo never becomes the label', () => {
   assert.equal(
     teamPeople([{ subject: 'coach-guido', displayName: 'coach-guido' }])[0].label,
