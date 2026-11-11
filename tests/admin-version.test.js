@@ -16,6 +16,7 @@ import {
   BO_UPDATE_NOTICE,
   BO_UPDATE_UNSAVED_NOTICE,
   BO_UNSAVED_RECHECK_MS,
+  BO_UNSAVED_RECHECK_LIMIT,
   refreshUpdateNotice,
   BO_VERSION_POLL_MS,
   checkBundleVersion,
@@ -395,6 +396,34 @@ test('52f76db1a3ef: a later poll also clears a stale warning, and never reloads'
   assert.equal(doc._state.banner.textContent, BO_UPDATE_NOTICE);
   assert.equal(reloads, 0);
   assert.equal(refreshUpdateNotice(null, doc), false, 'no banner, nothing to say');
+});
+
+// Review #761 (P2): a field that keeps text (a search box) must not keep
+// the one-second recheck alive forever: it stops at a cap, the warning stays
+// honest, and the minute poll still clears it later.
+test('review #761: the recheck stops after its cap when a field keeps text', async () => {
+  resetVersionWatchState();
+  const search = fakeField({ tag: 'INPUT', type: 'search', value: 'giulia' });
+  const doc = fakeDoc({ scripts: [fakeScript('/bo/bo-aaaa000000.js')], fields: [search] });
+  const timers = [];
+  let reloads = 0;
+  const options = {
+    adminBase: '/bo', doc, fetchImpl: okFetch('bo-bbbb111111.js'), reload: () => { reloads++; },
+    setInterval: (fn, ms) => { const timer = { fn, ms, cleared: false }; timers.push(timer); return timer; },
+    clearInterval: (timer) => { timer.cleared = true; },
+  };
+  await checkBundleVersion(options);
+  doc._state.banner.click();
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE);
+  for (let tick = 1; tick < BO_UNSAVED_RECHECK_LIMIT; tick += 1) timers[0].fn();
+  assert.equal(timers[0].cleared, false, 'still checking before the cap');
+  timers[0].fn();
+  assert.equal(timers[0].cleared, true, 'the recheck stops at the cap');
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE, 'text still there: the warning stays');
+  search.value = '';
+  await checkBundleVersion(options);
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_NOTICE, 'the next poll clears the warning');
+  assert.equal(reloads, 0, 'never a reload on its own');
 });
 
 test('a CSS-only release shows the notice', async () => {

@@ -37,6 +37,13 @@ export const BO_UPDATE_UNSAVED_NOTICE = 'Hai del testo non salvato: salvalo, poi
 export const BO_UNSAVED_RECHECK_MS = 1000;
 
 /**
+ * Most rechecks of one warning (review #761): a field that keeps text (a
+ * search box, a draft left open) must not tick forever. Past the cap the
+ * minute poll (and every navigation) still clears a stale warning.
+ */
+export const BO_UNSAVED_RECHECK_LIMIT = 120;
+
+/**
  * backlog:52f76db1a3ef: once the text is saved (the note box empties) the
  * warning «Hai del testo non salvato…» gives way to the plain notice again:
  * the banner keeps no stale warning. Returns true when the banner reads the
@@ -373,9 +380,11 @@ export async function checkBundleVersion(options = {}) {
       if (!warned && hasUnsavedWork(doc)) {
         if (pressed && typeof pressed === 'object') pressed.textContent = BO_UPDATE_UNSAVED_NOTICE;
         if (recheck === null && typeof setTimer === 'function') {
+          let ticks = 0;
           try {
             recheck = setTimer(() => {
-              if (refreshUpdateNotice(pressed, doc)) stopRecheck();
+              ticks += 1;
+              if (refreshUpdateNotice(pressed, doc) || ticks >= BO_UNSAVED_RECHECK_LIMIT) stopRecheck();
             }, BO_UNSAVED_RECHECK_MS);
             if (recheck && typeof recheck.unref === 'function') recheck.unref();
           } catch {

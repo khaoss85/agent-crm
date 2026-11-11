@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAdminBundle } from '../apps/server/src/admin-bundle.js';
-import { MODULE_NAMES, euro, moduleScreenLabel, plural } from '../apps/admin/public/admin-labels.js';
+import { MODULE_NAMES, euro, moduleScreenLabel, plainAmount, plural } from '../apps/admin/public/admin-labels.js';
+import { createdWithin } from '../apps/admin/public/admin-pipeline.js';
 import { formatMoney } from '../apps/admin/public/admin-reporting.js';
 import { pluralize } from '../apps/admin/public/admin-personalizzazione.js';
 
@@ -99,6 +100,30 @@ test('9236684c96a7: the served bundle has no money formatter without thousands s
   assert.doesNotMatch(jsBody, /\$\{[^}`]*(?:toFixed\(2\)|priceText\([^)]*\)|formatPriceCents\([^)]*\))[^}`]*\}\s*€/, 'no «45.00 €» glued by hand');
   // The views that write money read the shared helpers.
   assert.match(source('admin-reporting.js'), /return euro\(minor, currency\) \?\? 'n\.d\.'/);
-  assert.match(source('admin-clienti.js'), /euro\(Number\(row\.offerValueCents\)/);
+  assert.match(source('admin-clienti.js'), /euro\(cents, code\)/);
   assert.match(source('admin-calendario.js'), /\$\{entry\.name\} · \$\{euro\(entry\.priceCents\) \?\? '—'\}/);
+});
+
+// Review #761 (P2): an offer with no currency must not read as euros: the
+// amount stays grouped and bare, as main wrote it.
+test('review #761: plainAmount groups without a symbol; Clienti never presumes €', () => {
+  assert.equal(plainAmount(120000), '1.200,00');
+  assert.equal(plainAmount(1.5), null);
+  const clienti = source('admin-clienti.js');
+  assert.match(clienti, /code === '' \? plainAmount\(cents\) : euro\(cents, code\)/, 'no currency: bare grouped amount');
+  assert.doesNotMatch(clienti, /offerCurrency \?\? 'EUR'/, 'never a presumed EUR');
+});
+
+// Review #761 (P2): the «Creata» filter counts Rome days, like the column.
+test('review #761: the Creata filter reads the Rome day the column shows', () => {
+  const now = new Date('2026-11-11T10:00:00.000Z');
+  // 23:30Z on 3 nov is 4 nov in Rome: inside «ultimi 7 giorni» (cutoff 4 nov).
+  assert.equal(createdWithin('2026-11-03T23:30:00.000Z', 7, now), true, 'the Rome day, not the UTC day');
+  assert.equal(createdWithin('2026-11-03T22:30:00.000Z', 7, now), false, '3 nov in Rome is out');
+  // Rome after midnight while UTC is still the day before.
+  const lateNight = new Date('2026-11-10T23:30:00.000Z'); // 11 nov 00:30 in Rome
+  assert.equal(createdWithin('2026-11-04T12:00:00.000Z', 7, lateNight), true, 'today is the Rome today');
+  assert.equal(createdWithin('2026-11-04', 7, lateNight), true, 'a bare day keeps its day');
+  assert.equal(createdWithin('not a day', 7, now), false);
+  assert.equal(createdWithin('2026-11-10T10:00:00.000Z', 0, now), false);
 });

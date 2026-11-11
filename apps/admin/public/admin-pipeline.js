@@ -59,12 +59,35 @@ const MONTHS_IT = [
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
 
-/** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
-function dayOf(value) {
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+/**
+ * Rome calendar day (YYYY-MM-DD) of a stored day or instant, null when
+ * absent/unparseable: the same day the screen prints with italianDay
+ * (review #761), never the UTC day.
+ * @param {unknown} value
+ */
+function romeDayOf(value) {
   if (typeof value !== 'string' || !value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const time = Date.parse(value);
   if (Number.isNaN(time)) return null;
-  return new Date(time).toISOString().slice(0, 10);
+  return ROME_DAY_KEY.format(new Date(time));
+}
+
+/**
+ * BO-F6-10 C8: whether a record created at `createdAt` falls in the last
+ * `days` Rome calendar days (today included in the count back), on the
+ * same Rome day the Creata column shows. Fail closed on an unreadable day.
+ * @param {unknown} createdAt @param {number} days @param {Date} [now]
+ */
+export function createdWithin(createdAt, days, now = new Date()) {
+  const day = romeDayOf(createdAt);
+  const today = now instanceof Date && !Number.isNaN(now.getTime()) ? ROME_DAY_KEY.format(now) : null;
+  if (!days || day === null || today === null) return false;
+  const [year, month, date] = today.split('-').map(Number);
+  const cutoff = new Date(Date.UTC(year, month - 1, date - days)).toISOString().slice(0, 10);
+  return day >= cutoff;
 }
 
 /**
@@ -99,12 +122,7 @@ function matchesFilters(record, filters) {
   // matches nothing rather than silently lifting the filter.
   if (filters.created) {
     const days = filters.created === '7d' ? 7 : filters.created === '30d' ? 30 : 0;
-    const day = dayOf(record.createdAt);
-    if (!days || !day) return false;
-    const now = new Date();
-    const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days))
-      .toISOString().slice(0, 10);
-    if (day < cutoff) return false;
+    if (!createdWithin(record.createdAt, days)) return false;
   }
   return true;
 }

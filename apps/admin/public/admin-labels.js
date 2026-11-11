@@ -429,6 +429,20 @@ export function euro(minor, currency = 'EUR') {
   return format.format(minor / 100);
 }
 
+/** Grouped amount with no currency symbol, built once. */
+const PLAIN_AMOUNT = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+
+/**
+ * An amount whose currency is not known, minor units in: «1.200,00», no
+ * symbol — never a presumed € (review #761). Null when not whole cents.
+ * @param {unknown} minor amount in 1/100 units
+ * @returns {string | null}
+ */
+export function plainAmount(minor) {
+  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
+  return PLAIN_AMOUNT.format(minor / 100);
+}
+
 /**
  * A count with its noun: «1 appuntamento», «3 appuntamenti», «0 righe».
  * Only exactly one takes the singular.

@@ -22,7 +22,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // ("marco whatsapp") needs no LLM and always works.
 
 import { humanReadError } from './admin-core.js';
-import { euro } from './admin-labels.js';
+import { euro, plainAmount } from './admin-labels.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -754,8 +754,11 @@ export function createCustomerListView(deps) {
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
-        // backlog:9236684c96a7: the shared euro() groups thousands («1.200,00 €»).
-        const amount = euro(Number(row.offerValueCents), row.offerCurrency ?? 'EUR');
+        // backlog:9236684c96a7: the shared euro() groups thousands («1.200,00 €»);
+        // without a currency the amount stays bare, never a presumed € (review #761).
+        const cents = Number(row.offerValueCents);
+        const code = typeof row.offerCurrency === 'string' ? row.offerCurrency.trim() : '';
+        const amount = code === '' ? plainAmount(cents) : euro(cents, code);
         return amount === null ? el('span', 'bo-muted', '—') : el('span', undefined, amount);
       }
       case 'budget': {

@@ -17,6 +17,9 @@
 // the renderer uses DOM APIs only — createElement + textContent/setAttribute
 // — never innerHTML with data, so hostile bundle rows are inert text.
 
+import { euro } from './admin-labels.js';
+import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+
 /** Hash route of the Reporting screen. */
 export const REPORTING_ROUTE = '#/reporting';
 
@@ -336,8 +339,6 @@ export function reportingSummary(rows) {
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { euro } from './admin-labels.js';
-import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Reporting and "+ Nuovo modulo" screens.
