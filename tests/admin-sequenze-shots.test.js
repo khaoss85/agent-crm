@@ -282,7 +282,7 @@ test('the sequenze elenco and dettaglio render in a real browser: desktop PNG', 
   assert.equal(probe.steps, 2, 'the dettaglio lists both day+channel steps');
   assert.equal(probe.firstDay, 'Subito', 'the first step names its day');
   assert.equal(probe.firstChannel, 'WhatsApp · Ciao, ci manchi', 'the first step names its channel and title');
-  assert.ok(probe.confirm?.includes('Attivare questa sequenza?'), `the write asks twice (${probe.confirm})`);
+  assert.ok(probe.confirm?.includes('Avviare questa sequenza?'), `the write asks twice (${probe.confirm})`);
   console.log(`sequenze desktop PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });
 

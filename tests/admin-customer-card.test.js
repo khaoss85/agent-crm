@@ -3651,15 +3651,43 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   };
   const { panel } = await openComposerMount({ client });
   const { input, go } = aiParts(panel);
-  if (!go) {
-    assert.match(panel.textContent, /Nessun canale collegato/, 'without channels the composer says so');
-    return;
-  }
+  assert.ok(go, 'Genera is in the composer');
   input.value = 'scrivi tu';
   go.dispatch('click');
   await flushComposer();
   assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
-  assert.match(panel.textContent, /Nessun canale collegato/);
+  // backlog:bd9ae1482194 (verifica 11/11): the line says what to do, with
+  // the way to Connettori — never «l’AI scrive per il canale scelto» when
+  // there is no channel to choose.
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.ok(line, 'the AI row has its line');
+  assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente');
+  const go2 = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(go2, 'the line is a link');
+  assert.equal(go2.getAttribute('href'), '#/connettori', 'the link opens the Connettori screen of the /bo');
+  assert.ok(!panel.textContent.includes('canale scelto'), 'no sentence about a channel nobody can pick');
+});
+
+test('backlog:bd9ae1482194: a space with channels but no address for this customer says so, no Connettori line', async () => {
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return { connectors: [{ channel: 'facebook', status: 'active', connectionKey: 'fb-1' }] }; // Messenger linked, no Messenger address on the card
+      if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(inner.drafts.length, 0, 'no draft request without a usable channel');
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.equal(line.textContent, 'Questo cliente non ha un recapito sui canali collegati.');
+  assert.equal(line.findAll('a').length, 0, 'the space has a channel: no Connettori link in the line');
 });
 
 // Dan 06/11: «ho aggiunto una nota ma non si vede e non si capisce dove;
