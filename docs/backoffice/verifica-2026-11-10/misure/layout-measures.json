@@ -1,0 +1,598 @@
+{
+  "oggi@390": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 390,
+    "innerWidth": 390,
+    "vw": 390,
+    "vh": 844,
+    "docScrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Oggi",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 1,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "oggi@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Oggi",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 1,
+    "minFieldFontPx": 14,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px"
+    ]
+  },
+  "clienti@390": {
+    "ok": false,
+    "failures": [
+      "innerWidth 612 != 390",
+      "docScrollWidth 612 > 390"
+    ],
+    "requestedWidth": 390,
+    "innerWidth": 612,
+    "vw": 390,
+    "vh": 1325,
+    "docScrollWidth": 612,
+    "bodyScrollWidth": 390,
+    "horizontalOverflowPx": 222,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Clienti",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "clienti@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Clienti",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 14,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px",
+      "q:15px"
+    ]
+  },
+  "cliente@390": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 390,
+    "innerWidth": 390,
+    "vw": 390,
+    "vh": 844,
+    "docScrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Clienti",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "cliente@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Clienti",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 14,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px",
+      "noteBody:14px"
+    ]
+  },
+  "calendario@390": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 390,
+    "innerWidth": 390,
+    "vw": 390,
+    "vh": 844,
+    "docScrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Calendario",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 11,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "calendario@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Calendario",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 11,
+    "minFieldFontPx": 12.5,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px",
+      "phrase:14px",
+      "members:12.5px",
+      "customerSearch:13px",
+      "teamMemberId:14px",
+      "serviceKey:13px",
+      "price:13px",
+      "date:13px"
+    ]
+  },
+  "pipeline@390": {
+    "ok": false,
+    "failures": [
+      "innerWidth 1073 != 390",
+      "docScrollWidth 1073 > 390"
+    ],
+    "requestedWidth": 390,
+    "innerWidth": 1073,
+    "vw": 390,
+    "vh": 2323,
+    "docScrollWidth": 1073,
+    "bodyScrollWidth": 1073,
+    "horizontalOverflowPx": 683,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Pipeline",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 5,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "pipeline@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Pipeline",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 5,
+    "minFieldFontPx": 12,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px",
+      "ui-field:13px",
+      "ui-field:12px",
+      "ui-field:12px",
+      "ui-field:12px"
+    ]
+  },
+  "personalizzazione@390": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 390,
+    "innerWidth": 390,
+    "vw": 390,
+    "vh": 844,
+    "docScrollWidth": 390,
+    "bodyScrollWidth": 390,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 110,
+      "bottom": 110
+    },
+    "viewModuleTop": 114,
+    "contentTop": 114,
+    "crumb": {
+      "text": "Studio Aurora / Personalizzazione",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "sidebarVisibleInViewport": false,
+    "menuToggle": {
+      "x": 334,
+      "y": 6,
+      "w": 44,
+      "h": 44,
+      "bottom": 50
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 16,
+    "fieldsUnder16": []
+  },
+  "personalizzazione@1440": {
+    "ok": true,
+    "failures": [],
+    "requestedWidth": 1440,
+    "innerWidth": 1440,
+    "vw": 1440,
+    "vh": 1800,
+    "docScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "horizontalOverflowPx": 0,
+    "offenders": [],
+    "offenderCount": 0,
+    "topbar": {
+      "x": 264,
+      "y": 0,
+      "w": 1176,
+      "h": 64,
+      "bottom": 64
+    },
+    "viewModuleTop": 94,
+    "contentTop": 94,
+    "crumb": {
+      "text": "Studio Aurora / Personalizzazione",
+      "visible": true,
+      "inViewport": true,
+      "truncated": false
+    },
+    "sidebar": {
+      "x": 0,
+      "y": 0,
+      "w": 264,
+      "h": 1800,
+      "bottom": 1800
+    },
+    "sidebarVisibleInViewport": true,
+    "menuToggle": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "bottom": 0
+    },
+    "menuExpanded": "false",
+    "fieldCount": 2,
+    "minFieldFontPx": 14,
+    "fieldsUnder16": [
+      "bo-ai-input ui-field:14px",
+      "search ui-field:14px"
+    ]
+  }
+}

@@ -670,6 +670,12 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
   return failed;
 }
 
+/** The codes a gateway answers with when the server behind it never did. */
+const GATEWAY_CODES = new Set(['', 'UNKNOWN', 'BAD_GATEWAY', 'SERVICE_UNAVAILABLE', 'GATEWAY_TIMEOUT']);
+
+/** A write the server could not take right now (5xx): what happened, then what to do. */
+export const SERVER_UNAVAILABLE_TEXT = 'Il server non risponde adesso, riprova tra poco.';
+
 /**
  * Whether a failure means the write never got a usable answer from the
  * server (backlog:7cc35edab50c, production 07/11: a 502 from the /bo edge
@@ -699,7 +705,11 @@ export function isNetworkFailure(error) {
     return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
   }
   if (status !== 502 && status !== 503 && status !== 504) return false;
-  return !/_(FAILED|PENDING|REFUSED|NOT_CONFIGURED)$/.test(code) && !/REFUSALS?$/.test(code);
+  // backlog:7d30fb517785 (production 10/11: a 503 OPERATION_APP_UNAVAILABLE
+  // on the AI switch read «Connessione non riuscita»): at 502/503/504 only a
+  // gateway's own generic code means «no answer». Any other code is a
+  // verdict the server named, never a connection fault.
+  return GATEWAY_CODES.has(code);
 }
 
 /**
@@ -710,7 +720,9 @@ export function isNetworkFailure(error) {
  * validi) hanno un testo proprio; tutto il resto risponde `failed`. Un
  * guasto di rete (backlog:7cc35edab50c) non è un rifiuto: risponde
  * «Connessione non riuscita, riprova.» e il comando resta a schermo per la
- * riprova, mai il testo di un rifiuto.
+ * riprova, mai il testo di un rifiuto. Un 502/503/504 da gateway non è un
+ * guasto di rete (backlog:7d30fb517785): il server non risponde, e il testo
+ * lo dice; un codice applicativo a quegli stati risponde `failed`.
  *
  * @param {unknown} error the rejection from `client.request`
  * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
@@ -718,7 +730,10 @@ export function isNetworkFailure(error) {
 export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
   const { code, status, message, report } = normalizeFailure(error, log);
   report('[bo] scrittura rifiutata', { code, status, message });
-  if (isNetworkFailure(error)) return 'Connessione non riuscita, riprova.';
+  // backlog:7d30fb517785: «Connessione non riuscita» only when the answer
+  // never arrived (fetch rejected, status 0, timeout). A gateway 5xx did
+  // answer: the server is the one not taking the write right now.
+  if (isNetworkFailure(error)) return status !== null && status >= 500 ? SERVER_UNAVAILABLE_TEXT : 'Connessione non riuscita, riprova.';
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
     return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';

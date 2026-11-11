@@ -1,7 +1,9 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { CHANNEL_SYSTEMS, isNoCompany } from './sender.js';
+import { messagePreview } from '../../core/message-preview.js';
+import { CHANNEL_SYSTEMS } from './sender.js';
+import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
 /**
  * **The customer list (BO-F1-05): one page of customers, server-side.**
@@ -41,17 +43,22 @@ export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 export const LAST_CONTACT_PREVIEW_CHARS = 140;
 
 /**
- * Short single-line excerpt of the latest message for the list row. Calls
- * carry no text, so a latest call (or no activity) previews as null — the
- * view renders the channel and the date alone, never an invented excerpt.
+ * Short single-line excerpt of the latest message for the list row, read
+ * like a mail client (Dan 10/11): «Oggetto — estratto pulito» for an email
+ * with a stored subject, the cleaned excerpt otherwise — no URLs, HTML
+ * residue, hidden preheaders or service lines (core `messagePreview`). A
+ * body that cleans to nothing falls back to the subject. Calls carry no
+ * text, so a latest call (or no activity) previews as null — the view
+ * renders the channel and the date alone, never an invented excerpt.
  * @param {unknown} value the latest message body, if any
+ * @param {unknown} [subject] the latest message's mail subject, if any
  */
-export function previewLastContactText(value) {
-  if (typeof value !== 'string') return null;
-  const single = value.replace(/\s+/g, ' ').trim();
-  if (single === '') return null;
-  if (single.length <= LAST_CONTACT_PREVIEW_CHARS) return single;
-  return `${single.slice(0, LAST_CONTACT_PREVIEW_CHARS).trimEnd()}…`;
+export function previewLastContactText(value, subject = null) {
+  const preview = messagePreview(typeof value === 'string' ? value : null, {
+    subject: typeof subject === 'string' ? subject : null,
+    max: LAST_CONTACT_PREVIEW_CHARS,
+  });
+  return preview === '' ? null : preview;
 }
 
 /** Server page sizes from the approved prototype ("04 Clienti"). */
@@ -435,9 +442,10 @@ export function shapeCustomerRow(subject, reads = {}) {
   const id = contact?.id ?? company?.id ?? null;
   if (!id) throw new ValidationError('a customer row needs a contact or a company', { field: 'id' });
   const key = `${resource}:${id}`;
-  const name = contact
-    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
-    : company?.name ?? null;
+  // The one display rule (display-name.js, production 10/11): placeholders
+  // dropped, never an address as a name.
+  const shownCompany = shownCompanyOf(company, contact);
+  const name = contact ? contactDisplayName(contact) : companyDisplayName(company);
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
   // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps
@@ -477,7 +485,12 @@ export function shapeCustomerRow(subject, reads = {}) {
     name, resource, id,
     // The reserved «no company» behind a contact typed without Azienda
     // reads as no company (production 07/11), never as a company name.
-    company: company && !(contact && isNoCompany(company)) ? Object.freeze({ id: company.id, name: company.name }) : null,
+    // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
+    // A company subject named by a placeholder (`Unknown (…)`) lists no
+    // company line either: the row keeps its id, never the placeholder
+    // (review #739 giro 3).
+    company: shownCompany && companyDisplayName(shownCompany) !== null
+      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
@@ -485,7 +498,7 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
-    lastContactText: previewLastContactText(activity?.text ?? null),
+    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     offerValueCents: offer?.valueCents ?? null,

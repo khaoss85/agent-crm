@@ -84,20 +84,36 @@ export function romeClock(value) {
  * lead path still stores `—` as the last name of a one-token address. None of
  * them names anyone: they are dropped from what the operator reads.
  */
-const NAME_PLACEHOLDERS = new Set(['unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', '-', '—', '–']);
+const NAME_PLACEHOLDERS = new Set([
+  'unknown', 'sconosciuto', 'sconosciuta', 'n/a', 'na', 'null', 'undefined', 'none', '-', '—', '–',
+]);
+
+/** An address-shaped word; a lone `@` or a handle is not one (review #739). */
+const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
- * «PayPal»), null when nothing real is left.
+ * «PayPal»), null when nothing real is left. A name that carries an
+ * address (`Mittente: x@…`, or a bare email used as a label) names nobody:
+ * null, never the long address on screen (production 10/11).
+ * The browser twin of customer-data `readableName` (display-name.js): the
+ * bundle cannot import a package, so tests/customer-display-name.test.js
+ * runs both on the same table.
  * @param {unknown} value
  * @returns {string | null}
  */
 export function readableName(value) {
   if (typeof value !== 'string') return null;
-  const words = value.trim().split(/\s+/).filter((word) => word !== '' && !NAME_PLACEHOLDERS.has(word.toLowerCase()));
-  const text = words.join(' ');
-  return text !== '' ? text : null;
+  const words = value.trim().split(/\s+/).filter((word) => word !== '');
+  if (words.some((word) => ADDRESS_WORD.test(word))) return null;
+  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const text = kept.join(' ');
+  return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
+
+/** A trailing no-reply marker (`Noreply`, `NO-REPLY`), any case (production 10/11). */
+const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
 
 /**
  * Display name from a read-only customer profile
@@ -110,12 +126,101 @@ export function readableName(value) {
  * @returns {string | null}
  */
 export function nameFromProfile(profile) {
+  // The provider's display name first (customer-data display-name.js): the
+  // one rule every screen reads, with the domain label for a nameless
+  // address. A profile from before the field keeps the join below.
+  const provided = profile?.identity?.displayName;
+  // An explicit null is the provider's verdict «no name» (review #739 giro
+  // 2): only a profile without the field falls back to the join below.
+  if (provided === null) return null;
+  if (typeof provided === 'string') return readableName(provided);
   const contact = profile?.identity?.contact ?? null;
   const full = readableName([contact?.firstName, contact?.lastName]
     .filter((part) => typeof part === 'string')
     .join(' '));
-  if (full !== null) return full;
+  if (full !== null) return nameWithoutAddressEchoes(full, contact?.email);
   return readableName(profile?.identity?.company?.name);
+}
+
+/**
+ * The name without the pieces it repeats from its own address
+ * («Amazon.it It» reads «Amazon.it»): the browser twin of customer-data
+ * `nameWithoutAddressEchoes`, held to it by the parity test in
+ * tests/customer-display-name.test.js (seguito P3 di #743).
+ * @param {string} name
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function nameWithoutAddressEchoes(name, email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const labels = new Set(text.slice(text.lastIndexOf('@') + 1).split('.').filter((label) => label !== ''));
+  const said = new Set();
+  const kept = [];
+  for (const word of name.split(/\s+/).filter((part) => part !== '')) {
+    const bare = word.toLowerCase().replace(/[^\p{L}\p{N}.-]/gu, '');
+    if (kept.length > 0 && labels.has(bare) && said.has(bare)) continue;
+    kept.push(word);
+    for (const part of bare.split('.')) if (part !== '') said.add(part);
+  }
+  const out = kept.join(' ');
+  return out !== '' ? out : null;
+}
+
+/**
+ * Whether a member text is a technical identity rather than a name
+ * (production 10/11: Oggi › Agenda read «broker+adopted-…@accordo.invalid»
+ * and «google|1049…», Spazi e accessi listed the broker mailboxes): a
+ * provider subject (`google|…`, `github|…`) or the broker's reserved mailbox
+ * (`broker+…`, `…@accordo.invalid`) never reaches the screen.
+ * @param {unknown} value
+ */
+export function isTechnicalMemberText(value) {
+  if (typeof value !== 'string') return true;
+  const text = value.trim().toLowerCase();
+  return text === '' || text.includes('|') || text.startsWith('broker+') || text.endsWith('@accordo.invalid');
+}
+
+/**
+ * A member text worth showing (a roster displayName or mailbox), trimmed,
+ * or null when it is empty or technical. The one filter every team screen
+ * (Oggi, Calendario, Spazi e accessi) reads member text through.
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+export function memberText(value) {
+  if (typeof value !== 'string' || isTechnicalMemberText(value)) return null;
+  return value.trim();
+}
+
+/**
+ * The name of the team member behind a subject, or null — never the id
+ * itself when it is technical. The roster (`GET /api/spine/memberships`,
+ * enriched by the pilot) names the subject; with no name on its own row, a
+ * row of the same person (`operatorAccountId`) lends its name. A subject
+ * the roster does not know reads as itself only when it is a plain word an
+ * operator typed («Marco»), never an address or a provider id.
+ * @param {unknown} subject
+ * @param {unknown} members roster items
+ * @returns {string | null}
+ */
+export function memberLabel(subject, members) {
+  if (typeof subject !== 'string' || subject.trim() === '') return null;
+  const roster = Array.isArray(members) ? members.filter((member) => member && typeof member === 'object') : [];
+  const own = roster.find((member) => member.subject === subject) ?? null;
+  const ownName = memberText(own?.displayName);
+  if (ownName !== null) return ownName;
+  const person = typeof own?.operatorAccountId === 'string' && own.operatorAccountId.trim() !== ''
+    ? own.operatorAccountId.trim() : null;
+  if (person !== null) {
+    for (const member of roster) {
+      if (member.operatorAccountId !== person) continue;
+      const name = memberText(member.displayName);
+      if (name !== null) return name;
+    }
+  }
+  if (own !== null) return null;
+  const typed = memberText(subject);
+  return typed !== null && !typed.includes('@') ? typed : null;
 }
 
 const ROME_DAY_TIME = new Intl.DateTimeFormat('it-IT', {

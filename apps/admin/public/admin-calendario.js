@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { nameFromProfile } from './admin-labels.js';
+import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -357,8 +357,10 @@ export function personRows(named, hidden, members) {
     const subject = member.subject;
     if (bySubject.has(subject)) continue;
     const personId = rosterPersonId(member);
-    const email = personKeyOf(member.email);
-    const display = cleanPersonText(member.displayName);
+    // The shared member filter (admin-labels.js, production 10/11): a broker
+    // mailbox or a provider id never names or merges a person.
+    const email = personKeyOf(memberText(member.email));
+    const display = memberText(member.displayName);
     // One human shares one mailbox — or one control-plane person key when
     // the roster carries it (backlog:810ed0bf): either merges two subjects
     // into one person row. A shared display name alone never merges — two
@@ -407,7 +409,7 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -469,7 +471,7 @@ export function resolveMemberName(subject, named, members) {
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
-  if (!subject.includes('|')) return subject;
+  if (!isTechnicalMemberText(subject)) return subject;
   return null;
 }
 
@@ -576,6 +578,25 @@ export function draftMinutes(draft) {
   if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
   if (statedOk) return stated;
   return 30;
+}
+
+/**
+ * backlog:913c61ec — production 10/11: «giovedì alle 15 con Guido» drafted
+ * a start with no end (the sentence states no duration), so Fine stayed
+ * empty. A timed draft without an end closes at its start plus the minutes
+ * the sentence stated (any whole minutes the server accepted, 20 stays 20),
+ * else the 30-minute default. A day-only draft keeps its hours to choose;
+ * an end the model gave is kept as it is.
+ * @param {any} draft
+ */
+export function draftWithEnd(draft) {
+  if (!draft || typeof draft !== 'object' || draft.endsAt !== undefined) return draft;
+  if (typeof draft.startsAt !== 'string' || draftDayOnly(draft)) return draft;
+  const from = Date.parse(draft.startsAt);
+  if (!Number.isFinite(from)) return draft;
+  const stated = draft.durationMinutes;
+  const minutes = Number.isSafeInteger(stated) && stated >= 1 && stated <= 1440 ? stated : draftMinutes(draft);
+  return { ...draft, endsAt: new Date(from + minutes * 60000).toISOString() };
 }
 
 /**
@@ -1182,6 +1203,8 @@ export function createCalendarioView(deps) {
     manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
+    /** backlog:913c61ec — the form values the last phrase draft wrote and the ones before it, for «Annulla». @type {{values: Record<string, string>, prior: Record<string, any>}|null} */
+    draftWrote: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
@@ -2609,9 +2632,22 @@ export function createCalendarioView(deps) {
   /**
    * Suggest window over the shown Rome week, with the day-margin idiom of
    * the booking path — or over the one Rome day the phrase named.
-   * @param {string|null} [dayKey]
+   * backlog:913c61ec — a draft with a time searches from that time to the
+   * end of the painted hours (at least the draft's own minutes): never the
+   * whole day, never the night before it.
+   * @param {string|null} [dayKey] @param {any} [draft]
    */
-  function suggestBounds(dayKey = null) {
+  function suggestBounds(dayKey = null, draft = null) {
+    const timed = draft && typeof draft.startsAt === 'string' && !draftDayOnly(draft)
+      ? Date.parse(draft.startsAt) : NaN;
+    if (Number.isFinite(timed) && typeof dayKey === 'string') {
+      const close = Date.parse(romeInstant(dayKey, minutesLabel(GRID_END_MINUTES)) ?? '');
+      const own = timed + draftMinutes(draft) * 60000;
+      return {
+        from: new Date(timed).toISOString(),
+        to: new Date(Number.isFinite(close) ? Math.max(close, own) : own).toISOString(),
+      };
+    }
     const keys = typeof dayKey === 'string' && dayKey !== '' ? [dayKey] : state.weekKeys;
     if (!Array.isArray(keys) || keys.length === 0) return null;
     const first = Date.parse(`${keys[0]}T00:00:00Z`);
@@ -2689,11 +2725,17 @@ export function createCalendarioView(deps) {
     const askedSpace = readSpace();
     try {
       const answer = await phraseAnswer({ resumeId, seq });
+      // e98e7a346b37: the asking space left while the answer was on its way
+      // (space switch bumps phraseSeq in render): nothing of it paints here —
+      // neither the note nor the lock — the new space never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.phraseWaiting = false;
       // An edit while the answer was on its way never relabels it: the
       // draft paints under the phrase that asked it (review #664 P3).
       state.phrase = asked;
-      const draft = answer?.draft ?? null;
+      // backlog:913c61ec: a timed draft without an end closes at its minutes,
+      // so the card, the form's Fine and the search all read the same slot.
+      const draft = draftWithEnd(answer?.draft ?? null);
       state.draft = draft;
       if (!draft) {
         state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
@@ -2722,10 +2764,11 @@ export function createCalendarioView(deps) {
         if (shown.length > 0) await loadWeek(shown);
         // A pager move during the preload leaves this answer unpublished:
         // the guard must never read a week other than the named one
-        // (review #657, round 5).
-        if (state.weekKeys !== wantedKeys) return;
+        // (review #657, round 5). A space switch owns the card now
+        // (e98e7a346b37): nothing of the old space paints here.
+        if (seq !== phraseSeq || state.weekKeys !== wantedKeys || readSpace() !== askedSpace) return;
       }
-      const bounds = suggestBounds(dayKey);
+      const bounds = suggestBounds(dayKey, draft);
       if (!bounds) {
         state.aiNote = 'Settimana non valida.';
         return;
@@ -2738,7 +2781,30 @@ export function createCalendarioView(deps) {
       // every identity the human holds. Unresolved words keep the outsider
       // path below, never a booking as the wrong human.
       const memberIds = resolveDraftMemberIds(member, parseMemberFilter(state.memberFilter), state.members);
+      // backlog:913c61ec — production 10/11: «Guido» matched nobody of the
+      // known team and travelled as teamMemberIds, so the server answered
+      // every step free for an identity that holds nothing. A plain name
+      // outside a known team never filters the slots: the draft stays in the
+      // form and the operator picks the person there. An opaque identity
+      // (`provider|id`), or a screen whose team roster is unread (the filter
+      // names only who is shown, never the whole team), keeps the search.
+      const knownTeam = Array.isArray(state.members)
+        && personRows([], [], state.members).length > 0;
+      if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
+        state.draftNote = '';
+        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // The return skips the prefill after the search: fill the form here,
+        // the finally below paints it. The outsider name never fills
+        // «Persona del team» (production after #735): the field stays empty,
+        // or keeps the person the operator had already chosen.
+        const withoutPerson = { ...draft };
+        delete withoutPerson.teamMemberId;
+        state.draftFill = withoutPerson;
+        return;
+      }
       const searchIds = memberIds.length > 0 ? memberIds : [member];
+      // The draft paints (with its Annulla) while the slots are searched.
+      renderAll();
       const found = await client.request(
         `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
         + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
@@ -2762,29 +2828,55 @@ export function createCalendarioView(deps) {
       // (nobody named, the filter shows marco and the phrase names sara, a
       // moved week the grid could not load), the guard reads theirs too — a
       // failed read proposes nothing, never an unguarded list (review #657).
-      if (state.weekKeys !== searchKeys) return;
+      // A space switch owns the card now (e98e7a346b37).
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       let heldWeek = null;
       try {
         heldWeek = await heldWeekFor(searchIds, searchKeys);
       } catch {
         heldWeek = null;
       }
-      if (state.weekKeys !== searchKeys) return;
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
       }
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
-      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, clock().getTime()), heldWeek, searchIds));
+      const nowMs = clock().getTime();
+      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      // backlog:913c61ec — a sentence with a time asks for that time: when it
+      // is free the proposal is the draft itself; when it is missing the next
+      // free steps of the same afternoon follow, with the reason said — «già
+      // passate» for a begun hour, «già occupato» only when the server
+      // answered the step held or a booking overlaps it (review #735).
+      const timedAt = typeof draft.startsAt === 'string' && !draftDayOnly(draft) ? Date.parse(draft.startsAt) : NaN;
+      const exact = Number.isFinite(timedAt)
+        ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
+        : null;
+      // The exact step books the draft's own end (a stated 20 minutes inside
+      // a free 30-minute step stays 20, never the search size).
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      let takenNote = '';
+      if (Number.isFinite(timedAt) && !exact) {
+        const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
+        const draftStep = { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf?.endsAt };
+        if (timedAt < nowMs) takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono già passate`;
+        else if (stepOf === null || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
+          takenNote = `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`;
+        }
+      }
       state.aiNote = proposals.length === 0
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
-        : '';
+        : (takenNote !== '' ? `${takenNote}: ecco gli orari liberi dopo.` : '');
     } catch (error) {
       const record = error !== null && typeof error === 'object' ? error : {};
       // A newer search or a route away owns the card now: touch nothing.
       if (record.code === 'PHRASE_STALE') return;
+      // e98e7a346b37: a late refusal from the space just left never locks or
+      // labels the new space — it never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2798,7 +2890,7 @@ export function createCalendarioView(deps) {
         return;
       }
       const refusal = calendarRefusalText(error);
-      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
       state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
@@ -2837,7 +2929,50 @@ export function createCalendarioView(deps) {
       text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
+    // backlog:913c61ec — production 10/11: the draft card had no way out but
+    // a page reload. Annulla closes it in place and books nothing.
+    const cancel = uiButton(doc, {
+      variant: 'secondary', small: true, label: 'Annulla',
+      attrs: { type: 'button', 'data-action': 'phrase-cancel' },
+    });
+    cancel.addEventListener('click', () => cancelDraft());
+    box.appendChild(cancel);
     return box;
+  }
+
+  /**
+   * backlog:913c61ec — «Annulla» on the draft card: the search in flight is
+   * dropped (phraseSeq, like a route away), the draft, its note and its
+   * proposals go, and the day and hours the draft wrote into the form are
+   * cleared when still untouched — the person too. The phrase,
+   * the customer and the service stay, so the operator can fix the sentence
+   * and search again. No request is sent.
+   */
+  function cancelDraft() {
+    phraseSeq += 1;
+    state.aiLoading = false;
+    state.phraseWaiting = false;
+    state.phrasePending = null;
+    state.draft = null;
+    state.draftNote = '';
+    state.draftFill = null;
+    state.proposals = [];
+    state.aiNote = '';
+    state.phraseNoDraft = false;
+    // Each field this draft wrote and nobody changed since goes back to what
+    // the form held before the draft (review #735: a value the operator
+    // typed equal to the draft is restored, never blanked). A search
+    // cancelled before the draft reached the form leaves the form as it was.
+    const { values = {}, prior = {} } = state.draftWrote ?? {};
+    if (state.manual) {
+      const kept = { ...state.manual };
+      for (const [name, value] of Object.entries(values)) {
+        if (kept[name] === value) kept[name] = typeof prior[name] === 'string' ? prior[name] : '';
+      }
+      state.manual = kept;
+    }
+    state.draftWrote = null;
+    renderAll();
   }
 
   /** Live manual values, from the rendered inputs when present. @param {string} name */
@@ -3079,6 +3214,7 @@ export function createCalendarioView(deps) {
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
+    state.draftWrote = null;
     state.proposals = [];
     state.aiNote = '';
     state.bookingNote = '';
@@ -3174,8 +3310,8 @@ export function createCalendarioView(deps) {
     const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
-      if (current !== '' && !current.includes('|')) input.value = current;
-      if (current.includes('|')) {
+      if (current !== '' && !isTechnicalMemberText(current)) input.value = current;
+      if (current !== '' && isTechnicalMemberText(current)) {
         // A pipe id never paints: the visible field stays empty while the
         // opaque identity rides in state for the claim only.
         state.manual = { ...(state.manual ?? {}), teamMemberId: current };
@@ -3381,6 +3517,15 @@ export function createCalendarioView(deps) {
     // cliente» button over an existing pick), set by renderCustomerPick
     // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
+      // backlog:913c61ec — the form as it was before this draft, for «Annulla».
+      // A previous draft's untouched fields carry their own «before».
+      const before = { ...(state.manual ?? {}) };
+      const earlier = state.draftWrote;
+      if (earlier) {
+        for (const [name, value] of Object.entries(earlier.values)) {
+          if (before[name] === value) before[name] = earlier.prior[name] ?? '';
+        }
+      }
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
@@ -3394,7 +3539,7 @@ export function createCalendarioView(deps) {
         const person = people.find((row) => row.ids.includes(raw));
         if (inputs.teamMemberId?.tagName === 'SELECT') {
           if (person) inputs.teamMemberId.value = raw;
-        } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        } else if (person || !isTechnicalMemberText(raw)) inputs.teamMemberId.value = raw;
       }
       if (draft.serviceKey) {
         // The service is a menu (backlog:810ed0bf): a drafted key the
@@ -3436,6 +3581,13 @@ export function createCalendarioView(deps) {
         absorbed.teamMemberId = String(draft.teamMemberId);
       }
       state.manual = absorbed;
+      // backlog:913c61ec — what this draft wrote into the form and what the
+      // form held before, so «Annulla» restores the operator's own values.
+      const wrote = { start: absorbed.start, end: absorbed.end };
+      if (dayKey) wrote.date = absorbed.date;
+      if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
+      if (draft.notes) wrote.notes = absorbed.notes;
+      state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });

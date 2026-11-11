@@ -446,8 +446,10 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.ok(suggest.path.includes('teamMemberIds=marco'), 'the drafted person is searched');
   assert.ok(suggest.path.includes('slotMinutes=30'), 'the drafted duration is searched');
   // Production 07/11: the drafted day bounds the search (Rome Thu 22 Oct).
-  assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search covers the drafted day');
-  assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and only that day');
+  // backlog:913c61ec: a drafted time narrows it further — from 16:00 Rome to
+  // the end of the painted hours (18:00 Rome), never the whole day.
+  assert.ok(suggest.path.includes('from=2026-10-22T14%3A00'), 'the search starts at the drafted time');
+  assert.ok(suggest.path.includes('to=2026-10-22T16%3A00'), 'and ends with the painted hours of that day');
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
@@ -2860,9 +2862,11 @@ test('no known team keeps the plain person field', async () => {
   assert.equal(payload(proposes[0]).teamMemberId, 'marco');
 });
 
-// Fetta 9: a phrase draft naming someone outside the known team keeps the
-// typed field prefilled, so nothing the AI named is lost.
-test('a draft outsider keeps the typed person field', async () => {
+// Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
+// draft naming someone outside the read team roster never prefills
+// «Persona del team» — the choice stays among the team, empty, and the card
+// says the name is not in the team.
+test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2884,17 +2888,17 @@ test('a draft outsider keeps the typed person field', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'an outsider is not forced into the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted person');
-  assert.equal(field.value, 'marco');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, '', 'the outsider name never fills it');
+  assert.ok(mount.textContent.includes('marco non è nel team'), 'the card says why');
 });
 
-// Fetta 10 (P2 di #481): a phrase draft naming an outsider wins over a
-// previous known choice. Before the fix the kept choice ('sara') decided the
-// control, the draft id ('marco') was assigned to a select with no matching
-// option, the browser cleared it, and the snapshot saved an empty person.
-test('a draft outsider wins over a previous known choice', async () => {
+// Fetta 10 (P2 di #481) protected the drafted outsider from a select that
+// cleared it. Superseded after #735 (production 10/11, supervisor): with the
+// team roster read, a name outside it never replaces the person the operator
+// already chose — the choice stays and the claim books it.
+test('a previous known choice stays over a draft outsider', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2922,10 +2926,9 @@ test('a draft outsider wins over a previous known choice', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'the outsider draft leaves the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted outsider');
-  assert.equal(field.value, 'marco', 'the drafted identity is not lost');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, 'sara', 'the operator choice stays');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   const form = byName();
   form.serviceKey.value = 'taglio';
@@ -2937,7 +2940,7 @@ test('a draft outsider wins over a previous known choice', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
-  assert.equal(payload(proposes[0]).teamMemberId, 'marco', 'the claim carries the drafted person');
+  assert.equal(payload(proposes[0]).teamMemberId, 'sara', 'the claim books the chosen person, never the outsider name');
 });
 
 // Fetta 9 (C22): the service label names no technical concept.
@@ -4204,6 +4207,70 @@ test('AI off is remembered for its own space only', async () => {
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'off in space A');
   space = 'space-b';
   await view.render();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
+});
+
+// e98e7a346b37: a refusal that lands after the operator already switched
+// space belongs to the space just left — the new space keeps its phrase box
+// and never paints the other space's «AI spenta» note.
+test('a late AI-off refusal from the previous space never locks or labels the new space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'space-a';
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  let releasePhrase = null;
+  const refusal = Object.assign(new Error('Calendar phrase refused'), { status: 503, code: 'LLM_SPACE_DISABLED' });
+  const base = stubClient({});
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/phrase') {
+        await new Promise((resolve) => { releasePhrase = resolve; });
+        throw refusal;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A phrase is still in flight');
+  // The operator switches before the answer lands.
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  releasePhrase();
+  await flushMany();
+  // Any later repaint still shows the new space's own card.
+  await view.render();
+  await flushMany();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B stays enabled');
+  assert.ok(!mount.textContent.includes('AI spenta'), 'the space A note never paints in space B');
+  // Back in the refusing space a fresh phrase still says it, only there.
+  space = 'space-a';
+  releasePhrase = null;
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A retry is in flight');
+  releasePhrase();
+  await flushMany();
+  assert.ok(mount.textContent.includes('AI spenta'), 'space A names its own off state');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'space A locks its own box');
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  assert.ok(!mount.textContent.includes('AI spenta'), 'back in space B the note is gone');
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
 });
 

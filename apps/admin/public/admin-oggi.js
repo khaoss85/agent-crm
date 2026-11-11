@@ -33,7 +33,8 @@
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { nameFromProfile, readableName } from './admin-labels.js';
+import { memberLabel, nameFromProfile, readableName } from './admin-labels.js';
+import { messagePreview } from './admin-message-preview.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -174,6 +175,62 @@ export function romeShortDay(value) {
 }
 
 /**
+ * Day and full month on the Rome calendar («12 novembre»), null when
+ * unparsable (backlog:7d30fb517785: Oggi writes dates the way a person
+ * does, never «12 nov»). Never the year, like romeShortDay.
+ * @param {unknown} value
+ */
+export function romeLongDay(value) {
+  const instant = toInstant(value);
+  if (!instant) return null;
+  try {
+    return new Intl.DateTimeFormat('it-IT', {
+      timeZone: OGGI_TIME_ZONE, day: 'numeric', month: 'long',
+    }).format(instant);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The Rome calendar day `shift` days from `now`'s Rome day, 'YYYY-MM-DD',
+ * null when `now` is not a real instant. Calendar arithmetic on the Rome
+ * date, never `now` ± 24 h: a 23 h or 25 h day (the DST change on the last
+ * Sunday of March and October) would skip or repeat a day (review #746).
+ * @param {unknown} now
+ * @param {number} shift
+ */
+export function romeDayKeyShift(now, shift) {
+  const key = romeDayKey(now);
+  if (key === null) return null;
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + shift)).toISOString().slice(0, 10);
+}
+
+/**
+ * A day as Oggi writes it after a preposition (backlog:7d30fb517785,
+ * production 10/11: «Appuntamento di 12 nov»): «oggi», «ieri», «domani» on
+ * those Rome days, else the day with its article — `del` gives «del 12
+ * novembre» / «dell'8 novembre», `il` gives «il 12 novembre» / «l'8
+ * novembre». Null when unparsable.
+ * @param {unknown} value
+ * @param {Date} now
+ * @param {'del' | 'il'} article
+ */
+export function romeDayPhrase(value, now, article) {
+  const key = romeDayKey(value);
+  if (key === null) return null;
+  const near = [[0, 'oggi'], [-1, 'ieri'], [1, 'domani']].find(([shift]) => romeDayKeyShift(now, shift) === key);
+  if (near) return article === 'del' ? `di ${near[1]}` : near[1];
+  const long = romeLongDay(value);
+  if (long === null) return null;
+  // «l'8», «l'11», «l'1»: the number is read with a vowel.
+  const elided = /^(1|8|11) /.test(long);
+  if (article === 'del') return elided ? `dell\u2019${long}` : `del ${long}`;
+  return elided ? `l\u2019${long}` : `il ${long}`;
+}
+
+/**
  * Whether an instant falls on the Rome-calendar day of `now`.
  * @param {unknown} value
  * @param {Date} [now]
@@ -259,6 +316,26 @@ function subjectDisplayLabel(row, names = {}) {
 }
 
 /**
+ * The next call's guest name, or null when no name exists yet — never a
+ * stand-in noun. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name: with no
+ * stored or profile name it waits for the name with a neutral
+ * placeholder, never a presumed customer.
+ */
+const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
+
+/**
+ * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} appointment
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+function appointmentGuestName(appointment, names = {}) {
+  const key = inboxSubjectKey(appointment);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(appointment?.subjectLabel));
+}
+
+/**
  * One advisor action from an open follow-up. The CTA completes the real
  * work-task (same server action the Work section uses); the motive names the
  * record that opened it.
@@ -304,13 +381,14 @@ function badgeInitials(label) {
   return marks.join('') || '·';
 }
 
-function followupAction(task) {
+function followupAction(task, now = new Date()) {
   const id = nonEmptyText(task?.id);
   if (!id) return null;
   const title = nonEmptyText(task?.title) ?? 'Follow-up';
   const label = subjectDisplayLabel(task);
-  const opened = romeShortDay(task?.openedAt);
-  const why = `Follow-up aperto${opened ? ` il ${opened}` : ''}: ${label}.`;
+  // «aperto l'8 novembre», «aperto ieri» (backlog:7d30fb517785).
+  const opened = romeDayPhrase(task?.openedAt, now, 'il');
+  const why = `Follow-up aperto${opened ? ` ${opened}` : ''}: ${label}.`;
   return Object.freeze({
     id: `bo04:followup:${id}`,
     kind: 'followup',
@@ -339,13 +417,14 @@ function followupAction(task) {
  * preparation itself happens on fresh reads there, so this run navigates
  * rather than duplicating a mutation the scheda already owns.
  * @param {Record<string, any>} appointment a booked/confirmed appointment row
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-function appointmentPrepAction(appointment) {
+function appointmentPrepAction(appointment, names = {}) {
   const id = nonEmptyText(appointment?.id);
   if (!id) return null;
   const time = romeTime(appointment?.startsAt);
   if (!time) return null;
-  const label = subjectDisplayLabel(appointment);
+  const label = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
   const href = cardHrefForSubject(appointment) ?? recordDetailHref('appointment', id);
   return Object.freeze({
     id: `bo04:appointment:${id}`,
@@ -371,9 +450,9 @@ function appointmentPrepAction(appointment) {
  * Deterministic advisor list: open follow-ups due (overdue first), then the
  * preparation of today's next appointment. Capped — the screen says so when
  * the cap hides actions.
- * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date }} input
+ * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null> }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date() } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {} } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -386,7 +465,7 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
   });
   const actions = [];
   for (const task of open) {
-    const action = followupAction(task);
+    const action = followupAction(task, now);
     if (action) actions.push(action);
   }
   const today = (Array.isArray(appointments) ? appointments : [])
@@ -395,7 +474,7 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
       && isTodayInRome(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   if (today.length > 0) {
-    const prep = appointmentPrepAction(today[0]);
+    const prep = appointmentPrepAction(today[0], names);
     if (prep) actions.push(prep);
   }
   const capped = actions.length > ADVISOR_ACTION_LIMIT;
@@ -570,10 +649,14 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
     : [];
+  // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
+  // the verb agrees with the count, and zero reads as a person says it.
   if (tasks.length === 0) {
-    return `Niente in sospeso. Ti restano ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+    if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
+    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${countNoun(today.length, 'appuntamento', 'appuntamenti')}. Ti servono circa ${tasks.length * 3} minuti`;
+  const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : countNoun(today.length, 'appuntamento', 'appuntamenti');
+  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   return drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
 }
@@ -602,14 +685,16 @@ function buildTodayAgendaRows(appointments = [], now = new Date()) {
  * @param {Date} [now]
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-export function buildTodayAgenda(appointments = [], now = new Date(), names = {}) {
+export function buildTodayAgenda(appointments = [], now = new Date(), names = {}, members = []) {
   const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
     // The prototype's second line under each appointment ("chi"): who the
-    // appointment is with — the team member holding the slot, else a short
-    // honest cue from the notes. Never invented when neither exists.
-    const team = nonEmptyText(row?.teamMemberId);
+    // appointment is with — the team member's name from the roster, else a
+    // short honest cue from the notes. Never invented when neither exists,
+    // and never the member's technical id (production 10/11 read
+    // «broker+…@accordo.invalid» and «google|…» here).
+    const team = memberLabel(row?.teamMemberId, members);
     const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -668,18 +753,19 @@ export function upcomingAppointment(appointments = [], now = new Date()) {
 
 /**
  * When one appointment happens, in the words of the brief: «oggi alle
- * 10:00», «domani alle 10:00», «12 nov alle 10:00».
+ * 10:00», «domani alle 10:00», «12 novembre alle 10:00» — the month in
+ * full (backlog:7d30fb517785, production 10/11 read «12 nov»).
  * @param {unknown} startsAt
  * @param {Date} now
  */
 function briefWhen(startsAt, now) {
   const time = romeTime(startsAt) ?? '—';
   if (isTodayInRome(startsAt, now)) return `oggi alle ${time}`;
-  const tomorrow = now instanceof Date ? new Date(now.getTime() + 86400000) : null;
-  if (tomorrow !== null && romeDayKey(startsAt) !== null && romeDayKey(startsAt) === romeDayKey(tomorrow)) {
+  const tomorrow = romeDayKeyShift(now, 1);
+  if (tomorrow !== null && romeDayKey(startsAt) === tomorrow) {
     return `domani alle ${time}`;
   }
-  const day = romeShortDay(startsAt);
+  const day = romeLongDay(startsAt);
   return day !== null ? `${day} alle ${time}` : `alle ${time}`;
 }
 
@@ -718,10 +804,15 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
   if (appointment == null) return null;
   const id = nonEmptyText(appointment?.id) ?? '';
   const time = romeTime(appointment?.startsAt) ?? '—';
-  const who = subjectDisplayLabel(appointment, names);
+  const who = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
   const when = briefWhen(appointment?.startsAt, now);
-  // Today's call keeps the short line; a later day names its day.
-  const opening = when.startsWith('oggi ') ? `Appuntamento delle ${time}` : `Appuntamento di ${when}`;
+  // Today's call keeps the short line; a later day names its day with the
+  // right article: «di domani», «del 12 novembre», «dell'8 novembre»
+  // (backlog:7d30fb517785, production 10/11 read «Appuntamento di 12 nov»).
+  const day = romeDayPhrase(appointment?.startsAt, now, 'del');
+  const opening = when.startsWith('oggi ')
+    ? `Appuntamento delle ${time}`
+    : day !== null ? `Appuntamento ${day} alle ${time}` : `Appuntamento delle ${time}`;
   const bullets = [];
   const notes = briefSnippet(appointment?.notes);
   bullets.push(notes !== ''
@@ -737,14 +828,18 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     .sort((a, b) => (String(a.occurredAt ?? '') < String(b.occurredAt ?? '') ? 1 : String(a.occurredAt ?? '') > String(b.occurredAt ?? '') ? -1 : 0))
     .slice(0, 3);
   for (const message of inbound) {
-    const body = briefSnippet(message?.body);
-    const when = romeShortDay(message?.occurredAt) ?? 'data non registrata';
-    const channel = nonEmptyText(message?.channel) ?? 'canale';
+    // Read like a mail client: «Oggetto — estratto pulito» (Dan 10/11).
+    const body = messagePreview(message?.body, { subject: message?.mailSubject, max: 140 });
+    // «Messaggio WhatsApp di ieri», «del 12 novembre»; without a stored
+    // date «senza data», never «del data non registrata».
+    const when = romeDayPhrase(message?.occurredAt, now, 'del') ?? 'senza data';
+    const channel = messageChannelName(message?.channel);
+    const head = `${channel} ${when}`;
     bullets.push(body !== ''
-      ? `Messaggio ${channel} del ${when}: “${body}”`
-      : `Messaggio ${channel} del ${when} (senza testo registrato).`);
+      ? `${head}: “${body}”`
+      : `${head} (senza testo registrato).`);
     const source = briefSource(
-      `Messaggio ${channel} del ${when}`,
+      head,
       recordDetailHref('interaction-message', message.id),
     );
     if (source) sources.push(source);
@@ -754,13 +849,13 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     .sort((a, b) => (String(a.occurredAt ?? '') < String(b.occurredAt ?? '') ? 1 : String(a.occurredAt ?? '') > String(b.occurredAt ?? '') ? -1 : 0))
     .slice(0, 2);
   for (const call of recent) {
-    const when = romeShortDay(call?.occurredAt) ?? 'data non registrata';
+    const when = romeDayPhrase(call?.occurredAt, now, 'del') ?? 'senza data';
     const outcome = briefSnippet(call?.outcome, 80);
     bullets.push(outcome !== ''
-      ? `Chiamata del ${when}: ${outcome}`
-      : `Chiamata del ${when} (esito non registrato).`);
+      ? `Chiamata ${when}: ${outcome}`
+      : `Chiamata ${when} (esito non registrato).`);
     const source = briefSource(
-      `Chiamata del ${when}`,
+      `Chiamata ${when}`,
       recordDetailHref('interaction-call', call.id),
     );
     if (source) sources.push(source);
@@ -787,6 +882,18 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
  * The exact per-channel table lives in Stato sync; Oggi only needs the
  * headline count, so the total is a fixed constant, never metadata.
  */
+/**
+ * «Messaggio WhatsApp», «Email»: the brief names the channel as people
+ * do (backlog:7d30fb517785), never the stored key («Messaggio whatsapp»).
+ * @param {unknown} channel
+ */
+function messageChannelName(channel) {
+  const key = String(channel ?? '').toLowerCase();
+  if (key === 'email') return 'Email';
+  const name = OGGI_CHANNEL_NAMES[key];
+  return typeof name === 'string' ? `Messaggio ${name}` : 'Messaggio';
+}
+
 /** Italian channel names for the inbox rows. */
 const OGGI_CHANNEL_NAMES = Object.freeze({ whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Messenger', tiktok: 'TikTok', email: 'Email', phone: 'Telefono', voice: 'Telefono', sms: 'SMS', 'website-form': 'Form del sito', web: 'Form del sito', telegram: 'Telegram' });
 export const INBOX_LIMIT = 6;
@@ -877,7 +984,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectKey,
       mono: channelTile(channel) ?? badgeInitials(name),
       name,
-      preview: briefSnippet(message.body, 110) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
+      // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
+      // residue or hidden preheaders; the subject alone when the body cleans away.
+      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
       when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject(subject),
     });
@@ -1136,6 +1245,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     inboxNames: {},
     /** Customer names of the agenda and next-call subjects, by `resource:id`. */
     appointmentNames: {},
+    /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
+    members: [],
     next: null,
   };
   // Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold,
@@ -1212,11 +1323,20 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const subject = outcome.next != null && interactions
     ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
     : null;
-  const [inboxNames, appointmentNames] = await Promise.all([
+  const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
+  const [inboxNames, appointmentNames, members] = await Promise.all([
     outcome.inboxAvailable
       ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now)
       : Promise.resolve({}),
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
+    // The roster names the member holding each slot: read only when a slot
+    // names one, fail-soft (the line then falls back to the notes cue).
+    withMember
+      ? client.request('/api/spine/memberships').then(
+        (answer) => (Array.isArray(answer?.items) ? answer.items : []),
+        (error) => { noteReadFailure('memberships', error); return []; },
+      )
+      : Promise.resolve([]),
     (async () => {
       if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
       try {
@@ -1236,6 +1356,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   ]);
   outcome.inboxNames = inboxNames;
   outcome.appointmentNames = appointmentNames;
+  outcome.members = members;
   return outcome;
 }
 
@@ -1445,7 +1566,7 @@ export function renderOggi({
     bar.appendChild(fill);
     head.appendChild(bar);
   }
-  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} fatte`));
+  head.appendChild(el(doc, 'p', 'bo-oggi-progress', `${progress.handled} di ${progress.total} ${progress.total === 1 ? 'fatta' : 'fatte'}`));
   advisor.appendChild(head);
   // The prototype's done line shows once no card is open (allDone): the
   // decided cards stay listed above it, attenuated (C14).
@@ -1796,7 +1917,7 @@ export function createOggiView(deps) {
   /** @param {any} [target] where to paint: the live mount, or a detached box for fill() */
   function paint(target = mount) {
     if (!last) return;
-    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now });
+    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {} });
     lastBuilt = built;
     const merged = [...built.actions];
     const today = romeDayKey(lastMeta.now);
@@ -1813,7 +1934,7 @@ export function createOggiView(deps) {
     const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
     const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
     lastActions = actions;
-    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {});
+    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {}, last.members ?? []);
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {} })
       : null;
@@ -1963,6 +2084,25 @@ export function createOggiView(deps) {
     for (const [live, fresh] of pairs) {
       while (live.firstChild) live.removeChild(live.firstChild);
       for (const child of Array.from(fresh.childNodes)) live.appendChild(child);
+    }
+    // backlog:7d30fb517785 (production 10/11: the advisor read «con un
+    // ospite da confermare» while the agenda, at the same hour, named Fio
+    // Neri): the customer names land after the advisor painted. Its rows
+    // stay (buttons, focus); only their words take the names the agenda
+    // just took, from the same map.
+    for (const action of lastActions) {
+      const id = String(action?.id ?? '');
+      if (id === '' || id.includes('"')) continue;
+      const liveRow = mount.querySelector(`div[data-action="${id}"]`);
+      const freshRow = scratch.querySelector(`div[data-action="${id}"]`);
+      if (liveRow === null || freshRow === null) continue;
+      for (const cls of ['.bo-oggi-title', '.bo-oggi-why']) {
+        const liveText = liveRow.querySelector(cls);
+        const freshText = freshRow.querySelector(cls);
+        if (liveText !== null && freshText !== null && liveText.textContent !== freshText.textContent) {
+          liveText.textContent = freshText.textContent;
+        }
+      }
     }
   }
 

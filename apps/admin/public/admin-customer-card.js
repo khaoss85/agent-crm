@@ -6,8 +6,9 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, italianDateTime, offerStageLabel, offerStateLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
+import { cleanMessageBody } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -192,7 +193,9 @@ const durationParts = (sec) => {
  * @param {unknown} value
  */
 export function teamName(value) {
-  if (!isHumanHandle(value)) return null;
+  // A provider id or the broker's reserved mailbox is no name (production
+  // 10/11: `broker+…@accordo.invalid` read «Broker»), shared filter.
+  if (!isHumanHandle(value) || isTechnicalMemberText(value)) return null;
   const text = String(value).trim();
   const isEmail = text.includes('@');
   // An e-mail never shows its domain: the local part, without a `+tag`.
@@ -601,6 +604,29 @@ export function phoneRefusalText(error) {
   return isItalianSentence(record.message) ? String(record.message).trim() : own;
 }
 
+const DETAILS_SAVE_FAILED = 'Salvataggio non riuscito. Riprova più tardi.';
+const EMAIL_TAKEN_REFUSAL = 'Questa email è già di un altro cliente';
+
+/**
+ * Voce 5e13c9ef: «Dettagli» Salva said «Salvataggio non riuscito…» even for
+ * a 409 the server already names (CONFLICT, email taken by another customer:
+ * contact-service EMAIL_TAKEN_MESSAGE). A 409 now reads its own reason —
+ * the server's Italian sentence when it sends one, else the same reason in
+ * our words; anything else (other 4xx, 5xx, network) keeps the generic retry
+ * line through humanReadError, exactly as before.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function detailsRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const status = typeof record.status === 'number' ? record.status
+    : (record.code === 'CONFLICT' ? 409 : null);
+  if (status !== 409) {
+    return humanReadError(error, { failed: DETAILS_SAVE_FAILED });
+  }
+  humanReadError(error, { failed: EMAIL_TAKEN_REFUSAL });
+  return isItalianSentence(record.message) ? String(record.message).trim() : EMAIL_TAKEN_REFUSAL;
+}
+
 /**
  * The reserved company a contact typed without Azienda sits under
  * (customer-data `NO_COMPANY_NAME`, production 07/11): the core needs a
@@ -614,6 +640,10 @@ export function shownCompanyName(card) {
   // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
   const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
   if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  // A stored placeholder (`Unknown (assistenza@…)`) is no company either
+  // (review #739 giro 3): the same rule as customer-data
+  // `isPlaceholderCompanyName`, through the browser twin.
+  if (readableName(name.replace(/\([^)]*\)/g, ' ')) === null) return null;
   return name;
 }
 
@@ -1384,12 +1414,20 @@ export function createCustomerCardView(deps) {
    * «Chiedi all'AI» (Dan 05/11: the composer is agentic — a prompt writes
    * the text, as an alternative to writing it from scratch). The prompt goes
    * to `POST /api/customer-hub/messages/draft` { spaceId, contactId, channel,
-   * prompt } → { subject?, body }: the server drafts from the customer's
-   * own history through the space LLM gate and never sends. The draft lands
-   * in the message field, editable; the previous text can be restored once
-   * with «Annulla»; Invia stays the person's click. AI off (503
-   * LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without the
-   * route (404/405) turns the row into one honest line, never a dead button.
+   * prompt } → { corta, lunga, diretta, subject? } (backlog:01289e73): the
+   * server drafts three labeled wordings from the customer's own history
+   * through the space LLM gate and never sends. The member picks one of
+   * the three — Corta, Lunga or Diretta — and it lands in the message
+   * field, editable. The three stay on screen until the send or the close
+   * (production 10/11): another pick refills the field with no new call,
+   * after an inline «Sostituire il testo modificato?» if the member edited
+   * it; Rigenera asks three new ones. The previous text can be restored
+   * once with «Annulla»;
+   * Invia stays the person's click. A single-text answer from a pilot
+   * before the three-version cure still fills the field at once. AI off
+   * (503 LLM_SPACE_DISABLED / LLM_SECRET_UNAVAILABLE) or a pilot without
+   * the route (404/405) turns the row into one honest line, never a dead
+   * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
   function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
@@ -1410,12 +1448,31 @@ export function createCustomerCardView(deps) {
     go.setAttribute('data-action', 'composer-ai-generate');
     const line = el('p', 'bo-composer-ai-line', '');
     line.setAttribute('aria-live', 'polite');
+    // The three versions live in their own row, so a pick or a message in
+    // `line` never wipes them (production 10/11: after «Diretta» the other
+    // two were gone and only Rigenera — a new AI call — brought them back).
+    const choice = el('div', 'bo-composer-ai-picks');
     const field = el('div', 'bo-composer-ai-field');
     field.appendChild(mark);
     field.appendChild(prompt);
     field.appendChild(go);
     row.appendChild(field);
+    row.appendChild(choice);
     row.appendChild(line);
+    // The wording the AI last put in the field: a different field value
+    // means the member edited it by hand.
+    /** @type {string|null} */
+    let filled = null;
+    /** @type {any[]} */
+    let pickButtons = [];
+    // The line as it was before an open «Sostituire…?» confirmation, taken
+    // once (Muse P2 on #737): a second pick while one is open updates it in
+    // place, and «Tieni il mio» always brings back the draft line.
+    /** @type {any[]|null} */
+    let beforeConfirm = null;
+    const markPicked = (kind) => {
+      for (const node of pickButtons) node.setAttribute('aria-pressed', node.getAttribute('data-version') === kind ? 'true' : 'false');
+    };
     let busy = false;
     // A draft the pilot still held after the read-back (504 BO_DRAFT_PENDING)
     // lives in composerAiPending, outside this row (review #664): the next
@@ -1436,6 +1493,7 @@ export function createCustomerCardView(deps) {
       row.appendChild(el('p', 'bo-composer-ai-off', sentence));
     };
     const say = (sentence, undo = false) => {
+      beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
@@ -1447,6 +1505,8 @@ export function createCustomerCardView(deps) {
         back.addEventListener('click', () => {
           const kept = baseline();
           if (kept === null) return;
+          filled = null;
+          markPicked(null);
           text.value = kept.text;
           // Muse P2 on #599: with no subject field mounted (channel switched
           // to WhatsApp) the undone subject goes to the shared draft, so the
@@ -1460,6 +1520,12 @@ export function createCustomerCardView(deps) {
         line.appendChild(el('span', undefined, ' · '));
         line.appendChild(back);
       }
+    };
+    // The line under an AI draft: reread it, and Annulla when there is a
+    // text of the person's own to go back to.
+    const sayDrafted = () => {
+      const kept = baseline();
+      say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
@@ -1539,22 +1605,91 @@ export function createCustomerCardView(deps) {
         // shared per-customer draft; a superseded one never overwrites the
         // newer draft (review #664).
         if (gone()) return;
+        // Three labeled wordings the member chooses from (backlog:01289e73):
+        // the pilot's own labels (`corta`, `lunga`, `diretta`), one
+        // vocabulary for the same choice on every surface.
+        const kinds = [['corta', 'Corta'], ['lunga', 'Lunga'], ['diretta', 'Diretta']];
+        const versions = [];
+        for (const [kind, label] of kinds) {
+          const wording = typeof answer?.[kind] === 'string' ? answer[kind].trim() : '';
+          if (wording !== '') versions.push({ kind, label, text: wording.slice(0, 2000) });
+        }
+        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
+        // Regenerating keeps the person's original, never a previous AI draft.
+        const fill = (picked, kind = null) => {
+          // Muse #718 P2: read the live subject at pick time — a channel
+          // switch between the answer and the pick replaces the input.
+          const subjectField = subject();
+          if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
+          text.value = picked;
+          filled = picked;
+          markPicked(kind);
+          if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
+          changed();
+          // A pick during a Rigenera in flight leaves Genera's own label alone.
+          if (!busy) go.textContent = 'Rigenera';
+          sayDrafted();
+          if (typeof text.focus === 'function') text.focus();
+        };
+        if (versions.length === kinds.length) {
+          while (choice.firstChild) choice.removeChild(choice.firstChild);
+          pickButtons = [];
+          choice.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
+          for (const version of versions) {
+            const pick = el('button', 'bo-composer-ai-pick', version.label);
+            pick.setAttribute('type', 'button');
+            pick.setAttribute('data-action', 'composer-ai-pick');
+            pick.setAttribute('data-version', version.kind);
+            pick.setAttribute('aria-pressed', 'false');
+            // Only a closed or reopened composer retires the versions: a
+            // Rigenera in flight leaves them working until the new three.
+            pick.addEventListener('click', () => {
+              if (stale()) return;
+              if (filled === null || text.value === filled) {
+                fill(version.text, version.kind);
+                return;
+              }
+              // Hand edits never go in silence: ask inline, never a browser dialog.
+              if (beforeConfirm === null) beforeConfirm = Array.from(line.childNodes ?? []);
+              const before = beforeConfirm;
+              while (line.firstChild) line.removeChild(line.firstChild);
+              line.textContent = '';
+              line.appendChild(el('span', undefined, `Sostituire il testo modificato con la versione ${version.label}? `));
+              const replace = el('button', 'bo-composer-ai-undo', 'Sostituisci');
+              replace.setAttribute('type', 'button');
+              replace.setAttribute('data-action', 'composer-ai-replace');
+              replace.addEventListener('click', () => { if (!stale()) fill(version.text, version.kind); });
+              const keep = el('button', 'bo-composer-ai-undo', 'Tieni il mio');
+              keep.setAttribute('type', 'button');
+              keep.setAttribute('data-action', 'composer-ai-keep');
+              keep.addEventListener('click', () => {
+                beforeConfirm = null;
+                while (line.firstChild) line.removeChild(line.firstChild);
+                line.textContent = '';
+                for (const node of before) line.appendChild(node);
+              });
+              line.appendChild(replace);
+              line.appendChild(el('span', undefined, ' · '));
+              line.appendChild(keep);
+            });
+            choice.appendChild(pick);
+            pickButtons.push(pick);
+          }
+          // A new set after a pick: the field keeps the earlier wording,
+          // none of the new three is selected yet.
+          if (filled !== null) sayDrafted();
+          return;
+        }
+        // A single-text answer from a pilot before the three-version cure
+        // still fills the field at once, never a dead choice.
         const drafted = typeof answer?.body === 'string' ? answer.body.trim() : '';
         if (drafted === '') {
           say('L’AI non ha scritto niente: prova a dirlo in un altro modo.');
           return;
         }
-        const subjectField = subject();
-        // Regenerating keeps the person's original, never a previous AI draft.
-        if (baseline() === null) setBaseline({ text: text.value, subject: subjectField !== null ? subjectField.value : '' });
-        text.value = drafted.slice(0, 2000);
-        const title = typeof answer?.subject === 'string' ? answer.subject.trim() : '';
-        if (subjectField !== null && title !== '' && subjectField.value.trim() === '') subjectField.value = title.slice(0, 256);
-        changed();
-        go.textContent = 'Rigenera';
-        const kept = baseline();
-        say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
-        if (typeof text.focus === 'function') text.focus();
+        while (choice.firstChild) choice.removeChild(choice.firstChild);
+        pickButtons = [];
+        fill(drafted.slice(0, 2000));
       } catch (error) {
         if (gone()) return;
         const code = error?.code ?? null;
@@ -2254,8 +2389,9 @@ export function createCustomerCardView(deps) {
         if (typeof restore === 'function') restore();
         await renderCard(editCtx.resource, editCtx.id);
       } catch (err) {
-        error.textContent = humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' });
-        toast(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }), true);
+        const refusal = detailsRefusalText(err);
+        error.textContent = refusal;
+        toast(refusal, true);
       } finally {
         detailsInFlight.delete(flightKey);
         busy = false;
@@ -2485,7 +2621,7 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? author}`;
+          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
@@ -2644,7 +2780,9 @@ export function createCustomerCardView(deps) {
           bubble.appendChild(el('p', 'bo-scheda-entry-body',
             [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
         } else if (typeof item?.body === 'string' && item.body !== '') {
-          const text = readableText(item.body);
+          // The full body stays as written; only markup residue a mail
+          // stored (tags, style="…" fragments, hidden preheaders) goes.
+          const text = readableText(cleanMessageBody(item.body));
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
           bubble.appendChild(bodyNode);
           if (text.length > ENTRY_FOLD_CHARS) {

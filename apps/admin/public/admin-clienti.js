@@ -844,7 +844,11 @@ export function createCustomerListView(deps) {
       } else {
         who.appendChild(nameLink);
       }
-      if (row.company?.name) who.appendChild(el('span', 'bo-muted bo-clienti-sub', String(row.company.name)));
+      // The second line names the company; a contact with none (or with a
+      // stored placeholder such as `Unknown (…)`, which the API reads as
+      // none) shows its email instead (production 10/11).
+      const sub = row.company?.name ? String(row.company.name) : (typeof row.email === 'string' ? row.email : '');
+      if (sub !== '') who.appendChild(el('span', 'bo-muted bo-clienti-sub', sub));
       head.appendChild(who);
       card.appendChild(head);
       for (const column of visible) {
