@@ -29,6 +29,8 @@ import {
   formatSpaceStat,
   memberInitials,
   spaceRoleLabel,
+  teamCalendarState,
+  teamChannelTiles,
 } from '../apps/admin/public/admin-spazi-accessi.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import {
@@ -1217,4 +1219,114 @@ test('7d30fb517785: a refused invite whose reload fails too still shows exactly 
   const toasts = seen.toast.filter((row) => row.error);
   assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
   assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+});
+
+// backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
+// C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
+// dei canali. Prima il rosso: sul codice di prima le righe non portano né
+// l'uno né le altre.
+test('67e14a50efb6: every team row names the shared calendar state and carries the channel tiles', async () => {
+  const members = [
+    { subject: 'owner-1', role: 'owner', status: 'active' },
+    { subject: 'marco', role: 'operator', status: 'active' },
+  ];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', account: 'studio@example.test', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', account: '+39 02 1234567', status: 'active' },
+          { connectionKey: 'ig-1', channel: 'instagram', account: 'studio.esempio', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 2, 'two rendered team rows');
+  for (const row of rows) {
+    assert.match(row.textContent ?? '', /Calendario condiviso: collegato/, 'each row names the shared calendar state');
+    const tiles = row.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip'));
+    assert.deepEqual(tiles.map((node) => node.textContent).sort(), ['IG', 'WA'], 'each row carries the active channel tiles, never the calendar');
+  }
+});
+
+test('67e14a50efb6: teamCalendarState reads only the calendar entries, fail-closed', () => {
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'suspended' },
+  ]), 'Calendario condiviso: collegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'suspended' },
+  ]), 'Calendario condiviso: scollegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'pending' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState(null), null, 'unreadable connectors invent no calendar line');
+  assert.equal(teamCalendarState({}), null);
+});
+
+test('67e14a50efb6: teamChannelTiles lists one tile per active channel, never the calendar', () => {
+  assert.deepEqual(teamChannelTiles([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'wa-2', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'ig-1', channel: 'instagram', status: 'active' },
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'old-1', channel: 'instagram', status: 'revoked' },
+    { connectionKey: 'no-channel', status: 'active' },
+  ]), [
+    { channel: 'instagram', tile: 'IG', tint: 'ui-chip-ig', label: 'Instagram' },
+    { channel: 'whatsapp', tile: 'WA', tint: 'ui-chip-wa', label: 'WhatsApp' },
+  ]);
+  assert.deepEqual(teamChannelTiles([]), []);
+  assert.deepEqual(teamChannelTiles(null), [], 'unreadable connectors tile nothing');
+  const [unknown] = teamChannelTiles([{ connectionKey: 'x-1', channel: 'carrier-pigeon', status: 'active' }]);
+  assert.equal(unknown.tile, '?', 'an unknown channel never invents a tile');
+});
+
+test('67e14a50efb6: unreadable connectors read honestly on every row, never silently bare', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const notFound = Object.assign(new Error('not found'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: notFound } }) });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /non sono attivi in questo spazio/, 'each row says the channels are not active here');
+  assert.doesNotMatch(rows[0].textContent ?? '', /NOT_FOUND/, 'no technical code on the page');
+  assert.equal(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).length, 0, 'no invented tiles');
+});
+
+test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team calendar and channel tiles', async () => {
+  // Repro: /api/connectors ok (active calendar + WA) but
+  // /api/customer-data/customers 404 — the shared Promise.all discarded the
+  // good connectors and every row read «non sono attivi». Red before, green
+  // after: the rows keep the indicators, only the card statistic is omitted.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const missing = Object.assign(new Error('no listCustomers'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      fail: { customers: missing },
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
+  assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
+  assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
 });

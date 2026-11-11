@@ -949,6 +949,60 @@ test('Crea con l\u2019AI proposes without a POST and creates only on confirm', a
   assert.ok(mount.textContent.includes('Quando offerta inviata'), 'the elenco shows the confirmed sequence');
 });
 
+test('backlog:1d6dc54f19db dettaglio mostra il passo whatsapp anche quando lo spazio del passo manca', async () => {
+  // Live pre-space rows (sequence-step revision 1 had no spaceId): the
+  // space-scoped steps read returns nothing while the key-only read carries
+  // the whatsapp passo. Before the cure the detail painted
+  // «Questa sequenza non ha passi registrati»; after it paints the passo.
+  const key = 'bo-seq-b6028139-live';
+  const preSpaceStep = {
+    id: 901, sequenceSourceKey: key, spaceId: null, stepOrder: 0, dayOffset: 0,
+    channel: 'whatsapp', templateName: 'Ciao, ci manchi', templateLanguage: 'it', templateVars: '[]',
+  };
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        assert.ok(path.includes(`filter.sequenceSourceKey=${encodeURIComponent(key)}`));
+        return { items: [preSpaceStep] };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, false);
+  assert.equal(outcome.rows.length, 1, 'the key-only retry recovers the pre-space passo');
+  const detail = buildSequenzaDettaglio({
+    sequence: { id: 77, sourceKey: key, spaceId: 'presti', name: 'Bentornato', status: 'draft' },
+    steps: outcome.rows,
+    enrollments: [],
+    sends: [],
+  });
+  assert.equal(detail.steps.length, 1);
+  assert.equal(detail.steps[0].channelLabel, 'WhatsApp');
+  assert.ok(detail.steps[0].title.includes('Ciao, ci manchi'));
+});
+
+test('backlog:1d6dc54f19db retry senza spazio che fallisce resta un errore, mai zero passi', async () => {
+  // P2 Codex su PR 755: lettura con spazio vuota + retry che lancia (rete,
+  // 500) dipingeva «non ha passi registrati». Resta failed: true.
+  const key = 'bo-seq-b6028139-retry-down';
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, true);
+  assert.deepEqual(outcome.rows, []);
+});
+
 test('Bozza wears the same ui-* chip class in elenco and dettaglio (backlog:05e53e77)', () => {
   // Supervisor 2026-11-07.md:46: live painted Bozza green in the list and
   // blue in the detail. Both renders must share one system chip class.

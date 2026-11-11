@@ -611,6 +611,16 @@ const customerCardView = createCustomerCardView({
     if (assistantPanel) void assistantPanel.open(screenId, draft, customer);
     else toast('Apri la barra AI (⌘K) e descrivi cosa vuoi fare per questo cliente.');
   },
+  // Voce 2f2d22f2: the breadcrumb follows the shown customer — «Clienti /
+  // <nome>» once the card names one, plain «Clienti» while it loads or when
+  // the read fails. The router already paints «Clienti» on entry (syncShell),
+  // so the hook only narrows it to the name. Review #722: a slow card read
+  // resolving after the operator moved on must never retitle the new
+  // screen, so a title from a card that is no longer routed is dropped.
+  onCustomerTitle: (name) => {
+    if (!mountGate.isActive('customer-card')) return;
+    if (shellView) shellView.update({ screenLabel: name ? `Clienti / ${name}` : 'Clienti' });
+  },
 });
 
 // Clienti list (BO-F1-05, backlog:80b25fb0): the table alone, no import tool.
@@ -1162,6 +1172,7 @@ async function route() {
     // may paint over it.
     mountGate.activate(null);
     clientiListView.invalidate();
+    customerCardView.invalidate();
     // backlog:607f33ee: same shared-mount race as below — a late async
     // view must not repaint the settings panel just opened.
     if (oggiView) oggiView.invalidate();
@@ -1210,6 +1221,10 @@ async function route() {
   // save still in flight must die when the operator leaves the form —
   // otherwise its late response clears the screen just opened.
   if (target.view !== 'customer-new') customerFormView.invalidate();
+  // Voce 2f2d22f2, review #722: a card read still in flight must die when
+  // the operator leaves the card — otherwise its late response retitles the
+  // screen just opened. Same shared-mount race as the list and the form.
+  if (target.view !== 'customer-card') customerCardView.invalidate();
   // backlog:607f33ee: every async view paints straight into the shared
   // mount, so a read still in flight must die when the operator leaves
   // the view — otherwise its late response repaints the screen just
