@@ -42,6 +42,7 @@
 
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import { memberText } from './admin-labels.js';
@@ -182,6 +183,66 @@ export function countSpaceCustomers(answer) {
   return typeof shaped.total === 'number' && Number.isInteger(shaped.total) && shaped.total >= 0
     ? shaped.total
     : null;
+}
+
+/**
+ * backlog:67e14a50efb6 (specs/account.md C13): the shared calendar state of
+ * one space, read from the same `GET /api/connectors` answer the cards
+ * already count — never a new request and never a per-person invention (the
+ * framework stores no per-member connection). Only an `active` calendar
+ * entry reads as collegato; a suspended or revoked one reads scollegato; a
+ * pending entry, or no calendar entry at all, reads da collegare. Anything
+ * but an array (unreadable connectors) yields null, and the row says so
+ * instead of inventing a line.
+ * @param {unknown} connectors
+ */
+export function teamCalendarState(connectors) {
+  if (!Array.isArray(connectors)) return null;
+  const calendars = connectors.filter((entry) => entry !== null && typeof entry === 'object'
+    && /** @type {{channel?: unknown}} */ (entry).channel === 'calendar');
+  if (calendars.some((entry) => /** @type {{status?: unknown}} */ (entry).status === 'active')) {
+    return 'Calendario condiviso: collegato';
+  }
+  if (calendars.some((entry) => /** @type {{status?: unknown}} */ (entry).status === 'suspended'
+    || /** @type {{status?: unknown}} */ (entry).status === 'revoked')) {
+    return 'Calendario condiviso: scollegato';
+  }
+  return 'Calendario condiviso: da collegare';
+}
+
+/**
+ * backlog:67e14a50efb6 (specs/account.md C14): one tile per active channel
+ * of the space, in the same vocabulary the Connettori rows paint
+ * (`CONNECTOR_BADGES`, `CONNECTOR_CATALOG` — reused, never redefined). The
+ * calendar is not a tile: it keeps its own state line above. Sorted by
+ * channel so the row is stable regardless of store order; an entry without
+ * a usable channel never tiles, and an unknown channel tiles «?» like the
+ * Connettori rows instead of inventing one. Anything but an array tiles
+ * nothing.
+ * @param {unknown} connectors
+ */
+export function teamChannelTiles(connectors) {
+  if (!Array.isArray(connectors)) return [];
+  const seen = new Set();
+  const tiles = [];
+  for (const entry of connectors) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const shaped = /** @type {{channel?: unknown, status?: unknown}} */ (entry);
+    if (typeof shaped.channel !== 'string' || shaped.channel === '' || shaped.channel === 'calendar') continue;
+    if (shaped.status !== 'active') continue;
+    if (seen.has(shaped.channel)) continue;
+    seen.add(shaped.channel);
+    const badge = /** @type {Record<string, {tile: string, tint: string}>} */ (CONNECTOR_BADGES)[shaped.channel]
+      ?? { tile: '?', tint: 'ui-chip-plain' };
+    const catalog = CONNECTOR_CATALOG.find((candidate) => candidate.channel === shaped.channel) ?? null;
+    tiles.push({
+      channel: shaped.channel,
+      tile: badge.tile,
+      tint: badge.tint,
+      label: catalog !== null ? catalog.label : shaped.channel,
+    });
+  }
+  return tiles.sort((left, right) => (left.channel < right.channel ? -1 : left.channel > right.channel ? 1 : 0));
 }
 
 /**
@@ -481,6 +542,15 @@ export function createSpaziAccessiView(deps) {
     /** @type {Map<string, string>} card statistic by space id; a space with
      * an unknown count simply has no entry, never an invented row */
     stats: new Map(),
+    /**
+     * backlog:67e14a50efb6: the raw connector entries behind each space's
+     * statistic, so every team row paints this space's calendar state and
+     * channel tiles from what production produced — no second request. An
+     * unreadable space keeps `{entries: null}` with why, and the rows say
+     * so instead of tiling nothing silently.
+     * @type {Map<string, {entries: Array<any>|null, unreadable: 'not-composed'|'failed'|null}>}
+     */
+    spaceConns: new Map(),
     /** @type {string|null} subject armed for the two-step removal */
     confirmRemove: null,
     /** @type {{subject: string, reason: string, note: string}|null} a removal with refused subjects, offered again as «Riprova» */
@@ -570,10 +640,26 @@ export function createSpaziAccessiView(deps) {
   async function loadSpaceStat(spaceId, memberCount) {
     if (memberCount === null) return null;
     try {
-      const [channelsAnswer, customersAnswer] = await Promise.all([
+      const [channelsSettled, customersSettled] = await Promise.allSettled([
         client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
         client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
       ]);
+      // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
+      // the team rows tile this space's calendar and channels from the same
+      // answer — no second request. A failed customer count never hides the
+      // team indicators: the connectors answer survives on its own (Codex P2
+      // on #756).
+      // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
+      // the team rows tile this space's calendar and channels from the same
+      // answer — no second request. The connectors answer is stored before
+      // the customer read can fail, so a failed customer count never hides
+      // the team indicators (Codex P2 on #756).
+      if (channelsSettled.status === 'rejected') throw channelsSettled.reason;
+      const channelsAnswer = channelsSettled.value;
+      const entries = Array.isArray(channelsAnswer?.connectors) ? channelsAnswer.connectors : null;
+      state.spaceConns.set(spaceId, { entries, unreadable: entries === null ? 'failed' : null });
+      if (customersSettled.status === 'rejected') throw customersSettled.reason;
+      const customersAnswer = customersSettled.value;
       return formatSpaceStat({
         channels: countSpaceChannels(channelsAnswer),
         members: memberCount,
@@ -584,15 +670,25 @@ export function createSpaziAccessiView(deps) {
       // diagnose is: log the safe fields (code/status plus the space id,
       // never a message that could carry personal data), like AGENTS.md asks.
       const record = error !== null && typeof error === 'object' ? error : {};
+      const code = typeof /** @type {{code?: unknown}} */ (record).code === 'string'
+        ? /** @type {{code?: unknown}} */ (record).code
+        : 'UNKNOWN';
+      const status = typeof /** @type {{status?: unknown}} */ (record).status === 'number'
+        ? /** @type {{status?: unknown}} */ (record).status
+        : null;
       if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[bo] lettura fallita', {
-          code: typeof /** @type {{code?: unknown}} */ (record).code === 'string'
-            ? /** @type {{code?: unknown}} */ (record).code
-            : 'UNKNOWN',
-          status: typeof /** @type {{status?: unknown}} */ (record).status === 'number'
-            ? /** @type {{status?: unknown}} */ (record).status
-            : null,
-          spaceId,
+        console.error('[bo] lettura fallita', { code, status, spaceId });
+      }
+      // backlog:67e14a50efb6: the team rows read this too — a 404 (the
+      // connectors are not composed here) is honest scope, anything else a
+      // transient failure — and both say so on the row, never silently bare.
+      // A failed customer count keeps the good connector entries above: only
+      // a failed connector read marks the rows unreadable (Codex P2 on #756).
+      const kept = state.spaceConns.get(spaceId);
+      if (kept === undefined || kept.entries === null) {
+        state.spaceConns.set(spaceId, {
+          entries: null,
+          unreadable: code === 'NOT_FOUND' || status === 404 ? 'not-composed' : 'failed',
         });
       }
       return null;
@@ -608,6 +704,7 @@ export function createSpaziAccessiView(deps) {
     state.overrides = null;
     state.switchesUnavailable = null;
     state.stats = new Map();
+    state.spaceConns = new Map();
     state.confirmRemove = null;
     state.removeRetry = null;
     state.confirmFlip = null;
@@ -792,6 +889,35 @@ export function createSpaziAccessiView(deps) {
     box.appendChild(grid);
   }
 
+  /**
+   * backlog:67e14a50efb6 (specs/account.md C13/C14): the calendar-and-channels
+   * line of one team row — the shared state from `conns`, painted with text
+   * only (createElement + textContent, never markup). An unreadable space
+   * says why on the row instead of staying silently bare.
+   * @param {{entries: Array<any>|null, unreadable: 'not-composed'|'failed'|null}} conns
+   */
+  function renderTeamConns(conns) {
+    const line = el(doc, 'div', { cls: 'bo-spazi-conns' });
+    if (conns.entries !== null) {
+      line.appendChild(el(doc, 'span', { text: teamCalendarState(conns.entries), cls: 'bo-spazi-calendar' }));
+      for (const tile of teamChannelTiles(conns.entries)) {
+        line.appendChild(el(doc, 'span', {
+          text: tile.tile,
+          cls: `ui-chip ${tile.tint} bo-spazi-tile`,
+          attrs: { title: `${tile.label} di questo spazio` },
+        }));
+      }
+      return line;
+    }
+    line.appendChild(el(doc, 'span', {
+      text: conns.unreadable === 'not-composed'
+        ? 'Canali e calendario non sono attivi in questo spazio.'
+        : 'Canali e calendario non leggibili al momento.',
+      cls: 'bo-spazi-calendar',
+    }));
+    return line;
+  }
+
   function renderTeam(box) {
     const section = el(doc, 'section', { cls: 'bo-spazi-section bo-spazi-panel bo-spazi-team-panel' });
     // Prototype 08: the team card head carries the green «Invita persona»,
@@ -842,6 +968,12 @@ export function createSpaziAccessiView(deps) {
       return;
     }
     const rows = buildTeamRows(state.members);
+    // backlog:67e14a50efb6 (specs/account.md C13/C14): every team row paints
+    // this space's shared calendar state and channel tiles from the same
+    // connectors answer the cards counted — the team is one per organization
+    // while the channels live per space, so the line repeats on each row and
+    // the titles say whose it is.
+    const conns = state.spaceConns.get(readActiveSpace()) ?? { entries: null, unreadable: 'failed' };
     const list = el(doc, 'div', { cls: 'bo-spazi-team' });
     if (rows.length === 0) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
@@ -861,6 +993,7 @@ export function createSpaziAccessiView(deps) {
       } else {
         names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
       }
+      names.appendChild(renderTeamConns(conns));
       identity.appendChild(names);
       item.appendChild(identity);
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
