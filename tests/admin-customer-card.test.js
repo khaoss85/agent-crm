@@ -2094,10 +2094,10 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
   );
 });
 
-// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
-// customer as a one-time pick — with the linked company the offer form needs
-// — and navigate to the creation screens. The destinations take the pick.
-test('714433c2: quick actions stash the picked customer and navigate to the creation screens', async () => {
+// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start with the
+// shown customer already chosen. Since Dan 06/11 (offer) and 11/11
+// (appointment) both open a window over the scheda instead of navigating.
+test('714433c2: quick actions open their windows over the scheda with the customer already chosen', async () => {
   const map = new Map();
   const storage = {
     getItem: (key) => (map.has(key) ? map.get(key) : null),
@@ -2122,13 +2122,16 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'no appointment pick leaks from the offer voice');
 
+  // Dan 11/11: Nuovo appuntamento opens its window over the scheda too (see
+  // tests/admin-appointment-panel.test.js) — no navigation, no stash, and
+  // only one window at a time.
   byAction('new-appointment').dispatch('click');
-  assert.deepEqual(navs, ['#/calendario'],
-    'Nuovo appuntamento opens the calendar manual booking');
-  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
-    resource: 'contact', id: 'c1', name: 'Guido Presti',
-    company: { id: 'co1', name: 'Palestra Esempio' },
-  }, 'the appointment pick names the same record');
+  assert.deepEqual(navs, [], 'Nuovo appuntamento stays on the scheda');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'),
+    'the appointment window opens');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'the offer window steps aside');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -2312,6 +2315,113 @@ const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
   composerSendButton(panel).dispatch('click');
   await flushComposer(12);
 };
+
+// backlog:d998cf15f011 (giro UX 11/11): the composer draft is kept per
+// customer like Gmail — through ✕ and Esc, through any re-read of the
+// scheda (a save elsewhere, the way back from another screen) — and goes
+// only after a send the server accepted. The state lived inside the quick
+// actions, so every re-read made it new and the draft was lost.
+async function draftView(client = composerClient()) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
+  await view.renderCard('contact', 'c1');
+  const open = async () => {
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+    await flushComposer();
+    return mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  };
+  const type = (panel, value) => {
+    const text = panel.findAll('textarea')[0];
+    text.value = value;
+    text.dispatch('input');
+  };
+  const leaveAndComeBack = async (other = null) => {
+    view.invalidate();
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    if (other !== null) await view.renderCard('contact', other);
+    await view.renderCard('contact', 'c1');
+  };
+  return { mount, view, open, type, leaveAndComeBack };
+}
+
+test('d998cf15f011: the draft survives ✕, Esc and a re-read of the same scheda', async () => {
+  const { mount, view, open, type } = await draftView();
+  let panel = await open();
+  type(panel, 'Ciao Guido, ti confermo');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined, '✕ closes');
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo', 'back after ✕ and a re-read');
+  type(panel, 'Ciao Guido, ti confermo domani');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo domani', 'back after Esc and a re-read');
+});
+
+test('d998cf15f011: the draft survives leaving the scheda and coming back, and stays with its customer', async () => {
+  const { open, type, leaveAndComeBack } = await draftView();
+  const panel = await open();
+  type(panel, 'Bozza per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Bozza per Guido', 'back from another screen');
+});
+
+test('d998cf15f011: another customer opens an empty composer, the first one keeps its draft', async () => {
+  const client = composerClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/card/contact/c2') return { ...CARD, subject: { resource: 'contact', id: 'c2' }, name: 'Altra Persona' };
+    return base(path, options);
+  };
+  const { open, type, view, leaveAndComeBack } = await draftView(client);
+  const panel = await open();
+  type(panel, 'Solo per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  view.invalidate();
+  await view.renderCard('contact', 'c2');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'the other customer starts empty');
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Solo per Guido');
+});
+
+test('d998cf15f011: a sent message empties the draft, also after a re-read', async () => {
+  const { open, type, view } = await draftView();
+  const panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  await view.renderCard('contact', 'c1');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'nothing comes back after the send');
+});
+
+test('d998cf15f011: a send retried after a re-read keeps its message key', async () => {
+  const keys = [];
+  const client = composerClient({
+    onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); },
+  });
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/messages' && options.method === 'POST') keys.push(JSON.parse(options.body).messageKey);
+    return base(path, options);
+  };
+  const { open, type, view } = await draftView(client);
+  let panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Certo, domani alle 18.', 'the unsent text is still there');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1], 'the same message keeps the same key: the server finds its own request');
+});
 
 test('composer window hangs off the view, outside the sticky side columns', async () => {
   const { mount, panel } = await openComposerMount();
@@ -4242,7 +4352,7 @@ test('review #612: a phone number being typed survives a re-read, Annulla closes
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-phone').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer').dispatch('click');
   const phoneField = () => mount.findAll('input').find((node) => node.getAttribute('type') === 'tel');
   phoneField().value = '+39333000111';
 

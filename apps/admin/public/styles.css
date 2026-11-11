@@ -662,7 +662,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -745,7 +749,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
@@ -2054,6 +2060,30 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
+/* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
+   card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+.pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
+.pipeline-card.dragging { opacity: .45; }
+.pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+.pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-card > .field-error { display: block; margin-top: 6px; }
+.pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
+.bo-scheda-composer.bo-pipeline-offer { top: 72px; bottom: 16px; width: min(420px, calc(100vw - 48px)); max-height: none; border-bottom: 1px solid var(--line); border-radius: 14px; }
+.bo-pipeline-offer .bo-composer-body.bo-pipeline-offer-body { gap: 16px; padding: 18px 18px 18px; }
+.bo-pipeline-offer .offer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.bo-pipeline-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-pipeline-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-pipeline-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-pipeline-offer-move { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-move label { font-size: 11px; font-weight: 700; color: var(--dim); }
+.bo-pipeline-offer-move-row { display: flex; gap: 8px; }
+.bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
+.bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
+@media (max-width: 560px) {
+  .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+  .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
 }
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }

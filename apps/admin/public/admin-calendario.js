@@ -501,11 +501,11 @@ export function draftMinutes(draft) {
   const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
   const pair = Math.round((to - from) / 60000);
   const stated = draft?.durationMinutes;
-  const statedOk = Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated);
+  const statedOk = Number.isSafeInteger(stated) && BOOKING_MINUTES.includes(stated);
   // A day-only draft (midnight start, production 07/11) carries an end the
   // model padded, not one the sentence stated: the stated minutes win.
   if (statedOk && draftDayOnly(draft)) return stated;
-  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  if (BOOKING_MINUTES.includes(pair)) return pair;
   if (statedOk) return stated;
   return 30;
 }
@@ -3139,11 +3139,7 @@ export function createCalendarioView(deps) {
       const searchIds = memberIds.length > 0 ? memberIds : [member];
       // The draft paints (with its Annulla) while the slots are searched.
       renderAll();
-      const found = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
-        + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
-        + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
-      );
+      const found = await client.request(suggestSlotsPath(searchIds, bounds.from, bounds.to, draftMinutes(draft)));
       const groups = Array.isArray(found?.members) ? found.members : [];
       // backlog:d1e4d90e — the searched identities belong to one resolved
       // person: offer a step only when every identity reports it free, so a
@@ -3480,20 +3476,16 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    const customer = pickedCustomer();
-    const claim = {
+    const claim = bookingClaim({
       spaceId: readSpace(),
-      subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+      customer: pickedCustomer(),
       teamMemberId: member,
       serviceKey: serviceKeyFor(manualValue('serviceKey'), state.services),
       priceCents: priceToCents(manualValue('price')),
-      currency: 'EUR',
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
-      source: { package: 'host', action: 'calendar-book' },
-    };
+    });
     state.confirmed = null;
     state.serviceError = '';
     const presend = servicePresendError(claim.serviceKey);
@@ -3970,23 +3962,17 @@ export function createCalendarioView(deps) {
     const member = claimedMember(inputs);
     // The customer rides the name-search pick, never a typed id or
     // resource: without a pick the historical contact/empty fallback stays.
-    const customer = pickedCustomer();
     return {
-      claim: {
+      claim: bookingClaim({
         spaceId: readSpace(),
-        subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+        customer: pickedCustomer(),
         teamMemberId: member,
         serviceKey: serviceKeyFor(read('serviceKey'), state.services),
         priceCents,
-        currency: 'EUR',
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
-        sourceKey: member !== '' && startsAt
-          ? `calendario:${member}:${startsAt}:${customer.id || 'senza-cliente'}`
-          : undefined,
-        source: { package: 'host', action: 'calendar-book' },
-      },
+      }),
     };
   }
 
@@ -4197,3 +4183,50 @@ export function createCalendarioView(deps) {
 
   return { render, invalidate };
 }
+
+/**
+ * The one booking claim every Conferma sends to `/api/appointments/confirm`
+ * (manual form, proposal row, and the scheda cliente «Nuovo appuntamento»
+ * window): the customer as a host subject, the listino key and price in
+ * EUR, and the source key that binds person, start and customer, so a retry
+ * or a double click replays instead of double-booking. Without a person or
+ * a start there is no source key yet (the server refuses the claim).
+ * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
+ *   teamMemberId: string, serviceKey: string, priceCents: number | null,
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
+ */
+export function bookingClaim(input) {
+  const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
+  const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
+    ? input.customer.resource : 'contact';
+  const member = input.teamMemberId;
+  return {
+    spaceId: input.spaceId,
+    subject: { resource, id, owner: 'host' },
+    teamMemberId: member,
+    serviceKey: input.serviceKey,
+    priceCents: input.priceCents,
+    currency: 'EUR',
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    notes: input.notes ?? null,
+    sourceKey: member !== '' && input.startsAt
+      ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
+      : undefined,
+    source: { package: 'host', action: 'calendar-book' },
+  };
+}
+
+/**
+ * The free-slot read for one person over a window: every searched booking
+ * identity, the bounds and the slot size, as `suggest-slots` expects them.
+ * @param {ReadonlyArray<string>} searchIds @param {string} from @param {string} to @param {number} minutes
+ */
+export function suggestSlotsPath(searchIds, from, to, minutes) {
+  return `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
+    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    + `&slotMinutes=${encodeURIComponent(String(minutes))}`;
+}
+
+/** The slot sizes `suggest-slots` accepts, in minutes. */
+export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);

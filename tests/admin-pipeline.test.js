@@ -1365,10 +1365,11 @@ test('kanban rides a scroll wrap hiding the end cue at the end (backlog 339ca222
 });
 
 /**
- * Voce ef92f728: Apri navigates to the offer detail page (#/offerte/<id>)
- * and never expands the card in place. The card stays a summary: editing
- * the three commercial facts (importo, chiusura, referente) moved to the
- * detail page behind Modifica, covered by tests/admin-offer.test.js.
+ * Voce ef92f728, Dan 11/11: Apri opens the offer panel over the board and
+ * never expands the card in place. The card stays a summary: editing the
+ * three commercial facts (importo, chiusura, referente) lives on the offer
+ * page behind Modifica (tests/admin-offer.test.js), linked from the panel.
+ * The panel itself is covered by tests/admin-pipeline-drag-panel.test.js.
  */
 function navigableClient(records, pipelines = [PIPELINE]) {
   return {
@@ -1384,7 +1385,7 @@ function apriButton(mount) {
   return mount.findAll('button').find((n) => n.getAttribute('data-action') === 'open-offer');
 }
 
-test('ef92f728: Apri navigates to the offer detail page; the card never expands', async () => {
+test('ef92f728: Apri opens the offer panel, never the page; the card never expands', async () => {
   const records = [record('a', 'discovery', {
     name: 'Cucina per Giulia', valueCents: 2750000, currency: 'EUR',
     expectedCloseDate: '2026-11-20T00:00:00.000Z', owner: 'maria',
@@ -1408,10 +1409,10 @@ test('ef92f728: Apri navigates to the offer detail page; the card never expands'
   assert.equal(card.__save, undefined, 'no save hook on the card');
 
   button.dispatch('click');
-  assert.deepEqual(hashes, ['#/offerte/a'], 'Apri navigates to the offer detail');
-  // The test hook drives the same navigation as the click.
-  card.__open();
-  assert.deepEqual(hashes, ['#/offerte/a', '#/offerte/a'], 'the hook navigates too');
+  assert.deepEqual(hashes, [], 'Apri never leaves the pipeline');
+  const panel = mount.findAll('div').find((n) => n.getAttribute('data-offer-drawer') === 'a');
+  assert.ok(panel, 'Apri opens the offer panel');
+  assert.equal(panel.getAttribute('role'), 'dialog');
   // After the click the card still shows the summary, never an expansion.
   const same = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.ok(!same.textContent.includes('Valore:'), 'the card stays a summary after Apri');

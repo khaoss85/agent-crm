@@ -4,10 +4,11 @@ import { elFor, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the singl
 import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
-import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
+import { openAppointmentPanel } from './admin-appointment-panel.js';
+import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
@@ -506,6 +507,20 @@ export function mergeLinkedIdentities(timeline) {
 }
 
 /**
+ * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
+ * the phone-bearing identities the profile holds beside the record, and the
+ * phone handles observed on its passages — deduplicated on their dialable
+ * form (admin-call-number.js `knownNumbers`).
+ * @param {any} card @param {any} profile @param {any} timeline
+ */
+export function schedaNumbers(card, profile, timeline) {
+  const held = card?.phone?.available === true && typeof card.phone.value === 'string' ? card.phone.value : null;
+  const identities = Array.isArray(profile?.externalIdentities) ? profile.externalIdentities : [];
+  const observed = mergeLinkedIdentities(timeline).rows.filter((row) => PHONE_LIKE_SYSTEMS.includes(row.system));
+  return knownNumbers({ held, identities, observed });
+}
+
+/**
  * Voce 59def6cb805d (C10): the directions observed per channel on the
  * customer's passages — `{in, out}` by lowercase system. Evidence only: a
  * direction nobody recorded is never assumed.
@@ -668,10 +683,10 @@ export function createCustomerCardView(deps) {
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   /** Dettagli saves in flight, view-wide: one PATCH per contact at a time. */
   const detailsInFlight = new Set();
-  // The one-time creation handoff («Nuova offerta», «Nuovo appuntamento»).
-  // The shell passes its storage; without one the buttons still navigate
-  // and the creation screens open unpicked.
-  const storage = deps.storage ?? null;
+  // «Chiama» on a number just saved from the number window (Dan 11/11):
+  // the call opens on the re-read card of that same customer, once.
+  /** @type {{key: string, number: string} | null} */
+  let pendingCallAfterSave = null;
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
@@ -731,6 +746,31 @@ export function createCustomerCardView(deps) {
   let timelineShown = TIMELINE_PAGE;
   // The scheda on screen, so a re-read of the same customer (after Invia,
   // a note, an edit) redraws in place instead of blanking the page.
+  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
+  // A slow first load never paints over (or crashes on) a newer opening:
+  // stale callbacks return without touching the panel.
+  let composerGeneration = 0;
+  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
+  // close the window, the typed text and subject stay here and come back
+  // when the composer reopens on the same customer. Cleared only by a send
+  // the server accepted. In memory: a reload still drops them, like any
+  // unsent form. backlog:d998cf15f011: this state lives with the view, not
+  // with one painted scheda — declared inside the quick actions it was born
+  // again at every re-read, so a draft was lost on the way back from
+  // another screen or after any save that re-reads the card.
+  const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
+  // The idempotency key of a send whose outcome is not yet known, keyed by
+  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
+  // the server finds its own request instead of mailing twice (production
+  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
+  // A changed text, subject or channel is a new message with a new key; a
+  // definitive answer (sent, refused, failed) drops the key.
+  const composerSendKeys = new Map();
   let shownKey = null;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
@@ -759,9 +799,6 @@ export function createCustomerCardView(deps) {
         }
       }
     }
-    const phonePanel = root.querySelector('div[data-phone="open"]');
-    const phone = phonePanel ? phonePanel.querySelector('input') : null;
-    if (phone) drafts.phone = typeof phone.value === 'string' ? phone.value : '';
     return Object.keys(drafts).length > 0 ? drafts : null;
   }
 
@@ -1053,39 +1090,39 @@ export function createCustomerCardView(deps) {
     const phone = card?.phone?.available === true
       && typeof card.phone.value === 'string' && card.phone.value.trim() !== ''
       ? card.phone.value.trim() : null;
-    if (phone !== null) {
-      // Voce 105563eea902: voice-aware «Chiama» — the number is dialed from
-      // the CRM only through a linked voice connection (the call then enters
-      // the scheda cronologia through POST /api/customer-hub/calls); without
-      // one the card says so and falls back to `tel:`, never logging a call
-      // the CRM never placed. A hostile value stays text in the title: the
-      // href is built only from the fallback branch below, never here.
-      const call = tile('Chiama', 'telefono');
-      call.setAttribute('type', 'button');
-      call.setAttribute('data-action', 'call-customer');
-      call.setAttribute('title', `Chiama ${phone}`);
-      call.addEventListener('click', () => {
-        openCallPanel(box, card, navCtx, phone);
-      });
-      row.appendChild(call);
-    } else {
-      // Voce 1a066ddfe42a: the API reason stays in the response, never on screen.
-      row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun telefono collegato'));
-      // Voce 105563eea902: the empty state offers its own cure — the
-      // operator holds the number here, through POST /api/customer-hub/phone.
-      const add = tile('Aggiungi telefono', 'telefono-piu');
-      add.setAttribute('type', 'button');
-      add.setAttribute('data-action', 'add-phone');
-      add.setAttribute('title', 'Salva il numero del cliente per chiamarlo dalla scheda');
-      add.addEventListener('click', () => {
-        openPhonePanel(box, navCtx);
-      });
-      row.appendChild(add);
-      if (pendingDrafts && typeof pendingDrafts.phone === 'string') {
-        openPhonePanel(box, navCtx);
-        const typed = box.querySelector('div[data-phone="open"]')?.querySelector('input');
-        if (typed) typed.value = pendingDrafts.phone;
-      }
+    const numbers = Array.isArray(extra.numbers) ? extra.numbers : [];
+    // Voce 105563eea902: voice-aware «Chiama» — the number is dialed from
+    // the CRM only through a linked voice connection (the call then enters
+    // the scheda cronologia through POST /api/customer-hub/calls); without
+    // one the card says so and falls back to `tel:`, never logging a call
+    // the CRM never placed. A hostile value stays text in the title: the
+    // href is built only from the fallback branch below, never here.
+    // Dan 11/11: «Chiama» is always there. With one known number it calls
+    // as before; with none, or with several, it asks which number in a
+    // window, saves a new one on the contact, then calls.
+    const call = tile('Chiama', 'telefono');
+    call.setAttribute('type', 'button');
+    call.setAttribute('data-action', 'call-customer');
+    call.setAttribute('title', phone !== null ? `Chiama ${phone}` : 'Chiama: scegli o scrivi il numero');
+    call.addEventListener('click', () => {
+      if (phone !== null && numbers.length <= 1) openCallPanel(box, card, navCtx, phone);
+      else openNumberWindow(box, card, navCtx, numbers);
+    });
+    row.appendChild(call);
+    // A number just saved from the number window: the call starts on the
+    // re-read card, with the number the server now holds.
+    if (pendingCallAfterSave !== null) {
+      const wanted = pendingCallAfterSave;
+      pendingCallAfterSave = null;
+      // Another customer took the screen meanwhile: no call there.
+      const same = wanted.key === `${navCtx.resource}/${navCtx.id}`;
+      const held = phone === null ? null : phone.replace(/[\s\-().]/g, '');
+      if (same && held === wanted.number) openCallPanel(box, card, navCtx, phone);
+      else if (same && phone !== null) {
+        // The card still dials another number: never call one the
+        // operator did not choose.
+        toast(`Numero salvato, ma la scheda chiama ancora ${phone}: la chiamata non parte. Riprova da «Chiama».`, true);
+      } else if (same) toast('Numero salvato, ma la scheda non lo mostra ancora: riprova tra poco.', true);
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -1103,69 +1140,56 @@ export function createCustomerCardView(deps) {
       row.appendChild(write);
     }
   /**
-   * The «Aggiungi telefono» panel (voce 105563eea902): the operator holds
-   * one callable number beside the customer, through
-   * `POST /api/customer-hub/phone`. The server validates E.164 and refuses
-   * a number already held beside another customer (409); the panel shows
-   * the Italian sentence, never the code. A saved number re-reads the whole
-   * card, like the Dettagli form — the shown number is the server's, never
-   * an optimistic copy.
+   * «Chiama» without a number, or with several (Dan 11/11): the number
+   * window asks which one. A number not yet held on the card is saved
+   * through `POST /api/customer-hub/phone` (the server validates E.164 and
+   * refuses a number held beside another customer, 409, in Italian), then
+   * the card re-reads and the usual «Chiama» flow starts on the number the
+   * server holds — the CRM call route dials only that one.
    */
-  function openPhonePanel(box, navCtx) {
-    const old = box.querySelector('div[data-phone="open"]');
-    if (old) {
-      while (old.firstChild) old.removeChild(old.firstChild);
-    }
-    const panel = old ?? el('div', 'bo-scheda-composer');
-    panel.setAttribute('data-phone', 'open');
-    if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Aggiungi telefono'));
-    const input = el('input');
-    input.setAttribute('type', 'tel');
-    input.setAttribute('placeholder', '+393331234567');
-    input.setAttribute('aria-label', 'Numero di telefono in formato internazionale');
-    panel.appendChild(input);
-    const err = el('p', 'field-error', '');
-    const row = el('div', 'bo-scheda-form-actions');
-    const save = el('button', undefined, 'Salva');
-    save.setAttribute('type', 'button');
-    save.setAttribute('data-action', 'save-phone');
-    const cancel = el('button', undefined, 'Annulla');
-    cancel.setAttribute('type', 'button');
-    cancel.setAttribute('data-action', 'cancel-phone');
-    row.appendChild(save);
-    row.appendChild(cancel);
-    panel.appendChild(row);
-    panel.appendChild(err);
-    let busy = false;
-    save.addEventListener('click', async () => {
-      if (busy) return;
-      const phone = input.value.trim();
-      if (phone === '') {
-        err.textContent = 'Scrivi il numero prima di salvarlo.';
-        return;
-      }
-      busy = true;
-      err.textContent = '';
-      try {
-        await client.request('/api/customer-hub/phone', {
-          method: 'POST',
-          body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone }),
-        });
-        toast('Telefono salvato');
-        if (panel.parentNode) panel.parentNode.removeChild(panel);
+  function openNumberWindow(box, card, navCtx, numbers) {
+    closeSchedaWindows();
+    openCallNumberPanel({
+      doc,
+      host: mount,
+      customer: typeof card?.name === 'string' ? card.name : null,
+      numbers,
+      choose: async (number, held) => {
+        if (held) {
+          openCallPanel(box, card, navCtx, number);
+          return null;
+        }
+        try {
+          await client.request('/api/customer-hub/phone', {
+            method: 'POST',
+            body: JSON.stringify({ resource: navCtx.resource, id: navCtx.id, phone: number }),
+          });
+        } catch (error) {
+          return phoneRefusalText(error);
+        }
+        toast('Numero salvato');
+        // The window closes before the re-read, so it never survives it.
+        const open = mount.querySelector('div[data-phone="open"]');
+        if (open && open.parentNode) open.parentNode.removeChild(open);
+        // Review #776 (P2): another customer took the screen while the
+        // number was saving — never repaint this one over it, never call.
+        const key = `${navCtx.resource}/${navCtx.id}`;
+        if (shownKey !== key) return null;
+        // Review #776 (P1): the call starts on the number the operator
+        // chose, and only once the re-read card holds that very number.
+        pendingCallAfterSave = { key, number };
         await renderCard(navCtx.resource, navCtx.id);
-      } catch (error) {
-        // The typed number stays in the field: the operator corrects it.
-        err.textContent = phoneRefusalText(error);
-      } finally {
-        busy = false;
-      }
+        return null;
+      },
     });
-    cancel.addEventListener('click', async () => {
-      if (panel.parentNode) panel.parentNode.removeChild(panel);
-      await renderCard(navCtx.resource, navCtx.id);
-    });
+  }
+  /** The windows over the scheda: one at a time (Scrivi keeps its draft). */
+  function closeSchedaWindows(keep = null) {
+    for (const attr of ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']) {
+      if (attr === keep) continue;
+      const open = mount.querySelector(`div[${attr}="open"]`);
+      if (open && open.parentNode) open.parentNode.removeChild(open);
+    }
   }
   /**
    * The voice-aware «Chiama» panel (voce 105563eea902): with an active
@@ -1337,15 +1361,10 @@ export function createCustomerCardView(deps) {
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
-  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
-  // A slow first load never paints over (or crashes on) a newer opening:
-  // stale callbacks return without touching the panel.
-  let composerGeneration = 0;
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
-    const offerWindow = mount.querySelector('div[data-offer-panel="open"]');
-    if (offerWindow && offerWindow.parentNode) offerWindow.parentNode.removeChild(offerWindow);
+    closeSchedaWindows('data-composer');
     // The window hangs off the view, not off the Azioni column: a sticky
     // column is its own stacking layer painted in page order, so a fixed
     // window inside the left column sat under the right one (#605).
@@ -1752,24 +1771,6 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
-  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
-  // close the window, the typed text and subject stay here and come back
-  // when the composer reopens on the same customer. Cleared only by a send
-  // the server accepted. In memory: a reload still drops them, like any
-  // unsent form.
-  const composerDrafts = new Map();
-  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
-  // space, customer, channel and words → requestId (review #664): a close
-  // and reopen of the composer reads the same request back, never a new POST.
-  /** @type {Map<string, string>} */
-  const composerAiPending = new Map();
-  // The idempotency key of a send whose outcome is not yet known, keyed by
-  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
-  // the server finds its own request instead of mailing twice (production
-  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
-  // A changed text, subject or channel is a new message with a new key; a
-  // definitive answer (sent, refused, failed) drops the key.
-  const composerSendKeys = new Map();
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
     // Keyed by space too: a draft never crosses into another workspace
@@ -2083,12 +2084,10 @@ export function createCustomerCardView(deps) {
       showError(formErrors.fields.text ?? logged);
     }
   }
-    // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start the
-    // creation flows with this customer already chosen. The pick travels
-    // as a one-time handoff the target screen takes on render (the router
-    // carries path-only hashes, so no query tail); without a named record
-    // or without a storage the buttons still navigate, and the creation
-    // screen opens unpicked instead of inventing a customer.
+    // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start with
+    // this customer already chosen, in a window over the scheda; without a
+    // named record they open their screens unpicked instead of inventing a
+    // customer.
     const pick = customerPickFor(navCtx, card);
     // Voce c2793930850a: the creation voices are tiles like Chiama and
     // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
@@ -2103,8 +2102,7 @@ export function createCustomerCardView(deps) {
         navigate('#/modules/opportunity/new');
         return;
       }
-      const composer = mount.querySelector('div[data-composer="open"]');
-      if (composer && composer.parentNode) composer.parentNode.removeChild(composer);
+      closeSchedaWindows('data-offer-panel');
       openOfferPanel({
         doc,
         host: mount,
@@ -2122,9 +2120,28 @@ export function createCustomerCardView(deps) {
     const appointment = tile('Nuovo appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
+    // Dan 11/11: the appointment is booked where the customer is — a
+    // window over the scheda like «Nuova offerta», never a jump to the
+    // Calendario. Without a named record the Calendario opens unpicked.
     appointment.addEventListener('click', () => {
-      if (pick !== null) writePendingCustomerPick(storage, 'appointment', pick);
-      navigate('#/calendario');
+      if (pick === null) {
+        navigate('#/calendario');
+        return;
+      }
+      closeSchedaWindows('data-appointment-panel');
+      openAppointmentPanel({
+        doc,
+        host: mount,
+        client,
+        issueKey: () => submissions.issueKey(),
+        customer: { resource: pick.resource, id: pick.id, name: pick.name },
+        spaceId: activeSpaceId(),
+        toast,
+        // Review #776 (P2): only while this customer is still on screen.
+        onBooked: () => {
+          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void renderCard(navCtx.resource, navCtx.id);
+        },
+      });
     });
     row.appendChild(appointment);
     box.appendChild(row);
@@ -3489,7 +3506,8 @@ export function createCustomerCardView(deps) {
     // offer panel) stay open through a re-read of the same customer, with
     // their text and focus; only the scheda itself is swapped.
     const isWindow = (child) => typeof child?.getAttribute === 'function'
-      && (child.getAttribute('data-composer') === 'open' || child.getAttribute('data-offer-panel') === 'open');
+      && ['data-composer', 'data-offer-panel', 'data-appointment-panel', 'data-phone']
+        .some((attr) => child.getAttribute(attr) === 'open');
     const kept = key !== null && key === shownKey ? Array.from(mount.childNodes ?? []).filter(isWindow) : [];
     for (const child of Array.from(mount.childNodes ?? [])) {
       if (!kept.includes(child)) mount.removeChild(child);
@@ -3607,7 +3625,7 @@ export function createCustomerCardView(deps) {
     };
     section(left, '', quickActions, card, {
       resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
-    });
+    }, { numbers: schedaNumbers(card, profile, timeline) });
     section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
     section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
