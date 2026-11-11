@@ -921,7 +921,7 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 18px 20px; }
 .bo-seq-headcard { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
 .bo-seq-headtext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--data-soft); color: var(--data-ink); }
+.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
 .bo-seq-headactions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .bo-seq-headactions .ui-btn { height: 38px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 700; }
 .bo-seq-confirm { margin: 0; font-size: 13px; font-weight: 700; }
