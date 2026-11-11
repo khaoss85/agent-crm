@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, memberText, nameFromProfile, teamPeople } from './admin-labels.js';
+import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -332,7 +332,9 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
+    // An id with no person behind it reads as a name («marco» → «Marco»,
+    // subjectText), never as the raw id (design check #750).
+    const base = name ?? (listed ? subjectText(primary) : null) ?? 'Membro del team';
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -394,7 +396,8 @@ export function resolveMemberName(subject, named, members) {
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
-  if (!isTechnicalMemberText(subject)) return subject;
+  const words = subjectText(subject);
+  if (words !== null) return words;
   return null;
 }
 

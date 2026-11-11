@@ -128,12 +128,12 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
       && node.childNodes[0]?.textContent === label);
     return cell ? cell.childNodes[1].textContent : null;
   };
-  assert.equal(fact('Referente'), 'maria', 'the referente fact paints');
+  assert.equal(fact('Referente'), 'Maria', 'the referente fact paints');
   assert.equal(fact('Fase'), 'Scoperta', 'the stage label paints, not its key');
   const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-offer-amount');
   assert.equal(amount?.textContent, '27.500 €', 'the value leads the page with the Italian thousands separator');
   assert.equal(fact('Chiusura prevista'), '20 nov 2026', 'the close date reads in Italian');
-  assert.equal(fact('Creata da'), 'maria', 'who created the deal reads from its creation event');
+  assert.equal(fact('Creata da'), 'Maria', 'who created the deal reads from its creation event');
   assert.equal(fact('Creata il'), '2 ott 2026', 'the creation day reads in Italian');
   assert.equal(fact('Ultima modifica'), '28 ott 2026', 'the update day reads in Italian');
   assert.ok(text.includes('chiusura prevista 20 nov 2026'), 'the close date sits under the value');
@@ -286,7 +286,7 @@ test('Modifica prefills from the record and Salva PATCHes the three facts', asyn
     { valueCents: 30050, expectedCloseDate: '2026-12-01', owner: 'guido' },
     'euro text becomes integer cents; the date and referente travel verbatim',
   );
-  assert.ok(mount.textContent.includes('guido'), 'the re-rendered detail shows the saved referente');
+  assert.ok(mount.textContent.includes('Guido'), 'the re-rendered detail shows the saved referente');
 });
 
 test('the edit validates before writing and keeps the form on a refused save', async () => {
@@ -315,7 +315,7 @@ test('the edit validates before writing and keeps the form on a refused save', a
 
   still.__cancelEdit();
   assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 1, 'Annulla writes nothing');
-  assert.ok(mount.textContent.includes('maria'), 'the detail still shows the stored referente');
+  assert.ok(mount.textContent.includes('Maria'), 'the detail still shows the stored referente');
 });
 
 test('offer routes parse canonically; hostile routes are invalid', async () => {
@@ -388,11 +388,11 @@ test('c1649d1d: the history names who moved the offer from which stage to which'
   const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
   await view.renderOfferDetail('off1');
   const text = mount.textContent;
-  assert.ok(text.includes('Cambio di stato · da Scoperta a Vinta · da maria'),
+  assert.ok(text.includes('Cambio di stato · da Scoperta a Vinta · da Maria'),
     'a pipeline move reads who, from which stage to which, and the actor the record corroborates');
-  assert.ok(text.includes('Cambio di fase · da qualificazione a proposta · da maria'),
+  assert.ok(text.includes('Cambio di fase · da qualificazione a proposta · da Maria'),
     'a core move reads its from/to in Italian too');
-  assert.ok(text.includes('Offerta aggiornata · da maria'), 'an unlabeled move keeps the generic line');
+  assert.ok(text.includes('Offerta aggiornata · da Maria'), 'an unlabeled move keeps the generic line');
   assert.ok(!text.includes('fantasma') && !text.includes('spettro'),
     'a side without a label never paints a raw key');
   assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
