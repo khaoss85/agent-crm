@@ -1058,6 +1058,7 @@ export function createCustomerCardView(deps) {
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
+        linked,
         connected: linked && (channel !== 'email' || sender !== null),
         connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
@@ -1459,7 +1460,7 @@ export function createCustomerCardView(deps) {
    * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
-  function composerAiRow({ spaceId, navCtx, text, channel, spaceLinked, subject, restoreSubject, changed, baseline, setBaseline }) {
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
     const row = el('div', 'bo-composer-ai');
     // The composer generation this row was built in: Scrivi again, ✕ or Esc
     // supersede it (openComposer bumps the counter on every opening).
@@ -1550,7 +1551,7 @@ export function createCustomerCardView(deps) {
         line.appendChild(back);
       }
     };
-    // No channel connected in the space: the one way forward is Connettori.
+    // No channel to write on: the one way forward is Connettori.
     const sayConnect = () => {
       say('');
       line.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
@@ -1575,10 +1576,10 @@ export function createCustomerCardView(deps) {
       }
       if (picked === null) {
         // backlog:bd9ae1482194 (verifica 11/11): with nothing to pick, the
-        // line says what to do — link a channel in Connettori, or (when the
-        // space has channels) that this customer has no address on them.
-        if (spaceLinked()) say('Questo cliente non ha un recapito sui canali collegati.');
-        else sayConnect();
+        // line says what to do. Scrivi only opens for a customer with an
+        // address, so «no channel to pick» always means the customer's
+        // channels are not linked (or not usable) yet: Connettori.
+        sayConnect();
         return;
       }
       const mine = ++drafting;
@@ -1884,24 +1885,27 @@ export function createCustomerCardView(deps) {
       list.appendChild(chip);
       radios.push({ entry, radio, chip });
     }
-    if (offLinked.length > 0) {
+    // backlog:bd9ae1482194: the space links none of the channels the
+    // composer writes on (no active row, no profile Gmail). Production
+    // 6b886ee: the customer has addresses, so the per-channel «canale non
+    // collegato» line used to win — with nothing linked at all the one line
+    // is the way to Connettori.
+    const spaceUnlinked = !channels.some((entry) => entry.linked === true);
+    if (spaceUnlinked) {
+      offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+    } else if (offLinked.length > 0) {
       offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
       offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     }
-    // backlog:bd9ae1482194: no channel the composer writes on is linked in
-    // the space — the AI line and «A» then point to Connettori, not to a
-    // channel nobody can pick.
-    const spaceUnlinked = !channels.some((entry) => entry.connected === true);
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);
-    if (offLinked.length > 0) body.appendChild(offLine);
+    if (offLine.firstChild) body.appendChild(offLine);
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
     const ai = composerAiRow({
       spaceId, navCtx, text,
       channel: () => (selected !== null ? selected.channel : null),
-      spaceLinked: () => !spaceUnlinked,
       subject: () => subjectInput,
       restoreSubject: (value) => {
         if (subjectInput !== null) subjectInput.value = value;
@@ -1922,11 +1926,9 @@ export function createCustomerCardView(deps) {
     if (selected !== null) select(selected);
     else {
       send.setAttribute('disabled', 'disabled');
-      // backlog:bd9ae1482194: «A» says which of the two cases it is, in
-      // the same words as the AI line.
-      toLine.textContent = spaceUnlinked
-        ? 'Nessun canale collegato'
-        : 'Nessun recapito di questo cliente sui canali collegati';
+      // backlog:bd9ae1482194: the space has no channel at all, or only
+      // channels this customer cannot be reached on.
+      toLine.textContent = spaceUnlinked ? 'Nessun canale collegato' : 'Nessun canale collegato per questo cliente';
       fromRow.setAttribute('data-empty', 'true');
       subjectHolder.setAttribute('data-empty', 'true');
     }
