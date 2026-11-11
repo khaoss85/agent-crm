@@ -30,12 +30,23 @@ test('1. the «view this email in an HTML-capable client / in your browser» fam
     'Please view this email in your browser and tell me if the logo is right');
 });
 
-test('1. the scheda shows the mail subject, never the stand-in body', () => {
-  const item = { entry: 'message', channel: 'email', body: 'Please view this email in an HTML-capable email client.', subject: 'Nuovi esercizi per te' };
-  assert.equal(card.passageText(item), 'Nuovi esercizi per te');
-  assert.equal(card.passageText({ ...item, subject: null }), '', 'no subject: nothing, never the stand-in');
-  const real = { entry: 'message', channel: 'email', body: 'Ciao,\nci vediamo giovedì https://example.com/agenda', subject: 'Appuntamento' };
-  assert.equal(card.passageText(real), 'Ciao,\nci vediamo giovedì https://example.com/agenda', 'a real body stays whole');
+test('1. the cronologia reads like Gmail: «Oggetto — testo pulito», never the stand-in, never empty', () => {
+  const muscle = {
+    entry: 'message', channel: 'email', subject: 'Nuovi esercizi per te',
+    body: 'Please view this email in an HTML-capable email client.\n\nOggi: 3 nuovi esercizi per le spalle.',
+  };
+  assert.equal(card.passagePreview(muscle), 'Nuovi esercizi per te — Oggi: 3 nuovi esercizi per le spalle.',
+    'a MuscleWiki mail with the stand-in and real text shows the real text');
+  const whatsapp = { entry: 'message', channel: 'whatsapp', subject: null, body: 'Ciao, confermo per giovedì alle 15' };
+  assert.equal(card.passagePreview(whatsapp), 'Ciao, confermo per giovedì alle 15', 'a WhatsApp without subject shows its text');
+  const standIn = { entry: 'message', channel: 'email', body: 'Please view this email in an HTML-capable email client.', subject: 'Nuovi esercizi per te' };
+  assert.equal(card.passagePreview(standIn), 'Nuovi esercizi per te', 'only a stand-in: the subject');
+  assert.equal(card.passagePreview({ ...standIn, subject: null }), '', 'nothing at all: the caller writes the no-text line');
+  assert.equal(card.PASSAGE_NO_TEXT, '(nessun testo)');
+  const long = { entry: 'message', channel: 'email', subject: 'Report', body: `Ciao,\n${'parola '.repeat(60)}https://example.com/report` };
+  assert.ok(card.passagePreview(long).length <= 140 && card.passagePreview(long).endsWith('…'), 'bounded like every preview');
+  assert.equal(card.passageFullText(long), `Ciao,\n${'parola '.repeat(60)}https://example.com/report`.trim(), 'the full body stays behind «Mostra tutto»');
+  assert.equal(card.passageFullText(standIn), '', 'a stand-in body has no full text to open');
 });
 
 test('2. table cells, line breaks and closing blocks never glue words', () => {
