@@ -160,6 +160,70 @@ function machineToken(token) {
 }
 
 /**
+ * The Italian mailboxes of the automated roles (backlog:bab63e32acdb,
+ * production 11/11: a PayPal receipt from `assistenza@paypal.it`). Oggi
+ * only: the Gmail sync keeps storing these messages (receipts carry their
+ * subject and attachments), they just never wait for a reply.
+ */
+const ITALIAN_ROLE_LOCALS = Object.freeze(['assistenza', 'notifiche', 'avvisi', 'fatturazione', 'fatture', 'ordini', 'ricevute']);
+
+/** A PEC mailbox: a `pec` label in the domain (`pec.libero.it`, `pec.aruba.it`) or a PEC-only provider. */
+const PEC_PROVIDERS = Object.freeze(['legalmail.it', 'postacert.it', 'postecert.it', 'arubapec.it']);
+
+/** Words of a website contact form in a subject or the opening of a body. */
+const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission|modulo di contatto|richiesta di contatto|nuovo contatto dal sito|messaggio dal sito)\b/i;
+
+/**
+ * A lower-case address out of a handle («Ada <ada@x.it>» reads `ada@x.it`), null when none.
+ * @param {unknown} handle
+ */
+function addressOf(handle) {
+  if (typeof handle !== 'string') return null;
+  const text = handle.trim().toLowerCase();
+  const inside = text.match(/<([^<>\s]+@[^<>\s]+)>/);
+  const address = inside ? inside[1] : text;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address) ? address : null;
+}
+
+/**
+ * Whether one inbound message is a notification, not a person waiting for a
+ * reply (backlog:bab63e32acdb, production 11/11, Presti › Da rispondere).
+ * A general rule, never a list of names:
+ * - a website contact form is a real person writing: never a notification,
+ *   whatever mailbox the form sends from (the form channel, or contact-form
+ *   words in the subject or the opening of the body);
+ * - an automated sender (`isAutomatedSender`: no-reply, notifications,
+ *   receipts and billing mailboxes, a «Noreply» display name) or the
+ *   Italian mailbox of the same roles (`assistenza@`, `ricevute@`…);
+ * - a certified-mail (PEC) mailbox: the receipts and copies a PEC box sends;
+ * - the owner writing to themselves: a sender among the space's own
+ *   addresses (`ownAddresses`, the linked mailboxes of the profile).
+ * Only e-mail is classified: a WhatsApp or Instagram message is a person.
+ * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown } | null | undefined} message
+ * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown> }} [context]
+ */
+export function isNotificationMessage(message, { ownAddresses = [], labels = [] } = {}) {
+  if (!message || typeof message !== 'object') return false;
+  const channel = String(message.channel ?? '').toLowerCase();
+  if (channel === 'website-form' || channel === 'web' || channel === 'site-form') return false;
+  const opening = typeof message.body === 'string' ? message.body.slice(0, 300) : '';
+  const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
+  if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
+  if (channel !== 'email') return false;
+  if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
+  const address = addressOf(message.remoteHandle);
+  if (address === null) return false;
+  const local = address.slice(0, address.lastIndexOf('@')).split('+')[0] ?? '';
+  if (ITALIAN_ROLE_LOCALS.some((role) => local === role || ['-', '_', '.'].some((sep) => local.startsWith(`${role}${sep}`)))) return true;
+  const domain = address.slice(address.lastIndexOf('@') + 1);
+  if (domain.split('.').includes('pec') || PEC_PROVIDERS.includes(domain) || address.startsWith('posta-certificata@')) return true;
+  for (const own of ownAddresses) {
+    if (addressOf(own) === address) return true;
+  }
+  return false;
+}
+
+/**
  * Whether a message comes from a machine, not a person (backlog:bab63e32acdb,
  * production 11/11: Oggi › Da rispondere offered «Rispondi» on PayPal
  * receipts, Google Docs comments and PEC notices). The repo's sender rules

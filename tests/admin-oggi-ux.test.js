@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildInbox, buildPreCallBrief, buildTodayAgenda, createOggiView, renderOggi,
+  buildInbox, buildPreCallBrief, buildTodayAgenda, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
-import { isAutomatedSender } from '../apps/admin/public/admin-labels.js';
+import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
 import { takePendingCalendarEvent, writePendingCalendarEvent } from '../apps/admin/public/admin-prefill.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { isAutomatedGmailSender } from '../packages/channels/src/gmail.js';
@@ -263,7 +263,6 @@ const MACHINE_SENDERS = [
   ['drive-shares-dm-noreply@google.com', 'Ada Rossi (tramite Google Drive)'],
   ['notifications@ahrefs.com', 'Ahrefs'],
   ['hello@news.ahrefs.com', 'Ahrefs'],
-  ['assistenza@paypal.it', 'PayPal Noreply'],
   ['avvisi@unicredit.it', 'UniCredit S.p.A. NO-REPLY'],
 ];
 const PEOPLE = [
@@ -363,4 +362,46 @@ test('bab63e32acdb: the open group stays open when the day repaints, and its row
   toggle().dispatch('click');
   await view.render({ spaceName: 'Spazio', links: [], now: NOW });
   assert.equal(toggle().getAttribute('aria-expanded'), 'true', 'still open after a repaint');
+});
+
+// The rows of Presti › Da rispondere on 11/11 ~15:00 (giro esplorativo).
+// Verified addresses: the PEC copy and the PayPal receipt; for Google Docs,
+// Namecheap and Ahrefs only the display name was visible, so their
+// addresses are the senders' usual ones.
+const PRESTI = {
+  pec: { channel: 'email', remoteHandle: 'daniele.pelleri@pec.libero.it', subjectLabel: 'Daniele Pelleri', mailSubject: 'POSTA CERTIFICATA: Copia di messaggio', body: 'Copia di messaggio di Posta Elettronica Certificata' },
+  paypal: { channel: 'email', remoteHandle: 'assistenza@paypal.it', subjectLabel: 'PayPal', mailSubject: 'Ricevuta del pagamento a Sky Italia', body: 'Ciao daniele pelleri Hai pagato 4,99 € EUR a Sky Italia' },
+  docs: { channel: 'email', remoteHandle: 'comments-noreply@docs.google.com', subjectLabel: 'Francesco Tirsi (Documenti Google)', body: 'Nuova attività nel seguente documento' },
+  namecheap: { channel: 'email', remoteHandle: 'support@namecheap.com', subjectLabel: 'Namecheap Support', body: 'Download the new Private Email mobile app' },
+  ahrefs: { channel: 'email', remoteHandle: 'noreply@ahrefs.com', subjectLabel: 'Ahrefs Site Audit', body: 'New crawl for Danielepelleri400 internal URLs' },
+  form: { channel: 'email', remoteHandle: 'noreply@arvo.app', subjectLabel: 'Arvo Contact', mailSubject: 'New contact form submission', body: 'NEW CONTACT FORM SUBMISSION Name: Julian Ross' },
+  person: { channel: 'email', remoteHandle: 'lia.marroni@gmail.com', subjectLabel: 'Lia Marroni', body: 'Avete posto giovedì?' },
+};
+
+test('bab63e32acdb: the general rule on the real Presti rows — receipts, PEC, no-reply in Notifiche; the contact form and people in Da rispondere', () => {
+  for (const key of ['pec', 'paypal', 'docs', 'namecheap', 'ahrefs']) {
+    assert.equal(isNotificationMessage(PRESTI[key]), true, `${key} is a notification`);
+  }
+  assert.equal(isNotificationMessage(PRESTI.form), false, 'a website contact form is a person writing, even from a no-reply mailbox');
+  assert.equal(isNotificationMessage(PRESTI.person), false);
+  assert.equal(isNotificationMessage({ channel: 'website-form', remoteHandle: 'noreply@sito.it', body: 'Ciao' }), false, 'the form channel is a person');
+  assert.equal(isNotificationMessage({ channel: 'whatsapp', remoteHandle: '+393331234567', subjectLabel: 'Noreply' }), false, 'only e-mail is classified');
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'avvocato@legalmail.it' }), true, 'a PEC-only provider');
+  // The owner writing to themselves, whatever the mailbox looks like.
+  const own = ownMailboxes({ member: { email: 'Dan@Presti.it' }, connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'op@presti.it' }] } });
+  assert.deepEqual(own, ['op@presti.it', 'dan@presti.it']);
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'Daniele <dan@presti.it>' }, { ownAddresses: own }), true, 'a message from the owner to the owner');
+  assert.equal(isNotificationMessage({ channel: 'email', remoteHandle: 'dan@presti.it' }), false, 'without the profile the same address is a person');
+  assert.deepEqual(ownMailboxes(null), []);
+});
+
+test('bab63e32acdb: Presti › Da rispondere keeps Arvo Contact and the person, the other five go to Notifiche', () => {
+  const messages = Object.entries(PRESTI).map(([key, row], index) => ({
+    ...row, id: `m-${key}`, conversationId: `c-${key}`, direction: 'inbound', ...host, subjectId: key,
+    occurredAt: `2026-10-19T0${index}:00:00.000Z`,
+  }));
+  const inbox = buildInbox({ messages, now: NOW });
+  assert.deepEqual(inbox.rows.map((row) => row.id).sort(), ['c-form', 'c-person']);
+  assert.equal(inbox.total, 2);
+  assert.deepEqual(inbox.notifications.rows.map((row) => row.id).sort(), ['c-ahrefs', 'c-docs', 'c-namecheap', 'c-paypal', 'c-pec']);
 });

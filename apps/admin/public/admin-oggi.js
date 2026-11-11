@@ -33,7 +33,7 @@
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isAutomatedSender, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent } from './admin-prefill.js';
 
@@ -983,15 +983,15 @@ function realLabel(value) {
  *
  * Machine mail is not a conversation waiting for the team
  * (backlog:bab63e32acdb, production 11/11: PayPal receipts, Google Docs
- * comments, PEC notices offered «Rispondi»): a sender the repo's sender
- * rules call automated (`isAutomatedSender`: the Gmail no-reply and
- * notification addresses, the technical local parts, a display name
- * carrying «Noreply») goes to `notifications`, apart, and never counts as
- * waiting. `pendingNames` marks the rows whose name a profile read still
- * has to bring (backlog:bd5e84545021).
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean }} input
+ * comments, PEC copies offered «Rispondi»): a message the general rule
+ * calls a notification (`isNotificationMessage`: automated senders, PEC
+ * mailboxes, the owner writing to themselves; a contact form never) goes to
+ * `notifications`, apart, and never counts as waiting. `ownAddresses` are
+ * the space's own mailboxes (`ownMailboxes`). `pendingNames` marks the rows
+ * whose name a profile read still has to bring (backlog:bd5e84545021).
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string> }} input
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [] } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -1020,11 +1020,11 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectId: message.subjectId ?? conversation?.subjectId,
     };
     const subjectKey = inboxSubjectKey(subject);
-    const machine = isAutomatedSender(
-      nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle),
-      message.subjectLabel,
-      conversation?.subjectLabel,
-    );
+    const machine = isNotificationMessage({
+      ...message,
+      channel,
+      remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle),
+    }, { ownAddresses, labels: [conversation?.subjectLabel] });
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)
       ?? realLabel(message.subjectLabel)
@@ -1056,6 +1056,25 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     rows: waiting.slice(0, Math.max(0, limit)),
     notifications: { total: automated.length, rows: automated.slice(0, Math.max(0, limit)) },
   };
+}
+
+/**
+ * The space's own mailboxes from a GET /api/profile answer: the accounts
+ * of its linked connectors and the member's own e-mail (backlog:bab63e32acdb:
+ * a message the owner sent themselves is a notification). Empty when the
+ * profile is unreadable.
+ * @param {unknown} profile
+ * @returns {Array<string>}
+ */
+export function ownMailboxes(profile) {
+  const out = [];
+  const add = (value) => {
+    if (typeof value === 'string' && value.includes('@') && !out.includes(value.trim().toLowerCase())) out.push(value.trim().toLowerCase());
+  };
+  const items = /** @type {any} */ (profile)?.connections?.items;
+  if (Array.isArray(items)) for (const item of items) add(item?.account);
+  add(/** @type {any} */ (profile)?.member?.email);
+  return out;
 }
 
 export const OGGI_TOTAL_CHANNELS = 9;
@@ -1233,8 +1252,8 @@ async function readModulePage(client, module, filters = {}) {
  * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
  * @returns {Promise<Record<string, string>>}
  */
-export async function readInboxNames(client, messages, conversations, now) {
-  const { rows } = buildInbox({ messages, conversations, now });
+export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
+  const { rows } = buildInbox({ messages, conversations, now, ownAddresses });
   const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
   /** @type {Record<string, string>} */
   const names = {};
@@ -1389,7 +1408,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
   const [inboxNames, appointmentNames, members] = await Promise.all([
     outcome.inboxAvailable
-      ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now)
+      ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile) })
       : Promise.resolve({}),
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
     // The roster names the member holding each slot: read only when a slot
@@ -2182,7 +2201,7 @@ export function createOggiView(deps) {
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
-            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames }) }
+            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames, ownAddresses: ownMailboxes(last.profile) }) }
             : { available: false, total: 0, rows: [] },
         missing,
         connections: last.connections,
