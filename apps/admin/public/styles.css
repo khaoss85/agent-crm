@@ -1290,6 +1290,7 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-tool { display: inline-flex; align-items: center; gap: 6px; }
 .bo-clienti-tool .ui-icon { width: 18px; height: 18px; }
 .bo-clienti-toolcount { font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.bo-clienti-toolword { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .bo-clienti-toolbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; display: inline-grid; place-items: center; background: var(--accent); color: var(--paper); font-size: 11px; font-weight: 700; }
 .bo-clienti-menubutton.ui-btn:has(.bo-clienti-tool) { min-width: 40px; justify-content: center; }
 .bo-clienti-menu { position: absolute; right: 0; z-index: 15; margin-top: 8px; width: 290px; max-width: min(78vw, 320px); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 6px; box-shadow: var(--shadow); }
@@ -1298,6 +1299,10 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-item.ui-chip { display: block; width: 100%; text-align: left; font-size: 14px; border: 0; background: transparent; color: var(--ink); padding: 7px 10px; border-radius: 8px; }
 .bo-clienti-item.ui-chip:hover { background: var(--surface-soft); }
 .bo-clienti-item.active { font-weight: 700; }
+/* backlog:754918ad8da7: the active order or filter carries a ✓ in a fixed slot, like the Pipeline voices. */
+.bo-clienti-check { display: inline-block; width: 1.25em; color: var(--accent); font-weight: 700; }
+/* A reload keeps the rows on screen, only quieter, so the bar never jumps. */
+.bo-clienti-body[aria-busy="true"] { opacity: .55; transition: opacity .12s; pointer-events: none; }
 .bo-clienti-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .bo-clienti-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; border-radius: 99px; padding: 5px 8px 5px 10px; background: var(--line-soft); }
 .bo-clienti-chipx.ui-chip { border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 0 2px; }

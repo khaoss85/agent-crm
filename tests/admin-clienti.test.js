@@ -262,11 +262,15 @@ test('BO-F6-08 fetta 1: the search bar shows the prototype placeholder and an Az
   input.value = 'milano';
   input.dispatch('input');
   assert.ok(!clear.classList.contains('hidden'), 'typing reveals Azzera');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 2, 'Invio searches at once');
+  assert.ok(client.calls[1].includes('q=milano'), client.calls[1]);
   clear.dispatch('click');
   await flush();
   assert.equal(input.value, '', 'Azzera empties the field');
-  assert.equal(client.calls.length, 2, 'Azzera reloads the list');
-  assert.ok(!client.calls[1].includes('q='), `the search is gone: ${client.calls[1]}`);
+  assert.equal(client.calls.length, 3, 'Azzera reloads the list');
+  assert.ok(!client.calls[2].includes('q='), `the search is gone: ${client.calls[2]}`);
 });
 
 test('BO-F6-08 fetta 2: the toolbar is three prototype icons with their counts', async () => {
@@ -918,4 +922,132 @@ test('da leggere: a new message lights the row up on the quiet re-read, no reloa
   pending.shift().fn();
   await flush();
   assert.equal(client.calls.length, 2, 'an invalidated list never re-reads');
+});
+
+/* ------------------------------------------- backlog:754918ad8da7 (punti 8-10) */
+
+const timers = () => {
+  const queue = [];
+  return { queue, schedule: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, fire() { const all = queue.splice(0); for (const t of all) t.fn(); } };
+};
+
+test('754918ad8da7: the sort toggle reads «Ordina: X» and the menu ticks the active order', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const sort = toolToggle(mount, 'Ordina');
+  assert.ok(sort.textContent.includes('Ordina: Ultimo contatto'), `the toggle names the order on screen: «${sort.textContent}»`);
+  sort.dispatch('click');
+  const active = byAttr(mount, 'button', 'data-sort', 'recent');
+  const other = byAttr(mount, 'button', 'data-sort', 'name');
+  assert.equal(active.getAttribute('aria-checked'), 'true');
+  assert.ok(active.textContent.startsWith('✓'), `the active order carries the ✓: «${active.textContent}»`);
+  assert.equal(other.getAttribute('aria-checked'), 'false');
+  assert.ok(!other.textContent.includes('✓'));
+  other.dispatch('click');
+  await flush();
+  const after = toolToggle(mount, 'Ordina');
+  assert.ok(after.textContent.includes('Ordina: Nome A–Z'), `the toggle follows the pick: «${after.textContent}»`);
+  after.dispatch('click');
+  assert.equal(byAttr(mount, 'button', 'data-sort', 'name').getAttribute('aria-checked'), 'true');
+  assert.ok(byAttr(mount, 'button', 'data-sort', 'name').textContent.startsWith('✓'));
+  // The channel and status filters tick their choice the same way.
+  toolToggle(mount, 'Filtri').dispatch('click');
+  assert.equal(byAttr(mount, 'button', 'data-filter', 'canale:all').getAttribute('aria-checked'), 'true');
+  assert.ok(byAttr(mount, 'button', 'data-filter', 'stato:all').textContent.startsWith('✓'));
+});
+
+test('754918ad8da7: the list filters while typing, once, and the field keeps its node and value', async () => {
+  const client = stubClient();
+  const clock = timers();
+  const { mount } = await render(client, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  const input = mount.findAll('input')[0];
+  for (const text of ['m', 'mi', 'mil']) {
+    input.value = text;
+    input.dispatch('input');
+  }
+  assert.equal(client.calls.length, 1, 'no read per keystroke');
+  assert.equal(clock.queue.length, 3);
+  assert.ok(clock.queue.every((entry) => entry.ms === 300), 'one quiet time, like the Calendario');
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 2, 'only the last keystroke reads');
+  assert.ok(client.calls[1].includes('q=mil'), client.calls[1]);
+  assert.equal(mount.findAll('input')[0], input, 'the field is never rebuilt, so focus and caret stay');
+  assert.equal(input.value, 'mil');
+  // Enter drops the pending keystroke read: one read, never two.
+  input.value = 'milano';
+  input.dispatch('input');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 3, 'Invio searches at once and the pending read is dropped');
+  assert.ok(client.calls[2].includes('q=milano'));
+});
+
+test('754918ad8da7: the Colonne menu stays open between ticks and repaints the table', async () => {
+  const { mount } = await render(stubClient());
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  toolToggle(mount, 'Colonne').dispatch('click');
+  const menu = menus()[3];
+  assert.ok(!menu.classList.contains('hidden'), 'the columns menu opens');
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'the menu stays open after a tick');
+  assert.equal(menus()[3], menu, 'the same menu, never a rebuilt one');
+  byAttr(mount, 'button', 'data-column', 'telefono').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'and after a second tick');
+  assert.ok(byAttr(mount, 'button', 'data-column', 'email').textContent.startsWith('✓'));
+  assert.equal(byAttr(mount, 'button', 'data-column', 'email').getAttribute('aria-checked'), 'true');
+  const heads = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-clienti-th').map((node) => node.textContent);
+  assert.ok(heads.includes('Email') && heads.includes('Telefono'), `the table shows the ticked columns: ${heads}`);
+  assert.equal(toolToggle(mount, 'Colonne').getAttribute('aria-label'), 'Colonne: 6 di 8 visibili');
+  assert.ok(toolToggle(mount, 'Colonne').textContent.includes('6/8'));
+  byAttr(mount, 'button', 'data-action', 'reset-columns').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'Ripristina keeps the menu open too');
+  assert.ok(byAttr(mount, 'button', 'data-column', 'email').textContent.startsWith('○'));
+  // Escape still closes it.
+  menu.dispatch('keydown', { key: 'Escape' });
+  assert.ok(menu.classList.contains('hidden'));
+});
+
+test('754918ad8da7: after Azzera the chips and rows stay until the new page arrives, then change once', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const chipsRow = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-chips'));
+  assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the filter chip shows');
+  gated = true;
+  mount.findAll('button').find((node) => node.textContent === 'Azzera' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
+  await flush();
+  // While the read is in flight nothing jumps: chips and rows stay, the
+  // table only reads busy, and no loading line pushes the bar down.
+  assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the chip row stays while loading');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no loading line above the bar');
+  const body = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-body'));
+  assert.equal(body.getAttribute('aria-busy'), 'true');
+  release();
+  await flush();
+  assert.ok(!chipsRow().textContent.includes('WhatsApp'), 'the chip goes with the new page');
+  assert.equal(body.getAttribute('aria-busy'), null);
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
+test('754918ad8da7: the status line sits under the bar, so an empty page never pushes the search down', async () => {
+  const client = stubClient({ pages: [{ customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true }] });
+  const { mount } = await render(client);
+  const panel = mount.findAll('section').find((node) => node.getAttribute('class') === 'bo-clienti');
+  const kids = panel.childNodes.map((node) => String(node.getAttribute('class') ?? ''));
+  const at = (cls) => kids.findIndex((value) => value.split(/\s+/).includes(cls));
+  assert.ok(at('bo-clienti-status') > at('bo-clienti-search'), `status after the search: ${kids}`);
+  assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
+  assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
 });
