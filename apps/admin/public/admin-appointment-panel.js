@@ -11,14 +11,14 @@
 // `/api/appointments/confirm` like the Calendario's Conferma. No AI is
 // involved: the window works the same with the AI switched off.
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
   BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
   formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
   suggestSlotsPath,
 } from './admin-calendario.js';
-import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
+import { openSchedaWindow } from './admin-scheda-window.js';
 
 /** Days ahead the window searches for free slots. */
 export const APPOINTMENT_SEARCH_DAYS = 7;
@@ -324,7 +324,7 @@ export function openAppointmentPanel(deps) {
       return;
     }
     booking = true;
-    const release = holdButton(confirm, 'Prenoto…');
+    const release = uiHold(confirm, 'Prenoto…');
     if (submissionKey === null) submissionKey = deps.issueKey();
     try {
       const answer = await client.request(APPOINTMENT_CONFIRM_PATH, {

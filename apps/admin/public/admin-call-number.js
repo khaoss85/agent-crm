@@ -6,8 +6,8 @@
 // and starts the call with the usual «Chiama» flow. The CRM call route
 // dials the number held on the card, so a number is always saved first.
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
+import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { openSchedaWindow } from './admin-scheda-window.js';
 
 /** Identity systems whose handle is a phone number (same list as the card). */
 const PHONE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
@@ -191,7 +191,7 @@ export function openCallNumberPanel(deps) {
       held = entry.held;
     }
     busy = true;
-    const release = holdButton(go, held ? 'Chiamo…' : 'Salvo…');
+    const release = uiHold(go, held ? 'Chiamo…' : 'Salvo…');
     try {
       const refusal = await deps.choose(number, held);
       if (refusal !== null && !gone()) say(refusal);

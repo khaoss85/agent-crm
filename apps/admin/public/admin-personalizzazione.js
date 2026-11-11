@@ -156,7 +156,7 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * The open toolbar menu, if any (Aggiungi, Stato, Ordina per). One menu per
@@ -599,6 +599,7 @@ export function createPersonalizzazioneView(deps) {
 
   async function mutate(path, body) {
     state.busy = true;
+    busyWrite = `${path}|${body?.unit ?? ''}`; // cta-loading: the pressed button reads «…» on the re-render
     render();
     try {
       const answer = await client.request(path, { method: 'POST', body });
@@ -607,6 +608,8 @@ export function createPersonalizzazioneView(deps) {
       state.busy = false;
     }
   }
+  let busyWrite = '';
+  const busyOn = (path, unit) => state.busy && busyWrite === `${path}|${unit ?? ''}`;
 
   /** @param {string} hash */
   function go(hash) {
@@ -991,6 +994,7 @@ export function createPersonalizzazioneView(deps) {
       const cell = el(doc, 'td');
       const toggle = el(doc, 'button', { text: 'Disattiva', attrs: { type: 'button' } });
       toggle.disabled = state.busy;
+      if (busyOn('/api/space-packages/deactivate', entry.name)) uiMarkBusy(toggle, 'Disattivo…');
       toggle.addEventListener('click', async () => {
         try {
           await mutate('/api/space-packages/deactivate', { spaceId: readSpace().trim(), unit: entry.name });
@@ -1039,6 +1043,7 @@ export function createPersonalizzazioneView(deps) {
       const active = unitStatus({ entry, row }) === 'attiva';
       const add = el(doc, 'button', { text: active ? '✓' : '+', attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` } });
       add.disabled = state.busy || active;
+      if (busyOn('/api/space-packages/activate', entry.name)) uiMarkBusy(add, 'Attivo…');
       if (!active) {
         add.addEventListener('click', async () => {
           try {

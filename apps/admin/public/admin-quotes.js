@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -229,7 +229,7 @@ export function createQuoteView(deps) {
     }
     const createButton = el('button', undefined, 'Crea preventivo');
     const createError = el('small', 'field-error', '');
-    createButton.addEventListener('click', async () => {
+    createButton.addEventListener('click', () => uiBusy(createButton, 'Creo…', async () => {
       const opportunityId = String(opportunityInput.value ?? '').trim();
       if (!opportunityId) {
         createError.textContent = 'Scegli l’offerta per cui creare il preventivo.';
@@ -247,7 +247,7 @@ export function createQuoteView(deps) {
       } finally {
         createButton.disabled = false;
       }
-    });
+    }));
     form.appendChild(opportunityInput);
     form.appendChild(bookSelect);
     form.appendChild(createButton);
@@ -458,16 +458,16 @@ export function createQuoteView(deps) {
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
         busy.push(updateButton, removeButton);
-        updateButton.addEventListener('click', () => withBusy(() => act('update-line', {
+        updateButton.addEventListener('click', () => uiBusy(updateButton, 'Aggiorno…', () => withBusy(() => act('update-line', {
           lineId: line.id,
           quantity: Number(quantityInput.value),
           discountBps: Number(discountInput.value),
           expectedRevision: quote.draftRevision,
-        })));
-        removeButton.addEventListener('click', () => withBusy(() => act('remove-line', {
+        }))));
+        removeButton.addEventListener('click', () => uiBusy(removeButton, 'Rimuovo…', () => withBusy(() => act('remove-line', {
           lineId: line.id,
           expectedRevision: quote.draftRevision,
-        })));
+        }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
         edit.appendChild(labelled('Sconto (punti base)', discountInput));
@@ -504,12 +504,12 @@ export function createQuoteView(deps) {
       const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Sconto in punti base (intero 0–10000): 1000 = 10,00%.');
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
-      addButton.addEventListener('click', () => withBusy(() => act('add-line', {
+      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
         quantity: Number(quantityInput.value),
         discountBps: Number(discountInput.value),
         expectedRevision: quote.draftRevision,
-      })));
+      }))));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
       addPanel.appendChild(labelled('Sconto (punti base)', discountInput));
@@ -532,10 +532,10 @@ export function createQuoteView(deps) {
       }
       const submitButton = el('button', undefined, 'Invia');
       busy.push(submitButton);
-      submitButton.addEventListener('click', () => withBusy(() => {
+      submitButton.addEventListener('click', () => uiBusy(submitButton, 'Invio…', () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
-      }));
+      })));
       submitPanel.appendChild(labelled('Regola di sconto', policySelect));
       submitPanel.appendChild(submitButton);
       submitPanel.__submit = () => withBusy(() => {
@@ -553,8 +553,8 @@ export function createQuoteView(deps) {
       const approveButton = el('button', undefined, 'Approva');
       const rejectButton = el('button', undefined, 'Rifiuta');
       busy.push(approveButton, rejectButton);
-      approveButton.addEventListener('click', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {})));
-      rejectButton.addEventListener('click', () => withBusy(() => act('reject', { reason: reasonInput.value })));
+      approveButton.addEventListener('click', () => uiBusy(approveButton, 'Approvo…', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {}))));
+      rejectButton.addEventListener('click', () => uiBusy(rejectButton, 'Rifiuto…', () => withBusy(() => act('reject', { reason: reasonInput.value }))));
       decidePanel.appendChild(reasonInput);
       decidePanel.appendChild(approveButton);
       decidePanel.appendChild(rejectButton);
@@ -568,7 +568,7 @@ export function createQuoteView(deps) {
       const revisePanel = el('div', 'quote-revise');
       const reviseButton = el('button', undefined, 'Rivedi (torna in bozza)');
       busy.push(reviseButton);
-      reviseButton.addEventListener('click', () => withBusy(() => act('revise', {})));
+      reviseButton.addEventListener('click', () => uiBusy(reviseButton, 'Riapro…', () => withBusy(() => act('revise', {}))));
       revisePanel.appendChild(reviseButton);
       revisePanel.__revise = () => withBusy(() => act('revise', {}));
       side.appendChild(revisePanel);
@@ -686,7 +686,7 @@ export function createQuoteView(deps) {
           }),
         });
       });
-      requestButton.addEventListener('click', request);
+      requestButton.addEventListener('click', () => uiBusy(requestButton, 'Invio…', request));
       for (const control of [providerSelect, nameInput, emailInput, roleInput, requestButton]) form.appendChild(control);
       form.appendChild(el('small', 'muted', 'Tutti i firmatari devono firmare; l’ordine dichiarato è registrato, non imposto in sequenza. Nessuna garanzia sull’identità dei firmatari.'));
       form.__request = request;
@@ -739,7 +739,7 @@ export function createQuoteView(deps) {
       const reconcileButton = el('button', undefined, 'Riconcilia con il fornitore');
       busy.push(reconcileButton);
       const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
-      reconcileButton.addEventListener('click', reconcile);
+      reconcileButton.addEventListener('click', () => uiBusy(reconcileButton, 'Controllo…', reconcile));
       state.appendChild(reconcileButton);
       state.__reconcile = reconcile;
     }

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -1432,7 +1432,7 @@ export function createCustomerCardView(deps) {
     panel.appendChild(save);
     panel.appendChild(err);
     let busy = false;
-    save.addEventListener('click', async () => {
+    save.addEventListener('click', () => uiBusy(save, 'Registro…', async () => {
       if (busy) return;
       busy = true;
       err.textContent = '';
@@ -1464,7 +1464,7 @@ export function createCustomerCardView(deps) {
       } finally {
         busy = false;
       }
-    });
+    }));
   }
   /**
    * The «Scrivi» composer panel (backlog:e9b4fc2f): channel choice among
@@ -2540,7 +2540,7 @@ export function createCustomerCardView(deps) {
     // the PATCH already in flight and send nothing.
     const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
-    save.addEventListener('click', async () => {
+    save.addEventListener('click', () => uiBusy(save, 'Salvo…', async () => {
       if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
       detailsInFlight.add(flightKey);
@@ -2573,7 +2573,7 @@ export function createCustomerCardView(deps) {
         busy = false;
         save.disabled = false;
       }
-    });
+    }));
     cancel.addEventListener('click', async () => {
       if (typeof restore === 'function') {
         restore();
@@ -2651,7 +2651,7 @@ export function createCustomerCardView(deps) {
     row.appendChild(cancel);
     box.appendChild(row);
     let busy = false;
-    save.addEventListener('click', async () => {
+    save.addEventListener('click', () => uiBusy(save, 'Salvo…', async () => {
       if (busy) return;
       busy = true;
       entry.setError('');
@@ -2665,7 +2665,7 @@ export function createCustomerCardView(deps) {
         entry.setError(humanReadError(err, { failed: 'Salvataggio non riuscito. Riprova più tardi.' }));
         busy = false;
       }
-    });
+    }));
     cancel.addEventListener('click', async () => {
       await renderCard(ctx.resource, ctx.id);
     });
@@ -2700,7 +2700,7 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', async () => {
+      refresh.addEventListener('click', () => uiBusy(refresh, 'Aggiorno…', async () => {
         if (busy) return;
         busy = true;
         try {
@@ -2715,7 +2715,7 @@ export function createCustomerCardView(deps) {
         } finally {
           busy = false;
         }
-      });
+      }));
       box.appendChild(refresh);
     }
     const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
@@ -3009,7 +3009,7 @@ export function createCustomerCardView(deps) {
             const retry = el('button', 'bo-scheda-retry', 'Riprova');
             retry.setAttribute('type', 'button');
             retry.setAttribute('data-action', 'message-retry');
-            retry.addEventListener('click', async () => {
+            retry.addEventListener('click', () => uiBusy(retry, 'Invio…', async () => {
               retry.setAttribute('disabled', '');
               try {
                 const spaceId = activeSpaceId();
@@ -3030,7 +3030,7 @@ export function createCustomerCardView(deps) {
                 toast(humanReadError(error, { failed: 'Messaggio non inviato. Riprova più tardi.' }), true);
                 retry.removeAttribute('disabled');
               }
-            });
+            }));
             bubble.appendChild(retry);
           }
         }
@@ -3070,7 +3070,7 @@ export function createCustomerCardView(deps) {
       noteButton.setAttribute('data-action', 'add-note');
       const noteError = el('small', 'field-error', '');
       let noteBusy = false;
-      noteButton.addEventListener('click', async () => {
+      noteButton.addEventListener('click', () => uiBusy(noteButton, 'Salvo…', async () => {
         if (noteBusy) return;
         noteBusy = true;
         noteError.textContent = '';
@@ -3094,7 +3094,7 @@ export function createCustomerCardView(deps) {
         } finally {
           noteBusy = false;
         }
-      });
+      }));
       noteForm.appendChild(noteInput);
       noteForm.appendChild(noteButton);
       noteForm.appendChild(noteError);
@@ -3356,7 +3356,7 @@ export function createCustomerCardView(deps) {
         if (!confirmVoice) return;
         const answer = readStageConfirm(confirmPanel, confirmVoice);
         if (!answer.ok) return;
-        void move(confirmVoice, answer.reason ?? null);
+        void uiBusy(confirmPanel.yes, 'Sposto…', () => move(confirmVoice, answer.reason ?? null));
       });
       confirmPanel.no.addEventListener('click', () => {
         confirmVoice = null;
@@ -3374,7 +3374,7 @@ export function createCustomerCardView(deps) {
             showStageConfirm(confirmPanel, offerName, voiceDef);
             return;
           }
-          void move(voiceDef);
+          void uiBusy(voice, 'Sposto…', () => move(voiceDef));
         });
         menu.appendChild(voice);
       }

@@ -1,5 +1,6 @@
 // @ts-check
 
+import { uiBusy } from './admin-ui.js';
 import { humanReadError } from './admin-core.js';
 
 /**
@@ -236,8 +237,8 @@ function decisionControls({ change, el, client, withBusy, busy, refresh }) {
       throw failure;
     }
   };
-  approve.addEventListener('click', () => { void withBusy(decide('approve')); });
-  reject.addEventListener('click', () => { void withBusy(decide('reject')); });
+  approve.addEventListener('click', () => { void uiBusy(approve, 'Approvo…', () => withBusy(decide('approve'))); });
+  reject.addEventListener('click', () => { void uiBusy(reject, 'Rifiuto…', () => withBusy(decide('reject'))); });
   busy.push(approve, reject);
 
   controls.appendChild(reason);
@@ -278,7 +279,7 @@ function proposeControls({ project, el, client, withBusy, busy, refresh }) {
   submit.setAttribute('type', 'button');
 
   submit.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(submit, 'Invio…', () => withBusy(async () => {
       error.textContent = '';
       submit.disabled = true; // no double submit while the request is in flight
       try {
@@ -294,7 +295,7 @@ function proposeControls({ project, el, client, withBusy, busy, refresh }) {
         submit.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   busy.push(submit);
 
@@ -415,7 +416,7 @@ function resolveControl({ candidate, el, client, withBusy, busy, refresh }) {
   const button = el('button', 'resolve', 'Record follow-up outcome');
   button.setAttribute('type', 'button');
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Registro…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -432,7 +433,7 @@ function resolveControl({ candidate, el, client, withBusy, busy, refresh }) {
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   busy.push(button);
   for (const node of [resolution, reason, evidence, button, error]) controls.appendChild(node);
@@ -485,7 +486,7 @@ function completeControl({ deliverable, el, client, withBusy, busy, refresh }) {
   const button = el('button', 'complete', 'Complete deliverable');
   button.setAttribute('type', 'button');
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Completo…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -497,7 +498,7 @@ function completeControl({ deliverable, el, client, withBusy, busy, refresh }) {
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   busy.push(button);
   controls.appendChild(evidence);
@@ -525,7 +526,7 @@ function planDeliverableControls({ data, project, el, client, withBusy, busy, re
   const button = el('button', 'plan', 'Plan deliverable');
   button.setAttribute('type', 'button');
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Pianifico…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -542,7 +543,7 @@ function planDeliverableControls({ data, project, el, client, withBusy, busy, re
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   busy.push(button);
   for (const node of [key, label, workPackage, milestone, button, error]) form.appendChild(node);
@@ -651,8 +652,8 @@ function recordControls({ request, el, client, withBusy, busy, refresh }) {
       throw failure;
     }
   };
-  accept.addEventListener('click', () => { void withBusy(record('accepted')); });
-  reject.addEventListener('click', () => { void withBusy(record('rejected')); });
+  accept.addEventListener('click', () => { void uiBusy(accept, 'Registro…', () => withBusy(record('accepted'))); });
+  reject.addEventListener('click', () => { void uiBusy(reject, 'Registro…', () => withBusy(record('rejected'))); });
   busy.push(accept, reject);
 
   controls.appendChild(customer);
