@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { fileMaxSecFrom } from '../../scripts/measure-piece-runner.js';
 
@@ -41,51 +42,70 @@ export function hangGuardMs() {
   return Math.max(1, Math.floor(FILE_HANG_BUDGET_MS - performance.now()));
 }
 
-/** @type {WeakMap<import('node:child_process').ChildProcess, NodeJS.Signals | number | null>} */
-const signalsSent = new WeakMap();
+/**
+ * Per child: the last signal the *test* delivered through `child.kill`, and the
+ * unwrapped `kill` the hang guard uses, so the guard's own SIGKILL never shows up
+ * as a signal from the test.
+ *
+ * @type {WeakMap<import('node:child_process').ChildProcess, { sent: NodeJS.Signals | number | null, rawKill: (signal?: NodeJS.Signals | number) => boolean }>}
+ */
+const tracked = new WeakMap();
 
 /**
- * Record every signal the test sends through `child.kill` from now on, so
- * {@link awaitChildExit} can report it in `signalSent`. Call it right after `spawn`
- * when the test may signal the child before awaiting it (awaitChildExit calls it
- * too). A signal sent around it (`process.kill(child.pid)`) is not seen.
+ * `spawn`, with every signal the test sends through `child.kill` recorded from the
+ * first moment, so {@link awaitChildExit} can report it in `signalSent`. Every child
+ * awaited with awaitChildExit must come from here: a kill sent before tracking began
+ * would be lost and «no signal sent» would prove nothing. A signal sent around it
+ * (`process.kill(child.pid)`) is not the test's `child.kill` and is not recorded.
  *
- * @template {import('node:child_process').ChildProcess} T
- * @param {T} child
- * @returns {T}
+ * @type {typeof spawn}
  */
-export function trackSignals(child) {
-  if (signalsSent.has(child)) return child;
-  signalsSent.set(child, null);
-  const kill = child.kill.bind(child);
+export const spawnTracked = /** @type {typeof spawn} */ ((...args) => {
+  const child = /** @type {import('node:child_process').ChildProcess} */ (spawn(.../** @type {[string, string[], object]} */ (args)));
+  const rawKill = child.kill.bind(child);
+  const record = { sent: /** @type {NodeJS.Signals | number | null} */ (null), rawKill };
+  tracked.set(child, record);
   child.kill = (signal = 'SIGTERM') => {
-    const delivered = kill(signal);
-    if (delivered) signalsSent.set(child, signal);
+    const delivered = rawKill(signal);
+    if (delivered) record.sent = signal;
     return delivered;
   };
   return child;
+});
+
+/** @param {import('node:child_process').ChildProcess} child */
+function exited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 /** @param {import('node:child_process').ChildProcess} child */
 function closed(child) {
-  if (child.exitCode === null && child.signalCode === null) return false;
   // Same streams Node waits on before `close`: stdout and stderr (not stdin).
-  return [child.stdout, child.stderr].every((stream) => !stream || stream.closed || stream.destroyed);
+  return exited(child) && [child.stdout, child.stderr].every((stream) => !stream || stream.closed || stream.destroyed);
 }
 
 /**
  * Wait for `child` to exit with its output drained, and report how it ended.
  *
- * @param {import('node:child_process').ChildProcess} child
+ * When the hang guard expires the wait **always** rejects, by name, whatever the
+ * pipes do: a child still running is killed (SIGKILL, by the guard, not counted as
+ * the test's signal) and awaited to its `exit`; a child that exited but whose
+ * stdout/stderr never closed (a grandchild inherited the descriptors) has its
+ * streams destroyed. The error carries `signalSent` (the test's) and `guardSignal`
+ * (the guard's, or `null` when the child had already exited).
+ *
+ * @param {import('node:child_process').ChildProcess} child spawned with {@link spawnTracked}
  * @param {{ label: string, hangGuardMs?: number, diagnostics?: () => string }} options
  *   `label` names the test in the hang error; `diagnostics` adds e.g. the child's stderr;
  *   `hangGuardMs` defaults to what is left of the file's budget ({@link hangGuardMs}).
  * @returns {Promise<{ code: number | null, signal: NodeJS.Signals | null, signalSent: NodeJS.Signals | number | null }>}
- *   `signalSent` is the last signal the test delivered through `child.kill` (see
- *   {@link trackSignals}), `null` if it sent none.
+ *   `signalSent` is the last signal the test delivered through `child.kill`, `null` if none.
  */
 export function awaitChildExit(child, { label, hangGuardMs: guardMs = hangGuardMs(), diagnostics = () => '' }) {
-  trackSignals(child);
+  const record = tracked.get(child);
+  if (!record) {
+    return Promise.reject(new TypeError(`${label}: spawn the child with spawnTracked, so the signals the test sent are known from the start`));
+  }
   // `close` waits for stdout/stderr to end; a stream nobody reads would never end,
   // so one the test left unconsumed is drained (its data was not wanted).
   for (const stream of [child.stdout, child.stderr]) {
@@ -93,26 +113,42 @@ export function awaitChildExit(child, { label, hangGuardMs: guardMs = hangGuardM
   }
   return new Promise((resolve, reject) => {
     if (closed(child)) {
-      resolve({ code: child.exitCode, signal: child.signalCode, signalSent: signalsSent.get(child) ?? null });
+      resolve({ code: child.exitCode, signal: child.signalCode, signalSent: record.sent });
       return;
     }
-    let hung = false;
-    const guard = setTimeout(() => {
-      hung = true;
-      child.kill('SIGKILL');
-    }, guardMs);
-    child.once('close', (code, signal) => {
+    let settled = false;
+    const onClose = (/** @type {number | null} */ code, /** @type {NodeJS.Signals | null} */ signal) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(guard);
-      if (hung) {
-        const extra = diagnostics();
-        reject(new Error(
-          `${label}: child never exited within its ${guardMs} ms hang guard (what was left of the file's `
-          + `${FILE_HANG_BUDGET_MS} ms budget; killed with SIGKILL; exit ${code}, signal ${signal})${extra ? `: ${extra}` : ''}`,
-        ));
+      resolve({ code, signal, signalSent: record.sent });
+    };
+    const fail = (/** @type {NodeJS.Signals | null} */ guardSignal, /** @type {string} */ what) => {
+      const extra = diagnostics();
+      const error = Object.assign(new Error(
+        `${label}: ${what} within its ${guardMs} ms hang guard (what was left of the file's ${FILE_HANG_BUDGET_MS} ms budget; `
+        + `exit ${child.exitCode}, signal ${child.signalCode}; test sent ${record.sent ?? 'no signal'}, `
+        + `guard sent ${guardSignal ?? 'no signal'})${extra ? `: ${extra}` : ''}`,
+      ), { signalSent: record.sent, guardSignal });
+      reject(error);
+    };
+    const guard = setTimeout(() => {
+      settled = true;
+      child.off('close', onClose);
+      // Whatever holds the pipes, the wait ends here: the streams go, the error names the test.
+      const drop = () => { for (const stream of [child.stdout, child.stderr]) stream?.destroy(); };
+      if (exited(child)) {
+        drop();
+        fail(null, 'child exited but its stdout/stderr never closed (a descendant holds them)');
         return;
       }
-      resolve({ code, signal, signalSent: signalsSent.get(child) ?? null });
-    });
+      child.once('exit', () => {
+        drop();
+        fail('SIGKILL', 'child never exited');
+      });
+      record.rawKill('SIGKILL');
+    }, guardMs);
+    child.once('close', onClose);
   });
 }
 

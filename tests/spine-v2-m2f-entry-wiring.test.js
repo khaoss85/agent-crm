@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -24,7 +24,7 @@ import {
   POSTGRESQL_HTTP_SPINE_REQUIRED,
 } from '../packages/cli/src/commands.js';
 import { MCP_PRODUCTION_SURFACE_UNAVAILABLE } from '../packages/mcp/src/production-surface.js';
-import { assertSyncChildExited, awaitChildExit, hangGuardMs, trackSignals } from './helpers/child-exit.js';
+import { assertSyncChildExited, awaitChildExit, hangGuardMs, spawnTracked } from './helpers/child-exit.js';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -340,7 +340,7 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
   writeModule(root, 'providers/identity-verifier.mjs', HANG_VERIFIER);
   const configPath = writeConfig(root, sqliteEnvelope(root));
   const dbPath = join(root, 'tenant.sqlite');
-  const child = trackSignals(spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve',
     '--deployment-storage', configPath,
     '--root', root,
@@ -349,7 +349,7 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
     cwd: repoRoot,
     env: spawnEnv(),
     stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -371,11 +371,11 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
 test('M2-17 serve --db still discloses the ratified SQLite path and listens', async () => {
   const root = scratch();
   const dbPath = join(root, 'serve.sqlite');
-  const child = trackSignals(spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve', '--db', dbPath, '--port', '0',
   ], {
     cwd: repoRoot, env: spawnEnv(), stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -419,14 +419,14 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', as
 test('M2-17 serve document-selected stdout is {adapter,available} not a path', async () => {
   const { root, configPath } = sqliteScratch();
   const dbPath = join(root, 'tenant.sqlite');
-  const child = trackSignals(spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve',
     '--deployment-storage', configPath,
     '--root', root,
     '--port', '0',
   ], {
     cwd: repoRoot, env: spawnEnv(), stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -494,14 +494,14 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
   assert.equal(fifo.status, 0, fifo.stderr || 'mkfifo failed');
   const dbPath = join(root, 'data', 'accordo.sqlite');
 
-  const child = trackSignals(spawn(process.execPath, ['--no-warnings', mcpBin], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', mcpBin], {
     cwd: root,
     env: spawnEnv({
       ACCORDO_MODE: 'production',
       ACCORDO_DEPLOYMENT_STORAGE: fifoPath,
     }),
     stdio: ['pipe', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -544,11 +544,11 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
 test('M2-16 local MCP --db still composes and lists application tools', async () => {
   const root = scratch();
   const dbPath = join(root, 'mcp.sqlite');
-  const child = trackSignals(spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'mcp', '--db', dbPath,
   ], {
     cwd: repoRoot, env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import { CORE_MIGRATIONS_FOR_CHARACTERIZATION } from '../packages/core/src/database.js';
 import createWorkPackage from '../packages/work/src/index.js';
-import { assertSyncChildExited, awaitChildExit, hangGuardMs, trackSignals } from './helpers/child-exit.js';
+import { assertSyncChildExited, awaitChildExit, hangGuardMs, spawnTracked } from './helpers/child-exit.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
@@ -280,9 +280,9 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
   const env = { ...process.env };
   delete env.CRM_DB_PATH;
-  const child = trackSignals(spawn(process.execPath, ['--no-warnings', mcpBin], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', mcpBin], {
     cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');
@@ -329,9 +329,9 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   }
 
   const servePath = join(directory, 'serve.sqlite');
-  const child = trackSignals(spawn(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-  }));
+  });
   let stdout = '';
   let stderr = '';
   child.stdout.setEncoding('utf8');

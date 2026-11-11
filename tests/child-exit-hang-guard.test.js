@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fileMaxSecFrom } from '../scripts/measure-piece-runner.js';
 import {
-  assertSyncChildExited, awaitChildExit, FILE_HANG_BUDGET_MS, hangGuardMs, trackSignals,
+  assertSyncChildExited, awaitChildExit, FILE_HANG_BUDGET_MS, hangGuardMs, spawnTracked,
 } from './helpers/child-exit.js';
 
 // Guards the helper behind the MCP «exits on its own after stdin EOF» tests
@@ -15,7 +15,7 @@ import {
 const helperUrl = new URL('./helpers/child-exit.js', import.meta.url).href;
 
 function fakeChild(source) {
-  const child = spawn(process.execPath, ['--no-warnings', '-e', source], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawnTracked(process.execPath, ['--no-warnings', '-e', source], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.end('{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}\n');
   return child;
 }
@@ -30,13 +30,13 @@ test('a child that ignores stdin EOF and never exits is red, named by its label'
   const child = fakeChild("process.stdin.resume(); process.stdin.on('end', () => {}); setInterval(() => {}, 1_000);");
   await assert.rejects(
     awaitChildExit(child, { label: 'hung-mcp-fake', hangGuardMs: 500, diagnostics: () => 'stderr-tail' }),
-    /^Error: hung-mcp-fake: child never exited within its 500 ms hang guard .*killed with SIGKILL; exit null, signal SIGKILL\): stderr-tail$/,
+    /^Error: hung-mcp-fake: child never exited within its 500 ms hang guard .*exit null, signal SIGKILL; test sent no signal, guard sent SIGKILL\): stderr-tail$/,
   );
   assert.equal(child.signalCode, 'SIGKILL', 'the hang guard leaves no process behind');
 });
 
 test('signalSent reports the signal the test sent, so «none sent» is a real claim', async () => {
-  const child = trackSignals(fakeChild("process.on('SIGTERM', () => process.exit(0)); process.stdout.write('ready'); setInterval(() => {}, 1_000);"));
+  const child = (fakeChild("process.on('SIGTERM', () => process.exit(0)); process.stdout.write('ready'); setInterval(() => {}, 1_000);"));
   await new Promise((resolve) => child.stdout.once('data', resolve)); // handler installed
   child.kill('SIGTERM');
   // The child handled SIGTERM and exited 0: without signalSent this would look like a clean exit.
@@ -56,7 +56,7 @@ test('output read after the wait is complete: the wait ends on close, not on exi
   // the pipe is drained. The delay only makes the old 'exit' wait miss the line; the
   // 'close' wait sees it however long the grandchild takes.
   const grandchild = "setTimeout(() => process.stdout.write('late'), 500);";
-  const child = spawn(process.execPath, ['-e', `
+  const child = spawnTracked(process.execPath, ['-e', `
     const { spawn } = require('node:child_process');
     process.stdout.write('early ');
     spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: ['ignore', 'inherit', 'inherit'] }).unref();
@@ -70,15 +70,65 @@ test('output read after the wait is complete: the wait ends on close, not on exi
 });
 
 test('a child whose output nobody reads still ends the wait', async () => {
-  const child = spawn(process.execPath, ['-e', "process.stdout.write('x'.repeat(1024 * 1024));"], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawnTracked(process.execPath, ['-e', "process.stdout.write('x'.repeat(1024 * 1024));"], { stdio: ['ignore', 'pipe', 'pipe'] });
   assert.deepEqual(await awaitChildExit(child, { label: 'unread-output' }), { code: 0, signal: null, signalSent: null });
 });
 
 test('awaiting a child that has already closed resolves at once with its cause', async () => {
-  const child = trackSignals(fakeChild('setInterval(() => {}, 1_000);'));
+  const child = (fakeChild('setInterval(() => {}, 1_000);'));
   child.kill('SIGKILL');
   await awaitChildExit(child, { label: 'first' });
   assert.deepEqual(await awaitChildExit(child, { label: 'again' }), { code: null, signal: 'SIGKILL', signalSent: 'SIGKILL' });
+});
+
+test('the guard rejects by name even when a descendant keeps the pipes open after the child exited', async (t) => {
+  // The child exits 0 at once; a grandchild inherits its stdout/stderr and never ends,
+  // so 'close' never comes. The wait must still end at the guard, red and named.
+  const grandchild = 'setInterval(() => {}, 1_000);';
+  const child = spawnTracked(process.execPath, ['-e', `
+    const { spawn } = require('node:child_process');
+    const g = spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: ['ignore', 'inherit', 'inherit'] });
+    g.unref();
+    process.stdout.write(String(g.pid) + '\\n');
+    process.exit(0);
+  `], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  t.after(() => { const pid = Number(stdout.trim()); if (pid) try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ } });
+  const error = await awaitChildExit(child, { label: 'held-pipes', hangGuardMs: 1_000 }).then(
+    () => assert.fail('the wait resolved although stdout never closed'),
+    (rejection) => rejection,
+  );
+  assert.match(error.message, /^held-pipes: child exited but its stdout\/stderr never closed .*exit 0, signal null; test sent no signal, guard sent no signal\)$/);
+  assert.equal(error.guardSignal, null, 'the child had already exited: the guard killed nothing');
+  assert.equal(child.stdout.destroyed && child.stderr.destroyed, true, 'the held streams are released');
+  assert.ok(Number(stdout.trim()) > 0, 'the grandchild really held the pipe');
+});
+
+test('the test\'s signal and the guard\'s are kept apart, and a kill right after spawn is not lost', async () => {
+  // Sent before any wait began: recorded because tracking starts at spawn.
+  const early = fakeChild('setInterval(() => {}, 1_000);');
+  early.kill('SIGKILL');
+  assert.deepEqual(await awaitChildExit(early, { label: 'early-kill' }), { code: null, signal: 'SIGKILL', signalSent: 'SIGKILL' });
+
+  // The test sends SIGTERM, the child ignores it, the guard then sends SIGKILL:
+  // the error names both, each in its own field.
+  const stubborn = fakeChild("process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1_000);");
+  await new Promise((resolve) => stubborn.stdout.once('data', resolve)); // handler installed
+  stubborn.kill('SIGTERM');
+  const error = await awaitChildExit(stubborn, { label: 'stubborn', hangGuardMs: 500 }).then(
+    () => assert.fail('a child that ignores SIGTERM cannot resolve'),
+    (rejection) => rejection,
+  );
+  assert.equal(error.signalSent, 'SIGTERM', 'the test sent SIGTERM');
+  assert.equal(error.guardSignal, 'SIGKILL', 'the guard sent SIGKILL');
+  assert.match(error.message, /test sent SIGTERM, guard sent SIGKILL\)$/);
+
+  // A child not spawned through spawnTracked is refused: its signals are unknown.
+  const { spawn } = await import('node:child_process');
+  const untracked = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+  await assert.rejects(awaitChildExit(untracked, { label: 'untracked' }), /^TypeError: untracked: spawn the child with spawnTracked/);
 });
 
 test('a spawnSync child that never exits is red by name, one that exits is untouched', () => {
@@ -103,11 +153,10 @@ test('several hung waits in one file all fail before the per-file ceiling, not o
   // another: with a guard per wait they would need more than the ceiling; with one
   // deadline per file all three fail, by name, inside 80% of it.
   const script = `
-    import { spawn } from 'node:child_process';
-    import { awaitChildExit } from ${JSON.stringify(helperUrl)};
+    import { awaitChildExit, spawnTracked } from ${JSON.stringify(helperUrl)};
     const errors = [];
     for (const name of ['first', 'second', 'third']) {
-      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1_000);'], { stdio: 'ignore' });
+      const child = spawnTracked(process.execPath, ['-e', 'setInterval(() => {}, 1_000);'], { stdio: 'ignore' });
       try { await awaitChildExit(child, { label: name }); } catch (error) { errors.push(error.message.split(':')[0]); }
     }
     console.log(JSON.stringify({ errors, elapsedMs: Math.round(performance.now()) }));
