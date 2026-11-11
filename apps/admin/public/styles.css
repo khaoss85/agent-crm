@@ -662,7 +662,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -745,7 +749,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
