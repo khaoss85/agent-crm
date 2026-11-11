@@ -6,7 +6,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { writePendingCustomerPick } from './admin-prefill.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
@@ -3204,14 +3204,14 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
     const loading = el('p', 'bo-muted', 'Caricamento…');
     box.appendChild(loading);
-    const fill = (items) => {
+    const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
       const rows = [];
       for (const entry of Array.isArray(items) ? items : []) {
         const move = stageMoveOf(entry);
         if (move === null) continue;
         const words = stageMoveLabels(pipelines, move);
-        const who = auditActorLabel(entry, [owner, companyName]);
+        const who = auditActorLabel(entry, [owner, companyName], people);
         const when = italianDateTime(entry?.createdAt) ?? '—';
         if (words === null) {
           // Review giro 1 (P2): the audit holds a move but no side has a
@@ -3233,17 +3233,23 @@ export function createCustomerCardView(deps) {
         box.appendChild(el('p', 'bo-scheda-offer-history', text));
       }
     };
-    void client.request(
-      `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`,
-    ).then(
-      (answer) => fill(answer?.items),
+    // backlog:e52c5e0dd49f (review Muse #750 giro 2, famiglia F5): the team
+    // roster names the actors, like the offer detail — a team subject reads
+    // its profile name, never «utente». A roster read that fails leaves the
+    // record names only, never a new failure line.
+    const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
+    void client.request('/api/spine/memberships').then(
+      (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
+      () => [],
+    ).then((people) => client.request(auditPath).then(
+      (answer) => fill(answer?.items, people),
       (error) => {
         // Review giro 1 (P2): the rejection cause reaches on-call, like the
         // detail does — code and status only, never payload or PII.
         logHistoryFailure(error);
         if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
       },
-    );
+    ));
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in

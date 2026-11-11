@@ -186,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [] } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -232,6 +232,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (auditError) throw auditError;
         return { items: audit };
       }
+      if (path === '/api/spine/memberships') return { items: team };
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -4605,6 +4606,25 @@ test('c1649d1d: the scheda Storia stati names who moved the offer from which sta
     'a move whose side has no label never paints a raw key');
   assert.ok(text.includes('Cambio di stato · da elena'),
     'an unlabelled move still reads the generic Italian line, like the detail');
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Storia stati names a team actor from the roster, never «utente»', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    audit: [
+      {
+        action: 'opportunity.updated', actorId: 'github|48571113', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+        data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+      },
+    ],
+    team: [{ subject: 'github|48571113', displayName: 'Daniele Pelleri', email: 'dan@example.com' }],
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('da Daniele Pelleri'), 'the team actor reads the profile name from the roster');
+  assert.ok(!text.includes('da utente'), 'no team actor hides behind «utente»');
+  assert.ok(!text.includes('github|'), 'no provider id leaks on screen');
 });
 
 test('c1649d1d: an unreadable audit trail reads one honest line', async () => {

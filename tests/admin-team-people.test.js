@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
-import { memberLabelFor, personRows } from '../apps/admin/public/admin-calendario.js';
+import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
 import { buildTeamRows } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
@@ -133,6 +133,65 @@ test('review Muse #750 P2: «Cosa noto» swaps every owner once, never a name ju
     insights: [{ text: 'coach-guido tiene i lead: spostarli a Bianchi.' }],
   };
   assert.equal(withPersonNames(model, roster).insights[0].text, 'Guido Bianchi tiene i lead: spostarli a Luca Neri.');
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): «Cosa noto» swaps owners as whole words only', () => {
+  const roster = [
+    { subject: 'Sara', displayName: 'Sara Neri' },
+    { subject: 'Bianchi', displayName: 'Luca Neri' },
+  ];
+  const model = {
+    owners: ['Sara', 'Bianchi'], team: [],
+    insights: [{ text: 'Saranno spostati i lead Bianchini: parlarne con Sara e Bianchi.' }],
+  };
+  assert.equal(
+    withPersonNames(model, roster).insights[0].text,
+    'Saranno spostati i lead Bianchini: parlarne con Sara Neri e Luca Neri.',
+    'a short owner never rewrites inside a longer word',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): a slug-shaped displayName echo never becomes the label', () => {
+  assert.equal(
+    teamPeople([{ subject: 'coach-guido', displayName: 'coach-guido' }])[0].label,
+    'Coach Guido',
+    'an id echoed as displayName reads as words',
+  );
+  assert.equal(
+    teamPeople([{ subject: 'x', displayName: 'coach-guido' }])[0].label,
+    'Coach Guido',
+    'a slug displayName on another subject reads as words too',
+  );
+  assert.equal(
+    teamPeople([{ subject: 'google|77', displayName: 'anna-maria', email: 'am@example.com' }])[0].label,
+    'anna-maria',
+    'a genuine name on a technical subject still reads verbatim',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Calendario personRows never paints the raw stored id', () => {
+  const roster = [{ subject: 'coach-guido' }];
+  const listed = personRows(['coach-guido'], [], roster);
+  assert.equal(listed[0].label, 'Coach Guido');
+  const unlisted = personRows([], [], roster);
+  assert.equal(unlisted[0].label, 'Coach Guido', 'like Spazi, not «Membro del team»');
+  for (const row of [...listed, ...unlisted]) assert.doesNotMatch(`${row.label} ${row.name ?? ''}`, TECHNICAL);
+  assert.equal(
+    resolveMemberName('coach-guido', ['coach-guido'], roster),
+    'Coach Guido',
+    'a booking line reads words, never the slug',
+  );
+});
+
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): memberLabel keeps a real mailbox like personLabel', () => {
+  assert.equal(memberLabel('mario.rossi@esempio.it', []), 'mario.rossi@esempio.it', 'an unknown mailbox reads as itself');
+  assert.equal(
+    memberLabel('m1', [{ subject: 'm1', email: 'mario.rossi@esempio.it' }]),
+    'mario.rossi@esempio.it',
+    'a person known only by mailbox keeps it, never the notes snippet',
+  );
+  assert.equal(memberLabel('broker+x@accordo.invalid', []), null, 'a technical mailbox still hides');
+  assert.equal(memberLabel('google|1049', []), null, 'a provider id still hides');
 });
 
 test('review Muse #750 P2: Pipeline and Offerta show a mailbox referente as written', async () => {

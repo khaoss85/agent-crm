@@ -296,10 +296,10 @@ export function teamPeople(roster) {
     seen.add(member.subject);
     const key = operatorKeyOf(member);
     const email = memberText(member.email);
-    const name = memberText(member.displayName);
-    const identity = email === null || name === null
+    const rawName = memberText(member.displayName);
+    const identity = email === null || rawName === null
       ? null
-      : `${email.toLowerCase()}\u0000${name.replace(/\s+/g, ' ').toLowerCase()}`;
+      : `${email.toLowerCase()}\u0000${rawName.replace(/\s+/g, ' ').toLowerCase()}`;
     let person = (key !== null && byKey.get(key)) || null;
     if (person === null && identity !== null) {
       const candidate = byIdentity.get(identity) ?? null;
@@ -316,6 +316,15 @@ export function teamPeople(roster) {
     if (key !== null && !person.keys.includes(key)) person.keys.push(key);
     if (key !== null && !byKey.has(key)) byKey.set(key, person);
     if (identity !== null && !byIdentity.has(identity)) byIdentity.set(identity, person);
+    // backlog:e52c5e0dd49f (review Muse #750 giro 2): a slug-shaped
+    // displayName on a plain stored id is an unenriched echo of the id, not
+    // a name («coach-guido» on subject «coach-guido»): it reads as words,
+    // never the raw slug (a digit slug names nobody and drops out). A
+    // displayName on a technical subject (a pipe id) is a genuine name
+    // signal and reads verbatim («anna-maria»).
+    const name = rawName !== null && SLUG_SHAPE.test(rawName) && !isTechnicalMemberText(member.subject)
+      ? slugAsName(rawName)
+      : rawName;
     if (name !== null) person.names.push(name);
     if (person.email === null && email !== null) person.email = email;
     const born = memberBornAt(member);
@@ -386,8 +395,11 @@ export function personLabel(id, rosterOrPeople) {
  * The name of the team member behind a subject, or null — never the id
  * itself when it is technical. Reads the person row of `teamPeople`, so an
  * identity without a name of its own borrows the profile name of the same
- * person. A subject the roster does not know reads as itself only when it
- * is a plain word an operator typed («Marco»).
+ * person. A subject the roster does not know reads as itself (a typed
+ * name, a real mailbox, a slug as words); null only for a technical id or
+ * a slug with digits that names nobody. A person the roster knows reads
+ * the profile name, else their first real mailbox like `personLabel`
+ * does, so Oggi shows the same mailbox Pipeline and Reporting show.
  * @param {unknown} subject
  * @param {unknown} members roster items
  * @returns {string | null}
@@ -395,9 +407,10 @@ export function personLabel(id, rosterOrPeople) {
 export function memberLabel(subject, members) {
   if (typeof subject !== 'string' || subject.trim() === '') return null;
   const row = teamPeople(members).find((person) => person.subjects.includes(subject)) ?? null;
-  if (row !== null) return row.name;
-  const typed = subjectText(subject);
-  return typed !== null && !typed.includes('@') ? typed : null;
+  // backlog:e52c5e0dd49f (review Muse #750 giro 2): a person known only by
+  // a real mailbox keeps it, like personLabel — never the notes snippet.
+  if (row !== null) return row.name ?? row.email ?? subjectText(subject);
+  return subjectText(subject);
 }
 
 const ROME_DAY_TIME = new Intl.DateTimeFormat('it-IT', {
