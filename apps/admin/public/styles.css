@@ -1148,6 +1148,11 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
 .bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bo-spazi-names { overflow: hidden; }
+/* backlog:67e14a50efb6: the calendar-and-channels line of every team row —
+   shared state with the Connettori tile vocabulary, small enough to wrap. */
+.bo-spazi-conns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.bo-spazi-calendar { font-size: 12px; color: var(--muted); }
+.bo-spazi-tile.ui-chip { font-size: 10px; padding: 3px 7px; }
 .bo-spazi-invite-toggle.ui-btn { white-space: nowrap; flex: none; }
 @media (max-width: 700px) {
   .bo-spazi-adder { min-height: 88px; }
