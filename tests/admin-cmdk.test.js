@@ -249,3 +249,27 @@ test('a question from ⌘K shows at once in the panel, with a waiting line, befo
   await opening;
   assert.ok(!mount.textContent.includes('Chiedo all’assistente…'), 'the waiting line goes when the answer path starts');
 });
+
+test('Enter while customers are still being read waits for them instead of asking the AI', async () => {
+  const pending = [];
+  const s = shell({ customers: (query) => new Promise((resolve) => pending.push({ query, resolve })), offers: async () => [] });
+  await s.type('Ada');
+  s.key('Enter');
+  assert.deepEqual(s.seen.asked, [], 'no AI while the read runs');
+  assert.ok(s.list().textContent.includes('Cerco tra clienti e offerte'));
+  pending[0].resolve([CUSTOMERS[0]]);
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+  const selected = s.options().find((row) => row.getAttribute('aria-selected') === 'true');
+  assert.equal(selected.getAttribute('href'), '#/customer-card/contact/c-1', 'the first result arrives selected');
+  s.key('Enter');
+  assert.deepEqual(s.seen.navigate, ['#/customer-card/contact/c-1']);
+});
+
+test('a second Enter while the read still hangs asks the AI', async () => {
+  const s = shell({ customers: () => new Promise(() => {}), offers: async () => [] });
+  await s.type('Ada');
+  s.key('Enter');
+  assert.deepEqual(s.seen.asked, []);
+  s.key('Enter');
+  assert.deepEqual(s.seen.asked, ['Ada']);
+});

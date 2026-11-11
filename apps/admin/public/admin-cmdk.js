@@ -169,6 +169,7 @@ export function createCommandMenu({
     offers: null,
     offersAt: 0,
     offersLoading: false,
+    enterWaited: false,
   };
   /** @type {any} */
   let input = null;
@@ -304,6 +305,7 @@ export function createCommandMenu({
     state.query = typeof input?.value === 'string' ? input.value : '';
     state.open = state.query.trim() !== '';
     state.active = 0;
+    state.enterWaited = false;
     if (timer !== null) cancel(timer);
     timer = null;
     const query = state.query.trim();
@@ -343,6 +345,15 @@ export function createCommandMenu({
       const current = rows();
       if (current.length === 0) return;
       prevent();
+      // Still reading customers and offers (2-4 s in production): Enter
+      // waits for them instead of sending a name to the AI. The list stays
+      // open on «Cerco…» and the first result arrives selected. A second
+      // Enter asks: a read that hangs never locks the AI row away.
+      if (state.open && !state.enterWaited && (state.customersLoading || state.offersLoading)
+        && current.every((row) => row.kind === 'ask')) {
+        state.enterWaited = true;
+        return;
+      }
       choose(state.open ? current[Math.min(state.active, current.length - 1)] : current[current.length - 1]);
       return;
     }
