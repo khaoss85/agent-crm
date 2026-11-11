@@ -1158,10 +1158,19 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       contracts: sectionSummary(evidenceReads.contracts, mine),
       subscriptions: sectionSummary(evidenceReads.subscriptions, mine),
     })]]);
-    const openValue = myOpportunities
+    // backlog:5c2f8bc67859 (giro UX 11/11): «Valore offerta» on a contact
+    // row sums only the offers that name this contact, the same rule as the
+    // scheda (profile.js, voce 1e89d516cfc3). A company-linked offer (empty
+    // contactId) matched every contact under its company, so all the
+    // contacts of one company read the company's total. The wide rule above stays
+    // for status evidence: an order filed on the company still counts.
+    const myOffers = resource === 'contact'
+      ? myOpportunities.filter((row) => row?.contactId != null && row.contactId !== '' && row.contactId === id)
+      : myOpportunities;
+    const openValue = myOffers
       .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
-    const currencies = [...new Set(myOpportunities.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
+    const currencies = [...new Set(myOffers.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
     const myTasks = tasks.rows.filter(mine).filter((row) => row?.status === 'open');
     // The callback view filters on this one value, so it must be the most
     // actionable open task — overdue first, then due today — never the
@@ -1228,7 +1237,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject }]]),
-      offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
+      offerBySubject: new Map(myOffers.length === 0 ? [] : [[key, {
         valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
       }]]),
       taskBySubject: new Map(next === null ? [] : [[key, {
