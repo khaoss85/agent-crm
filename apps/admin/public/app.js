@@ -410,23 +410,17 @@ function toggleBusy(element, busy) {
   element.disabled = busy;
 }
 
-let toastTimer;
+/** The shell toast and its clock (backlog:2f72000d4a4d), built on first use. */
+let toaster = null;
 /**
  * @param {string} message @param {boolean} [error]
- * @param {{ action?: { label: string, run: () => void } }} [options] one action
- *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); the toast
- *   then stays a little longer so the button can be reached.
+ * @param {{ action?: { label: string, run: () => void }, duration?: number }} [options] one action
+ *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); a toast
+ *   with an action stays at least 10 s, and never hides under the pointer.
  */
 function toast(message, error = false, options = {}) {
-  clearTimeout(toastTimer);
-  const hide = () => elements.toast.classList.add('hidden');
-  paintToast(document, elements.toast, message, {
-    error,
-    action: options?.action ?? null,
-    onDone: () => { clearTimeout(toastTimer); hide(); },
-  });
-  elements.toast.classList.remove('hidden');
-  toastTimer = setTimeout(hide, options?.action ? 6000 : 3200);
+  if (toaster === null) toaster = createToastController(document, elements.toast);
+  toaster.show(message, error, options ?? {});
 }
 
 function escapeHtml(value) {
@@ -484,7 +478,7 @@ import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
-import { paintToast } from './admin-ui.js';
+import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';

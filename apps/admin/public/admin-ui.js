@@ -607,6 +607,56 @@ export function paintToast(doc, node, message, options = {}) {
 }
 
 /**
+ * The shell toast's clock (backlog:2f72000d4a4d): a toast with an action
+ * («Annulla») stays at least `duration` (10 s by default), a plain one 3,2 s;
+ * while the pointer or the keyboard focus is on it, it never hides — after
+ * the person leaves it, it stays 4 s more. The action closes it at once.
+ * @param {any} doc @param {any} node the shell's toast element
+ * @param {{ setTimer?: (fn: () => void, ms: number) => any, clearTimer?: (timer: any) => void }} [clock]
+ */
+export function createToastController(doc, node, clock = {}) {
+  const setTimer = clock.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = clock.clearTimer ?? ((timer) => clearTimeout(timer));
+  let timer = null;
+  let held = false;
+  const hide = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    node.classList.add('hidden');
+  };
+  const arm = (ms) => {
+    if (timer !== null) clearTimer(timer);
+    timer = held ? null : setTimer(hide, ms);
+  };
+  const hold = () => {
+    held = true;
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
+  const release = () => {
+    held = false;
+    if (!node.classList.contains('hidden')) arm(4000);
+  };
+  node.addEventListener('mouseenter', hold);
+  node.addEventListener('mouseleave', release);
+  node.addEventListener('focusin', hold);
+  node.addEventListener('focusout', release);
+  return {
+    /**
+     * @param {unknown} message @param {boolean} [error]
+     * @param {{ action?: { label: string, run: () => void } | null, duration?: number }} [options]
+     */
+    show(message, error = false, options = {}) {
+      paintToast(doc, node, message, { error, action: options?.action ?? null, onDone: hide });
+      node.classList.remove('hidden');
+      const duration = Number.isFinite(options?.duration) ? Number(options.duration) : (options?.action ? 10000 : 3200);
+      arm(duration);
+    },
+    hide,
+  };
+}
+
+/**
  * @param {any} doc
  * @param {{ title?: unknown }} [options]
  */
