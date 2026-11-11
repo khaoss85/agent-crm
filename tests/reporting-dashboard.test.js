@@ -29,6 +29,7 @@ import {
   channelWeekLabel,
   channelWeeksOf,
   dashboardCompilations,
+  dashboardSpecs,
   formatMinor,
   formatMonth,
   monthOf,
@@ -38,6 +39,7 @@ import {
 } from '../packages/analytics/src/dashboard.js';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
+import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 
 const TS = '2026-09-01T00:00:00.000Z';
 
@@ -474,7 +476,7 @@ test('proposal baseline is period-scoped: equal in-period rates propose nothing'
 });
 
 test('query, month and target helpers behave', () => {
-  assert.deepEqual({ ...parseDashboardQuery({ period: '2026-10' }) }, { period: '2026-10', owner: null, currency: 'EUR' });
+  assert.deepEqual({ ...parseDashboardQuery({ period: '2026-10' }) }, { period: '2026-10', owner: null, currency: 'EUR', pipeline: null });
   assert.equal(parseDashboardQuery({ period: '2026-10', owner: '' }).owner, null);
   // A pollution carrier cannot pollute: only the three known keys are read
   // into a fresh frozen object, never copied.
@@ -622,4 +624,171 @@ test('the dashboard model carries the channel breakdown, empty when no origins',
   const without = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.equal(without.channels.total, 0);
   assert.deepEqual(without.channels.channels, []);
+});
+
+// Backlog 099c41c32355 — Reporting like the Pipeline board. Production
+// offers carry the legacy core `stage` (create defaults it to
+// `qualification`, a move-stage never touches it) next to the placement the
+// board shows. The fixture below mirrors that split: every core stage reads
+// `qualification`, the placement spreads over accordo-sales. The dashboard in
+// pipeline mode must answer with the board's phases, open count and total —
+// never with the legacy pile-up.
+
+/**
+ * @param {{id: string, stage?: string, pipelineKey?: string | null, pipelineStage?: string | null, cents: number, currency: string, owner: string, close: string | null}} opportunity
+ */
+function placedOpportunityRow({ id, stage = 'qualification', pipelineKey = 'accordo-sales', pipelineStage = 'richiesta-info', cents, currency, owner, close }) {
+  return {
+    kind: 'insert', table: 'opportunities', values: [
+      { column: 'id', value: id }, { column: 'company_id', value: 'c1' },
+      { column: 'contact_id', value: null }, { column: 'name', value: id },
+      { column: 'type', value: 'new_business' }, { column: 'value_cents', value: cents },
+      { column: 'currency', value: currency }, { column: 'stage', value: stage },
+      { column: 'pipeline_key', value: pipelineKey }, { column: 'pipeline_stage', value: pipelineStage },
+      { column: 'owner', value: owner }, { column: 'expected_close_date', value: close },
+      { column: 'created_at', value: TS }, { column: 'updated_at', value: TS },
+    ],
+  };
+}
+
+// Hand-computed (EUR): placed and on-definition p1..p5 hold 32000/5; open
+// (richiesta-info, prova, proposta) p1..p3 hold 20000/3; pagato p4 9000/1;
+// perso p5 3000/1; rate 1/2. p6 is USD, p7 never placed, p8 drifted off the
+// definition — the board shows none of the three in its columns or totals.
+const PLACED_FIXTURE = [
+  { id: 'p1', pipelineStage: 'richiesta-info', cents: 10000, currency: 'EUR', owner: 'alice', close: '2026-10-15' },
+  { id: 'p2', pipelineStage: 'prova', cents: 4000, currency: 'EUR', owner: 'alice', close: '2026-10-20' },
+  { id: 'p3', pipelineStage: 'proposta', cents: 6000, currency: 'EUR', owner: 'bob', close: '2026-11-02' },
+  { id: 'p4', pipelineStage: 'pagato', cents: 9000, currency: 'EUR', owner: 'alice', close: '2026-10-10' },
+  { id: 'p5', pipelineStage: 'perso', cents: 3000, currency: 'EUR', owner: 'alice', close: '2026-10-12' },
+  { id: 'p6', pipelineStage: 'richiesta-info', cents: 5000, currency: 'USD', owner: 'bob', close: '2026-10-18' },
+  { id: 'p7', pipelineKey: null, pipelineStage: null, cents: 7000, currency: 'EUR', owner: 'bob', close: '2026-10-19' },
+  { id: 'p8', pipelineStage: 'sopralluogo', cents: 8000, currency: 'EUR', owner: 'alice', close: '2026-10-21' },
+];
+
+const QUERY_PIPELINE_OCT = Object.freeze({ period: '2026-10', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+
+/** @param {import('node:test').TestContext} t */
+function placedFixtureDatabase(t) {
+  const database = createDatabase({ path: ':memory:' });
+  t.after(() => database.close());
+  database.storage.sync.execute(companyRow());
+  for (const opportunity of PLACED_FIXTURE) database.storage.sync.execute(placedOpportunityRow(opportunity));
+  return database;
+}
+
+/** @param {any} database @param {{period: string, owner: string | null, currency: string, pipeline?: string | null}} query */
+function pipelineDashboardResults(database, query) {
+  const compiled = dashboardCompilations(query);
+  return {
+    byStage: runReport(database, compiled.byStage),
+    schedule: runReport(database, compiled.schedule),
+  };
+}
+
+test('pipeline specs group by placement, scoped to the pipeline key', () => {
+  const specs = dashboardSpecs(QUERY_PIPELINE_OCT);
+  assert.equal(specs.byStage.metric, 'pipeline_value_by_pipeline_stage');
+  assert.deepEqual([...specs.byStage.dimensions], ['opportunity.pipelineStage']);
+  assert.deepEqual({ ...specs.byStage.filters }, { 'opportunity.pipelineKey': 'accordo-sales' });
+  assert.equal(specs.schedule.metric, 'pipeline_close_schedule_by_pipeline');
+  assert.deepEqual(
+    [...specs.schedule.dimensions],
+    ['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate'],
+  );
+  const compiled = dashboardCompilations(QUERY_PIPELINE_OCT);
+  assert.equal(compiled.byStage.metric, 'pipeline_value_by_pipeline_stage');
+  assert.deepEqual(
+    [...compiled.byStage.descriptor.columns].sort(),
+    ['currency', 'pipeline_stage', 'value_cents'],
+  );
+  assert.deepEqual(
+    [...compiled.schedule.descriptor.columns].sort(),
+    ['currency', 'expected_close_date', 'owner', 'pipeline_stage', 'value_cents'],
+  );
+  assert.deepEqual(compiled.schedule.descriptor.where, [
+    { column: 'pipeline_key', op: 'eq', value: 'accordo-sales' },
+  ]);
+});
+
+test('pipeline dashboard names the board phases with the board counts and total', (t) => {
+  const database = placedFixtureDatabase(t);
+  const results = pipelineDashboardResults(database, QUERY_PIPELINE_OCT);
+  assert.equal(results.byStage.truncated, false);
+  assert.equal(results.schedule.truncated, false);
+  const model = buildDashboardModel(results, [], QUERY_PIPELINE_OCT, TS, [], [accordoSalesPipeline]);
+  // Same phase names as the board columns, in board order (open, then paid).
+  assert.deepEqual(model.funnel.map((entry) => [entry.stage, entry.label, entry.count, entry.minor]), [
+    ['richiesta-info', 'Richiesta info', 1, 10000],
+    ['prova', 'Prova', 1, 4000],
+    ['proposta', 'Proposta', 1, 6000],
+    ['pagato', 'Pagato', 1, 9000],
+  ]);
+  assert.deepEqual(model.valueByStage.map((entry) => [entry.stage, entry.label, entry.count, entry.minor]), [
+    ['richiesta-info', 'Richiesta info', 1, 10000],
+    ['prova', 'Prova', 1, 4000],
+    ['proposta', 'Proposta', 1, 6000],
+  ]);
+  // Same open offers and total as the board's working columns (USD, the
+  // never-placed row and the drifted row stay out, like on the board).
+  const [openValue, openCount, wonPeriod, winRate] = model.kpis;
+  assert.equal(openValue.display, formatMinor(20000, 'EUR'));
+  assert.equal(openValue.sub, '3 preventivi aperti');
+  assert.equal(openCount.display, '3');
+  assert.equal(openCount.sub, formatMinor(20000, 'EUR'));
+  assert.equal(wonPeriod.display, formatMinor(9000, 'EUR'));
+  assert.equal(winRate.display, '50%');
+  assert.equal(winRate.sub, '1 vinte, 1 perse');
+  assert.deepEqual(model.currencies.others, ['USD']);
+  // Parity with the board's own counting rule over the same rows: placed on
+  // this pipeline, on-definition, open type.
+  const stageKeys = new Set(accordoSalesPipeline.stages.map((stage) => stage.key));
+  const openTypes = new Set(
+    accordoSalesPipeline.stages.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key),
+  );
+  const boardOpen = PLACED_FIXTURE.filter(
+    (row) => row.currency === 'EUR'
+      && (row.pipelineKey ?? 'accordo-sales') === 'accordo-sales'
+      && typeof row.pipelineStage === 'string'
+      && stageKeys.has(row.pipelineStage)
+      && openTypes.has(row.pipelineStage),
+  );
+  assert.equal(openCount.display, String(boardOpen.length));
+  assert.equal(openValue.display, formatMinor(boardOpen.reduce((total, row) => total + row.cents, 0), 'EUR'));
+});
+
+test('pipeline dashboard recalculates with persona, like the board filters', (t) => {
+  const database = placedFixtureDatabase(t);
+  const query = { period: '2026-10', owner: 'alice', currency: 'EUR', pipeline: 'accordo-sales' };
+  const model = buildDashboardModel(pipelineDashboardResults(database, query), [], query, TS, [], [accordoSalesPipeline]);
+  const [, openCount, , winRate] = model.kpis;
+  assert.equal(openCount.display, '2');
+  assert.equal(openCount.sub, formatMinor(14000, 'EUR'));
+  assert.deepEqual(model.owners, ['alice']);
+  assert.equal(winRate.display, '50%');
+  const funnel = Object.fromEntries(model.funnel.map((entry) => [entry.stage, entry]));
+  assert.deepEqual([funnel['richiesta-info'].count, funnel.prova.count, funnel.proposta.count, funnel.pagato.count], [1, 1, 0, 1]);
+});
+
+test('without a pipeline the legacy core grouping still answers as before', (t) => {
+  const database = placedFixtureDatabase(t);
+  // Same rows, no pipeline: every core stage reads `qualification`, so the
+  // dashboard piles all 7 EUR offers (placed, unplaced and drifted) under one
+  // legacy label — the pile-up the pipeline mode above replaces.
+  const model = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
+  const [openValue, openCount] = model.kpis;
+  assert.equal(openCount.display, '7');
+  assert.equal(openValue.display, formatMinor(47000, 'EUR'));
+  const funnel = Object.fromEntries(model.funnel.map((entry) => [entry.stage, entry]));
+  assert.equal(funnel.qualification.label, 'Qualifica');
+  assert.deepEqual([funnel.qualification.count, funnel.qualification.minor], [7, 47000]);
+});
+
+test('dashboard query refuses a hostile pipeline name with a 400', () => {
+  assert.equal(parseDashboardQuery({ period: '2026-10', pipeline: null }).pipeline, null);
+  assert.equal(parseDashboardQuery({ period: '2026-10', pipeline: '' }).pipeline, null);
+  assert.equal(parseDashboardQuery({ period: '2026-10', pipeline: 'accordo-sales' }).pipeline, 'accordo-sales');
+  for (const bad of ['Accordo-Sales', '../x', 'a b', 'x'.repeat(201)]) {
+    assert.throws(() => parseDashboardQuery({ period: '2026-10', pipeline: bad }), ValidationError);
+  }
 });
