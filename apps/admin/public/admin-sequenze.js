@@ -564,7 +564,20 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
       ? {}
       : { spaceId };
     const page = await readModulePage(client, 'sequence-step', { sequenceSourceKey, ...scoped });
-    return { rows: page.rows, failed: false };
+    if (page.rows.length > 0 || Object.keys(scoped).length === 0) {
+      return { rows: page.rows, failed: false };
+    }
+    // Pre-space rows (sequence-step revision 1 had no spaceId, so live steps
+    // created before space scoping carry spaceId null): the space-scoped read
+    // above misses them while the sequence itself is space-scoped. The
+    // sequenceSourceKey is globally unique, so a key-only retry is still
+    // space-safe and recovers those rows instead of painting a genuine zero.
+    try {
+      const retry = await readModulePage(client, 'sequence-step', { sequenceSourceKey });
+      return { rows: retry.rows, failed: false };
+    } catch {
+      return { rows: page.rows, failed: false };
+    }
   } catch (error) {
     console.warn('bo-sequenze steps unreadable:', error instanceof Error ? error.name : 'unknown');
     return { rows: [], failed: true };
