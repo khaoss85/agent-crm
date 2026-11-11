@@ -5,7 +5,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PackageRegistry, validatePackageDefinition } from '../packages/core/index.js';
-import { DOMAIN_MANIFESTS, DOMAIN_MODULES, POLICY, TERM, boot, project, signedOrder } from './helpers/contracts-project-cache.js';
+import { DOMAIN_MANIFESTS, DOMAIN_MODULES, POLICY, TERM, boot, project, signedOrder } from './helpers/contracts-project.js';
 
 /**
  * Milestone 12 adversarial review, part two: the generic domain seam under
