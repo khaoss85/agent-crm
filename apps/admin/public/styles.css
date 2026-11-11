@@ -968,8 +968,18 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-person-name { margin: 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .bo-seq-person-step { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .bo-seq-person-status { margin: 0; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--data-soft); color: var(--data-ink); }
+/* backlog:c6759700e359: Nuova sequenza — each label above its own field;
+ * a step names itself once, then Canale · Attesa · Messaggio in a row. */
+.bo-seq-panel .bo-seq-field { margin-bottom: 14px; }
+.bo-seq-panel .bo-seq-field .ui-label { margin-bottom: 0; }
+.bo-seq-panel .bo-seq-field .ui-select { display: flex; }
+.bo-seq-step-edit { display: grid; grid-template-columns: minmax(0, 1fr) 130px minmax(0, 2fr) auto; gap: 0 12px; align-items: end; margin-bottom: 6px; }
+.bo-seq-step-title { grid-column: 1 / -1; margin: 6px 0 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.bo-seq-step-edit > .ui-btn { margin-bottom: 14px; }
 
 @media (max-width: 700px) {
+  .bo-seq-step-edit { grid-template-columns: minmax(0, 1fr); }
+  .bo-seq-step-edit > .ui-btn { justify-self: start; }
   .bo-seq-btns button { flex: 1; }
   .bo-seq-left { max-width: none; }
   .bo-seq-step { grid-template-columns: 52px 34px minmax(0, 1fr); gap: 8px; }
@@ -2411,7 +2421,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* Assistente (05/11): domanda della barra in testa alla colonna, nota di fondo con margine. */
 .bo-assistant-asked { display: flex; flex-direction: column; gap: 4px; align-self: flex-end; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: var(--surface); }
 .bo-assistant-asked-text { margin: 0; font-size: 14px; line-height: 1.45; }
-.bo-assistant-asked-note { margin: 0; font-size: 11.5px; line-height: 1.4; opacity: .75; }
+/* backlog:1968c3320cd3: the system reply is its own bubble, on the
+ * assistant's side, like the answer card. */
+.bo-assistant-reply { margin: 0; align-self: flex-start; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--agent-card); border: 1px solid var(--agent-line); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.bo-assistant-foot .bo-assistant-source-link { margin-left: 6px; }
 .bo-assistant .bo-assistant-foot { margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-assistant-draft.bo-assistant-foot { padding-top: 0; border-top: 0; color: var(--ink); font-size: 13px; }
 
