@@ -2317,6 +2317,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-campo-add-cancel:hover { color: var(--ink); }
 .bo-campo-add > small.field-error:empty { display: none; }
 .bo-cliente-nuovo-actions { display: flex; gap: 8px; margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--line-faint); }
+/* backlog:ff8bb60f417f: Nuovo cliente in the scheda's window frame (bo-scheda-composer), not a page card. */
+.bo-cliente-panel .bo-cliente-nuovo { max-width: none; margin: 0; padding: 14px 0 18px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.bo-cliente-panel .bo-cliente-nuovo-actions { position: sticky; bottom: 0; background: var(--surface); padding-bottom: 4px; }
+.bo-cliente-nuovo-discard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line-soft); }
+.bo-cliente-nuovo-discard > p { flex: 1 1 100%; margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.bo-cliente-nuovo-discard.hidden, .bo-cliente-nuovo-actions.hidden { display: none; }
 @media (max-width: 640px) {
   .bo-cliente-nuovo { padding: 20px 16px; border-radius: 16px; margin-top: 0; }
   .bo-cliente-nuovo-grid, .bo-cliente-nuovo-custom { grid-template-columns: 1fr; }

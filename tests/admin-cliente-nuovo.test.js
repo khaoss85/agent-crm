@@ -17,6 +17,7 @@ import {
   normalizeTelefono,
   readNewCustomerDraft,
   saveNewCustomerDraft,
+  customerNames,
   splitNome,
   stepNeedsRun,
   tabDraftStorage,
@@ -115,10 +116,12 @@ test('validateCustomerForm refuses empty identity with Italian errors', () => {
 test('the form renders every field with Salva and Annulla, in Italian', async () => {
   const { mount, view } = render(stubClient(() => accepted()));
   await view.render();
-  for (const name of ['nome', 'email', 'telefono', 'azienda', 'stato', 'nota']) {
+  for (const name of ['nome', 'cognome', 'email', 'telefono', 'azienda', 'nota']) {
     assert.ok(field(mount, name), `the ${name} control renders`);
-    assert.ok(errorFor(mount, name) ?? (name === 'stato' || name === 'nota'), `the ${name} error slot renders`);
+    assert.ok(errorFor(mount, name), `the ${name} error slot renders`);
   }
+  // backlog:ff8bb60f417f: no Stato — nothing stores it and Modifica has none.
+  assert.equal(field(mount, 'stato'), undefined, 'no Stato field');
   const buttons = mount.findAll('button').map((node) => node.textContent);
   assert.ok(buttons.includes('Salva'), 'Salva renders');
   assert.ok(buttons.includes('Annulla'), 'Annulla renders');
@@ -270,6 +273,9 @@ test('Annulla navigates back to the list without writing', async () => {
   setValue(rendered.mount, 'nome', 'Mario Rossi');
   rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-customer').dispatch('click');
   await flush();
+  // backlog:ff8bb60f417f: with text typed, Annulla asks first.
+  rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'discard-customer').dispatch('click');
+  await flush();
   assert.equal(appliesOf(client).length, 0, 'Annulla writes nothing');
   assert.equal(rendered.navigated(), '#/customer-data');
 });
@@ -280,10 +286,12 @@ test('a leaving route invalidates the form so a late save cannot clear the next 
   await rendered.view.render();
   setValue(rendered.mount, 'nome', 'Mario Rossi');
   setValue(rendered.mount, 'email', 'mario@esempio.it');
-  rendered.view.invalidate();
   clickSave(rendered.mount);
+  rendered.view.invalidate();
   await flush();
   assert.equal(rendered.navigated(), null, 'the invalidated save never navigates onto the next screen');
+  assert.equal(rendered.mount.findAll('div').filter((node) => node.getAttribute('data-customer-panel') === 'open').length, 0,
+    'leaving the route closes the window');
 });
 
 test('CLIENTI_NUOVO_ROUTE never points at the import tool', () => {
@@ -1253,4 +1261,132 @@ test('a generic failure keeps its own error and stores no draft', async () => {
   assert.match(rendered.mount.textContent, /Riprova più tardi/, 'a broken write keeps its own error');
   assert.equal(readNewCustomerDraft(store), null, 'only a lost session stores the draft');
   clearNewCustomerDraft(store);
+});
+
+/* ------------------------------------------------ backlog:ff8bb60f417f (punti 11-12) */
+
+const panelOf = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-customer-panel') === 'open') ?? null;
+const action = (mount, name) => mount.findAll('button').find((node) => node.getAttribute('data-action') === name);
+const discardBox = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-discard') === '');
+
+test('ff8bb60f417f: Nuovo cliente opens as a window like the scheda panels, focus on Nome before the reads answer', async () => {
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = stubClient(async (path) => {
+    await gate;
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    return { available: false };
+  });
+  const rendered = render(client);
+  const pending = rendered.view.render();
+  const panel = panelOf(rendered.mount);
+  assert.ok(panel, 'the window shows at once, before the field and AI reads answer');
+  const classes = String(panel.getAttribute('class')).split(/\s+/);
+  assert.ok(classes.includes('bo-scheda-composer'), 'the same frame as Scrivi and Nuova offerta');
+  assert.equal(panel.getAttribute('role'), 'dialog');
+  assert.ok(panel.findAll('h4').some((node) => node.textContent === 'Nuovo cliente'), 'the dark head names the purpose');
+  assert.ok(action(rendered.mount, 'customer-minimize') && action(rendered.mount, 'customer-close'), 'minimize and close');
+  assert.equal(field(rendered.mount, 'nome').__focused, true, 'the focus is on Nome');
+  assert.equal(rendered.mount.findAll('h1').length, 0, 'no page title: it is a window');
+  release();
+  await pending;
+  // A second render (route re-entry) never stacks a second window.
+  await rendered.view.render();
+  assert.equal(rendered.mount.findAll('div').filter((node) => node.getAttribute('data-customer-panel') === 'open').length, 1);
+});
+
+test('ff8bb60f417f: Annulla, ✕ and Esc with text ask inline, never with confirm(); empty closes at once', async () => {
+  const original = globalThis.confirm;
+  let browserConfirms = 0;
+  globalThis.confirm = () => { browserConfirms += 1; return true; };
+  try {
+    // Empty: Annulla closes at once.
+    const empty = render(stubClient(() => accepted()));
+    await empty.view.render();
+    action(empty.mount, 'cancel-customer').dispatch('click');
+    assert.equal(empty.navigated(), '#/customer-data', 'nothing typed: Annulla leaves at once');
+    assert.equal(panelOf(empty.mount), null, 'and the window closes');
+
+    for (const how of ['annulla', 'close', 'escape']) {
+      const rendered = render(stubClient(() => accepted()));
+      await rendered.view.render();
+      setValue(rendered.mount, 'cognome', 'Rossi');
+      const ask = () => {
+        if (how === 'annulla') action(rendered.mount, 'cancel-customer').dispatch('click');
+        else if (how === 'close') action(rendered.mount, 'customer-close').dispatch('click');
+        else panelOf(rendered.mount).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+      };
+      ask();
+      assert.equal(rendered.navigated(), null, `${how}: nothing typed is lost without asking`);
+      assert.ok(!discardBox(rendered.mount).classList.contains('hidden'), `${how}: the question shows inline`);
+      assert.match(discardBox(rendered.mount).textContent, /Scartare quello che hai scritto\?/);
+      assert.equal(action(rendered.mount, 'keep-customer').__focused, true, `${how}: the focus goes to the safe answer`);
+      // Esc on the question keeps the text.
+      panelOf(rendered.mount).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+      assert.ok(discardBox(rendered.mount).classList.contains('hidden'), `${how}: Esc on the question keeps writing`);
+      assert.equal(field(rendered.mount, 'cognome').value, 'Rossi', `${how}: the text stays`);
+      ask();
+      action(rendered.mount, 'keep-customer').dispatch('click');
+      assert.ok(discardBox(rendered.mount).classList.contains('hidden'), `${how}: Continua a scrivere goes back`);
+      assert.equal(panelOf(rendered.mount) !== null, true);
+      ask();
+      action(rendered.mount, 'discard-customer').dispatch('click');
+      assert.equal(rendered.navigated(), '#/customer-data', `${how}: Scarta leaves`);
+      assert.equal(panelOf(rendered.mount), null, `${how}: and closes the window`);
+    }
+    assert.equal(browserConfirms, 0, 'never the browser confirm()');
+  } finally {
+    globalThis.confirm = original;
+  }
+});
+
+test('ff8bb60f417f: after Salva a toast says so, the badge recounts and the window closes', async () => {
+  const client = stubClient(() => accepted());
+  let saved = 0;
+  const rendered = render(client, { onSaved: () => { saved += 1; } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario');
+  setValue(rendered.mount, 'cognome', 'Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.deepEqual(rendered.notes, ['Cliente creato.']);
+  assert.equal(saved, 1);
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
+  assert.equal(panelOf(rendered.mount), null, 'the window closes on the new scheda');
+});
+
+test('ff8bb60f417f: Nome and Cognome travel apart, like Modifica; one field alone still splits', async () => {
+  assert.deepEqual(customerNames({ nome: 'Anna Maria', cognome: 'Bianchi' }), { firstName: 'Anna Maria', lastName: 'Bianchi' });
+  assert.deepEqual(customerNames({ nome: ' Mario  Rossi ', cognome: '' }), { firstName: 'Mario', lastName: 'Rossi' });
+  const client = stubClient(() => accepted());
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Anna Maria');
+  setValue(rendered.mount, 'cognome', 'Bianchi');
+  setValue(rendered.mount, 'email', 'anna@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.deepEqual(appliesOf(client)[0].body.rows, [{ firstName: 'Anna Maria', lastName: 'Bianchi', email: 'anna@esempio.it' }]);
+});
+
+test('ff8bb60f417f: the kept draft carries Cognome across a lost session', () => {
+  const map = new Map();
+  const storage = { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => map.set(k, v), removeItem: (k) => map.delete(k) };
+  assert.equal(saveNewCustomerDraft(storage, { nome: 'Anna', cognome: 'Bianchi' }, { spaceId: 's1' }), true);
+  const draft = readNewCustomerDraft(storage, { spaceId: 's1' });
+  assert.equal(draft.cognome, 'Bianchi');
+  assert.equal(saveNewCustomerDraft(storage, { nome: '', cognome: 'Bianchi' }, { spaceId: 's2' }), true, 'a Cognome alone is text worth keeping');
+});
+
+test('ff8bb60f417f: the question takes the place of Salva/Annulla while asked', async () => {
+  const rendered = render(stubClient(() => accepted()));
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Lia');
+  const actions = rendered.mount.findAll('div').find((node) => node.getAttribute('class')?.split(/\s+/).includes('bo-cliente-nuovo-actions'));
+  action(rendered.mount, 'cancel-customer').dispatch('click');
+  assert.ok(actions.classList.contains('hidden'), 'Salva/Annulla step aside');
+  action(rendered.mount, 'keep-customer').dispatch('click');
+  assert.ok(!actions.classList.contains('hidden'), 'and come back with Continua a scrivere');
+  assert.equal(field(rendered.mount, 'nome').__focused, true, 'the focus goes back to the form');
 });

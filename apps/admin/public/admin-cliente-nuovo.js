@@ -143,6 +143,7 @@ function parseDraft(raw) {
   if (Date.now() - parsed.savedAt > NEW_CUSTOMER_DRAFT_TTL_MS) return null;
   const draft = {
     nome: cleanDraftText(parsed.nome),
+    cognome: cleanDraftText(parsed.cognome),
     email: cleanDraftText(parsed.email),
     telefono: cleanDraftText(parsed.telefono),
     azienda: cleanDraftText(parsed.azienda),
@@ -153,7 +154,7 @@ function parseDraft(raw) {
     done: validDone(parsed.done),
     custom: validCustomSnapshot(parsed.custom),
   };
-  const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+  const texts = [draft.nome, draft.cognome, draft.email, draft.telefono, draft.azienda, draft.nota];
   if (texts.every((value) => value === '') && draft.created === null) return null;
   return draft;
 }
@@ -188,7 +189,7 @@ export function readNewCustomerDraft(storage, scope) {
 
 /**
  * @param {{ getItem?: unknown, setItem?: unknown, removeItem?: unknown } | null | undefined} storage
- * @param {{ nome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values
+ * @param {{ nome?: unknown, cognome?: unknown, email?: unknown, telefono?: unknown, azienda?: unknown, nota?: unknown }} values
  * @param {{ spaceId?: unknown, operator?: unknown } | null | undefined} [scope]
  * @param {{ created?: unknown, done?: unknown, custom?: unknown } | null | undefined} [extra]
  */
@@ -198,6 +199,7 @@ export function saveNewCustomerDraft(storage, values, scope, extra) {
     const created = validCreated(extra?.created);
     const draft = {
       nome: cleanDraftText(values?.nome),
+      cognome: cleanDraftText(values?.cognome),
       email: cleanDraftText(values?.email),
       telefono: cleanDraftText(values?.telefono),
       azienda: cleanDraftText(values?.azienda),
@@ -209,7 +211,7 @@ export function saveNewCustomerDraft(storage, values, scope, extra) {
       custom: validCustomSnapshot(extra?.custom),
       savedAt: Date.now(),
     };
-    const texts = [draft.nome, draft.email, draft.telefono, draft.azienda, draft.nota];
+    const texts = [draft.nome, draft.cognome, draft.email, draft.telefono, draft.azienda, draft.nota];
     if (texts.every((value) => value === '') && created === null) return false;
     storage?.setItem?.(newCustomerDraftKey(space), JSON.stringify(draft));
     return true;
@@ -278,6 +280,30 @@ export function splitNome(raw) {
   const firstName = parts[0] ?? '';
   const lastName = parts.slice(1).join(' ');
   return { firstName, lastName };
+}
+
+/**
+ * First and last name from the two fields (backlog:ff8bb60f417f: the same
+ * Nome/Cognome pair the scheda's Modifica edits). An empty Cognome falls
+ * back to splitting Nome, so a full name typed in one field still works.
+ * @param {{ nome?: unknown, cognome?: unknown }} values
+ */
+export function customerNames(values) {
+  const nome = String(values?.nome ?? '').trim().replace(/\s+/g, ' ');
+  const cognome = String(values?.cognome ?? '').trim().replace(/\s+/g, ' ');
+  if (cognome === '') return splitNome(nome);
+  return { firstName: nome, lastName: cognome };
+}
+
+/** The full name both fields spell, for resume comparisons. @param {{ nome?: unknown, cognome?: unknown }} values */
+export function customerFullName(values) {
+  const { firstName, lastName } = customerNames(values);
+  return [firstName, lastName].filter((part) => part !== '').join(' ');
+}
+
+/** True when the form holds something the operator typed. @param {Record<string, unknown>} values */
+export function hasTypedText(values) {
+  return Object.values(values ?? {}).some((value) => String(value ?? '').trim() !== '');
 }
 
 /** @param {string} raw */
@@ -355,9 +381,18 @@ export function createCustomerFormView(deps) {
   const { client } = bindAdminMutations(deps.client, deps);
   const el = elFor(doc); // BO-F6-02: shared element builder.
   let renderToken = 0;
+  /** The open window, so a second render or a route change closes this one only. */
+  let openWindow = null;
 
+  function closeWindow() {
+    if (openWindow && openWindow.parentNode) openWindow.parentNode.removeChild(openWindow);
+    openWindow = null;
+  }
+
+  /** Leaving the route closes the window and drops any save still in flight. */
   function invalidate() {
     renderToken += 1;
+    closeWindow();
   }
 
   function fieldErrorSlot() {
@@ -368,12 +403,39 @@ export function createCustomerFormView(deps) {
 
   async function render() {
     const token = ++renderToken;
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    closeWindow();
+
+    // backlog:ff8bb60f417f: Nuovo cliente opens in a window over the list,
+    // the same frame as the scheda's Scrivi and Nuova offerta — a dark head
+    // with the purpose, minimize and close — never a page of its own. The
+    // window shows at once with the focus on Nome; custom fields and the
+    // AI area fill in when their reads answer.
+    const win = el('div', 'bo-scheda-composer bo-cliente-panel');
+    win.setAttribute('data-customer-panel', 'open');
+    win.setAttribute('role', 'dialog');
+    win.setAttribute('aria-label', 'Nuovo cliente');
+    const head = el('div', 'bo-composer-head');
+    head.appendChild(el('h4', 'bo-composer-title', 'Nuovo cliente'));
+    const minimize = el('button', 'bo-composer-icon', '–');
+    minimize.setAttribute('type', 'button');
+    minimize.setAttribute('aria-label', 'Riduci');
+    minimize.setAttribute('data-action', 'customer-minimize');
+    minimize.addEventListener('click', () => {
+      if (win.getAttribute('data-minimized') === 'true') win.removeAttribute('data-minimized');
+      else win.setAttribute('data-minimized', 'true');
+    });
+    const closeButton = el('button', 'bo-composer-icon', '✕');
+    closeButton.setAttribute('type', 'button');
+    closeButton.setAttribute('aria-label', 'Chiudi');
+    closeButton.setAttribute('data-action', 'customer-close');
+    head.appendChild(minimize);
+    head.appendChild(closeButton);
+    win.appendChild(head);
+    const body = el('div', 'bo-composer-body');
+    win.appendChild(body);
 
     const panel = el('section', 'bo-cliente-nuovo');
-    panel.appendChild(el('h1', 'bo-cliente-nuovo-title', 'Nuovo cliente'));
-    panel.appendChild(el('p', 'bo-muted',
-      'Compila e premi Salva: il cliente si crea con la stessa operazione dell\u2019importazione.'));
+    body.appendChild(panel);
 
     // «✦ Scrivi o incolla» fills in only when the server says the AI is
     // on; without it the manual fields below work alone.
@@ -408,12 +470,20 @@ export function createCustomerFormView(deps) {
     panel.appendChild(grid);
     let into = grid;
 
+    // Nome and Cognome apart, like the scheda's Modifica (backlog:ff8bb60f417f).
     const nome = el('input', 'ui-field');
     nome.setAttribute('name', 'nome');
     nome.setAttribute('type', 'text');
-    nome.setAttribute('placeholder', 'Mario Rossi');
+    nome.setAttribute('placeholder', 'Mario');
+    nome.setAttribute('autocomplete', 'given-name');
     field('nome', 'Nome', nome);
-    nome.parentNode?.classList?.add('is-wide');
+
+    const cognome = el('input', 'ui-field');
+    cognome.setAttribute('name', 'cognome');
+    cognome.setAttribute('type', 'text');
+    cognome.setAttribute('placeholder', 'Rossi');
+    cognome.setAttribute('autocomplete', 'family-name');
+    field('cognome', 'Cognome', cognome);
 
     const email = el('input', 'ui-field');
     email.setAttribute('name', 'email');
@@ -432,17 +502,10 @@ export function createCustomerFormView(deps) {
     azienda.setAttribute('type', 'text');
     azienda.setAttribute('placeholder', 'Palestra Esempio');
     field('azienda', 'Azienda', azienda);
-
-    const stato = el('select', 'ui-field');
-    stato.setAttribute('name', 'stato');
-    for (const [value, label] of [['contatto', 'Contatto'], ['cliente', 'Cliente']]) {
-      const option = el('option', undefined, label);
-      option.setAttribute('value', value);
-      stato.appendChild(option);
-    }
-    stato.value = 'contatto';
-    field('stato', 'Stato', stato,
-      'Promemoria per te: lo stato vero dipende da ordini, contratti o abbonamenti.');
+    azienda.parentNode?.classList?.add('is-wide');
+    // No Stato here (backlog:ff8bb60f417f): nothing stores it — the state
+    // comes from orders, contracts and subscriptions — and the scheda's
+    // Modifica has none, so the two forms ask the same things.
 
     // One control per space-wide custom field, plus the inline adder.
     into = panel;
@@ -467,6 +530,7 @@ export function createCustomerFormView(deps) {
     const restored = readNewCustomerDraft(drafts, draftScope());
     if (restored !== null) {
       if (restored.nome !== '') nome.value = restored.nome;
+      if (restored.cognome !== '') cognome.value = restored.cognome;
       if (restored.email !== '') email.value = restored.email;
       if (restored.telefono !== '') telefono.value = restored.telefono;
       if (restored.azienda !== '') azienda.value = restored.azienda;
@@ -483,6 +547,18 @@ export function createCustomerFormView(deps) {
     actions.appendChild(save);
     actions.appendChild(cancel);
     panel.appendChild(actions);
+    // Annulla, ✕ or Esc with text typed asks first, inline, never with the
+    // browser's confirm(): «Scarta» drops it, «Continua a scrivere» goes back.
+    const discard = el('div', 'bo-cliente-nuovo-discard hidden');
+    discard.setAttribute('role', 'alert');
+    discard.setAttribute('data-discard', '');
+    discard.appendChild(el('p', undefined, 'Scartare quello che hai scritto?'));
+    const discardYes = uiButton(doc, { variant: 'danger', label: 'Scarta', attrs: { 'data-action': 'discard-customer' } });
+    const discardNo = uiSecondaryButton(doc, 'Continua a scrivere');
+    discardNo.setAttribute('data-action', 'keep-customer');
+    discard.appendChild(discardYes);
+    discard.appendChild(discardNo);
+    panel.appendChild(discard);
     // A refused note (production 07/11: 400 BO_CRM_BODY_REFUSED, and the
     // operator saw nothing) keeps the operator on the form with this line
     // and the way to the scheda: the customer exists, only the note is
@@ -491,6 +567,60 @@ export function createCustomerFormView(deps) {
     noteWarning.setAttribute('data-note-warning', '');
     noteWarning.setAttribute('role', 'alert');
     panel.appendChild(noteWarning);
+
+    const currentValues = () => ({
+      nome: String(nome.value ?? ''),
+      cognome: String(cognome.value ?? ''),
+      email: String(email.value ?? ''),
+      telefono: String(telefono.value ?? ''),
+      azienda: String(azienda.value ?? ''),
+      nota: String(nota.value ?? ''),
+    });
+    /** Custom controls join once their definitions arrive. @type {Array<any>} */
+    let customControls = [];
+    const typedSomething = () => hasTypedText(currentValues())
+      || customControls.some((entry) => {
+        try { return String(entry.read() ?? '').trim() !== ''; } catch { return false; }
+      });
+    const confirming = () => !discard.classList.contains('hidden');
+    const leave = () => {
+      clearNewCustomerDraft(drafts, draftScope());
+      closeWindow();
+      navigate('#/customer-data');
+    };
+    // The question takes the place of Salva/Annulla while it is asked.
+    const keepWriting = () => {
+      discard.classList.add('hidden');
+      actions.classList.remove('hidden');
+      nome.focus?.();
+    };
+    const requestClose = () => {
+      if (confirming()) return;
+      if (!typedSomething()) {
+        leave();
+        return;
+      }
+      actions.classList.add('hidden');
+      discard.classList.remove('hidden');
+      discard.scrollIntoView?.({ block: 'nearest' });
+      discardNo.focus?.();
+    };
+    discardYes.addEventListener('click', leave);
+    discardNo.addEventListener('click', keepWriting);
+    closeButton.addEventListener('click', requestClose);
+    cancel.addEventListener('click', requestClose);
+    win.addEventListener('keydown', (event) => {
+      if (event?.key !== 'Escape') return;
+      event?.preventDefault?.();
+      // Esc on the question keeps the text: the safe answer.
+      if (confirming()) keepWriting();
+      else requestClose();
+    });
+
+    // The window shows now, before the reads below.
+    mount.appendChild(win);
+    openWindow = win;
+    nome.focus?.();
 
     const setErrors = (errors) => {
       for (const [name, slot] of Object.entries(slots)) {
@@ -508,7 +638,7 @@ export function createCustomerFormView(deps) {
       fieldDefs = [];
     }
     if (token !== renderToken) return;
-    const customControls = fieldDefs.map((def) => fieldControl(el, def));
+    customControls = fieldDefs.map((def) => fieldControl(el, def));
     /** Set once the note-refused lock exists: a custom field added later lifts it too. */
     let watchCustomControl = (entry) => { void entry; };
     for (const entry of customControls) customBox.appendChild(entry.wrap);
@@ -594,7 +724,7 @@ export function createCustomerFormView(deps) {
       if (!busy) save.disabled = false;
       while (noteWarning.firstChild) noteWarning.removeChild(noteWarning.firstChild);
     };
-    for (const control of [nome, email, telefono, azienda, nota]) {
+    for (const control of [nome, cognome, email, telefono, azienda, nota]) {
       control.addEventListener('input', releaseCreated);
     }
     // Custom fields count as typing too (review #654, giro 3): a select
@@ -606,18 +736,6 @@ export function createCustomerFormView(deps) {
     for (const entry of customControls) watchCustom(entry);
     watchCustomControl = watchCustom;
     save.addEventListener('click', () => void saveCustomer());
-    cancel.addEventListener('click', () => {
-      clearNewCustomerDraft(drafts, draftScope());
-      navigate('#/customer-data');
-    });
-
-    const currentValues = () => ({
-      nome: String(nome.value ?? ''),
-      email: String(email.value ?? ''),
-      telefono: String(telefono.value ?? ''),
-      azienda: String(azienda.value ?? ''),
-      nota: String(nota.value ?? ''),
-    });
 
     // The session may die after the customer exists (phone, custom value,
     // note). The shell is already leaving for the space login: keep the
@@ -677,7 +795,7 @@ export function createCustomerFormView(deps) {
       save.disabled = true;
       try {
         const cleanEmail = values.email.trim();
-        const cleanNome = values.nome.trim();
+        const cleanNome = customerFullName(values);
         const cleanAzienda = values.azienda.trim();
         // Resume: the customer may already exist from a session-loss rescue.
         // The rescue draft carries its subject: Salva resumes on it only
@@ -691,7 +809,7 @@ export function createCustomerFormView(deps) {
           && resumed?.created?.resource === 'contact' ? resumed : null;
         const keptEmail = kept !== null ? normalizeResumeEmail(kept.email) : '';
         const liveEmail = normalizeResumeEmail(cleanEmail);
-        const keptNome = kept !== null ? String(kept.nome ?? '').trim() : '';
+        const keptNome = kept !== null ? customerFullName(kept) : '';
         const keptAzienda = kept !== null ? String(kept.azienda ?? '').trim() : '';
         const sameIdentity = kept !== null
           && keptEmail === liveEmail
@@ -724,8 +842,8 @@ export function createCustomerFormView(deps) {
           subject = kept.created;
           done = new Set(kept.done);
           const namePatch = {};
-          if (String(kept.nome ?? '').trim() !== cleanNome) {
-            const { firstName, lastName } = splitNome(values.nome);
+          if (customerFullName(kept) !== cleanNome) {
+            const { firstName, lastName } = customerNames(values);
             namePatch.firstName = firstName;
             if (lastName !== '') namePatch.lastName = lastName;
           }
@@ -750,7 +868,7 @@ export function createCustomerFormView(deps) {
             updateWarning = updateWarning === null ? aziendaWarning : `${updateWarning} ${aziendaWarning}`;
           }
         } else {
-          const { firstName, lastName } = splitNome(values.nome);
+          const { firstName, lastName } = customerNames(values);
           const row = { firstName };
           if (lastName !== '') row.lastName = lastName;
           if (cleanEmail !== '') row.email = cleanEmail;
@@ -836,9 +954,12 @@ export function createCustomerFormView(deps) {
         // a later step failure can never overwrite them into silence.
         if (updateWarning !== null) warning = warning === null ? updateWarning : `${warning} ${updateWarning}`;
         clearNewCustomerDraft(drafts, draftScope());
+        closeWindow();
         navigate(`#/customer-card/${subject.resource}/${subject.id}`);
         emitSaved();
-        if (warning !== null) notify(warning);
+        // backlog:ff8bb60f417f: every save says so; a part that failed says
+        // what is left to do instead.
+        notify(warning ?? 'Cliente creato.');
       } catch (error) {
         if (token !== renderToken) return;
         if (isNewCustomerSessionLoss(error)) {
@@ -997,9 +1118,10 @@ export function createCustomerFormView(deps) {
               return;
             }
           }
+          closeWindow();
           navigate(`#/customer-card/${subject.resource}/${subject.id}`);
           emitSaved();
-          if (warning !== null) ctx.notify(warning);
+          ctx.notify(warning ?? 'Cliente creato.');
         } catch (err) {
           if (token !== renderToken) return;
           error.textContent = String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
@@ -1010,7 +1132,6 @@ export function createCustomerFormView(deps) {
       });
     }
 
-    mount.appendChild(panel);
   }
 
   return { render, invalidate };

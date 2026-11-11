@@ -604,6 +604,22 @@ export function formatAmount(minorUnits, currency) {
   return `${sign}${number} ${unit}`.trim();
 }
 
+/**
+ * The customer's initials, one rule for every avatar (backlog:ff8bb60f417f:
+ * the list read «UE», the scheda «UB», the scheda right after creation
+ * «U?» for the same customer). First letter of the first and of the last
+ * word that holds a letter — «Guido Presti» → «GP», «UX Esplorativo 1111 B»
+ * → «UB» — never a «?»: a name with no letter at all reads «·».
+ * @param {unknown} name
+ */
+export function customerInitials(name) {
+  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  if (words.length === 0) return '·';
+  const letter = (word) => word.match(/\p{L}/u)?.[0] ?? '';
+  const last = words.length > 1 ? letter(words[words.length - 1]) : '';
+  return `${letter(words[0])}${last}`.toUpperCase();
+}
+
 const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
 
 /**

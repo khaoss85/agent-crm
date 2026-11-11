@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -879,23 +879,6 @@ export function createCustomerCardView(deps) {
   }
 
   /** First Unicode letter of a word, or '?' when the word holds none. */
-  function firstLetter(word) {
-    const hit = String(word ?? '').match(/\p{L}/u);
-    return hit ? hit[0] : '?';
-  }
-
-  /**
-   * Initials for the header avatar ("Guido Presti" → "GP"): first letter of
-   * the first and last word, uppercased. Text only, so a hostile name stays
-   * inert text inside the circle.
-   */
-  function initialsFor(name) {
-    const words = String(name ?? '').trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return '?';
-    const last = words.length > 1 ? firstLetter(words[words.length - 1]) : '';
-    return `${firstLetter(words[0])}${last}`.toUpperCase();
-  }
-
   function header(panel, card, resource, id) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
@@ -912,7 +895,7 @@ export function createCustomerCardView(deps) {
     back.addEventListener('click', () => navigate('#/customer-data'));
     panel.appendChild(back);
     const head = el('div', 'bo-scheda-head');
-    const avatar = el('span', 'bo-scheda-avatar', initialsFor(card?.name));
+    const avatar = el('span', 'bo-scheda-avatar', customerInitials(card?.name));
     avatar.setAttribute('aria-hidden', 'true');
     head.appendChild(avatar);
     const titles = el('div', 'bo-scheda-titles');
