@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPipelineBoard } from '../apps/admin/public/admin-pipeline.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { createMountGate } from '../apps/admin/public/admin-navigation.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
@@ -113,7 +114,7 @@ function startDrag(mount, id, height = 92) {
 
 async function board(records, options = {}) {
   const doc = options.doc ?? createFakeDocument();
-  const mount = createMount();
+  const mount = options.mount ?? createMount();
   const client = server(records, options);
   const toasts = [];
   const hashes = [];
@@ -121,7 +122,7 @@ async function board(records, options = {}) {
     doc, mount, client,
     toast: (message, error) => toasts.push({ message: String(message), error: Boolean(error) }),
     navigate: (hash) => hashes.push(hash),
-    wait: () => new Promise(() => {}),
+    wait: options.wait ?? (() => new Promise(() => {})),
   });
   await view.renderBoard('b2b-sales');
   return { doc, mount, client, toasts, hashes, view };
@@ -455,4 +456,84 @@ test('Dan 11/11: a closed offer (Vinta) shows no Cambia fase in the panel', asyn
   const panel = panelOf(mount);
   assert.ok(panel.textContent.includes('Vinta'), 'the stage shows');
   assert.ok(!panel.textContent.includes('Cambia fase'), 'no move out of a closed stage');
+});
+
+// ---- Review #774 (Codex, giro 1) ------------------------------------------
+
+test('review #774 P2: through the shell\'s gated mount, a stage change keeps the panel open with the new stage', async () => {
+  const raw = createMount();
+  const gate = createMountGate(raw);
+  gate.activate('pipeline');
+  const mount = gate.owned('pipeline');
+  const { client } = await board([record('a', 'discovery')], { mount });
+  apriOf(raw, 'a').dispatch('click');
+  const panel = panelOf(raw);
+  panel.findAll('select')[0].value = 'demo';
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move').dispatch('click');
+  await tick();
+  await tick();
+  await tick();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1);
+  const after = panelOf(raw);
+  assert.ok(after, 'the panel is still open after the move');
+  assert.ok(after.textContent.includes('FaseDemo'), 'and shows the new stage');
+});
+
+test('review #774 P2: a move started in the panel locks the card and survives closing and reopening the panel', async () => {
+  const { mount, client } = await board([record('a', 'discovery')], { onPost: () => new Promise(() => {}) });
+  apriOf(mount, 'a').dispatch('click');
+  let panel = panelOf(mount);
+  panel.findAll('select')[0].value = 'demo';
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move').dispatch('click');
+  await tick();
+  const posts = () => client.calls.filter((call) => call.method === 'POST').length;
+  assert.equal(posts(), 1);
+  const card = cardOf(mount, 'a');
+  assert.equal(card.getAttribute('aria-busy'), 'true', 'the card shows the panel\'s move');
+  assert.ok(card.textContent.includes('Spostamento in corso…'));
+  let prevented = false;
+  card.dispatch('dragstart', { preventDefault() { prevented = true; }, dataTransfer: dataTransfer() });
+  assert.ok(prevented, 'the card cannot be dragged meanwhile');
+  card.__select.value = 'demo';
+  await card.__move();
+  assert.equal(posts(), 1, 'Sposta on the card posts nothing while the panel\'s move runs');
+
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click');
+  apriOf(mount, 'a').dispatch('click');
+  panel = panelOf(mount);
+  const go = panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move');
+  assert.equal(go.disabled, true, 'the reopened panel stays locked');
+  assert.ok(panel.textContent.includes('Spostamento in corso…'), 'and says why');
+  panel.findAll('select')[0].value = 'demo';
+  go.dispatch('click');
+  await tick();
+  assert.equal(posts(), 1, 'no second POST from the reopened panel');
+});
+
+test('review #774 P2: a panel move with no answer turns «Non ancora confermato» with Riprova, a re-read only', async () => {
+  let elapse = () => {};
+  const timer = new Promise((resolve) => { elapse = resolve; });
+  const { mount, client } = await board([record('a', 'discovery')], {
+    onPost: () => new Promise(() => {}),
+    wait: () => timer,
+  });
+  apriOf(mount, 'a').dispatch('click');
+  const panel = panelOf(mount);
+  panel.findAll('select')[0].value = 'demo';
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move').dispatch('click');
+  await tick();
+  assert.ok(panel.textContent.includes('Spostamento in corso…'));
+  elapse();
+  await tick();
+  const status = panel.findAll('small').find((n) => n.getAttribute('role') === 'status');
+  assert.equal(status.textContent, 'Non ancora confermato', 'the wait is bounded');
+  const retry = panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move-retry');
+  assert.ok(retry && !classes(retry).includes('hidden'), 'Riprova shows');
+  assert.ok(cardOf(mount, 'a').textContent.includes('Non ancora confermato'), 'the card says the same');
+  const reads = client.calls.filter((call) => call.method === 'GET').length;
+  retry.dispatch('click');
+  await tick();
+  await tick();
+  assert.ok(client.calls.filter((call) => call.method === 'GET').length > reads, 'Riprova re-reads the board');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1, 'never a second POST');
 });

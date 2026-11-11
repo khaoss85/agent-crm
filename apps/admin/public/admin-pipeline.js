@@ -304,6 +304,71 @@ export function createPipelineBoard(deps) {
     mount.appendChild(box);
   }
 
+  /**
+   * Review #774 (P2): one lock per offer, shared by the card (Sposta, drop)
+   * and the Apri panel, and kept across re-renders and panel reopenings.
+   * 'flight' while the request runs; 'queued' once the server answered
+   * BO_CRM_PENDING, until the next board read says where the card is.
+   * @type {Map<string, 'flight' | 'queued'>}
+   */
+  const moveLocks = new Map();
+
+  /**
+   * The views of one offer that show a move: its card and, when open on the
+   * same offer, the panel. Each answers start / unconfirmed / fail.
+   * @param {string} id
+   */
+  function moveViewsOf(id) {
+    const views = [];
+    const card = cardNodes.get(id)?.view;
+    if (card) views.push(card);
+    if (drawer && drawer.recordId === id && drawer.moveView) views.push(drawer.moveView);
+    return views;
+  }
+
+  /**
+   * Run one stage move for every entry point (review #774, P2): the lock,
+   * «Spostamento in corso…», the bounded «Non ancora confermato» + Riprova
+   * once MOVE_PENDING_MS goes by without an answer, the toast, and the quiet
+   * board re-read. A queued move (BO_CRM_PENDING) stays locked: only a board
+   * read (Riprova) releases it, never a second POST.
+   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+   */
+  async function runMove(pipeline, recordId, fromStage, toStage, reason) {
+    const id = String(recordId);
+    if (moveLocks.has(id)) return { busy: true };
+    moveLocks.set(id, 'flight');
+    for (const view of moveViewsOf(id)) view.start();
+    let settled = false;
+    void wait(MOVE_PENDING_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
+    });
+    try {
+      await postMove(pipeline, id, fromStage, toStage, reason);
+      settled = true;
+      moveLocks.delete(id);
+      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
+      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      return { moved: true };
+    } catch (error) {
+      settled = true;
+      if (isMovePending(error)) {
+        // Still queued on the server: the outcome is unknown, never
+        // «non riuscito». The move stays locked (review #657): only
+        // Riprova, a board re-read, is offered — a second POST would
+        // queue a duplicate or meet a stale-stage refusal.
+        console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
+        moveLocks.set(id, 'queued');
+        for (const view of moveViewsOf(id)) view.unconfirmed();
+        return { pending: true };
+      }
+      moveLocks.delete(id);
+      const message = moveFailureText(error);
+      for (const view of moveViewsOf(id)) view.fail(message);
+      return { failed: true, message };
+    }
+  }
+
   /** POST one move-stage transition — shared by the Move button and drops. */
   async function postMove(pipeline, recordId, fromStage, toStage, reason) {
     const input = { toStage, fromStage };
@@ -397,7 +462,9 @@ export function createPipelineBoard(deps) {
     const token = ++renderToken;
     // A panel the router took off the page (the view was left) never comes
     // back on its own: only a reload of this same board keeps it.
-    if (drawer && drawer.node.parentNode !== mount) closeOfferDrawer({ refocus: false });
+    // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
+    // the parent node itself — ask it whether it holds the panel.
+    if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
     if (!quiet || !mount.firstChild) showMessage('Caricamento…');
     let pipeline;
     let records;
@@ -454,6 +521,8 @@ export function createPipelineBoard(deps) {
       state.created = '';
     }
     cached = { pipeline, pipelines: composed, records };
+    // A fresh read is the truth a queued move waited for: it releases it.
+    for (const [id, lock] of [...moveLocks]) if (lock === 'queued') moveLocks.delete(id);
     // A fresh server read may have moved the records: a pending Conferma
     // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
@@ -563,7 +632,7 @@ export function createPipelineBoard(deps) {
       const fresh = records.find((candidate) => String(candidate.id) === drawer.recordId);
       if (!fresh || fresh.pipelineKey !== pipeline.name) closeOfferDrawer({ refocus: false });
       else {
-        if (drawer.node.parentNode !== mount) mount.appendChild(drawer.node);
+        if (!mount.contains(drawer.node)) mount.appendChild(drawer.node);
         if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
       }
     }
@@ -1322,59 +1391,42 @@ export function createPipelineBoard(deps) {
       yes: confirmYes, no: confirmNo, error: confirmError,
     } = confirmPanel;
 
-    let busy = false;
+    const id = String(record.id);
     /** Dan 11/11: the card itself shows the wait, wherever the move began. */
     const markCardBusy = (on) => {
       card.setAttribute('aria-busy', on ? 'true' : 'false');
+      moveButton.disabled = on;
+      moveButton.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmYes.disabled = on;
     };
+    const cardView = {
+      start() {
+        markCardBusy(true);
+        errorNode.textContent = '';
+        errorNode.setAttribute('class', 'field-error hidden');
+        confirmError.textContent = '';
+        confirmError.setAttribute('class', 'field-error hidden');
+        showStatus(MOVE_IN_FLIGHT, false);
+      },
+      unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
+      fail(message) {
+        markCardBusy(false);
+        showStatus('', false);
+        errorNode.textContent = message;
+        errorNode.setAttribute('class', 'field-error');
+      },
+    };
+    // A card painted while its offer still has a move running (a filter, a
+    // reopened panel) shows the same wait and stays locked.
+    const lock = moveLocks.get(id);
+    if (lock) {
+      markCardBusy(true);
+      showStatus(lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT, lock === 'queued');
+    }
     /**
      * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
      */
-    const doPost = async (toStage, reason) => {
-      if (busy) return { busy: true };
-      busy = true;
-      markCardBusy(true);
-      moveButton.disabled = true;
-      moveButton.setAttribute('aria-busy', 'true');
-      confirmYes.disabled = true;
-      errorNode.textContent = '';
-      errorNode.setAttribute('class', 'field-error hidden');
-      confirmError.textContent = '';
-      confirmError.setAttribute('class', 'field-error hidden');
-      showStatus(MOVE_IN_FLIGHT, false);
-      let settled = false;
-      void wait(MOVE_PENDING_MS).then(() => {
-        if (!settled) showStatus(MOVE_UNCONFIRMED, true);
-      });
-      try {
-        await postMove(pipeline, record.id, stage.key, toStage, reason);
-        settled = true;
-        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-        await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
-        return { moved: true };
-      } catch (error) {
-        settled = true;
-        if (isMovePending(error)) {
-          // Still queued on the server: the outcome is unknown, never
-          // «non riuscito». The move stays locked (review #657): only
-          // Riprova, a board re-read, is offered — a second POST would
-          // queue a duplicate or meet a stale-stage refusal.
-          console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
-          showStatus(MOVE_UNCONFIRMED, true);
-          return { pending: true };
-        }
-        busy = false;
-        markCardBusy(false);
-        moveButton.disabled = false;
-        moveButton.setAttribute('aria-busy', 'false');
-        confirmYes.disabled = false;
-        showStatus('', false);
-        const message = moveFailureText(error);
-        errorNode.textContent = message;
-        errorNode.setAttribute('class', 'field-error');
-        return { failed: true, message };
-      }
-    };
+    const doPost = (toStage, reason) => runMove(pipeline, record.id, stage.key, toStage, reason);
     const confirm = async () => {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
@@ -1390,7 +1442,7 @@ export function createPipelineBoard(deps) {
       renderAll(renderToken);
     };
     const submit = async () => {
-      if (busy) return;
+      if (moveLocks.has(id)) return;
       errorNode.textContent = '';
       errorNode.setAttribute('class', 'field-error hidden');
       const toStage = select.value;
@@ -1417,6 +1469,7 @@ export function createPipelineBoard(deps) {
     card.appendChild(confirmBox);
     cardNodes.set(String(record.id), {
       card, select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      view: cardView,
       move: (toStage) => doPost(toStage, undefined),
     });
     card.__move = submit; // test hook
@@ -1450,7 +1503,7 @@ export function createPipelineBoard(deps) {
   /**
    * The open offer panel (Dan 11/11): the composer window of the scheda
    * (`bo-scheda-composer`, dark head, ✕) over the board. One at a time.
-   * @type {null | { node: any, body: any, title: any, close: any, recordId: string, pipelineName: string, opener: any, paintedFrom: any, detach: () => void }}
+   * @type {null | { node: any, body: any, title: any, close: any, recordId: string, pipelineName: string, opener: any, paintedFrom: any, moveView?: any, detach: () => void }}
    */
   let drawer = null;
 
@@ -1557,6 +1610,8 @@ export function createPipelineBoard(deps) {
     if (!drawer) return;
     const { body, title, node } = drawer;
     drawer.paintedFrom = record;
+    // A closed stage paints no Cambia fase: no stale move view either.
+    drawer.moveView = null;
     const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
     const customer = customerName(record);
     title.textContent = name;
@@ -1620,43 +1675,58 @@ export function createPipelineBoard(deps) {
     box.appendChild(error);
     const confirmPanel = createStageConfirm(doc);
     box.appendChild(confirmPanel.box);
+    const retry = el(doc, 'button', {
+      class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'drawer-move-retry' },
+    });
+    // Riprova re-reads the board, never a second POST (review #657).
+    retry.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    box.appendChild(retry);
     let pending = null;
-    let busy = false;
+    const id = String(record.id);
     const say = (node, text) => {
       node.textContent = text;
       const base = node === status ? 'card-status' : 'field-error';
       node.setAttribute('class', text ? base : `${base} hidden`);
     };
-    const post = async (toStage, reason) => {
-      if (busy) return;
-      busy = true;
-      go.disabled = true;
-      go.setAttribute('aria-busy', 'true');
-      confirmPanel.yes.disabled = true;
-      say(error, '');
-      say(status, MOVE_IN_FLIGHT);
-      try {
-        await postMove(pipeline, record.id, record.pipelineStage, toStage, reason);
-        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-        // The board re-reads the truth; renderAll repaints this panel, and
-        // focus, whose button the repaint replaced, lands on its ✕.
-        await renderBoard(pipeline.name, { quiet: true });
-        if (drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
-      } catch (failure) {
-        if (isMovePending(failure)) {
-          say(status, `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`);
-          return;
-        }
-        busy = false;
-        go.disabled = false;
-        go.setAttribute('aria-busy', 'false');
-        confirmPanel.yes.disabled = false;
+    const lockControls = (on) => {
+      go.disabled = on;
+      go.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmPanel.yes.disabled = on;
+    };
+    // Review #774 (P2): the panel shows the same move as the card — one lock
+    // per offer, the bounded «Non ancora confermato» with Riprova.
+    drawer.moveView = {
+      start() {
+        lockControls(true);
+        say(error, '');
+        say(status, MOVE_IN_FLIGHT);
+        retry.setAttribute('class', 'small secondary hidden');
+      },
+      unconfirmed() {
+        say(status, MOVE_UNCONFIRMED);
+        retry.setAttribute('class', 'small secondary');
+      },
+      fail(message) {
+        lockControls(false);
         say(status, '');
-        say(error, moveFailureText(failure));
-      }
+        retry.setAttribute('class', 'small secondary hidden');
+        say(error, message);
+      },
+    };
+    const lock = moveLocks.get(id);
+    if (lock) {
+      lockControls(true);
+      say(status, lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT);
+      if (lock === 'queued') retry.setAttribute('class', 'small secondary');
+    }
+    const post = async (toStage, reason) => {
+      const outcome = await runMove(pipeline, record.id, record.pipelineStage, toStage, reason);
+      // The board re-read repaints this panel; focus, whose button the
+      // repaint replaced, lands on its ✕.
+      if (outcome.moved && drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
     };
     go.addEventListener('click', () => {
-      if (busy) return;
+      if (moveLocks.has(id)) return;
       const toStage = select.value;
       const target = pipeline.stages.find((candidate) => candidate.key === toStage);
       if (!target) return;
