@@ -188,7 +188,7 @@ export function createModuleAdmin(deps) {
     const panel = el(doc, 'section', { class: 'panel panel-wide' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
-    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Generated module' }));
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo generato' }));
     titleBox.appendChild(el(doc, 'h2', { text: humanizeLabel(meta.name) }));
     if (meta.description) titleBox.appendChild(el(doc, 'p', { class: 'lede', text: meta.description }));
     heading.appendChild(titleBox);
@@ -767,7 +767,7 @@ export function createModuleAdmin(deps) {
     const panel = el(doc, 'section', { class: 'panel actions-panel' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
-    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Lifecycle' }));
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Ciclo di vita' }));
     titleBox.appendChild(el(doc, 'h2', { text: 'Actions' }));
     heading.appendChild(titleBox);
     panel.appendChild(heading);

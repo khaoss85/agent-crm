@@ -31,6 +31,7 @@ import { CHANNEL_CONNECT_ROUTES } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { plural } from './admin-labels.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
@@ -121,9 +122,13 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   return list;
 }
 
-/** @param {unknown} count @param {string} singular @param {string} plural */
-export function pluralize(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
+/**
+ * Kept for its callers and tests: the shared plural() of admin-labels
+ * (famiglia F8, backlog:9236684c96a7).
+ * @param {unknown} count @param {string} singular @param {string} many
+ */
+export function pluralize(count, singular, many) {
+  return plural(count, singular, many);
 }
 
 /**
@@ -1207,7 +1212,7 @@ export function createPersonalizzazioneView(deps) {
     head.appendChild(el(doc, 'span', {
       text: String(group.cards.length),
       cls: 'ui-conn-count',
-      attrs: { 'aria-label': `${group.cards.length} canali` },
+      attrs: { 'aria-label': plural(group.cards.length, 'canale', 'canali') },
     }));
     const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
     all.addEventListener('click', () => {

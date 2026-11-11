@@ -22,6 +22,7 @@ import {
   WORKBOOK_REFUSAL,
 } from './admin-import-file.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { plural } from './admin-labels.js';
 
 /**
  * The server origin contract (packages/customer-data/src/normalize.js
@@ -282,7 +283,7 @@ export function createCustomerDataView(deps) {
     importBox.appendChild(drop);
     if (fileState.file) {
       importBox.appendChild(el('p', 'bo-import-file',
-        `File «${fileState.file.name}»: ${fileState.file.rows.length} righe, ${fileState.file.columns.length} colonne.`));
+        `File «${fileState.file.name}»: ${plural(fileState.file.rows.length, 'riga', 'righe')}, ${plural(fileState.file.columns.length, 'colonna', 'colonne')}.`));
     }
     panel.appendChild(importBox);
 
@@ -354,8 +355,8 @@ export function createCustomerDataView(deps) {
         checkBox.appendChild(el('p', 'field-error customer-data-duplicates',
           `Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`));
       }
-      const infoBits = [`${built.length} righe da importare`];
-      if (skippedEmpty > 0) infoBits.push(`${skippedEmpty} righe vuote saltate`);
+      const infoBits = [`${plural(built.length, 'riga', 'righe')} da importare`];
+      if (skippedEmpty > 0) infoBits.push(plural(skippedEmpty, 'riga vuota saltata', 'righe vuote saltate'));
       if (phones.length > 0) infoBits.push(`${phones.length} telefoni da collegare`);
       if (phonesWithoutEmail > 0) infoBits.push(`${phonesWithoutEmail} telefoni senza email non si collegano`);
       if (invalidPhones > 0) infoBits.push(`${invalidPhones} numeri di telefono non validi: controlla la colonna Telefono`);

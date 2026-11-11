@@ -35,7 +35,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel } from './admin-labels.js';
 
@@ -980,8 +980,9 @@ export function createPipelineBoard(deps) {
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
+      // Famiglia F8: days as a person writes them («20 nov 2026»), never ISO.
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
       body.appendChild(row);
     }
@@ -1123,7 +1124,7 @@ export function createPipelineBoard(deps) {
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
-    const closeDay = dayOf(record.expectedCloseDate);
+    const closeDay = italianDay(record.expectedCloseDate);
     if (closeDay) {
       card.appendChild(el(doc, 'p', { class: 'card-close', text: `chiusura ${closeDay}` }));
     }

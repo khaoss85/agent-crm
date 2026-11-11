@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
+import { euro, isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -3419,7 +3419,9 @@ export function createCalendarioView(deps) {
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
     const options = bookable.map((entry) => ({
       value: entry.key,
-      label: `${entry.name} · ${priceText(entry)} €`,
+      // The menu reads money the Italian way («1.080,00 €», backlog:9236684c96a7);
+      // the price field keeps the machine form it sends.
+      label: `${entry.name} · ${euro(entry.priceCents) ?? '—'}`,
     }));
     const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
     const select = wrap.querySelector('select') ?? wrap;

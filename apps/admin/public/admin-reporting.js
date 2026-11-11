@@ -157,12 +157,13 @@ export function dashboardPath({ period, owner = null, currency = REPORTING_CURRE
 
 /**
  * Money for display: integer minor units to an Italian currency string.
- * Non-integers are never formatted as money — 'n.d.', not a guess.
+ * Non-integers are never formatted as money — 'n.d.', not a guess. The
+ * shared euro() groups the thousands always («1.080,00 €», never
+ * «1080,00 €»: backlog:9236684c96a7).
  * @param {number} minor @param {string} [currency]
  */
 export function formatMoney(minor, currency = REPORTING_CURRENCY) {
-  if (!Number.isInteger(minor)) return 'n.d.';
-  return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+  return euro(minor, currency) ?? 'n.d.';
 }
 
 /**
@@ -335,6 +336,7 @@ export function reportingSummary(rows) {
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
+import { euro } from './admin-labels.js';
 import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**

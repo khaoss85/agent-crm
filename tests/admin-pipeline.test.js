@@ -486,7 +486,7 @@ test('Lista view renders the same filtered records as a read-only table', async 
   assert.equal(rows.length, 5, 'all placed records are listed');
   assert.ok(rows[0].textContent.includes('Discovery'), 'stage renders as its label');
   assert.ok(rows[0].textContent.includes('alice'), 'referente is visible');
-  assert.ok(rows[0].textContent.includes('2026-11-01'), 'expected close renders as a day');
+  assert.ok(rows[0].textContent.includes('1 nov 2026'), 'expected close renders as an Italian day (famiglia F8)');
 
   const kanbanButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban');
   kanbanButton.dispatch('click');
@@ -1086,8 +1086,8 @@ test('pipeline lista follows the prototype: headers order, pill, probability, da
   );
   assert.ok(cells[2].textContent.includes('27.500') || cells[2].textContent.includes('27,500'), `valore shows the amount (${cells[2].textContent})`);
   assert.equal(cells[3].textContent, '10%', 'probabilità shows the discovery stage probability');
-  assert.equal(cells[4].textContent, '2026-11-20', 'chiusura shows the expected close day');
-  assert.equal(cells[5].textContent, '2026-10-02', 'creata shows the creation day');
+  assert.equal(cells[4].textContent, '20 nov 2026', 'chiusura shows the expected close day, never ISO (famiglia F8)');
+  assert.equal(cells[5].textContent, '2 ott 2026', 'creata shows the creation day, never ISO (famiglia F8)');
   assert.ok(cells[6].textContent.includes('maria'), 'referente shows the owner');
 
   // C21: an empty filter shows the exact prototype message.
@@ -1216,8 +1216,8 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   const closeOf = (id) => mount.findAll('div')
     .find((n) => n.getAttribute('data-record') === id)
     .findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-close');
-  assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
-  assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
+  assert.equal(closeOf('a')?.textContent, 'chiusura 20 nov 2026', 'C13: close line follows `chiusura <data>`');
+  assert.equal(closeOf('b')?.textContent, 'chiusura 1 dic 2026', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
 });
 

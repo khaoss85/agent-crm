@@ -394,3 +394,85 @@ export function auditActorLabel(entry, known = []) {
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   return names.includes(id) ? id : 'utente';
 }
+
+// ---------------------------------------------------------------------------
+// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
+// screen names in Italian, from one place. Every view that writes money, a
+// count or a module name reads it here, so a fix lands on every screen.
+// Dates: italianDateTime above («7 nov, 14:30»), italianDay in admin-core
+// («20 nov 2026») and romeDayPhrase in admin-oggi («di domani», «del 12
+// novembre», agent-crm#746) — never a raw ISO stamp on screen.
+// ---------------------------------------------------------------------------
+
+/** One formatter per currency code, built once. */
+const MONEY_FORMATS = new Map();
+
+/**
+ * Money for the Italian screens, minor units (cents) in: «1.080,00 €»,
+ * «26.000,00 €», «0,00 USD». `useGrouping: 'always'` is the point: it-IT
+ * leaves four-digit numbers ungrouped by default, so Reporting read
+ * «1080,00 €» (backlog:9236684c96a7). Null when the amount is not a whole
+ * number of cents — never a guessed figure.
+ * @param {unknown} minor amount in 1/100 units
+ * @param {unknown} [currency] ISO 4217 code, EUR when missing
+ * @returns {string | null}
+ */
+export function euro(minor, currency = 'EUR') {
+  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
+  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : '';
+  const code = /^[A-Z]{3}$/.test(raw) ? raw : 'EUR';
+  let format = MONEY_FORMATS.get(code);
+  if (format === undefined) {
+    format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
+    MONEY_FORMATS.set(code, format);
+  }
+  return format.format(minor / 100);
+}
+
+/**
+ * A count with its noun: «1 appuntamento», «3 appuntamenti», «0 righe».
+ * Only exactly one takes the singular.
+ * @param {unknown} count
+ * @param {string} one
+ * @param {string} many
+ */
+export function plural(count, one, many) {
+  return `${count} ${Number(count) === 1 ? one : many}`;
+}
+
+/**
+ * Italian names of the core modules, for the breadcrumb and the kickers
+ * (uppercased by CSS: a raw key read «OPPORTUNITY» on Nuova offerta,
+ * backlog:1d99c8207f90). `one`/`many` name the record and the list,
+ * `create` the creation screen.
+ */
+export const MODULE_NAMES = Object.freeze({
+  opportunity: Object.freeze({ one: 'Offerta', many: 'Offerte', create: 'Nuova offerta' }),
+  company: Object.freeze({ one: 'Azienda', many: 'Aziende', create: 'Nuova azienda' }),
+  contact: Object.freeze({ one: 'Contatto', many: 'Contatti', create: 'Nuovo contatto' }),
+  quote: Object.freeze({ one: 'Preventivo', many: 'Preventivi', create: 'Nuovo preventivo' }),
+  appointment: Object.freeze({ one: 'Appuntamento', many: 'Appuntamenti', create: 'Nuovo appuntamento' }),
+  product: Object.freeze({ one: 'Prodotto', many: 'Prodotti', create: 'Nuovo prodotto' }),
+  order: Object.freeze({ one: 'Ordine', many: 'Ordini', create: 'Nuovo ordine' }),
+  contract: Object.freeze({ one: 'Contratto', many: 'Contratti', create: 'Nuovo contratto' }),
+  task: Object.freeze({ one: 'Attività', many: 'Attività', create: 'Nuova attività' }),
+  lead: Object.freeze({ one: 'Lead', many: 'Lead', create: 'Nuovo lead' }),
+});
+
+/**
+ * The screen name of one module route for the breadcrumb: «Nuova offerta»
+ * for `new`, «Offerta» for `detail`, «Offerte» for `list`. A module the
+ * table does not know (one the operator generated) reads its own name with
+ * spaces for dashes and a capital first letter — its key is the name the
+ * operator gave it.
+ * @param {'list' | 'new' | 'detail' | string} view
+ * @param {unknown} moduleName
+ */
+export function moduleScreenLabel(view, moduleName) {
+  const key = typeof moduleName === 'string' ? moduleName.trim().toLowerCase() : '';
+  if (key === '') return 'Modulo';
+  const known = Object.hasOwn(MODULE_NAMES, key) ? MODULE_NAMES[key] : null;
+  if (known !== null) return view === 'new' ? known.create : view === 'detail' ? known.one : known.many;
+  const words = key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}

@@ -32,7 +32,7 @@ import {
   PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
-import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
+import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -589,7 +589,7 @@ async function answerChiamate(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [outcome, count] of [...byOutcome.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${outcome}: ${count}`);
   }
@@ -994,7 +994,7 @@ async function answerSlot(client) {
   // status enum). Done is history, not a slot to propose; cancelled and
   // no-show are out; a missing status is never counted as booked.
   const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === 'confirmed');
-  answer.lines.push(`${booked.length} appuntamenti fissati letti. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
+  answer.lines.push(`${plural(booked.length, 'appuntamento fissato letto', 'appuntamenti fissati letti')}. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
   // Backlog 5a1e6d8dc42e: the slot reads «7 nov, 14:30», never the ISO
   // stamp; a bare day keeps its day and never invents a time.
   const whenOf = (row) => italianDateTime(row?.startsAt) || italianDay(row?.date) || shortText(row?.date, 24) || 'appuntamento';
@@ -1025,7 +1025,7 @@ async function answerLeadSito(client) {
     answer.lines.push('Nessun messaggio dal form del sito tra gli ultimi letti.');
     return answer;
   }
-  answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
+  answer.lines.push(`${plural(inboundAll.length, 'messaggio', 'messaggi')} dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
   // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
   const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
   const distinctSite = uniqueLabels(listedSite.map((row) => shortText(row?.body, 60) || '(senza testo)'));
@@ -1084,7 +1084,7 @@ async function answerCallReport(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [member, entry] of [...byMember.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} riuscite)`);
   }
