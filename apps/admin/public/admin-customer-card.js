@@ -731,6 +731,31 @@ export function createCustomerCardView(deps) {
   let timelineShown = TIMELINE_PAGE;
   // The scheda on screen, so a re-read of the same customer (after Invia,
   // a note, an edit) redraws in place instead of blanking the page.
+  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
+  // A slow first load never paints over (or crashes on) a newer opening:
+  // stale callbacks return without touching the panel.
+  let composerGeneration = 0;
+  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
+  // close the window, the typed text and subject stay here and come back
+  // when the composer reopens on the same customer. Cleared only by a send
+  // the server accepted. In memory: a reload still drops them, like any
+  // unsent form. backlog:d998cf15f011: this state lives with the view, not
+  // with one painted scheda — declared inside the quick actions it was born
+  // again at every re-read, so a draft was lost on the way back from
+  // another screen or after any save that re-reads the card.
+  const composerDrafts = new Map();
+  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
+  // space, customer, channel and words → requestId (review #664): a close
+  // and reopen of the composer reads the same request back, never a new POST.
+  /** @type {Map<string, string>} */
+  const composerAiPending = new Map();
+  // The idempotency key of a send whose outcome is not yet known, keyed by
+  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
+  // the server finds its own request instead of mailing twice (production
+  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
+  // A changed text, subject or channel is a new message with a new key; a
+  // definitive answer (sent, refused, failed) drops the key.
+  const composerSendKeys = new Map();
   let shownKey = null;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
@@ -1337,10 +1362,6 @@ export function createCustomerCardView(deps) {
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
-  // Voce 8ce25b0f445f: every Scrivi press opens a new composer generation.
-  // A slow first load never paints over (or crashes on) a newer opening:
-  // stale callbacks return without touching the panel.
-  let composerGeneration = 0;
 
   function openComposer(card, navCtx) {
     const generation = (composerGeneration += 1);
@@ -1752,24 +1773,6 @@ export function createCustomerCardView(deps) {
     return row;
   }
 
-  // Composer drafts by customer (Gmail habit, never lose text): ✕ and Esc
-  // close the window, the typed text and subject stay here and come back
-  // when the composer reopens on the same customer. Cleared only by a send
-  // the server accepted. In memory: a reload still drops them, like any
-  // unsent form.
-  const composerDrafts = new Map();
-  // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
-  // space, customer, channel and words → requestId (review #664): a close
-  // and reopen of the composer reads the same request back, never a new POST.
-  /** @type {Map<string, string>} */
-  const composerAiPending = new Map();
-  // The idempotency key of a send whose outcome is not yet known, keyed by
-  // the message itself (draft, channel, connection, subject, trimmed text). A re-tap of the same message reuses it, so
-  // the server finds its own request instead of mailing twice (production
-  // 06/11: the worker sent at +2.5 min while the panel said «non inviato»).
-  // A changed text, subject or channel is a new message with a new key; a
-  // definitive answer (sent, refused, failed) drops the key.
-  const composerSendKeys = new Map();
 
   function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
     // Keyed by space too: a draft never crosses into another workspace

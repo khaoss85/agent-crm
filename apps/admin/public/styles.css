@@ -2055,6 +2055,30 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }
+/* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
+   card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+.pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
+.pipeline-card.dragging { opacity: .45; }
+.pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+.pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-card > .field-error { display: block; margin-top: 6px; }
+.pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
+.bo-scheda-composer.bo-pipeline-offer { top: 72px; bottom: 16px; width: min(420px, calc(100vw - 48px)); max-height: none; border-bottom: 1px solid var(--line); border-radius: 14px; }
+.bo-pipeline-offer .bo-composer-body.bo-pipeline-offer-body { gap: 16px; padding: 18px 18px 18px; }
+.bo-pipeline-offer .offer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.bo-pipeline-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-pipeline-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-pipeline-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-pipeline-offer-move { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-move label { font-size: 11px; font-weight: 700; color: var(--dim); }
+.bo-pipeline-offer-move-row { display: flex; gap: 8px; }
+.bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
+.bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
+@media (max-width: 560px) {
+  .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+  .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
+}
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }
 .pipeline-toolbar select.ui-field, .pipeline-toolbar input[type="date"].ui-field { border-color: var(--line-soft); background: var(--surface); color: var(--ink); font-weight: 600; }
