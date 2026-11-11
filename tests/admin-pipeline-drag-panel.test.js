@@ -222,6 +222,32 @@ test('Dan 11/11: on drop the card sits where the placeholder was, waits for the 
   assert.deepEqual(cardIds(columnOf(again.mount, 'demo')), ['a', 'b', 'c'], 'a page reload shows the same order');
 });
 
+test('giro UX 11/11: after a drop the board never blanks to «Caricamento…» while it re-reads', async () => {
+  const { mount, client } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  // From now on every read waits: the pilot answers a list in 2,5-4 s.
+  let releaseRead = () => {};
+  const readGate = new Promise((resolve) => { releaseRead = resolve; });
+  const plain = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if ((options.method ?? 'GET') === 'GET' && path !== '/api/schema') await readGate;
+    return plain(path, options);
+  };
+  const { transfer } = startDrag(mount, 'a');
+  const demo = columnOf(mount, 'demo');
+  demo.dispatch('dragover', { preventDefault() {} });
+  demo.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  await tick();
+  assert.ok(!mount.textContent.includes('Caricamento…'), 'the board stays on screen during the re-read');
+  assert.deepEqual(cardIds(columnOf(mount, 'demo')), ['a', 'b'], 'with the card already in its new place');
+  releaseRead();
+  await tick();
+  await tick();
+  await tick();
+  assert.deepEqual(cardIds(columnOf(mount, 'demo')), ['a', 'b'], 'and the re-read confirms it');
+  assert.equal(cardOf(mount, 'a').getAttribute('aria-busy'), null, 'the fresh card is no longer waiting');
+});
+
 test('Dan 11/11: a failed drop puts the card back in its place with a clear message', async () => {
   const { mount, toasts } = await board(
     [record('x', 'discovery'), record('a', 'discovery'), record('y', 'discovery'), record('b', 'demo')],

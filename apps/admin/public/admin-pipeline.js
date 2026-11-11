@@ -378,7 +378,7 @@ export function createPipelineBoard(deps) {
     try {
       await postMove(pipeline, recordId, fromStage, toStage);
       toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-      await renderBoard(pipeline.name); // re-render: server state is the truth
+      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
     } catch (error) {
       toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
     }
@@ -388,13 +388,17 @@ export function createPipelineBoard(deps) {
    * @param {string | null} pipelineName null for the bare #/pipeline link
    *   (backlog 2a075e2d9250): the first composed pipeline, the same rule
    *   as the sidebar voice (buildShellNav).
+   * @param {{ quiet?: boolean }} [options] quiet: the re-read after a move —
+   *   the board stays on screen (the moved card already sits in its new place)
+   *   instead of «Caricamento…» for the seconds the read takes (giro UX 11/11:
+   *   on the pilot a read takes 2,5-4 s).
    */
-  async function renderBoard(pipelineName) {
+  async function renderBoard(pipelineName, { quiet = false } = {}) {
     const token = ++renderToken;
     // A panel the router took off the page (the view was left) never comes
     // back on its own: only a reload of this same board keeps it.
     if (drawer && drawer.node.parentNode !== mount) closeOfferDrawer({ refocus: false });
-    showMessage('Caricamento…');
+    if (!quiet || !mount.firstChild) showMessage('Caricamento…');
     let pipeline;
     let records;
     let composed = [];
@@ -1346,7 +1350,7 @@ export function createPipelineBoard(deps) {
         await postMove(pipeline, record.id, stage.key, toStage, reason);
         settled = true;
         toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-        await renderBoard(pipeline.name); // re-render: server state is the truth
+        await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
         return { moved: true };
       } catch (error) {
         settled = true;
@@ -1636,7 +1640,7 @@ export function createPipelineBoard(deps) {
         toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
         // The board re-reads the truth; renderAll repaints this panel, and
         // focus, whose button the repaint replaced, lands on its ✕.
-        await renderBoard(pipeline.name);
+        await renderBoard(pipeline.name, { quiet: true });
         if (drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
       } catch (failure) {
         if (isMovePending(failure)) {
