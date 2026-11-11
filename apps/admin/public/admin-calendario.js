@@ -1106,7 +1106,8 @@ export function createCalendarioView(deps) {
   let memberToken = 0;
   /**
    * The event drag in flight (backlog:3d0fbe7dc8d1): `{ mode, id, startMin,
-   * endMin, dayKey, targetDay, targetStart, targetEnd, moved }`, or null.
+   * endMin, grabOffset, dayKey, targetDay, targetStart, targetEnd, moved }`,
+   * or null.
    * Shared by every day column: the press starts on one, the release may
    * land on another. A full renderAll mid-drag never happens — the ghost is
    * painted directly — so no token guards it; the commit clears it first.
@@ -2093,19 +2094,27 @@ export function createCalendarioView(deps) {
       // their own click, like before.
       const target = event.target ?? null;
       const resizeHandle = target?.closest?.('[data-role="event-resize"]') ?? null;
-      const block = resizeHandle ?? target?.closest?.('.cal-event') ?? null;
-      const row = block !== null ? findWeekRow(block.getAttribute?.('data-event-id')) : null;
+      // The handle is a span inside the event button and carries no id: the
+      // row lookup always resolves the enclosing .cal-event (review #757:
+      // the handle alone left findWeekRow(null) and no resize ever started).
+      const eventBlock = target?.closest?.('.cal-event') ?? null;
+      const row = eventBlock !== null ? findWeekRow(eventBlock.getAttribute?.('data-event-id')) : null;
       if (row !== null && isMovableAppointment(row)) {
         const startMin = romeMinutes(row.startsAt);
         const endMin = romeMinutes(row.endsAt);
         if (startMin === null || endMin === null || endMin <= startMin) return;
         event.preventDefault?.();
+        const pressMinute = minuteAt(col, event);
         eventDrag = {
           mode: resizeHandle !== null ? 'resize' : 'move',
           id: String(row.id ?? ''),
           row,
           startMin,
           endMin,
+          // Where inside the event the press landed (review #757): the move
+          // keeps this offset, so grabbing mid-event never shifts the start
+          // by the grab distance on release.
+          grabOffset: pressMinute === null ? 0 : pressMinute - startMin,
           dayKey: key,
           targetDay: key,
           targetStart: startMin,
@@ -2115,7 +2124,7 @@ export function createCalendarioView(deps) {
         hookDocDragEnd();
         return;
       }
-      if (block !== null) return;
+      if (eventBlock !== null) return;
       if (target?.closest?.('.bo-add-button, .cal-pick')) return;
       const minute = minuteAt(col, event);
       if (minute === null) return;
@@ -2233,7 +2242,10 @@ export function createCalendarioView(deps) {
       drag.targetEnd = end;
     } else {
       const latest = GRID_END_MINUTES - durationMin;
-      const start = Math.min(Math.max(minute, GRID_START_MINUTES), Math.max(GRID_START_MINUTES, latest));
+      const start = Math.min(
+        Math.max(minute - (drag.grabOffset ?? 0), GRID_START_MINUTES),
+        Math.max(GRID_START_MINUTES, latest),
+      );
       if (start === drag.targetStart && dayKey === drag.targetDay) return;
       drag.targetDay = dayKey;
       drag.targetStart = start;
@@ -2286,6 +2298,11 @@ export function createCalendarioView(deps) {
    * @param {any} row @param {string} startsAt @param {string} endsAt
    */
   async function commitEventMove(row, startsAt, endsAt) {
+    // The generation this write started from (review #757): a route away
+    // during the request invalidates the view, and the late answer must not
+    // repaint the calendar over the next screen nor start another week load.
+    // The busy flag still clears in the finally below.
+    const token = renderToken;
     if (state.moveBusy) return;
     const id = String(row?.id ?? '');
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
@@ -2325,6 +2342,7 @@ export function createCalendarioView(deps) {
     } finally {
       state.moveBusy = false;
     }
+    if (token !== renderToken) return;
     renderAll();
     if (ok) {
       const members = parseMemberFilter(state.memberFilter);

@@ -230,6 +230,193 @@ test('3d0fbe7d: a refused move stays put with an Italian note', async () => {
   );
 });
 
+/**
+ * closest() stand-in for pointer targets: the fake DOM has no
+ * Element.closest, so the dragged nodes get one that walks parentNode like
+ * the real one (class, [attr="value"], and comma lists — the only selectors
+ * the calendar's pointer path uses).
+ */
+function attachClosest(node) {
+  node.closest = (selector) => {
+    const parts = String(selector).split(',').map((part) => part.trim()).filter(Boolean);
+    let current = node;
+    while (current) {
+      for (const part of parts) {
+        if (part.startsWith('.')) {
+          const wanted = part.slice(1);
+          if ((current.getAttribute?.('class') ?? '').split(/\s+/).includes(wanted)) return current;
+        } else {
+          const attr = part.match(/^\[([a-zA-Z-]+)="([^"]*)"\]$/);
+          if (attr && current.getAttribute?.(attr[1]) === attr[2]) return current;
+        }
+      }
+      current = current.parentNode ?? null;
+    }
+    return null;
+  };
+  for (const child of node.childNodes ?? []) attachClosest(child);
+}
+
+const DRAG_WEEK = () => ({
+  from: '2026-10-19T00:00:00.000Z',
+  to: '2026-10-26T00:00:00.000Z',
+  members: [
+    {
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'a9',
+          status: 'booked',
+          // 14:00–15:00 in Rome (CEST, UTC+2): mid-grid, room to move both ways.
+          startsAt: '2026-10-22T12:00:00.000Z',
+          endsAt: '2026-10-22T13:00:00.000Z',
+          serviceKey: 'taglio',
+          teamMemberId: 'marco',
+          priceCents: 4500,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:marco:9:c9',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        },
+      ],
+    },
+  ],
+});
+
+async function openPointerWeek() {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = DRAG_WEEK();
+  const client = stubClient({ week });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  const button = eventButton(mount, 'a9');
+  const col = button.parentNode;
+  attachClosest(mount);
+  // 1 px per minute from 09:00: clientY 300 is 14:00, 330 is 14:30, 390 is 15:30.
+  col.getBoundingClientRect = () => ({ top: 0, height: 540 });
+  return { doc, mount, client, week, view, col };
+}
+
+function resizeHandleOf(mount) {
+  const button = eventButton(mount, 'a9');
+  const handle = button.findAll('span').find((node) => node.getAttribute('data-role') === 'event-resize');
+  assert.ok(handle, 'the stretch handle paints on the event');
+  return { button, handle };
+}
+
+test('3d0fbe7d: dragging the bottom edge stretches the booking (review #757 P2)', async () => {
+  const { mount, client, week, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  const before = { ...week.members[0].appointments[0] };
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  const reschedule = client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  assert.ok(reschedule, 'the stretch fires POST /api/appointments/reschedule');
+  const body = typeof reschedule.body === 'string' ? JSON.parse(reschedule.body) : reschedule.body;
+  assert.equal(Date.parse(body.startsAt), Date.parse(before.startsAt), 'the start stays where it was');
+  assert.ok(Date.parse(body.endsAt) > Date.parse(before.endsAt), 'the end moves later');
+});
+
+test('3d0fbe7d: grabbing mid-event keeps the grab offset, jitter sends nothing (review #757 P2)', async () => {
+  const first = await openPointerWeek();
+  const pressBody = eventButton(first.mount, 'a9');
+  // A press at 14:30 on a 14:00–15:00 event, released in the same half hour:
+  // ordinary click jitter must not move the booking anywhere.
+  first.col.dispatch('pointerdown', { target: pressBody, button: 0, clientY: 330 });
+  first.col.dispatch('pointermove', { clientY: 335 });
+  first.col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(
+    !first.client.calls.some((call) => call.path === '/api/appointments/reschedule'),
+    'jitter inside the same half hour sends no reschedule',
+  );
+
+  const second = await openPointerWeek();
+  const body = eventButton(second.mount, 'a9');
+  // A real displacement of one hour from a mid-event grab moves the block by
+  // one hour, not by the pointer's absolute time.
+  second.col.dispatch('pointerdown', { target: body, button: 0, clientY: 330 });
+  second.col.dispatch('pointermove', { clientY: 390 });
+  second.col.dispatch('pointerup', {});
+  await settle(15);
+  const reschedule = second.client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  assert.ok(reschedule, 'the move fires POST /api/appointments/reschedule');
+  const payload = typeof reschedule.body === 'string' ? JSON.parse(reschedule.body) : reschedule.body;
+  assert.equal(payload.startsAt, '2026-10-22T13:00:00.000Z', 'the block moves by the displacement (15:00 Rome)');
+  assert.equal(payload.endsAt, '2026-10-22T14:00:00.000Z', 'the duration follows the block (16:00 Rome)');
+});
+
+test('3d0fbe7d: a route away during the request never repaints the next screen (review #757 P2)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = WEEK();
+  let releaseReschedule;
+  const pending = new Promise((resolve) => { releaseReschedule = resolve; });
+  const base = stubClient({ week });
+  const rescheduleBodies = [];
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/reschedule') {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        rescheduleBodies.push(body);
+        return pending;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  await selectEvent(mount, 'a1');
+  fillMove(moveForm(mount), { date: '2026-10-22', start: '18:30', end: '19:00' });
+  submitMove(moveForm(mount));
+  await settle(5);
+  assert.equal(rescheduleBodies.length, 1, 'the move request leaves while mounted');
+  const weekCallsBefore = base.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  view.invalidate();
+  // The shell routes away: the shared mount now shows another screen.
+  for (const child of [...mount.childNodes]) mount.removeChild(child);
+  const other = doc.createElement('div');
+  other.setAttribute('class', 'other-screen');
+  other.textContent = 'Altra schermata';
+  mount.appendChild(other);
+  releaseReschedule({ appointment: { id: 'a1', startsAt: rescheduleBodies[0].startsAt, endsAt: rescheduleBodies[0].endsAt } });
+  await settle(15);
+  assert.equal(mount.querySelector('.cal-wrap'), null, 'the late answer never paints the calendar over the next screen');
+  assert.equal(mount.querySelector('.other-screen')?.textContent, 'Altra schermata', 'the next screen stays');
+  assert.equal(
+    base.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length,
+    weekCallsBefore,
+    'the late answer starts no week reload',
+  );
+  // The dropped completion still clears the busy state: back on the calendar,
+  // another move leaves again. a1 is still the selection from before the
+  // route away, and a click toggles — so one click deselects, then select.
+  await view.render();
+  await settle();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  const reselect = eventButton(mount, 'a1');
+  reselect.dispatch('click', { target: reselect });
+  await settle();
+  await selectEvent(mount, 'a1');
+  fillMove(moveForm(mount), { date: '2026-10-22', start: '19:00', end: '19:30' });
+  submitMove(moveForm(mount));
+  await settle(15);
+  assert.equal(rescheduleBodies.length, 2, 'the view takes another move after the dropped completion');
+});
+
 test('3d0fbe7d: bad move fields fail closed in Italian before any request', async () => {
   const { mount, client } = await openWeek();
   await selectEvent(mount, 'a1');
