@@ -16,7 +16,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stableKey, optionsShareable, templateDirName, project as cachedProject } from './helpers/contracts-project-cache.js';
+import { stableKey, optionsShareable, templateDirName } from './helpers/contracts-project-cache.js';
 import * as cached from './helpers/contracts-project-cache.js';
 import * as original from './helpers/contracts-project.js';
 import { createHash } from 'node:crypto';
@@ -71,11 +71,31 @@ test('an option set holding a function is not shareable', () => {
   assert.equal(optionsShareable({ priceRules: { nested: { fn: () => 0 } } }), false);
 });
 
+/** @param {string} root @returns {Record<string, string>} path → sha256 */
+function tree(root) {
+  /** @type {Record<string, string>} */
+  const files = {};
+  const walk = (/** @type {string} */ dir, /** @type {string} */ rel) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      const relPath = rel ? `${rel}/${name}` : name;
+      if (statSync(path).isDirectory()) walk(path, relPath);
+      else files[relPath] = createHash('sha256').update(readFileSync(path)).digest('hex');
+    }
+  };
+  walk(root, '');
+  return files;
+}
+
 test(
-  'two processes share one template build, each test keeps a private root',
+  'two processes share one template build, file for file the original build, each test a private copy',
   { skip: sharingEngages() ? false : 'checkout differs from HEAD: sharing is off by design here' },
   () => {
   const scratch = mkdtempSync(join(tmpdir(), 'accordo-runner-temp-'));
+  /** @type {Array<() => void>} */
+  const cleanups = [];
+  /** @type {string[]} */
+  const roots = [];
   const childPath = join(scratch, 'child.mjs');
   const helper = new URL('./helpers/contracts-project-cache.js', import.meta.url).href;
   writeFileSync(childPath, [
@@ -95,7 +115,9 @@ test(
       timeout: 420_000,
     });
     assert.equal(child.status, 0, `${name} failed: ${child.stderr.slice(-2000)}`);
-    return { ...JSON.parse(child.stdout.trim()), elapsedMs: Date.now() - start };
+    const out = JSON.parse(child.stdout.trim());
+    roots.push(out.root);
+    return { ...out, elapsedMs: Date.now() - start };
   };
   try {
     const first = runChild('first');
@@ -107,7 +129,17 @@ test(
     assert.deepEqual(second.shared, first.shared);
     assert.equal(statSync(marker).mtimeMs, builtAt);
     assert.notEqual(second.root, first.root);
+    // One uncached build to compare against: the shared build is file for
+    // file what the original helper builds, and each copy is private.
+    const fresh = original.project({ after: (fn) => { cleanups.push(fn); } }, {});
+    const expected = tree(fresh);
+    assert.deepEqual(tree(first.root), expected);
+    assert.deepEqual(tree(second.root), expected);
+    writeFileSync(join(first.root, 'package.json'), '{}\n');
+    assert.deepEqual(tree(second.root), expected, 'a test writing into its copy touches no other copy');
   } finally {
+    for (const cleanup of cleanups) cleanup();
+    for (const root of roots) rmSync(root, { recursive: true, force: true });
     rmSync(scratch, { recursive: true, force: true });
   }
 });
@@ -118,38 +150,4 @@ test('the cached helper re-exports every export of the original helper', () => {
     if (name !== 'project') assert.equal(cached[name], original[name], `${name} is the original's`);
   }
   assert.notEqual(cached.project, original.project);
-});
-
-test('a cached project is file for file the original helper\'s build, and each test gets its own copy', () => {
-  /** @param {string} root */
-  const tree = (root) => {
-    /** @type {Record<string, string>} */
-    const files = {};
-    const walk = (/** @type {string} */ dir, /** @type {string} */ rel) => {
-      for (const name of readdirSync(dir)) {
-        const path = join(dir, name);
-        const relPath = rel ? `${rel}/${name}` : name;
-        if (statSync(path).isDirectory()) walk(path, relPath);
-        else files[relPath] = createHash('sha256').update(readFileSync(path)).digest('hex');
-      }
-    };
-    walk(root, '');
-    return files;
-  };
-  /** @type {Array<() => void>} */
-  const cleanups = [];
-  const t = { after: (/** @type {() => void} */ fn) => { cleanups.push(fn); } };
-  try {
-    const fresh = original.project(t, { withDomain: false, withWorkTables: true });
-    const first = cachedProject(t, { withWorkTables: true, withDomain: false });
-    const second = cachedProject(t, { withDomain: false, withWorkTables: true });
-    assert.notEqual(first, second);
-    const expected = tree(fresh);
-    assert.deepEqual(tree(first), expected);
-    assert.deepEqual(tree(second), expected);
-    writeFileSync(join(first, 'package.json'), '{}\n');
-    assert.deepEqual(tree(second), expected, 'a test writing into its copy touches no other copy');
-  } finally {
-    for (const cleanup of cleanups) cleanup();
-  }
 });
