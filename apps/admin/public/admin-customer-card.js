@@ -9,7 +9,7 @@ import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, o
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
-import { cleanMessageBody } from './admin-message-preview.js';
+import { cleanMessageBody, cleanPreviewText, isPlaceholderBody } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -563,6 +563,45 @@ const TIMELINE_PAGE = 20;
 /** A message longer than this folds behind «Mostra tutto». */
 const ENTRY_FOLD_CHARS = 280;
 const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
+/**
+ * The text a passage shows in the cronologia (Dan 10/11). The full body
+ * stays as written, losing only markup residue; a body that is only a
+ * stand-in («Please view this email in an HTML-capable email client») shows
+ * the mail subject instead, or nothing — never the stand-in.
+ * @param {{ body?: unknown, subject?: unknown }} item
+ */
+export function passageText(item) {
+  const body = typeof item?.body === 'string' ? item.body : '';
+  if (body === '') return '';
+  if (isPlaceholderBody(body)) return cleanPreviewText(item?.subject);
+  return readableText(cleanMessageBody(body));
+}
+
+/**
+ * One passage per real message (Dan 10/11): the same mail synced several
+ * times — same channel, direction, sender, subject, text and minute — reads
+ * once in the cronologia. Notes and calls are never folded; the first copy
+ * in the list wins.
+ * @param {Array<any>} entries
+ */
+export function collapseDuplicatePassages(entries) {
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(entries) ? entries : []) {
+    if (item?.entry !== 'message') { out.push(item); continue; }
+    const at = Date.parse(String(item?.occurredAt ?? ''));
+    const minute = Number.isFinite(at) ? Math.floor(at / 60000) : null;
+    const key = minute === null ? null : JSON.stringify([
+      String(item?.channel ?? ''), String(item?.direction ?? ''), String(item?.remoteHandle ?? ''),
+      cleanPreviewText(item?.subject), passageText(item), minute,
+    ]);
+    if (key !== null && seen.has(key)) continue;
+    if (key !== null) seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 /**
  * Message text as a person reads it: HTML entities the mail provider left in
  * the snippet are decoded (as text — nothing is ever parsed as markup), the
@@ -2617,7 +2656,7 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
-    const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    const entries = collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : []);
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
     // there, one chip per writer («da dan», «dal team»).
@@ -2828,10 +2867,11 @@ export function createCustomerCardView(deps) {
           const dur = durationParts(item?.durationSec);
           bubble.appendChild(el('p', 'bo-scheda-entry-body',
             [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
-        } else if (typeof item?.body === 'string' && item.body !== '') {
+        } else if (passageText(item) !== '') {
           // The full body stays as written; only markup residue a mail
-          // stored (tags, style="…" fragments, hidden preheaders) goes.
-          const text = readableText(cleanMessageBody(item.body));
+          // stored (tags, style="…" fragments, hidden preheaders) goes, and
+          // a stand-in body reads as the mail subject (passageText).
+          const text = passageText(item);
           const bodyNode = el('p', 'bo-scheda-entry-body', text);
           bubble.appendChild(bodyNode);
           if (text.length > ENTRY_FOLD_CHARS) {
