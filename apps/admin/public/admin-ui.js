@@ -546,6 +546,26 @@ export function uiLoading(doc, options = {}) {
 }
 
 /**
+ * A grey placeholder bar where a value is still arriving (backlog:bd5e84545021,
+ * production 11/11: Oggi showed «un ospite da confermare» and stored labels
+ * for seconds, and they read as real data). It carries no text and is
+ * hidden from assistive tech; the screen announces the wait once, with
+ * its own status line. `width` is a CSS length («60%», «8em»).
+ *
+ * @param {any} doc
+ * @param {{ width?: unknown, block?: boolean }} [options]
+ */
+export function uiSkeleton(doc, options = {}) {
+  const bar = doc.createElement('span');
+  bar.setAttribute('class', options.block === true ? 'ui-skeleton ui-skeleton-block' : 'ui-skeleton');
+  bar.setAttribute('aria-hidden', 'true');
+  bar.setAttribute('data-skeleton', 'true');
+  const width = typeof options.width === 'string' && /^\d{1,3}(?:%|em|px)$/.test(options.width) ? options.width : '60%';
+  bar.setAttribute('style', `width: ${width}`);
+  return bar;
+}
+
+/**
  * @param {any} doc
  * @param {{ text?: unknown, error?: boolean }} [options]
  */

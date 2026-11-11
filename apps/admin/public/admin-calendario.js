@@ -23,7 +23,7 @@ import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedCon
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { takePendingCustomerPick } from './admin-prefill.js';
+import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
@@ -1231,6 +1231,8 @@ export function createCalendarioView(deps) {
     weekKeys: openingWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
+    /** An event another screen asked to open (Oggi «Fonti»): selected once its week loads. @type {string|null} */
+    pendingEventId: null,
     /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
@@ -1412,6 +1414,13 @@ export function createCalendarioView(deps) {
       state.week = week;
       state.weekError = null;
       state.unavailable = false;
+      // backlog:bd5e84545021: the event Oggi asked for opens its detail
+      // card as soon as its week is in; one try, a stale id selects nothing.
+      if (state.pendingEventId !== null) {
+        state.selectedId = state.pendingEventId;
+        state.pendingEventId = null;
+        if (selectedRow() === null) state.selectedId = null;
+      }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
       // sibling of a listed person stays hidden with its row — pruning to
@@ -4362,6 +4371,17 @@ export function createCalendarioView(deps) {
     // cleared, so a later visit starts unpicked. A fresh pick opens the
     // manual form around the named customer; without one the form keeps its
     // own state (an operator search in progress is never clobbered).
+    // backlog:bd5e84545021: Oggi's «Fonti: Appuntamento delle …» lands on
+    // the event's own week with the event selected, like a block click.
+    const askedEvent = takePendingCalendarEvent(storage);
+    if (askedEvent !== null) {
+      state.weekKeys = romeWeekKeys(new Date(`${askedEvent.day}T12:00:00Z`));
+      state.week = null;
+      state.proposals = [];
+      state.aiNote = '';
+      state.selectedId = null;
+      state.pendingEventId = askedEvent.id;
+    }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {
       state.customerPick = freshPick;

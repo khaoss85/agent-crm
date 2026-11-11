@@ -116,6 +116,80 @@ export function readableName(value) {
 const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
 
 /**
+ * Browser twin of the Gmail automated-sender tables (packages/channels
+ * gmail.js, backlog:1a4d9b30): the bundle cannot import a package, so
+ * tests/admin-automated-sender.test.js holds both to the same verdicts.
+ */
+const AUTOMATED_SENDER_LOCALS = Object.freeze([
+  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
+  'notify', 'notification', 'notifications',
+  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+  'renewals', 'support', 'onboarding',
+  'mailer-daemon', 'postmaster',
+]);
+const AUTOMATED_SENDING_SUBDOMAINS = Object.freeze(['mail', 'notify', 'em', 'news', 'bounce']);
+const AUTOMATED_NOTIFICATION_DOMAINS = Object.freeze([
+  'amazonses.com', 'sendgrid.net', 'mandrillapp.com', 'mailchimp.com', 'list-manage.com',
+  'campaign-archive.com', 'constantcontact.com', 'mailgun.org', 'hubspotemail.net', 'mktomail.com', 'cmail20.com',
+]);
+
+/**
+ * Twin of customer-data `isTechnicalLocalPart` (display-name.js): a local
+ * part that names a mailbox, not a person — the whole local a machine
+ * word, a no-reply word among its pieces (`comments-noreply`), or a
+ * generated id.
+ * @param {string} local lower-case local part, `+` tag stripped
+ */
+function technicalLocal(local) {
+  if (/^(?:no[._-]?reply|do[._-]?not[._-]?reply|mailer[._-]?daemon|postmaster|bounces?|notifications?|notify|alerts?)$/.test(local)) {
+    return true;
+  }
+  if (NO_REPLY_PIECE.test(local)) return true;
+  return local.split(/[._-]+/).some(machineToken);
+}
+
+/** A no-reply piece of a longer local part (`comments-noreply`, `drive-shares-dm-noreply`). */
+const NO_REPLY_PIECE = /(?:^|[._-])(?:no[._-]?reply|do[._-]?not[._-]?reply)(?:[._-]|$)/;
+
+/** Twin of customer-data `isMachineToken`. @param {string} token */
+function machineToken(token) {
+  if (token.length >= 24) return true;
+  if (token.length < 10 || !/\d/.test(token) || !/\p{L}/u.test(token)) return false;
+  if (/^\d/.test(token)) return true;
+  return (token.match(/(?:\p{L}(?=\d)|\d(?=\p{L}))/gu) ?? []).length >= 3;
+}
+
+/**
+ * Whether a message comes from a machine, not a person (backlog:bab63e32acdb,
+ * production 11/11: Oggi › Da rispondere offered «Rispondi» on PayPal
+ * receipts, Google Docs comments and PEC notices). The repo's sender rules
+ * only, never a new list: the Gmail automated-sender rule (local parts,
+ * sending subdomains, bulk platforms), the customer-data technical local
+ * part, and a display name carrying a no-reply marker («UniCredit S.p.A.
+ * Noreply»). An unreadable handle and an unmarked name are a person.
+ * @param {unknown} handle the sender address (`remoteHandle`)
+ * @param {...unknown} labels stored display names (subject snapshots)
+ */
+export function isAutomatedSender(handle, ...labels) {
+  for (const label of labels) {
+    if (typeof label !== 'string') continue;
+    const words = label.trim().split(/\s+/).map((word) => word.replace(/^[([<"']+|[)\]>"',;:]+$/g, ''));
+    if (words.some((word) => NO_REPLY_WORD.test(word))) return true;
+  }
+  const address = typeof handle === 'string' ? handle.trim().toLowerCase().replace(/^<|>$/g, '') : '';
+  const at = address.lastIndexOf('@');
+  if (at <= 0 || at === address.length - 1) return false;
+  const local = address.slice(0, at).split('+')[0] ?? '';
+  if (AUTOMATED_SENDER_LOCALS.includes(local)) return true;
+  if (AUTOMATED_SENDER_LOCALS.some((stem) => ['-', '_', '.'].some((sep) => local.startsWith(`${stem}${sep}`)))) return true;
+  if (technicalLocal(local)) return true;
+  const domain = address.slice(at + 1);
+  const labelsOfDomain = domain.split('.');
+  if (labelsOfDomain.length >= 2 && AUTOMATED_SENDING_SUBDOMAINS.includes(labelsOfDomain[0] ?? '')) return true;
+  return AUTOMATED_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+}
+
+/**
  * Display name from a read-only customer profile
  * (`GET /api/customer-data/profile/:resource/:id`): the contact's full name,
  * else the company name. The email is deliberately not a «nome», and an
