@@ -541,3 +541,70 @@ test('105563eea902: a hostile held value stays text, never markup', async () => 
   assert.ok(mount.textContent.includes(nasty), 'the value reads as text');
   assert.equal(mount.findAll('img').length, 0, 'no markup is built from the value');
 });
+
+// Review #776 (P1): the call starts only on the number the operator chose.
+// When the re-read card still dials another number, nothing is called and
+// the operator is told which number the scheda holds.
+test('review #776: a chosen number the card does not hold after the save is never called', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    connectors: [],
+    profile: { externalIdentities: [{ system: 'whatsapp', externalId: '+393457654321' }] },
+    // The server keeps showing the first number (a refreshed sighting).
+    onPost: { phone: (body) => ({ outcome: 'refreshed', system: 'phone', externalId: body.phone }) },
+  });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: (text, error) => toasts.push([text, error === true]) })
+    .renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  phoneWindow(mount).findAll('label').find((node) => node.getAttribute('data-number') === '+393457654321')
+    .findAll('input')[0].dispatch('change');
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  assert.equal(client.posts[0]?.body.phone, '+393457654321', 'the chosen number is saved');
+  assert.ok(!mount.findAll('a').some((node) => node.getAttribute('data-action') === 'call-fallback'), 'no call starts');
+  assert.ok(!mount.textContent.includes('Nessun connettore voce collegato'), 'no call panel opens');
+  assert.ok(toasts.some(([text, error]) => error && text.includes('la scheda chiama ancora +393331234567')), JSON.stringify(toasts));
+});
+
+// Review #776 (P2): leaving the scheda while the number is saving never
+// repaints it over the next customer, and never opens a call there.
+test('review #776: another customer opened during the save keeps the screen', async () => {
+  const base = stubClient({ connectors: [] });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const reads = [];
+  const client = {
+    ...base,
+    async request(path, opts = {}) {
+      if (opts.method === 'POST' && path === '/api/customer-hub/phone') {
+        const answer = base.request(path, opts);
+        await gate;
+        return answer;
+      }
+      reads.push(path);
+      if (path === '/api/customer-hub/card/contact/c2') {
+        return { ...CARD_NO_PHONE, subject: { resource: 'contact', id: 'c2' }, name: 'Altra Persona' };
+      }
+      return base.request(path, opts);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti' });
+  await view.renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '+393331234567';
+  const saving = button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  await view.renderCard('contact', 'c2');
+  reads.length = 0;
+  release();
+  await saving;
+  await flush();
+  assert.ok(mount.textContent.includes('Altra Persona'), 'the other customer stays on screen');
+  assert.ok(!reads.some((path) => path.includes('/card/contact/c1')), 'the first customer is not read again');
+  assert.ok(!mount.textContent.includes('Nessun connettore voce collegato'), 'no call panel there');
+});

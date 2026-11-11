@@ -685,7 +685,7 @@ export function createCustomerCardView(deps) {
   const detailsInFlight = new Set();
   // «Chiama» on a number just saved from the number window (Dan 11/11):
   // the call opens on the re-read card of that same customer, once.
-  /** @type {string | null} */
+  /** @type {{key: string, number: string} | null} */
   let pendingCallAfterSave = null;
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
@@ -1090,9 +1090,14 @@ export function createCustomerCardView(deps) {
       const wanted = pendingCallAfterSave;
       pendingCallAfterSave = null;
       // Another customer took the screen meanwhile: no call there.
-      const same = wanted === `${navCtx.resource}/${navCtx.id}`;
-      if (same && phone !== null) openCallPanel(box, card, navCtx, phone);
-      else if (same) toast('Numero salvato, ma la scheda non lo mostra ancora: riprova tra poco.', true);
+      const same = wanted.key === `${navCtx.resource}/${navCtx.id}`;
+      const held = phone === null ? null : phone.replace(/[\s\-().]/g, '');
+      if (same && held === wanted.number) openCallPanel(box, card, navCtx, phone);
+      else if (same && phone !== null) {
+        // The card still dials another number: never call one the
+        // operator did not choose.
+        toast(`Numero salvato, ma la scheda chiama ancora ${phone}: la chiamata non parte. Riprova da «Chiama».`, true);
+      } else if (same) toast('Numero salvato, ma la scheda non lo mostra ancora: riprova tra poco.', true);
     }
     // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
     // inside the scheda, and Invia sends through the outbox worker.
@@ -1138,10 +1143,16 @@ export function createCustomerCardView(deps) {
           return phoneRefusalText(error);
         }
         toast('Numero salvato');
-        pendingCallAfterSave = `${navCtx.resource}/${navCtx.id}`;
         // The window closes before the re-read, so it never survives it.
         const open = mount.querySelector('div[data-phone="open"]');
         if (open && open.parentNode) open.parentNode.removeChild(open);
+        // Review #776 (P2): another customer took the screen while the
+        // number was saving — never repaint this one over it, never call.
+        const key = `${navCtx.resource}/${navCtx.id}`;
+        if (shownKey !== key) return null;
+        // Review #776 (P1): the call starts on the number the operator
+        // chose, and only once the re-read card holds that very number.
+        pendingCallAfterSave = { key, number };
         await renderCard(navCtx.resource, navCtx.id);
         return null;
       },
@@ -2123,7 +2134,10 @@ export function createCustomerCardView(deps) {
         customer: { resource: pick.resource, id: pick.id, name: pick.name },
         spaceId: activeSpaceId(),
         toast,
-        onBooked: () => { renderCard(navCtx.resource, navCtx.id); },
+        // Review #776 (P2): only while this customer is still on screen.
+        onBooked: () => {
+          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void renderCard(navCtx.resource, navCtx.id);
+        },
       });
     });
     row.appendChild(appointment);

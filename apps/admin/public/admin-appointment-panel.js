@@ -102,6 +102,8 @@ export function openAppointmentPanel(deps) {
   field('service', 'Servizio', service, true);
   field('duration', 'Durata', duration);
   field('person', 'Persona del team', person);
+  const personHint = el('small', 'bo-muted', '');
+  person.parentNode.appendChild(personHint);
   body.appendChild(fields);
 
   const slotBox = el('div', 'bo-offer-catalog');
@@ -180,11 +182,32 @@ export function openAppointmentPanel(deps) {
     },
     (error) => {
       if (gone()) return;
-      people = [];
-      fillPeople(humanReadError(error, {
+      // Review #776 (P2): the roster is an administration read — a member or
+      // a manager is refused it. They still book for themselves: the spine
+      // context names the operator's own booking identity.
+      const refusal = humanReadError(error, {
         failed: 'Il team non si è potuto leggere. Riprova più tardi.',
         notComposed: 'Il team non è disponibile in questo spazio.',
-      }));
+      });
+      client.request('/api/spine/context').then(
+        (context) => {
+          if (gone()) return;
+          const subject = typeof context?.membership?.subject === 'string' ? context.membership.subject.trim() : '';
+          if (subject === '') {
+            people = [];
+            fillPeople(refusal);
+            return;
+          }
+          people = [{ ids: [subject], label: 'Tu' }];
+          fillPeople(null);
+          say(personHint, 'Prenoti per te: per un collega usa il Calendario o chiedi al titolare di vedere il team.');
+        },
+        () => {
+          if (gone()) return;
+          people = [];
+          fillPeople(refusal);
+        },
+      );
     },
   );
   function fillPeople(failure) {

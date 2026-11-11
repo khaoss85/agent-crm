@@ -356,3 +356,106 @@ test('scheda: Nuovo appuntamento opens the window with the customer, and the boo
   assert.ok(card && !card.textContent.includes('nessun appuntamento prenotato'), 'the scheda shows the new appointment');
   assert.ok(card.textContent.includes('Lezione prova'), card?.textContent);
 });
+
+// Review #776 (P2): the roster is an administration read. A member or a
+// manager is refused it and still books for themselves, never a dead window.
+test('review #776: without the team roster the operator books for themselves', async () => {
+  const forbidden = Object.assign(new Error('forbidden'), { status: 403, code: 'PERMISSION_NOT_IN_ROLE' });
+  const client = fakeClient({ members: forbidden });
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/spine/context') return { membership: { subject: 'google|sara', role: 'member' } };
+    return base(path, options);
+  };
+  const { panel } = await open({ client });
+  await flush();
+  assert.deepEqual(selectNamed(panel, 'person').findAll('option').map((node) => node.textContent), ['Scegli la persona', 'Tu']);
+  assert.equal(selectNamed(panel, 'person').value, '0', 'the operator is chosen at once');
+  assert.ok(panel.textContent.includes('Prenoti per te'), 'the window says why only you');
+  const url = new URL(`http://x${client.searches()[0].path}`);
+  assert.equal(url.searchParams.get('teamMemberIds'), 'google|sara', 'the slots are the operator\'s own');
+  assert.ok(chips(panel).length > 0, 'free slots are offered');
+});
+
+// Review #776 (P2): one window at a time, and Scrivi keeps its draft when
+// Nuovo appuntamento takes its place.
+test('review #776: opening Nuovo appuntamento keeps the Scrivi draft for when it reopens', async () => {
+  const card = {
+    customerCardContract: 1, subject: { resource: 'contact', id: 'c1' }, name: 'Guido Presti',
+    company: { id: 'co1', name: 'Palestra Esempio' }, phone: { available: false, value: null },
+    email: 'guido@palestra-esempio.it', socials: [], status: { value: 'contatto' },
+  };
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/customer-hub/card/')) return card;
+      if (path.startsWith('/api/connectors')) return { connectors: [{ channel: 'email', status: 'active', connectionKey: 'g1', account: 'studio@esempio.it' }] };
+      if (path === '/api/catalog/products?limit=200') return CATALOG;
+      if (path === '/api/spine/memberships') return MEMBERS;
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    },
+  };
+  const mount = createMount();
+  await createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  const action = (name) => mount.findAll('button').find((node) => node.getAttribute('data-action') === name);
+  action('compose-message').dispatch('click');
+  await flush();
+  const text = mount.findAll('textarea')[0];
+  text.value = 'Ciao Guido, ti scrivo per';
+  text.dispatch('input');
+  action('new-appointment').dispatch('click');
+  await flush();
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'));
+  action('appointment-cancel').dispatch('click');
+  action('compose-message').dispatch('click');
+  await flush();
+  assert.equal(mount.findAll('textarea')[0].value, 'Ciao Guido, ti scrivo per', 'the draft is back');
+});
+
+// Review #776 (P2): a booking that answers after the operator moved to
+// another customer never repaints the first one over it.
+test('review #776: a booking answered after leaving the scheda keeps the next customer on screen', async () => {
+  const day = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const slot = { startsAt: `${day}T10:00:00.000Z`, endsAt: `${day}T10:30:00.000Z` };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const reads = [];
+  const cardOf = (id, name) => ({
+    customerCardContract: 1, subject: { resource: 'contact', id }, name,
+    company: { id: 'co1', name: 'Palestra Esempio' }, phone: { available: false, value: null },
+    email: null, socials: [], status: { value: 'contatto' },
+  });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (options.method === 'POST' && path === APPOINTMENT_CONFIRM_PATH) {
+        await gate;
+        return { decision: 'booked', appointment: { id: 'a1' } };
+      }
+      reads.push(path);
+      if (path === '/api/customer-hub/card/contact/c1') return cardOf('c1', 'Guido Presti');
+      if (path === '/api/customer-hub/card/contact/c2') return cardOf('c2', 'Altra Persona');
+      if (path === '/api/catalog/products?limit=200') return CATALOG;
+      if (path === '/api/spine/memberships') return { items: [MEMBERS.items[1]] };
+      if (path.startsWith('/api/appointments/suggest-slots')) return { members: [{ teamMemberId: 'google|sara', slots: [slot] }] };
+      throw Object.assign(new Error('Not Found'), { status: 404 });
+    },
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti' });
+  await view.renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-appointment').dispatch('click');
+  await flush();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-appointment-panel') === 'open');
+  selectNamed(panel, 'service').value = 'lezione-prova';
+  chips(panel)[0].dispatch('click');
+  const booking = panel.__submit();
+  await flush();
+  await view.renderCard('contact', 'c2');
+  reads.length = 0;
+  release();
+  await booking;
+  await flush();
+  assert.ok(mount.textContent.includes('Altra Persona'), 'the next customer stays');
+  assert.ok(!reads.some((path) => path.includes('/card/contact/c1')), 'the first customer is not read again');
+});
