@@ -13,7 +13,7 @@
 import { elFor } from './admin-ui.js';
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { parseEuroToCents } from './admin-catalog.js';
-import { auditActorLabel, offerStageLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { auditActorLabel, offerStageLabel, personLabel, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -40,9 +40,9 @@ function auditActionLabel(action) {
  * di fase`); a side without a label falls back to the generic line, never a
  * raw key. Anything that is not a move keeps the action label with the actor.
  */
-function historyLine(entry, schema, record) {
+function historyLine(entry, schema, record, people = []) {
   const when = italianDay(entry?.createdAt) ?? '—';
-  const who = auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
+  const who = actorLabel(entry, record, people);
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
   if (move !== null && words !== null) {
@@ -97,8 +97,13 @@ const LIST_LIMIT = 200;
  * (backlog c1649d1d), corroborated by this deal's human display values (the
  * referente, the contact or the company the deal stores).
  */
-function actorLabel(entry, record) {
-  return auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
+function actorLabel(entry, record, people = []) {
+  // A team member reads their profile name (famiglia F5): the roster first,
+  // then the deal's own display values — never a slug like «coach-guido».
+  const owner = personLabel(record?.owner, people);
+  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
+  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
 }
 
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
@@ -179,6 +184,8 @@ export function createOfferDetail(deps) {
     let quotes;
     let auditItems;
     let auditUnreadable = false;
+    /** @type {Array<any>} */
+    let people = [];
     try {
       schema = await client.request('/api/schema');
       record = await readOffer(offerId);
@@ -195,6 +202,15 @@ export function createOfferDetail(deps) {
         logReadFailure('audit', error);
         auditItems = [];
         auditUnreadable = true;
+      }
+      try {
+        // The team names the referente and the authors by their profile
+        // name (backlog:ddf7f416ad22); without it the deal still renders.
+        const team = await client.request('/api/spine/memberships');
+        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
+      } catch (error) {
+        logReadFailure('team', error);
+        people = [];
       }
     } catch (error) {
       if (token !== renderToken) return;
@@ -235,10 +251,10 @@ export function createOfferDetail(deps) {
     const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
-      ['Referente', typeof record.owner === 'string' && record.owner !== '' ? record.owner : '—'],
+      ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Fase', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
-      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record) : '—'],
+      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record, people) : '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {
@@ -278,7 +294,7 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
-      const line = historyLine(entry, schema, record);
+      const line = historyLine(entry, schema, record, people);
       const row = el('p', 'history-event');
       row.appendChild(el('span', 'history-when', line.when));
       row.appendChild(el('span', 'history-what', line.what));

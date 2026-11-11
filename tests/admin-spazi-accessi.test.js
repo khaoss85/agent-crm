@@ -17,6 +17,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
   SPAZI_AI_DEFAULTS,
+  SPAZI_AI_MASTER,
+  SPAZI_AI_MASTER_DEFAULT,
   SPAZI_AI_SWITCHES,
   buildSpaziCards,
   buildTeamRows,
@@ -27,6 +29,8 @@ import {
   formatSpaceStat,
   memberInitials,
   spaceRoleLabel,
+  teamCalendarState,
+  teamChannelTiles,
 } from '../apps/admin/public/admin-spazi-accessi.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import {
@@ -237,7 +241,7 @@ test('team and AI panels share one row container, members show avatar and role p
   assert.match(text(mount), /attivo/, 'the status stays next to the subject, in Italian');
 });
 
-test('the screen lists spaces with roles, team and the five switches', async () => {
+test('the screen lists spaces with roles, team, the master AI switch and the five switches (backlog:2c3156a47f8e)', async () => {
   const members = [
     { subject: 'owner-1', role: 'owner', status: 'active' },
     { subject: 'marco', role: 'operator', status: 'active' },
@@ -255,15 +259,41 @@ test('the screen lists spaces with roles, team and the five switches', async () 
   // screen never says «postazione».
   assert.match(rendered, /Lo stesso team per tutta l’organizzazione/);
   assert.doesNotMatch(rendered, /postazione/);
-  assert.match(rendered, /marco/);
+  assert.match(rendered, /Marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
+  assert.equal(SPAZI_AI_MASTER.key, 'ai-enabled');
+  assert.equal(SPAZI_AI_MASTER_DEFAULT, true);
+  assert.ok(rendered.includes(SPAZI_AI_MASTER.label), 'the master AI switch is listed first');
+  assert.ok(rendered.includes(SPAZI_AI_MASTER.line), 'the master AI switch explains itself');
+  assert.match(rendered, /AI dello spazio: accesa/);
   for (const entry of SPAZI_AI_SWITCHES) {
     assert.ok(rendered.includes(entry.label), `switch ${entry.key} is listed`);
     assert.ok(rendered.includes(entry.line), `switch ${entry.key} explains itself`);
   }
   const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
-  assert.equal(toggles.length, 5);
+  assert.equal(toggles.length, 6);
+  assert.equal(toggles[0].getAttribute('aria-label'), SPAZI_AI_MASTER.label);
+  assert.equal(toggles[0].getAttribute('aria-checked'), 'true');
   assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'false');
+});
+
+test('with the master AI switch off the screen says spenta and locks the five (backlog:2c3156a47f8e)', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /AI dello spazio: spenta/);
+  const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(toggles.length, 6);
+  const master = toggles.find((node) => node.getAttribute('aria-label') === SPAZI_AI_MASTER.label);
+  assert.equal(master?.getAttribute('aria-checked'), 'false');
+  assert.equal(master?.disabled, false, 'the master stays flippable while everything else locks');
+  for (const node of toggles) {
+    if (node.getAttribute('aria-label') === SPAZI_AI_MASTER.label) continue;
+    assert.equal(node.disabled, true, `${node.getAttribute('aria-label')} locks while the master is off`);
+  }
 });
 
 test('a refused team read renders as a refusal, not an empty team', async () => {
@@ -351,8 +381,8 @@ test('inviting names subject, role and reason; removal asks twice with a reason'
   assert.equal(granted?.body?.reason, 'commesso del negozio');
 
   const lucaRow = text(mount);
-  assert.match(lucaRow, /luca/);
-  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('luca'));
+  assert.match(lucaRow, /Luca/);
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Luca'));
   assert.ok(remove, 'each member has its own removal');
   await remove.listeners.click[0]();
   await flush();
@@ -444,10 +474,12 @@ test('a refused flip renders the server refusal and keeps the screen usable', as
   await flush(20);
   // backlog:9046f940: the refusal is Italian next to the command, never the
   // technical message — the detail stays in the log, not in the DOM.
-  const said = seen.toast.find((row) => row.error);
-  assert.ok(said, 'the refusal is said aloud');
-  assert.match(said.message, /non \u00e8 riuscita|non permette/, 'the spoken refusal is Italian');
-  assert.ok(!/human user actor|HUMAN_APPROVAL/.test(said.message), 'no technical detail is spoken');
+  // backlog:7d30fb517785: one message only, next to the switch (an alert),
+  // no toast beside it.
+  assert.ok(!seen.toast.some((row) => row.error), 'no second copy in a toast');
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, 'one refusal on screen');
+  assert.equal(refusals[0].getAttribute('role'), 'alert', 'the refusal is said aloud by an alert');
   assert.ok(!/human user actor|HUMAN_APPROVAL/.test(text(mount)), 'no technical detail is rendered');
   assert.match(text(mount), /non \u00e8 riuscita|non permette/, 'the refusal renders next to the switches');
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('role') === 'switch'), 'the switches stay usable');
@@ -481,9 +513,7 @@ test('a 405 flip keeps the switch and shows an Italian refusal', async () => {
   const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
   await confirm.listeners.click[0]();
   await flush(20);
-  const said = seen.toast.find((row) => row.error);
-  assert.ok(said, 'the 405 is said aloud');
-  assert.match(said.message, /non permette/, 'the 405 names the refusal in Italian');
+  assert.ok(!seen.toast.some((row) => row.error), 'one message: no toast beside the inline one (7d30fb517785)');
   assert.match(text(mount), /non permette/, 'the 405 renders next to the switches');
   const kept = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
   assert.equal(kept.getAttribute('aria-checked'), 'false', 'the switch is back as it was');
@@ -852,7 +882,7 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
   // Without enrichment the row reads exactly as before.
   const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
-  assert.equal(bare.name, 'marco');
+  assert.equal(bare.name, 'Marco');
   assert.equal(bare.email, null);
   assert.equal(bare.initials, 'MA');
   // A suspended subject is not suspended twice.
@@ -878,6 +908,74 @@ test('6b44b0e9fcdf review: a mailbox alone never merges — different or missing
   assert.equal(bruno.name, 'Bruno Verdi', 'a different human on a shared mailbox keeps their own row');
   assert.deepEqual(bruno.removable, ['b'], 'removing Anna never suspends Bruno');
   assert.deepEqual(rows.find((row) => row.subjects.includes('c')).subjects, ['c'], 'a nameless subject is not folded in by mailbox');
+});
+
+test('ed0552dc1933: the adopted broker, github and google subjects of one operator are one row, and no @accordo.invalid paints', () => {
+  const members = [
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'google|1049', role: 'owner', status: 'active', displayName: 'Daniele Pelleri', email: 'daniele@esempio.it', operatorAccountId: 'op-1' },
+  ];
+  const rows = buildTeamRows(members);
+  assert.equal(rows.length, 1, 'the same person reads once, not twice');
+  const [dan] = rows;
+  assert.equal(dan.name, 'Daniele Pelleri', 'the row carries the profile name');
+  assert.deepEqual(dan.subjects, ['broker|adopted-abc', 'broker|github-48571113', 'google|1049'], 'the row keeps every subject');
+  assert.deepEqual(dan.removable, ['broker|adopted-abc', 'broker|github-48571113', 'google|1049']);
+  assert.equal(dan.email, 'daniele@esempio.it', 'the row shows the real mailbox, never the broker one');
+  assert.equal(dan.initials, 'DP');
+  assert.equal(dan.role, 'Titolare', 'a person holding two roles shows the stronger one');
+  assert.ok(!JSON.stringify(dan).includes('accordo.invalid'), 'no internal mailbox survives in the row');
+});
+
+test('ed0552dc1933: only broker subjects still read as one profile row with no email line', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@ACCORDO.INVALID', operatorAccountId: 'op-1' },
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+  ]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Daniele Pelleri');
+  assert.equal(rows[0].email, null, 'an internal mailbox is not a row email, even uppercase');
+});
+
+test('ed0552dc1933: two operator keys never merge, even on the same name with internal mailboxes', () => {
+  const rows = buildTeamRows([
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|adopted-xyz', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-xyz@accordo.invalid', operatorAccountId: 'op-2' },
+  ]);
+  assert.equal(rows.length, 2, 'different humans stay two rows');
+  assert.ok(rows.every((row) => row.email === null), 'no internal mailbox paints on either row');
+  assert.ok(rows.every((row) => row.name === 'Daniele Pelleri'));
+});
+
+test('ed0552dc1933 review (Codex P2): two explicit operator keys bridge no group — the shared mailbox does not pull a stranger in', () => {
+  const rows = buildTeamRows([
+    { subject: 'a', role: 'owner', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-1' },
+    { subject: 'b', role: 'operator', status: 'active', displayName: 'Anna Bianchi', email: 'squadra@esempio.it', operatorAccountId: 'op-2' },
+    { subject: 'c', role: 'observer', status: 'active', displayName: 'Anna Due', email: 'anna2@esempio.it', operatorAccountId: 'op-2' },
+  ]);
+  assert.equal(rows.length, 2, 'no single row across the two operator accounts');
+  const anna1 = rows.find((row) => row.subjects.includes('a'));
+  const anna2 = rows.find((row) => row.subjects.includes('b'));
+  assert.deepEqual(anna1.subjects, ['a'], 'the first account keeps its own row');
+  assert.deepEqual(anna2.subjects, ['b', 'c'], 'the second account still unites its own subjects');
+  assert.deepEqual(anna1.removable, ['a'], 'removing the first row never suspends the stranger');
+});
+
+test('ed0552dc1933: the painted team names Daniele once and shows no broker mailbox', async () => {
+  const members = [
+    { subject: 'broker|adopted-abc', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+adopted-abc@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'broker|github-48571113', role: 'operator', status: 'active', displayName: 'Daniele Pelleri', email: 'broker+github-48571113@accordo.invalid', operatorAccountId: 'op-1' },
+    { subject: 'google|7', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@esempio.invalid' },
+  ];
+  const { mount, view: v } = view({ client: stubClient({ members, calls: [] }) });
+  await v.render();
+  await flush();
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.deepEqual(names, ['Daniele Pelleri', 'Marco Ferri'], 'Daniele appears once');
+  assert.ok(!text(mount).includes('accordo.invalid'), 'no internal broker mailbox on screen');
+  assert.ok(!text(mount).includes('broker|adopted-abc') && !text(mount).includes('broker|github-48571113'), 'no technical subject on screen');
+  assert.match(text(mount), /2 persone/, 'the card statistic counts people, not subjects');
 });
 
 test('6b44b0e9fcdf review: the person status is deterministic and reads sospeso only when every subject is suspended', () => {
@@ -914,10 +1012,8 @@ test('6b44b0e9fcdf review: a refused subject does not stop the others, the outco
     `/api/spine/memberships/${encodeURIComponent('broker|dan')}/suspend`,
     `/api/spine/memberships/${encodeURIComponent('google|42')}/suspend`,
   ], 'the first refusal does not stop the second subject');
-  const said = seen.toast.at(-1);
-  assert.equal(said.error, true);
-  assert.match(said.message, /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted, not hidden behind a generic failure');
-  assert.match(text(mount), /account sospesi 1 su 2/, 'the outcome stays next to the row');
+  assert.ok(!seen.toast.some((row) => row.error), 'one message: no toast beside the row (7d30fb517785)');
+  assert.match(text(mount), /account sospesi 1 su 2, rifiutati 1/, 'the partial outcome is counted next to the row, not hidden behind a generic failure');
   assert.ok(!text(mount).includes('broker|dan') && !text(mount).includes('google|42'), 'no technical subject on screen');
   const retry = mount.findAll('button').find((node) => node.textContent === 'Riprova');
   assert.ok(retry, 'the row stays open with Riprova');
@@ -985,4 +1081,252 @@ test('6b44b0e9fcdf: the card foot pairs Tu: <ruolo> with the badge or Apri; a de
   assert.deepEqual(descriptions, ['Abbigliamento · Torino'], 'no description is invented for the space without one');
   const cards = byClassIn(mount, 'div', 'bo-spazi-card');
   assert.ok((cards.at(-1).getAttribute('class') ?? '').includes('bo-spazi-adder'), 'the dashed adder stays last');
+});
+
+// backlog:7d30fb517785 (production 10/11, Spazi e accessi): a 503
+// OPERATION_APP_UNAVAILABLE on the AI switch printed «Connessione non
+// riuscita, riprova.» twice — once under the invite form, which opened by
+// itself — and the text was false: the server answered. One true message,
+// under the switch that failed; the invite form stays closed.
+test('7d30fb517785: a 5xx on a switch shows one true message under that switch, the invite form stays closed', async () => {
+  const inner = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/space-permissions/set-permission') {
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(20);
+
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, `one message, not ${refusals.length}`);
+  assert.equal(refusals[0].textContent, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+  assert.ok(!text(mount).includes('Connessione non riuscita'), 'the server answered: never a connection fault');
+  assert.ok(!seen.toast.some((row) => row.error), 'no toast beside it');
+  // Next to the control that failed: right after that switch's row.
+  const switches = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-spazi-switches');
+  const kids = switches.childNodes;
+  const at = kids.indexOf(refusals[0]);
+  assert.ok(at > 0, 'the message sits in the switch list');
+  const before = kids[at - 1];
+  assert.ok(before.findAll('button').some((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta'), 'right under the switch that failed');
+  const invite = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-invite'));
+  assert.ok(invite, 'the invite form is there');
+  assert.ok(!(invite.getAttribute('class') ?? '').split(/\s+/).includes('open'), 'the invite form does not open by itself');
+  assert.ok(!invite.textContent.includes('riprova'), 'nothing of the switch failure under Invita');
+});
+
+// backlog:7d30fb517785: a refused invite keeps its message inside the form,
+// never under the switches; a lost answer (no status) is the only
+// «Connessione non riuscita».
+test('7d30fb517785: a refused invite shows its message once, inside the invite form', async () => {
+  const inner = stubClient();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships' && String(options?.method ?? 'GET').toUpperCase() === 'POST') {
+        throw new TypeError('Failed to fetch');
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).listeners.click[0]();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'luca@example.test';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuovo collega';
+  await mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(20);
+  const refusals = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  assert.equal(refusals.length, 1, `one message, not ${refusals.length}`);
+  assert.equal(refusals[0].textContent, 'Connessione non riuscita, riprova.', 'no answer at all: the connection text is true here');
+  const invite = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-invite'));
+  assert.ok(invite.findAll('p').includes(refusals[0]), 'inside the invite form');
+  assert.ok((invite.getAttribute('class') ?? '').split(/\s+/).includes('open'), 'the form stays open for the retry');
+  assert.ok(!seen.toast.some((row) => row.error), 'no toast beside it');
+});
+
+// Review #746 (P1): when the reload after a refused write fails too, the
+// inline message has nowhere to go — it falls back to one toast with the
+// same text. Always exactly one visible message, never none, never two.
+test('7d30fb517785: a refused switch whose reload fails too still shows exactly one message, as a toast', async () => {
+  const inner = stubClient();
+  let refused = false;
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/space-permissions/set-permission') {
+        refused = true;
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      if (refused && path.startsWith('/api/space-permissions/effective')) {
+        throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(20);
+  const inline = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  const toasts = seen.toast.filter((row) => row.error);
+  assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
+  assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.', 'the switch failure survives the failed reload');
+});
+
+test('7d30fb517785: a refused invite whose reload fails too still shows exactly one message, as a toast', async () => {
+  const inner = stubClient();
+  let refused = false;
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships') {
+        if (String(options?.method ?? 'GET').toUpperCase() === 'POST') {
+          refused = true;
+          throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+        }
+        if (refused) throw Object.assign(new Error('Operation app unavailable'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const { mount, seen, view: v } = view({ client });
+  await v.render();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾').listeners.click[0]();
+  await flush();
+  await mount.findAll('button').find((node) => node.textContent.includes('Compila manualmente')).listeners.click[0]();
+  await flush();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'luca@example.test';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuovo collega';
+  await mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(20);
+  const inline = mount.findAll('p').filter((node) => node.getAttribute('class') === 'bo-spazi-refusal');
+  const toasts = seen.toast.filter((row) => row.error);
+  assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
+  assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+});
+
+// backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
+// C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
+// dei canali. Prima il rosso: sul codice di prima le righe non portano né
+// l'uno né le altre.
+test('67e14a50efb6: every team row names the shared calendar state and carries the channel tiles', async () => {
+  const members = [
+    { subject: 'owner-1', role: 'owner', status: 'active' },
+    { subject: 'marco', role: 'operator', status: 'active' },
+  ];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', account: 'studio@example.test', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', account: '+39 02 1234567', status: 'active' },
+          { connectionKey: 'ig-1', channel: 'instagram', account: 'studio.esempio', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 2, 'two rendered team rows');
+  for (const row of rows) {
+    assert.match(row.textContent ?? '', /Calendario condiviso: collegato/, 'each row names the shared calendar state');
+    const tiles = row.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip'));
+    assert.deepEqual(tiles.map((node) => node.textContent).sort(), ['IG', 'WA'], 'each row carries the active channel tiles, never the calendar');
+  }
+});
+
+test('67e14a50efb6: teamCalendarState reads only the calendar entries, fail-closed', () => {
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'suspended' },
+  ]), 'Calendario condiviso: collegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'suspended' },
+  ]), 'Calendario condiviso: scollegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'pending' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState(null), null, 'unreadable connectors invent no calendar line');
+  assert.equal(teamCalendarState({}), null);
+});
+
+test('67e14a50efb6: teamChannelTiles lists one tile per active channel, never the calendar', () => {
+  assert.deepEqual(teamChannelTiles([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'wa-2', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'ig-1', channel: 'instagram', status: 'active' },
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'old-1', channel: 'instagram', status: 'revoked' },
+    { connectionKey: 'no-channel', status: 'active' },
+  ]), [
+    { channel: 'instagram', tile: 'IG', tint: 'ui-chip-ig', label: 'Instagram' },
+    { channel: 'whatsapp', tile: 'WA', tint: 'ui-chip-wa', label: 'WhatsApp' },
+  ]);
+  assert.deepEqual(teamChannelTiles([]), []);
+  assert.deepEqual(teamChannelTiles(null), [], 'unreadable connectors tile nothing');
+  const [unknown] = teamChannelTiles([{ connectionKey: 'x-1', channel: 'carrier-pigeon', status: 'active' }]);
+  assert.equal(unknown.tile, '?', 'an unknown channel never invents a tile');
+});
+
+test('67e14a50efb6: unreadable connectors read honestly on every row, never silently bare', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const notFound = Object.assign(new Error('not found'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: notFound } }) });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /non sono attivi in questo spazio/, 'each row says the channels are not active here');
+  assert.doesNotMatch(rows[0].textContent ?? '', /NOT_FOUND/, 'no technical code on the page');
+  assert.equal(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).length, 0, 'no invented tiles');
+});
+
+test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team calendar and channel tiles', async () => {
+  // Repro: /api/connectors ok (active calendar + WA) but
+  // /api/customer-data/customers 404 — the shared Promise.all discarded the
+  // good connectors and every row read «non sono attivi». Red before, green
+  // after: the rows keep the indicators, only the card statistic is omitted.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const missing = Object.assign(new Error('no listCustomers'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      fail: { customers: missing },
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
+  assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
+  assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
 });

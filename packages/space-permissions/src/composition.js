@@ -20,7 +20,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { AppError, ValidationError, nowIso, writeTrace } from '../../core/index.js';
-import { checkSpaceId, resolveSpacePermissions } from './permissions.js';
+import { checkSpaceId, isAiEnabled, resolveSpacePermissions } from './permissions.js';
 import { escapeKeyPart } from './proposals.js';
 import { buildSetPermissionAction, isUniqueConflict, requireIdentifiedActor } from './actions.js';
 
@@ -577,6 +577,9 @@ export function createEffectiveSpaceAiPermissionsOperation(context = {}) {
         enabled: row?.enabled,
       }))),
       resolved: resolveSpacePermissions(id, list),
+      // The space master switch (backlog:2c3156a47f8e): the /bo "AI dello
+      // spazio" on/off state, resolved with the same rows the gate uses.
+      aiEnabled: isAiEnabled(id, list),
     });
   }
 

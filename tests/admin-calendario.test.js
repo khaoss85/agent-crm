@@ -446,8 +446,10 @@ test('Trova slot liberi interprets the phrase, then lists proposals with Conferm
   assert.ok(suggest.path.includes('teamMemberIds=marco'), 'the drafted person is searched');
   assert.ok(suggest.path.includes('slotMinutes=30'), 'the drafted duration is searched');
   // Production 07/11: the drafted day bounds the search (Rome Thu 22 Oct).
-  assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search covers the drafted day');
-  assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and only that day');
+  // backlog:913c61ec: a drafted time narrows it further — from 16:00 Rome to
+  // the end of the painted hours (18:00 Rome), never the whole day.
+  assert.ok(suggest.path.includes('from=2026-10-22T14%3A00'), 'the search starts at the drafted time');
+  assert.ok(suggest.path.includes('to=2026-10-22T16%3A00'), 'and ends with the painted hours of that day');
   // C5: one row per slot, `<ddd> <n> · <hh:mm>–<hh:mm>` with Conferma.
   const list = mount.querySelector('.cal-slots');
   assert.ok(list, 'the proposal rows render');
@@ -558,7 +560,7 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
@@ -743,7 +745,7 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).confirmed, true);
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
 });
 
 test('late-evening wall times book the same Rome day, never tomorrow', async () => {
@@ -832,7 +834,7 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: marco')));
+  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
 });
 
 // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or says
@@ -1296,7 +1298,7 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   assert.ok(card, 'C6: the click opens the detail card');
   assert.ok(/taglio/i.test(card.textContent), 'C6: the card carries the title');
   assert.ok(card.textContent.includes('Giovedì 22 ott · 18:00–18:30'), 'C6: the card carries the day · time row');
-  assert.ok(card.textContent.includes('marco, Ada'), 'C6: the card names the participants');
+  assert.ok(card.textContent.includes('Marco, Ada'), 'C6: the card names the participants');
   assert.ok(selected.getAttribute('class').includes('cal-selected'), 'C9: the selected block reads selected');
   assert.equal(selected.getAttribute('aria-pressed'), 'true');
   const close = card.findAll('button').find((node) => node.textContent === '×');
@@ -1445,7 +1447,7 @@ test('the detail card opens the customer card for linked events only', async () 
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'C7: the card opens');
-  assert.ok(card.textContent.includes('marco, Ada Rossi'), 'C7: the participants name the resolved customer');
+  assert.ok(card.textContent.includes('Marco, Ada Rossi'), 'C7: the participants name the resolved customer');
   const open = card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
   assert.ok(open, 'C7: the linked card carries Apri scheda cliente');
   assert.match(open.getAttribute('class') ?? '', /ui-btn-primary/, 'the button is the dark primary action');
@@ -1612,7 +1614,7 @@ test('overlapping profile reads cache under their own keys', async () => {
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
-  assert.ok(card.textContent.includes('marco, Nome-c1'), 'the first name survives the second selection');
+  assert.ok(card.textContent.includes('Marco, Nome-c1'), 'the first name survives the second selection');
   assert.equal(
     calls.filter((path) => path.startsWith('/api/customer-data/profile/')).length,
     2,
@@ -1921,21 +1923,21 @@ test('the Team card toggles one row per named member and filters the grid', asyn
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(teamToggles(mount).length, 2, 'C10: one toggle row per named member');
   assert.ok(teamToggles(mount).every((node) => node.getAttribute('aria-pressed') === 'true'));
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('MA') && node.textContent.includes('marco')));
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('SA') && node.textContent.includes('sara')));
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('MA') && node.textContent.includes('Marco')));
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('SA') && node.textContent.includes('Sara')));
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
   assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 
   const callsBefore = client.calls.length;
-  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
   assert.equal(client.calls.length, callsBefore, 'C11: filtering needs no reload');
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the active member stays');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'C11: the deselected member disappears');
-  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'false');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Sara')).getAttribute('aria-pressed'), 'false');
 
-  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
   assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'C11: reselecting brings them back');
-  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('sara')).getAttribute('aria-pressed'), 'true');
+  assert.equal(teamToggles(mount).find((node) => node.textContent.includes('Sara')).getAttribute('aria-pressed'), 'true');
 });
 
 // Hiding the selected block's member closes the detail card: its selection
@@ -1953,7 +1955,7 @@ test('hiding the selected block member closes the detail card', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   mount.findAll('button').find((node) => /piega/i.test(node.textContent)).dispatch('click');
   assert.ok(mount.findAll('button').some((node) => node.textContent === '×'), 'the detail card opens');
-  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
   assert.ok(!mount.findAll('button').some((node) => node.textContent === '×'), 'hiding the member closes the card');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 });
@@ -1990,9 +1992,9 @@ test('personRows never paints a technical subject id', () => {
   const rows = personRows(['github|48571113', 'marco'], [], [{ subject: 'github|48571113', role: 'owner' }]);
   assert.equal(rows.length, 2);
   assert.equal(rows[0].label, 'Membro del team', 'an unnameable subject gets the generic label');
-  assert.equal(rows[1].label, 'marco', 'the typed nickname paints back');
+  assert.equal(rows[1].label, 'Marco', 'the typed nickname paints back: as a name, never the raw id');
   assert.equal(resolveMemberName('github|48571113', ['github|48571113', 'marco'], [{ subject: 'github|48571113', role: 'owner' }]), null);
-  assert.equal(resolveMemberName('marco', ['github|48571113', 'marco'], [{ subject: 'github|48571113', role: 'owner' }]), 'marco');
+  assert.equal(resolveMemberName('marco', ['github|48571113', 'marco'], [{ subject: 'github|48571113', role: 'owner' }]), 'Marco');
   assert.equal(memberLabelFor('github|48571113', ['github|48571113'], [{ subject: 'github|48571113', role: 'owner' }]), 'Membro del team');
   assert.equal(memberLabelFor(undefined, [], null), 'Membro del team');
 });
@@ -2008,7 +2010,7 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.equal(rows[0].initials, 'SA');
   assert.deepEqual(personRows(['marco'], [], null), [
     {
-      ids: ['marco'], id: 'marco', name: null, label: 'marco',
+      ids: ['marco'], id: 'marco', name: null, label: 'Marco',
       active: true, listed: true,
       color: memberColorIndex('marco'), initials: 'MA',
     },
@@ -2563,7 +2565,7 @@ test('the roster week filters on toggle with no reload', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'both roster weeks paint');
   const callsBefore = client.calls.length;
-  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
   assert.equal(client.calls.length, callsBefore, 'filtering needs no reload');
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)), 'the active member stays');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'the deselected roster member disappears');
@@ -2718,7 +2720,7 @@ test('a failed member-list reload repaints the fallback, never a stale roster', 
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(teamToggles(mount).length, 2, 'two roster toggles while the list resolves');
-  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('marco')), 'the person paints while the list resolves');
+  assert.ok(teamToggles(mount).some((node) => node.textContent.includes('Marco')), 'the person paints while the list resolves');
   refused = true;
   await view.render();
   await new Promise((resolve) => setImmediate(resolve));
@@ -2811,8 +2813,8 @@ test('the manual person is a choice from the known team', async () => {
   assert.ok(person, 'the known team paints a choice, not a text field');
   assert.ok(!byName().teamMemberId, 'no opaque id to type while the team is known');
   const labels = person.findAll('option').map((node) => node.textContent);
-  assert.ok(labels.some((label) => label.includes('marco')), 'marco is offered');
-  assert.ok(labels.some((label) => label.includes('sara')), 'sara is offered');
+  assert.ok(labels.some((label) => label.includes('Marco')), 'marco is offered');
+  assert.ok(labels.some((label) => label.includes('Sara')), 'sara is offered as Sara');
   assert.equal(person.value, '', 'nobody is preselected: an empty choice books nothing');
   await pickCustomerByName(mount, 'Ada');
   choosePerson(mount, 'sara');
@@ -2860,9 +2862,11 @@ test('no known team keeps the plain person field', async () => {
   assert.equal(payload(proposes[0]).teamMemberId, 'marco');
 });
 
-// Fetta 9: a phrase draft naming someone outside the known team keeps the
-// typed field prefilled, so nothing the AI named is lost.
-test('a draft outsider keeps the typed person field', async () => {
+// Fetta 9, superseded after #735 (production 10/11, supervisor): a phrase
+// draft naming someone outside the read team roster never prefills
+// «Persona del team» — the choice stays among the team, empty, and the card
+// says the name is not in the team.
+test('a draft outsider leaves the team choice empty', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2884,17 +2888,17 @@ test('a draft outsider keeps the typed person field', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'an outsider is not forced into the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted person');
-  assert.equal(field.value, 'marco');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, '', 'the outsider name never fills it');
+  assert.ok(mount.textContent.includes('Marco non è nel team'), 'the card says why');
 });
 
-// Fetta 10 (P2 di #481): a phrase draft naming an outsider wins over a
-// previous known choice. Before the fix the kept choice ('sara') decided the
-// control, the draft id ('marco') was assigned to a select with no matching
-// option, the browser cleared it, and the snapshot saved an empty person.
-test('a draft outsider wins over a previous known choice', async () => {
+// Fetta 10 (P2 di #481) protected the drafted outsider from a select that
+// cleared it. Superseded after #735 (production 10/11, supervisor): with the
+// team roster read, a name outside it never replaces the person the operator
+// already chose — the choice stays and the claim books it.
+test('a previous known choice stays over a draft outsider', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const draft = {
@@ -2922,10 +2926,9 @@ test('a draft outsider wins over a previous known choice', async () => {
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
   }
-  assert.equal(mount.querySelector('select[name="teamMemberId"]'), null, 'the outsider draft leaves the choice');
-  const field = mount.findAll('input').find((node) => node.getAttribute('name') === 'teamMemberId');
-  assert.ok(field, 'the typed field keeps the drafted outsider');
-  assert.equal(field.value, 'marco', 'the drafted identity is not lost');
+  const choice = mount.querySelector('select[name="teamMemberId"]');
+  assert.ok(choice, 'the person stays a choice among the team');
+  assert.equal(choice.value, 'sara', 'the operator choice stays');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   const form = byName();
   form.serviceKey.value = 'taglio';
@@ -2937,7 +2940,7 @@ test('a draft outsider wins over a previous known choice', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
   assert.equal(proposes.length, 1);
-  assert.equal(payload(proposes[0]).teamMemberId, 'marco', 'the claim carries the drafted person');
+  assert.equal(payload(proposes[0]).teamMemberId, 'sara', 'the claim books the chosen person, never the outsider name');
 });
 
 // Fetta 9 (C22): the service label names no technical concept.
@@ -3678,7 +3681,7 @@ test('review #646 r3: a day whose only bookings are hidden never reads «Nessun 
     .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day-compact'))
     .map((node) => node.getAttribute('data-day'));
   assert.ok(!compactDays().includes('2026-10-21'), 'Wednesday holds sara');
-  teamToggles(mount).find((node) => node.textContent.includes('sara')).dispatch('click');
+  teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)), 'sara is hidden');
   assert.ok(!compactDays().includes('2026-10-21'), 'a hidden booking still holds its day: no compact «Nessun appuntamento»');
   assert.deepEqual(compactDays(), ['2026-10-19', '2026-10-20', '2026-10-23'], 'truly empty days stay compact');
@@ -3756,7 +3759,7 @@ test('a booked Conferma clears every draft and shows «Prenotato» with the week
   assert.ok(!mount.textContent.includes('Bozza'), 'no draft line survives the booking');
   const booked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'booked');
   assert.ok(booked, 'the done state paints');
-  assert.equal(booked.textContent, 'Prenotato: marco · 22 ott 18:00.');
+  assert.equal(booked.textContent, 'Prenotato: Marco · 22 ott 18:00.');
   assert.equal(mount.querySelector('.cal-slots'), null, 'the proposals are gone');
   assert.equal(byName().serviceKey.value, '', 'the form is cleared for the next booking');
   assert.ok(
@@ -3859,7 +3862,9 @@ test('personRows merges one human on the roster person key across mailboxes', ()
   const rows = personRows(['broker|dan', 'github|48571113', 'google|1049abc', 'sara'], [], members);
   assert.equal(rows.length, 2, 'three subjects of Dan are one row, plus Sara');
   assert.deepEqual(rows[0].ids, ['broker|dan', 'github|48571113', 'google|1049abc']);
-  assert.equal(rows[0].label, 'Dan');
+  // The profile name of the person: the full name beats a short one
+  // (teamPeople, backlog:3ce220e60c33).
+  assert.equal(rows[0].label, 'Daniele Pelleri');
   assert.equal(rows[1].label, 'Sara');
   const noKey = personRows(['broker|dan', 'github|48571113'], [], [
     { subject: 'broker|dan', displayName: 'Dan', email: 'dan-broker@example.com' },
@@ -3907,7 +3912,8 @@ test('the manual form offers the catalog menu with the default and price prefill
   );
   const people = mount.querySelector('select[name="teamMemberId"]').findAll('option')
     .map((node) => node.textContent);
-  assert.equal(people.filter((text) => text === 'Dan').length, 1, 'three identities of Dan are one menu row');
+  assert.equal(people.filter((text) => text === 'Daniele Pelleri').length, 1, 'three identities of Dan are one menu row');
+  assert.ok(!people.includes('Dan'), 'no second row for another identity of Dan');
   assert.ok(people.includes('Sara'), 'Sara keeps her row');
   // Switching the service follows the price; the claim books menu keys.
   service.value = 'lezione-prova';
@@ -4204,6 +4210,70 @@ test('AI off is remembered for its own space only', async () => {
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'off in space A');
   space = 'space-b';
   await view.render();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
+});
+
+// e98e7a346b37: a refusal that lands after the operator already switched
+// space belongs to the space just left — the new space keeps its phrase box
+// and never paints the other space's «AI spenta» note.
+test('a late AI-off refusal from the previous space never locks or labels the new space', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'space-a';
+  const kept = new Map();
+  const storage = {
+    getItem: (key) => (key === 'accordo.activeSpace' ? space : kept.get(key) ?? null),
+    setItem: (key, value) => { kept.set(key, String(value)); },
+    removeItem: (key) => { kept.delete(key); },
+  };
+  let releasePhrase = null;
+  const refusal = Object.assign(new Error('Calendar phrase refused'), { status: 503, code: 'LLM_SPACE_DISABLED' });
+  const base = stubClient({});
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/phrase') {
+        await new Promise((resolve) => { releasePhrase = resolve; });
+        throw refusal;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, storage, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A phrase is still in flight');
+  // The operator switches before the answer lands.
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  releasePhrase();
+  await flushMany();
+  // Any later repaint still shows the new space's own card.
+  await view.render();
+  await flushMany();
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B stays enabled');
+  assert.ok(!mount.textContent.includes('AI spenta'), 'the space A note never paints in space B');
+  // Back in the refusing space a fresh phrase still says it, only there.
+  space = 'space-a';
+  releasePhrase = null;
+  await view.render();
+  await flushMany();
+  mount.querySelector('textarea[name="phrase"]').value = 'trova 45 minuti con marco';
+  clickButton(mount, 'Trova slot liberi');
+  await flushMany(3);
+  assert.ok(releasePhrase, 'the space A retry is in flight');
+  releasePhrase();
+  await flushMany();
+  assert.ok(mount.textContent.includes('AI spenta'), 'space A names its own off state');
+  assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), 'true', 'space A locks its own box');
+  space = 'space-b';
+  await view.render();
+  await flushMany();
+  assert.ok(!mount.textContent.includes('AI spenta'), 'back in space B the note is gone');
   assert.equal(mount.querySelector('textarea[name="phrase"]').getAttribute('disabled'), null, 'space B keeps its phrase box');
 });
 

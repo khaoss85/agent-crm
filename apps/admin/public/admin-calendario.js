@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { nameFromProfile } from './admin-labels.js';
+import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -274,68 +274,20 @@ export function teamRows(named, hidden) {
 }
 
 /**
- * Non-empty trimmed text, or null. Display names and mailboxes travel
- * through here, so a blank or non-string value never becomes a person.
- * @param {unknown} value
- */
-function cleanPersonText(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text === '' ? null : text;
-}
-
-/** Lower-cased person key for grouping, or null when there is none. @param {unknown} value */
-function personKeyOf(value) {
-  const text = cleanPersonText(value);
-  return text === null ? null : text.toLowerCase();
-}
-
-/**
- * backlog:810ed0bf — the control-plane same-person key of a roster row
- * (`operatorAccountId`, one per human), or null when the roster carries
- * none. The pilot forwards it beside the subject when it knows it, so the
- * Team card unites one member's identities (broker, github, google) even
- * when they carry different mailboxes. Only this documented key merges:
- * generic `personKey`/`personId`/`userId` fields have no producer contract
- * in this repo, and two unrelated humans sharing one would merge into a
- * single unbookable row — so they never merge here.
- * @param {any} member
- */
-function rosterPersonId(member) {
-  if (!member || typeof member !== 'object') return null;
-  const value = member.operatorAccountId;
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
- * Member creation instant (epoch ms), or null when the roster carries none.
- * The roster's own order is the fallback: it lists members oldest first.
- * @param {any} member
- */
-function memberBornAt(member) {
-  const raw = member?.createdAt ?? member?.created_at ?? null;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
-  }
-  return null;
-}
-
-/**
  * backlog:df55cf25 — one Team row per PERSON, never a technical id on
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
- * mailbox (unique per person), so Dan is one row called Dan. A shared
+ * (`github|…`, `google|…`, mailbox): subjects merge through the shared
+ * `teamPeople` (admin-labels.js) — the person key first, then mailbox AND
+ * name together, so Dan is one row called Dan. A mailbox alone or a shared
  * display name alone never merges — two email-less homonyms are two humans,
  * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
  * «Rossi (2)» in member-creation order, never a technical id). A group
- * with no roster name and no mailbox paints the
- * operator's own typed words, unless they look like a technical subject
- * (a pipe id never paints anywhere); such a row falls back to the generic
- * «Membro del team». No role line: the E2E takes the «Proprietario» chip out
+ * with no roster name and no mailbox paints the teamPeople label (plain
+ * words for a stored id, the operator's own typed words, a pipe id never
+ * paints anywhere); such a row falls back to the generic «Membro del
+ * team». No role line: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
  * accessi. Tint stays hashed on the stable primary subject and initials
  * follow the painted name, so a block and its toggle always match.
@@ -347,48 +299,25 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
-  const groups = [];
+  // backlog:3ce220e60c33 (famiglia F5): one person per row through the
+  // shared teamPeople (admin-labels.js) — person key first, then mailbox AND
+  // name; a mailbox alone or a name alone never merges (backlog:f4a1f25048c8,
+  // the Spazi e accessi rule of agent-crm#644/#742).
+  const groups = teamPeople(roster).map((person, index) => ({
+    subjects: [...person.subjects], displayName: person.name, email: person.email, label: person.label,
+    born: person.born, bornIndex: index,
+  }));
   const bySubject = new Map();
-  const byEmail = new Map();
-  const byPerson = new Map();
+  for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
   const groupFor = (subject) => bySubject.get(subject) ?? null;
-  for (const member of roster) {
-    const subject = member.subject;
-    if (bySubject.has(subject)) continue;
-    const personId = rosterPersonId(member);
-    const email = personKeyOf(member.email);
-    const display = cleanPersonText(member.displayName);
-    // One human shares one mailbox — or one control-plane person key when
-    // the roster carries it (backlog:810ed0bf): either merges two subjects
-    // into one person row. A shared display name alone never merges — two
-    // email-less homonyms are two humans, two rows.
-    let group = (personId !== null && byPerson.get(personId))
-      || (email !== null && byEmail.get(email))
-      || null;
-    if (!group) {
-      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
-      groups.push(group);
-    }
-    group.subjects.push(subject);
-    bySubject.set(subject, group);
-    const born = memberBornAt(member);
-    if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
-    if (personId !== null && group.personId === null) {
-      group.personId = personId;
-      byPerson.set(personId, group);
-    }
-    if (email !== null && group.email === null) {
-      group.email = member.email.trim();
-      byEmail.set(email, group);
-    }
-    if (group.displayName === null && display !== null) group.displayName = display;
-  }
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
     if (!groupFor(id)) {
-      const group = { subjects: [id], displayName: null, email: null };
+      const group = {
+        subjects: [id], displayName: null, email: null, label: subjectText(id) ?? 'Membro del team',
+        born: null, bornIndex: groups.length,
+      };
       groups.push(group);
       bySubject.set(id, group);
     }
@@ -407,7 +336,10 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !primary.includes('|') ? primary : 'Membro del team');
+    // backlog:e52c5e0dd49f (review Muse #750 giro 2): a row without a name
+    // paints the teamPeople label (name, mailbox, plain words, else the
+    // generic fallback) — never the raw stored id, so no slug leaks.
+    const base = name ?? group.label;
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -468,9 +400,9 @@ export function resolveMemberName(subject, named, members) {
   // show, so every line names the same human.
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
-  // a technical subject and never paints — the caller omits it instead.
-  if (!subject.includes('|')) return subject;
-  return null;
+  // a technical subject and never paints — the caller omits it instead. A
+  // stored slug reads as words, never the raw id (backlog:e52c5e0dd49f).
+  return subjectText(subject);
 }
 
 /**
@@ -569,13 +501,32 @@ export function draftMinutes(draft) {
   const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
   const pair = Math.round((to - from) / 60000);
   const stated = draft?.durationMinutes;
-  const statedOk = Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated);
+  const statedOk = Number.isSafeInteger(stated) && BOOKING_MINUTES.includes(stated);
   // A day-only draft (midnight start, production 07/11) carries an end the
   // model padded, not one the sentence stated: the stated minutes win.
   if (statedOk && draftDayOnly(draft)) return stated;
-  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  if (BOOKING_MINUTES.includes(pair)) return pair;
   if (statedOk) return stated;
   return 30;
+}
+
+/**
+ * backlog:913c61ec — production 10/11: «giovedì alle 15 con Guido» drafted
+ * a start with no end (the sentence states no duration), so Fine stayed
+ * empty. A timed draft without an end closes at its start plus the minutes
+ * the sentence stated (any whole minutes the server accepted, 20 stays 20),
+ * else the 30-minute default. A day-only draft keeps its hours to choose;
+ * an end the model gave is kept as it is.
+ * @param {any} draft
+ */
+export function draftWithEnd(draft) {
+  if (!draft || typeof draft !== 'object' || draft.endsAt !== undefined) return draft;
+  if (typeof draft.startsAt !== 'string' || draftDayOnly(draft)) return draft;
+  const from = Date.parse(draft.startsAt);
+  if (!Number.isFinite(from)) return draft;
+  const stated = draft.durationMinutes;
+  const minutes = Number.isSafeInteger(stated) && stated >= 1 && stated <= 1440 ? stated : draftMinutes(draft);
+  return { ...draft, endsAt: new Date(from + minutes * 60000).toISOString() };
 }
 
 /**
@@ -804,7 +755,30 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
+  // event: the slot is held, the reminder would strand, or the booking is
+  // closed and moves nowhere. The event stays where it was.
+  if (code === 'APPOINTMENTS_OVERLAP') {
+    return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
+  }
+  if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
+    return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
+  }
+  if (code === 'APPOINTMENTS_INVALID_STATE') {
+    return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
+  }
   return null;
+}
+
+/**
+ * Whether a booking row still moves: only held states (`booked`,
+ * `confirmed`) drag. Terminal states never regress — a repeat visit is a
+ * new booking, like everywhere else (backlog:3d0fbe7dc8d1).
+ * @param {any} row
+ */
+export function isMovableAppointment(row) {
+  const status = String(row?.status ?? 'booked');
+  return status === 'booked' || status === 'confirmed';
 }
 
 /**
@@ -1061,6 +1035,17 @@ export function createCalendarioView(deps) {
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
   /**
+   * The event drag in flight (backlog:3d0fbe7dc8d1): `{ mode, id, startMin,
+   * endMin, grabOffset, dayKey, targetDay, targetStart, targetEnd, moved,
+   * originCol }`, or null.
+   * Shared by every day column: the press starts on one, the release may
+   * land on another. A full renderAll mid-drag never happens — the ghost is
+   * painted directly — so no token guards it; the commit clears it first.
+   */
+  let eventDrag = null;
+  /** A drag that moved eats the click that follows it: the event keeps its selection. */
+  let suppressEventClick = false;
+  /**
    * Drops a pending read (backlog:607f33ee): the view paints into the
    * shell's shared mount, so a late week response must not repaint a
    * screen the operator already left. The shell calls this on every route
@@ -1132,6 +1117,10 @@ export function createCalendarioView(deps) {
     weekKeys: openingWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
+    /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
+    moveNote: '',
+    /** True while a reschedule write is in flight: no second move meanwhile. */
+    moveBusy: false,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -1182,6 +1171,8 @@ export function createCalendarioView(deps) {
     manualPanel: null,
     /** Draft absorbed into manual on submit. @type {any} */
     draftFill: null,
+    /** backlog:913c61ec — the form values the last phrase draft wrote and the ones before it, for «Annulla». @type {{values: Record<string, string>, prior: Record<string, any>}|null} */
+    draftWrote: null,
     /** Latest phrase input, so the "Crea con l'AI" voice can focus it. @type {any} */
     phraseInput: null,
     /** First manual-form field, so "Compila manualmente" can focus it. @type {any} */
@@ -2026,7 +2017,60 @@ export function createCalendarioView(deps) {
     };
     col.addEventListener('pointerdown', (event) => {
       if (event.button !== undefined && event.button !== 0) return;
-      if (event.target?.closest?.('.cal-event, .bo-add-button, .cal-pick')) return;
+      if (eventDrag) return;
+      // One move at a time (review #757): while a reschedule is in flight
+      // no second drag starts; a press on an event names the wait in
+      // Italian instead of dropping the move silently.
+      if (state.moveBusy) {
+        const busyBlock = (event.target ?? null)?.closest?.('.cal-event') ?? null;
+        if (busyBlock !== null) {
+          event.preventDefault?.();
+          state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+          if (mount.querySelector('.cal-wrap') !== null) renderAll();
+        }
+        return;
+      }
+      // A press on a movable event starts an event drag (backlog:3d0fbe7dc8d1),
+      // never a slot pick: the body moves the block, the bottom edge
+      // stretches it. Presses on ghosts, the pick or the add-slot button keep
+      // their own click, like before.
+      const target = event.target ?? null;
+      const resizeHandle = target?.closest?.('[data-role="event-resize"]') ?? null;
+      // The handle is a span inside the event button and carries no id: the
+      // row lookup always resolves the enclosing .cal-event (review #757:
+      // the handle alone left findWeekRow(null) and no resize ever started).
+      const eventBlock = target?.closest?.('.cal-event') ?? null;
+      const row = eventBlock !== null ? findWeekRow(eventBlock.getAttribute?.('data-event-id')) : null;
+      if (row !== null && isMovableAppointment(row)) {
+        const startMin = romeMinutes(row.startsAt);
+        const endMin = romeMinutes(row.endsAt);
+        if (startMin === null || endMin === null || endMin <= startMin) return;
+        event.preventDefault?.();
+        const pressMinute = minuteAt(col, event);
+        eventDrag = {
+          mode: resizeHandle !== null ? 'resize' : 'move',
+          id: String(row.id ?? ''),
+          row,
+          startMin,
+          endMin,
+          // Where inside the event the press landed (review #757): the move
+          // keeps this offset, so grabbing mid-event never shifts the start
+          // by the grab distance on release.
+          grabOffset: pressMinute === null ? 0 : pressMinute - startMin,
+          dayKey: key,
+          targetDay: key,
+          targetStart: startMin,
+          targetEnd: endMin,
+          moved: false,
+          // The column the press started on (review #757): a resize ghost
+          // always paints here, never on the hovered column.
+          originCol: col,
+        };
+        hookDocDragEnd();
+        return;
+      }
+      if (eventBlock !== null) return;
+      if (target?.closest?.('.bo-add-button, .cal-pick')) return;
       const minute = minuteAt(col, event);
       if (minute === null) return;
       event.preventDefault?.();
@@ -2037,6 +2081,12 @@ export function createCalendarioView(deps) {
       paint();
     });
     col.addEventListener('pointermove', (event) => {
+      if (eventDrag) {
+        const minute = minuteAt(col, event);
+        if (minute === null) return;
+        retargetEventDrag(key, minute, col);
+        return;
+      }
       if (!drag) return;
       const minute = minuteAt(col, event);
       if (minute === null || minute === drag.current) return;
@@ -2044,13 +2094,226 @@ export function createCalendarioView(deps) {
       paint();
     });
     col.addEventListener('pointerup', () => {
+      if (eventDrag) {
+        void commitEventDrag();
+        return;
+      }
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
       const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
       drag = null;
       openSlot(key, start, end);
     });
-    col.addEventListener('pointercancel', () => { drag?.node?.remove?.(); drag = null; });
+    col.addEventListener('pointercancel', () => {
+      if (eventDrag) {
+        eventDrag = null;
+        detachNode(mount.querySelector('.cal-drag-ghost'));
+        return;
+      }
+      drag?.node?.remove?.(); drag = null;
+    });
+  }
+
+  /**
+   * The booking row behind a dragged event (backlog:3d0fbe7dc8d1): the live
+   * week row by id, so the commit moves the row the grid painted. Unknown
+   * ids fail closed (null): a ghost button never starts a write.
+   * @param {unknown} id
+   */
+  function findWeekRow(id) {
+    const wanted = String(id ?? '');
+    if (wanted === '') return null;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (String(row?.id ?? '') === wanted) return row;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Detach a node on the real DOM and on the test double: `remove()` exists
+   * only on the real one, the double detaches through its parent.
+   * @param {any} node
+   */
+  function detachNode(node) {
+    if (!node) return;
+    try {
+      if (typeof node.remove === 'function') {
+        node.remove();
+        return;
+      }
+    } catch { /* fall through to the parent detach */ }
+    try {
+      node.parentNode?.removeChild?.(node);
+    } catch { /* a detached ghost is already gone */ }
+  }
+
+  /**
+   * A release outside every day column still ends the drag
+   * (backlog:3d0fbe7dc8d1): the columns own the commit, the document only
+   * guarantees the drag cannot stick with its ghost on screen. Installed
+   * once per view; the fake test document has no listeners and is skipped.
+   */
+  let docDragHooked = false;
+  function hookDocDragEnd() {
+    if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
+    docDragHooked = true;
+    doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
+    doc.addEventListener('pointercancel', () => {
+      if (!eventDrag) return;
+      eventDrag = null;
+      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+    });
+  }
+
+  /**
+   * Follow the pointer across columns while an event drag is in flight
+   * (backlog:3d0fbe7dc8d1): a move keeps its duration and takes the hovered
+   * day and hour, a resize keeps its start and day and takes the hovered
+   * end on the same column. Both
+   * stay inside the painted 09:00–18:00 hours in half-hour steps; the ghost
+   * paints the target range on the hovered column, except a resize ghost,
+   * which stays on the origin column (review #757).
+   * @param {string} dayKey @param {number} minute @param {any} col
+   */
+  function retargetEventDrag(dayKey, minute, col) {
+    const drag = eventDrag;
+    if (!drag) return;
+    const durationMin = Math.max(GRID_SLOT_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
+    if (drag.mode === 'resize') {
+      // The stretch stays on the origin day (review #757): sideways motion
+      // into another column is ignored, so preview and commit agree.
+      if (dayKey !== drag.dayKey) return;
+      const end = Math.min(Math.max(minute + GRID_SLOT_MINUTES, drag.startMin + GRID_SLOT_MINUTES), GRID_END_MINUTES);
+      if (end === drag.targetEnd) return;
+      drag.targetDay = drag.dayKey;
+      drag.targetStart = drag.startMin;
+      drag.targetEnd = end;
+    } else {
+      const latest = GRID_END_MINUTES - durationMin;
+      const start = Math.min(
+        Math.max(minute - (drag.grabOffset ?? 0), GRID_START_MINUTES),
+        Math.max(GRID_START_MINUTES, latest),
+      );
+      if (start === drag.targetStart && dayKey === drag.targetDay) return;
+      drag.targetDay = dayKey;
+      drag.targetStart = start;
+      drag.targetEnd = start + durationMin;
+    }
+    drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    const ghost = el(doc, 'div', {
+      className: 'cal-pick is-dragging cal-drag-ghost',
+      attrs: {
+        'aria-hidden': 'true',
+        style: `grid-row: ${(drag.targetStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(drag.targetEnd - drag.targetStart) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`,
+      },
+      text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
+    });
+    // A resize ghost paints on the origin column (review #757); a move
+    // ghost paints on the hovered column.
+    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+  }
+
+  /**
+   * Release an event drag (backlog:3d0fbe7dc8d1): a press without movement
+   * stays a click and selects the event; a moved block asks the server for
+   * the new slot. The grid paints the new time at once (optimistic) and the
+   * week reload confirms it; a refusal restores the old instants on the same
+   * row and names the cause in Italian beside the event.
+   */
+  async function commitEventDrag() {
+    const drag = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (!drag || !drag.moved) return;
+    // A second move while a reschedule is in flight is never dropped
+    // silently (review #757): no suppress flag, an Italian note, the grid
+    // repaints while the first request runs.
+    if (state.moveBusy) {
+      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
+    suppressEventClick = true;
+    const durationMs = Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt);
+    const startIso = romeWallToIso(drag.targetDay, Math.floor(drag.targetStart / 60), drag.targetStart % 60);
+    if (startIso === null) {
+      suppressEventClick = false;
+      return;
+    }
+    const endIso = drag.mode === 'resize'
+      ? romeWallToIso(drag.targetDay, Math.floor(drag.targetEnd / 60), drag.targetEnd % 60)
+      : new Date(Date.parse(startIso) + durationMs).toISOString();
+    if (endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
+      suppressEventClick = false;
+      return;
+    }
+    await commitEventMove(drag.row, startIso, endIso);
+  }
+
+  /**
+   * Move one booking through the reschedule route (backlog:3d0fbe7dc8d1).
+   * @param {any} row @param {string} startsAt @param {string} endsAt
+   */
+  async function commitEventMove(row, startsAt, endsAt) {
+    // The generation this write started from (review #757): a route away
+    // during the request invalidates the view, and the late answer must not
+    // repaint the calendar over the next screen nor start another week load.
+    // The busy flag still clears in the finally below.
+    const token = renderToken;
+    // A form submit racing a drag's request names the wait in Italian
+    // instead of dropping silently (review #757).
+    if (state.moveBusy) {
+      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
+    const id = String(row?.id ?? '');
+    const before = { startsAt: row.startsAt, endsAt: row.endsAt };
+    state.selectedId = id !== '' ? id : null;
+    if (before.startsAt === startsAt && before.endsAt === endsAt) {
+      state.moveNote = '';
+      renderAll();
+      return;
+    }
+    state.moveBusy = true;
+    row.startsAt = startsAt;
+    row.endsAt = endsAt;
+    state.moveNote = '';
+    renderAll();
+    let ok = false;
+    try {
+      const body = row.id !== undefined && row.id !== null && String(row.id) !== ''
+        ? { id: row.id, startsAt, endsAt }
+        : { sourceKey: row.sourceKey, startsAt, endsAt };
+      const answer = await client.request('/api/appointments/reschedule', { method: 'POST', body });
+      const moved = answer?.appointment ?? null;
+      if (moved && typeof moved === 'object') {
+        if (typeof moved.startsAt === 'string') row.startsAt = moved.startsAt;
+        if (typeof moved.endsAt === 'string') row.endsAt = moved.endsAt;
+      }
+      const day = romeDayKey(row.startsAt);
+      state.moveNote = `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`;
+      ok = true;
+    } catch (error) {
+      row.startsAt = before.startsAt;
+      row.endsAt = before.endsAt;
+      state.moveNote = calendarRefusalText(error)
+        ?? humanWriteError(error, {
+          failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
+    } finally {
+      state.moveBusy = false;
+    }
+    if (token !== renderToken) return;
+    renderAll();
+    if (ok) {
+      const members = parseMemberFilter(state.memberFilter);
+      if (members.length > 0) void loadWeek(members);
+    }
   }
 
   function renderWeek() {
@@ -2253,12 +2516,17 @@ export function createCalendarioView(deps) {
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
     if (cancelled) classes.push('cal-cancelled');
+    const movable = isMovableAppointment(row);
+    if (movable) classes.push('is-movable');
+    const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
       attrs: {
         type: 'button',
         style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`,
         'aria-pressed': selected ? 'true' : 'false',
+        'data-event-id': id,
+        'data-movable': movable ? '1' : '0',
       },
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
@@ -2286,9 +2554,22 @@ export function createCalendarioView(deps) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
     item.appendChild(foot);
-    const id = String(row?.id ?? '');
+    if (movable) {
+      // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
+      // span, never a button inside the event button. Dragging it changes
+      // only the end; dragging the body moves the whole block.
+      item.appendChild(el(doc, 'span', {
+        className: 'cal-resize',
+        attrs: { 'data-role': 'event-resize', 'aria-hidden': 'true', title: 'Allunga o accorcia' },
+      }));
+    }
     item.addEventListener('click', () => {
+      if (suppressEventClick) {
+        suppressEventClick = false;
+        return;
+      }
       state.selectedId = state.selectedId === id ? null : id;
+      state.moveNote = '';
       renderAll();
     });
     return item;
@@ -2406,6 +2687,13 @@ export function createCalendarioView(deps) {
     const key = romeDayKey(row?.startsAt);
     const when = `${key ? `${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}` : '?'} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`;
     card.appendChild(el(doc, 'p', { text: when }));
+    // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
+    // refusal, beside the event it belongs to. It clears on the next
+    // selection change (the click handler above).
+    if (state.moveNote !== '') {
+      card.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'move-note' }, text: state.moveNote }));
+    }
+    if (isMovableAppointment(row)) card.appendChild(renderMoveForm(row));
     const linked = subjectKeyOf(row);
     if (linked && !(linked.key in state.profiles)) {
       // In flight: the label or id paints meanwhile, and one request serves
@@ -2483,6 +2771,75 @@ export function createCalendarioView(deps) {
       card.appendChild(open);
     }
     return card;
+  }
+
+  /**
+   * The «Sposta» form in the event card (backlog:3d0fbe7dc8d1): the same move
+   * the drag performs, as named fields — the guaranteed path on a 390 px
+   * phone, where a drag is awkward, and the keyboard path everywhere. Day as
+   * YYYY-MM-DD, times as HH:MM; the write rides the same reschedule route,
+   * so a refusal reads the same Italian sentence and the event stays put.
+   * @param {any} row
+   */
+  function renderMoveForm(row) {
+    const box = el(doc, 'div', { className: 'cal-move', attrs: { 'data-role': 'move-form' } });
+    box.appendChild(el(doc, 'h3', { className: 'cal-move-title', text: 'Sposta' }));
+    const dayKey = romeDayKey(row?.startsAt) ?? '';
+    const fields = [
+      { name: 'move-date', label: 'Giorno (AAAA-MM-GG)', value: dayKey },
+      { name: 'move-start', label: 'Inizio (HH:MM)', value: romeTime(row?.startsAt) ?? '' },
+      { name: 'move-end', label: 'Fine (HH:MM)', value: romeTime(row?.endsAt) ?? '' },
+    ];
+    const inputs = {};
+    for (const field of fields) {
+      const wrap = el(doc, 'label', { className: 'cal-move-field', text: field.label });
+      const input = el(doc, 'input', { attrs: { name: field.name, type: 'text', autocomplete: 'off' } });
+      input.value = field.value;
+      wrap.appendChild(input);
+      box.appendChild(wrap);
+      inputs[field.name] = input;
+    }
+    const move = uiButton(doc, {
+      variant: 'secondary',
+      small: true,
+      label: state.moveBusy ? 'Spostamento in corso…' : 'Sposta',
+      attrs: { type: 'button', 'data-action': 'move-submit' },
+    });
+    if (state.moveBusy) move.setAttribute('disabled', 'true');
+    else {
+      move.addEventListener('click', () => {
+        void submitMoveForm(row, {
+          date: String(inputs['move-date']?.value ?? ''),
+          start: String(inputs['move-start']?.value ?? ''),
+          end: String(inputs['move-end']?.value ?? ''),
+        });
+      });
+    }
+    box.appendChild(move);
+    return box;
+  }
+
+  /**
+   * Read the «Sposta» fields and move through the same route as the drag
+   * (backlog:3d0fbe7dc8d1). Bad fields fail closed in Italian before any
+   * request; the server refusal handling is the drag's own.
+   * @param {any} row @param {{ date: string, start: string, end: string }} values
+   */
+  async function submitMoveForm(row, values) {
+    const day = values.date.trim();
+    const startsAt = romeInstant(day, values.start.trim());
+    const endsAt = romeInstant(day, values.end.trim());
+    if (startsAt === null || endsAt === null) {
+      state.moveNote = 'Scrivi giorno e orari validi: giorno come AAAA-MM-GG, orari come HH:MM.';
+      renderAll();
+      return;
+    }
+    if (Date.parse(endsAt) <= Date.parse(startsAt)) {
+      state.moveNote = 'L’orario di fine deve essere dopo l’inizio: l’appuntamento è rimasto dov’era.';
+      renderAll();
+      return;
+    }
+    await commitEventMove(row, startsAt, endsAt);
   }
 
   /**
@@ -2609,9 +2966,22 @@ export function createCalendarioView(deps) {
   /**
    * Suggest window over the shown Rome week, with the day-margin idiom of
    * the booking path — or over the one Rome day the phrase named.
-   * @param {string|null} [dayKey]
+   * backlog:913c61ec — a draft with a time searches from that time to the
+   * end of the painted hours (at least the draft's own minutes): never the
+   * whole day, never the night before it.
+   * @param {string|null} [dayKey] @param {any} [draft]
    */
-  function suggestBounds(dayKey = null) {
+  function suggestBounds(dayKey = null, draft = null) {
+    const timed = draft && typeof draft.startsAt === 'string' && !draftDayOnly(draft)
+      ? Date.parse(draft.startsAt) : NaN;
+    if (Number.isFinite(timed) && typeof dayKey === 'string') {
+      const close = Date.parse(romeInstant(dayKey, minutesLabel(GRID_END_MINUTES)) ?? '');
+      const own = timed + draftMinutes(draft) * 60000;
+      return {
+        from: new Date(timed).toISOString(),
+        to: new Date(Number.isFinite(close) ? Math.max(close, own) : own).toISOString(),
+      };
+    }
     const keys = typeof dayKey === 'string' && dayKey !== '' ? [dayKey] : state.weekKeys;
     if (!Array.isArray(keys) || keys.length === 0) return null;
     const first = Date.parse(`${keys[0]}T00:00:00Z`);
@@ -2689,11 +3059,17 @@ export function createCalendarioView(deps) {
     const askedSpace = readSpace();
     try {
       const answer = await phraseAnswer({ resumeId, seq });
+      // e98e7a346b37: the asking space left while the answer was on its way
+      // (space switch bumps phraseSeq in render): nothing of it paints here —
+      // neither the note nor the lock — the new space never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.phraseWaiting = false;
       // An edit while the answer was on its way never relabels it: the
       // draft paints under the phrase that asked it (review #664 P3).
       state.phrase = asked;
-      const draft = answer?.draft ?? null;
+      // backlog:913c61ec: a timed draft without an end closes at its minutes,
+      // so the card, the form's Fine and the search all read the same slot.
+      const draft = draftWithEnd(answer?.draft ?? null);
       state.draft = draft;
       if (!draft) {
         state.draftNote = 'Nessuna bozza dalla frase: riscrivila, o compila l’appuntamento a mano.';
@@ -2722,10 +3098,11 @@ export function createCalendarioView(deps) {
         if (shown.length > 0) await loadWeek(shown);
         // A pager move during the preload leaves this answer unpublished:
         // the guard must never read a week other than the named one
-        // (review #657, round 5).
-        if (state.weekKeys !== wantedKeys) return;
+        // (review #657, round 5). A space switch owns the card now
+        // (e98e7a346b37): nothing of the old space paints here.
+        if (seq !== phraseSeq || state.weekKeys !== wantedKeys || readSpace() !== askedSpace) return;
       }
-      const bounds = suggestBounds(dayKey);
+      const bounds = suggestBounds(dayKey, draft);
       if (!bounds) {
         state.aiNote = 'Settimana non valida.';
         return;
@@ -2738,12 +3115,31 @@ export function createCalendarioView(deps) {
       // every identity the human holds. Unresolved words keep the outsider
       // path below, never a booking as the wrong human.
       const memberIds = resolveDraftMemberIds(member, parseMemberFilter(state.memberFilter), state.members);
+      // backlog:913c61ec — production 10/11: «Guido» matched nobody of the
+      // known team and travelled as teamMemberIds, so the server answered
+      // every step free for an identity that holds nothing. A plain name
+      // outside a known team never filters the slots: the draft stays in the
+      // form and the operator picks the person there. An opaque identity
+      // (`provider|id`), or a screen whose team roster is unread (the filter
+      // names only who is shown, never the whole team), keeps the search.
+      const knownTeam = Array.isArray(state.members)
+        && personRows([], [], state.members).length > 0;
+      if (memberIds.length === 0 && knownTeam && !isTechnicalMemberText(member)) {
+        state.draftNote = '';
+        state.aiNote = `${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} non è nel team: scegli la persona nel modulo «Nuovo appuntamento» e conferma da lì.`;
+        // The return skips the prefill after the search: fill the form here,
+        // the finally below paints it. The outsider name never fills
+        // «Persona del team» (production after #735): the field stays empty,
+        // or keeps the person the operator had already chosen.
+        const withoutPerson = { ...draft };
+        delete withoutPerson.teamMemberId;
+        state.draftFill = withoutPerson;
+        return;
+      }
       const searchIds = memberIds.length > 0 ? memberIds : [member];
-      const found = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
-        + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
-        + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
-      );
+      // The draft paints (with its Annulla) while the slots are searched.
+      renderAll();
+      const found = await client.request(suggestSlotsPath(searchIds, bounds.from, bounds.to, draftMinutes(draft)));
       const groups = Array.isArray(found?.members) ? found.members : [];
       // backlog:d1e4d90e — the searched identities belong to one resolved
       // person: offer a step only when every identity reports it free, so a
@@ -2762,29 +3158,55 @@ export function createCalendarioView(deps) {
       // (nobody named, the filter shows marco and the phrase names sara, a
       // moved week the grid could not load), the guard reads theirs too — a
       // failed read proposes nothing, never an unguarded list (review #657).
-      if (state.weekKeys !== searchKeys) return;
+      // A space switch owns the card now (e98e7a346b37).
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       let heldWeek = null;
       try {
         heldWeek = await heldWeekFor(searchIds, searchKeys);
       } catch {
         heldWeek = null;
       }
-      if (state.weekKeys !== searchKeys) return;
+      if (seq !== phraseSeq || state.weekKeys !== searchKeys || readSpace() !== askedSpace) return;
       if (!heldWeek) {
         state.aiNote = 'Non riesco a leggere gli appuntamenti di quella settimana: riprova tra poco.';
         return;
       }
       const onDay = dayKey ? kept.filter((slot) => romeDayKey(slot?.startsAt) === dayKey) : kept;
-      const proposals = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, clock().getTime()), heldWeek, searchIds));
+      const nowMs = clock().getTime();
+      const ranked = rankPhraseProposals(dropHeldOverlaps(filterPhraseProposals(onDay, nowMs), heldWeek, searchIds));
+      // backlog:913c61ec — a sentence with a time asks for that time: when it
+      // is free the proposal is the draft itself; when it is missing the next
+      // free steps of the same afternoon follow, with the reason said — «già
+      // passate» for a begun hour, «già occupato» only when the server
+      // answered the step held or a booking overlaps it (review #735).
+      const timedAt = typeof draft.startsAt === 'string' && !draftDayOnly(draft) ? Date.parse(draft.startsAt) : NaN;
+      const exact = Number.isFinite(timedAt)
+        ? ranked.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null
+        : null;
+      // The exact step books the draft's own end (a stated 20 minutes inside
+      // a free 30-minute step stays 20, never the search size).
+      const proposals = exact ? [{ ...exact, endsAt: draft.endsAt ?? exact.endsAt }] : ranked;
       state.proposals = proposals.slice(0, 24);
       state.draftNote = 'Bozza pronta: controlla i campi nel modulo e conferma.';
+      let takenNote = '';
+      if (Number.isFinite(timedAt) && !exact) {
+        const stepOf = onDay.find((slot) => Date.parse(String(slot?.startsAt ?? '')) === timedAt) ?? null;
+        const draftStep = { startsAt: draft.startsAt, endsAt: draft.endsAt ?? stepOf?.endsAt };
+        if (timedAt < nowMs) takenNote = `Le ${romeTime(draft.startsAt) ?? ''} sono già passate`;
+        else if (stepOf === null || dropHeldOverlaps([draftStep], heldWeek, searchIds).length === 0) {
+          takenNote = `Alle ${romeTime(draft.startsAt) ?? ''} ${memberLabelFor(member, parseMemberFilter(state.memberFilter), state.members)} è già occupato`;
+        }
+      }
       state.aiNote = proposals.length === 0
         ? (dayKey ? 'Nessuno slot libero quel giorno, prova con un altro giorno.' : 'Nessuno slot libero questa settimana, prova con altri giorni.')
-        : '';
+        : (takenNote !== '' ? `${takenNote}: ecco gli orari liberi dopo.` : '');
     } catch (error) {
       const record = error !== null && typeof error === 'object' ? error : {};
       // A newer search or a route away owns the card now: touch nothing.
       if (record.code === 'PHRASE_STALE') return;
+      // e98e7a346b37: a late refusal from the space just left never locks or
+      // labels the new space — it never refused anything.
+      if (seq !== phraseSeq || readSpace() !== askedSpace) return;
       state.draft = null;
       state.draftNote = '';
       state.proposals = [];
@@ -2798,7 +3220,7 @@ export function createCalendarioView(deps) {
         return;
       }
       const refusal = calendarRefusalText(error);
-      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(readSpace());
+      if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
       state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
@@ -2837,7 +3259,50 @@ export function createCalendarioView(deps) {
       text: `Bozza: ${memberLabelFor(draft.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${when}`,
     }));
     if (draft.notes) box.appendChild(el(doc, 'p', { text: `Nota: ${draft.notes}` }));
+    // backlog:913c61ec — production 10/11: the draft card had no way out but
+    // a page reload. Annulla closes it in place and books nothing.
+    const cancel = uiButton(doc, {
+      variant: 'secondary', small: true, label: 'Annulla',
+      attrs: { type: 'button', 'data-action': 'phrase-cancel' },
+    });
+    cancel.addEventListener('click', () => cancelDraft());
+    box.appendChild(cancel);
     return box;
+  }
+
+  /**
+   * backlog:913c61ec — «Annulla» on the draft card: the search in flight is
+   * dropped (phraseSeq, like a route away), the draft, its note and its
+   * proposals go, and the day and hours the draft wrote into the form are
+   * cleared when still untouched — the person too. The phrase,
+   * the customer and the service stay, so the operator can fix the sentence
+   * and search again. No request is sent.
+   */
+  function cancelDraft() {
+    phraseSeq += 1;
+    state.aiLoading = false;
+    state.phraseWaiting = false;
+    state.phrasePending = null;
+    state.draft = null;
+    state.draftNote = '';
+    state.draftFill = null;
+    state.proposals = [];
+    state.aiNote = '';
+    state.phraseNoDraft = false;
+    // Each field this draft wrote and nobody changed since goes back to what
+    // the form held before the draft (review #735: a value the operator
+    // typed equal to the draft is restored, never blanked). A search
+    // cancelled before the draft reached the form leaves the form as it was.
+    const { values = {}, prior = {} } = state.draftWrote ?? {};
+    if (state.manual) {
+      const kept = { ...state.manual };
+      for (const [name, value] of Object.entries(values)) {
+        if (kept[name] === value) kept[name] = typeof prior[name] === 'string' ? prior[name] : '';
+      }
+      state.manual = kept;
+    }
+    state.draftWrote = null;
+    renderAll();
   }
 
   /** Live manual values, from the rendered inputs when present. @param {string} name */
@@ -2957,6 +3422,16 @@ export function createCalendarioView(deps) {
       }));
       return;
     }
+    // backlog:7d82fd84 (review #678 giro-2 P3): a partial list says so above
+    // the buttons too, not only on the empty branch — the operator could
+    // otherwise pick a visible name while a better match stays unread past
+    // the bound.
+    if (state.customerPartial) {
+      box.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: 'L’elenco è parziale: potrebbero esserci altri clienti oltre quelli letti.',
+      }));
+    }
     for (const item of state.customerItems) {
       const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
       const pick = uiSecondaryButton(doc, name);
@@ -3001,20 +3476,16 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    const customer = pickedCustomer();
-    const claim = {
+    const claim = bookingClaim({
       spaceId: readSpace(),
-      subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+      customer: pickedCustomer(),
       teamMemberId: member,
       serviceKey: serviceKeyFor(manualValue('serviceKey'), state.services),
       priceCents: priceToCents(manualValue('price')),
-      currency: 'EUR',
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
-      source: { package: 'host', action: 'calendar-book' },
-    };
+    });
     state.confirmed = null;
     state.serviceError = '';
     const presend = servicePresendError(claim.serviceKey);
@@ -3079,6 +3550,7 @@ export function createCalendarioView(deps) {
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
+    state.draftWrote = null;
     state.proposals = [];
     state.aiNote = '';
     state.bookingNote = '';
@@ -3174,8 +3646,8 @@ export function createCalendarioView(deps) {
     const known = rows.length > 0 && (current === '' || groupOf(current) !== null);
     if (!known) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'teamMemberId', placeholder: 'Persona del team' } });
-      if (current !== '' && !current.includes('|')) input.value = current;
-      if (current.includes('|')) {
+      if (current !== '' && !isTechnicalMemberText(current)) input.value = current;
+      if (current !== '' && isTechnicalMemberText(current)) {
         // A pipe id never paints: the visible field stays empty while the
         // opaque identity rides in state for the claim only.
         state.manual = { ...(state.manual ?? {}), teamMemberId: current };
@@ -3381,6 +3853,15 @@ export function createCalendarioView(deps) {
     // cliente» button over an existing pick), set by renderCustomerPick
     // above so «Compila manualmente» focuses the customer first.
     if (state.draftFill) {
+      // backlog:913c61ec — the form as it was before this draft, for «Annulla».
+      // A previous draft's untouched fields carry their own «before».
+      const before = { ...(state.manual ?? {}) };
+      const earlier = state.draftWrote;
+      if (earlier) {
+        for (const [name, value] of Object.entries(earlier.values)) {
+          if (before[name] === value) before[name] = earlier.prior[name] ?? '';
+        }
+      }
       state.manualOpen = true;
       const draft = state.draftFill;
       if (draft.teamMemberId) {
@@ -3394,7 +3875,7 @@ export function createCalendarioView(deps) {
         const person = people.find((row) => row.ids.includes(raw));
         if (inputs.teamMemberId?.tagName === 'SELECT') {
           if (person) inputs.teamMemberId.value = raw;
-        } else if (person || !raw.includes('|')) inputs.teamMemberId.value = raw;
+        } else if (person || !isTechnicalMemberText(raw)) inputs.teamMemberId.value = raw;
       }
       if (draft.serviceKey) {
         // The service is a menu (backlog:810ed0bf): a drafted key the
@@ -3436,6 +3917,13 @@ export function createCalendarioView(deps) {
         absorbed.teamMemberId = String(draft.teamMemberId);
       }
       state.manual = absorbed;
+      // backlog:913c61ec — what this draft wrote into the form and what the
+      // form held before, so «Annulla» restores the operator's own values.
+      const wrote = { start: absorbed.start, end: absorbed.end };
+      if (dayKey) wrote.date = absorbed.date;
+      if (draft.teamMemberId) wrote.teamMemberId = absorbed.teamMemberId;
+      if (draft.notes) wrote.notes = absorbed.notes;
+      state.draftWrote = { values: wrote, prior: before };
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
@@ -3474,23 +3962,17 @@ export function createCalendarioView(deps) {
     const member = claimedMember(inputs);
     // The customer rides the name-search pick, never a typed id or
     // resource: without a pick the historical contact/empty fallback stays.
-    const customer = pickedCustomer();
     return {
-      claim: {
+      claim: bookingClaim({
         spaceId: readSpace(),
-        subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+        customer: pickedCustomer(),
         teamMemberId: member,
         serviceKey: serviceKeyFor(read('serviceKey'), state.services),
         priceCents,
-        currency: 'EUR',
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
-        sourceKey: member !== '' && startsAt
-          ? `calendario:${member}:${startsAt}:${customer.id || 'senza-cliente'}`
-          : undefined,
-        source: { package: 'host', action: 'calendar-book' },
-      },
+      }),
     };
   }
 
@@ -3701,3 +4183,50 @@ export function createCalendarioView(deps) {
 
   return { render, invalidate };
 }
+
+/**
+ * The one booking claim every Conferma sends to `/api/appointments/confirm`
+ * (manual form, proposal row, and the scheda cliente «Nuovo appuntamento»
+ * window): the customer as a host subject, the listino key and price in
+ * EUR, and the source key that binds person, start and customer, so a retry
+ * or a double click replays instead of double-booking. Without a person or
+ * a start there is no source key yet (the server refuses the claim).
+ * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
+ *   teamMemberId: string, serviceKey: string, priceCents: number | null,
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
+ */
+export function bookingClaim(input) {
+  const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
+  const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
+    ? input.customer.resource : 'contact';
+  const member = input.teamMemberId;
+  return {
+    spaceId: input.spaceId,
+    subject: { resource, id, owner: 'host' },
+    teamMemberId: member,
+    serviceKey: input.serviceKey,
+    priceCents: input.priceCents,
+    currency: 'EUR',
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    notes: input.notes ?? null,
+    sourceKey: member !== '' && input.startsAt
+      ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
+      : undefined,
+    source: { package: 'host', action: 'calendar-book' },
+  };
+}
+
+/**
+ * The free-slot read for one person over a window: every searched booking
+ * identity, the bounds and the slot size, as `suggest-slots` expects them.
+ * @param {ReadonlyArray<string>} searchIds @param {string} from @param {string} to @param {number} minutes
+ */
+export function suggestSlotsPath(searchIds, from, to, minutes) {
+  return `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
+    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    + `&slotMinutes=${encodeURIComponent(String(minutes))}`;
+}
+
+/** The slot sizes `suggest-slots` accepts, in minutes. */
+export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);

@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import * as agentiMod from '../apps/admin/public/admin-agenti.js';
 import {
   AGENT_AUTONOMY_LABEL,
   AGENTS_IDLE_NOTE,
@@ -752,16 +753,29 @@ test('31a76b6f19a3: a queued refusal reads neutral and stays locked', async () =
   for (const action of ['approve', 'edit', 'reject']) assert.equal(findButton(mount, action).disabled, true, `${action} locked`);
 });
 
-test('31a76b6f19a3: an assignment reads «Attivo» once it ran or recurs with a next run, «In attesa di partire» only if it never started', () => {
+test('31a76b6f19a3, narrowed by 43e8e7c563c3: an assignment reads «Attivo» only once it ran; a recurring one that never ran waits for its first run', () => {
   const runs = [{ assignmentSourceKey: 'a-ran', outcome: 'artifact' }];
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran', status: 'active', cadence: 'once' }, runs), 'Attivo', 'it ran');
-  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
-    'Attivo', 'recurring with its next run scheduled');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' },
+    [{ assignmentSourceKey: 'a-ran-weekly', outcome: 'artifact' }]), 'Attivo', 'recurring, ran once');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' }, runs),
+    'In attesa del primo giro, 13 nov, 09:00', 'recurring with its next run scheduled, never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-once', status: 'active', cadence: 'once', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
     'In attesa di partire', 'a one-off that never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-new', status: 'active', cadence: 'weekly' }, runs), 'In attesa di partire', 'nothing scheduled, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-bad', status: 'active', cadence: 'weekly', nextRunAt: 'not-a-date' }, runs),
+    'In attesa di partire', 'unreadable next run, never ran');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-done', status: 'completed' }, runs), 'Fatto');
   assert.equal(assignmentStatusLabel({ sourceKey: 'a-p', status: 'paused' }, runs), 'In pausa');
+});
+
+test('43e8e7c563c3: a weekly «ogni venerdì» assignment that never ran shows «In attesa del primo giro» with the next date, never «Attivo»', () => {
+  const friday = { sourceKey: 'a-friday', status: 'active', cadence: 'weekly', weekday: 5, timeOfDay: '09:00', nextRunAt: '2026-11-13T08:00:00.000Z' };
+  assert.equal(describeSchedule(friday), 'Ogni venerdì alle 09:00');
+  const label = assignmentStatusLabel(friday, []);
+  assert.ok(label.startsWith('In attesa del primo giro'), `waits for the first run, got ${label}`);
+  assert.ok(label.includes('13 nov'), `names the next date, got ${label}`);
+  assert.ok(!label.includes('Attivo'), `never reads «Attivo» before the first run, got ${label}`);
 });
 
 test('review #688 P1: an answer that lands after a space switch is dropped, never painted on the space now shown', async () => {
@@ -911,4 +925,53 @@ test('review #688 giro 2 P2: a 405 with a domain code is a real refusal, not «N
   for (const code of [undefined, 'ADMIN_METHOD_NOT_ALLOWED', 'NOT_FOUND', 'BO_AGENT_ROUTE_UNKNOWN', 'BO_AGENT_DECISION_UNAVAILABLE']) {
     assert.equal(isDecisionUnavailable({ status: 405, code }), true, String(code));
   }
+});
+
+test('backlog 2df6a513cc4d: dopo Affida la pagina rilegge da sola e lascia «In attesa di partire»', async () => {
+  const POLL_MS = agentiMod.AGENTI_POLL_MS;
+  const FOLLOWUP_MS = agentiMod.AGENTI_FOLLOWUP_MS;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  const timers = [];
+  const setTimer = (fn, ms) => { const handle = { fn, ms }; timers.push(handle); return handle; };
+  const clearTimer = (handle) => { const at = timers.indexOf(handle); if (at >= 0) timers.splice(at, 1); };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer, clearTimer });
+  await view.render();
+  await flush();
+  assert.equal(timers.length, 1, 'una lettura periodica mentre la pagina è mostrata');
+  assert.ok(Number.isInteger(POLL_MS) && POLL_MS > 0 && POLL_MS <= 60_000, 'poll sotto il minuto');
+  assert.ok(Array.isArray(FOLLOWUP_MS) && FOLLOWUP_MS.length > 0, 'riletture dopo Affida');
+  assert.equal(timers[0].ms, POLL_MS);
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'ogni lunedì occupati dei lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.ok(textOf(mount).includes('Incarico dato a Riaggancio'), 'l’esito di Affida resta');
+  assert.ok(textOf(mount).includes('Ogni lunedì alle 08:00 · In attesa di partire'), 'il giro non è ancora arrivato');
+  assert.equal(timers.length, 1 + FOLLOWUP_MS.length, 'Affida riuscita arma le riletture');
+  // Il giro del worker arriva dopo la risposta: una proposta per il nuovo incarico.
+  const assignment = client.assignments[0];
+  assert.ok(assignment && typeof assignment.sourceKey === 'string');
+  const { items: serverRuns } = await client.request('/api/modules/teammate-run/records?filter.spaceId=presti', {});
+  serverRuns.push({
+    id: 'run-affida', sourceKey: 'r-affida', agentSourceKey: RIAGGANCIO.sourceKey,
+    assignmentSourceKey: assignment.sourceKey, outcome: 'proposed', startedAt: NOW,
+    proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'Bozza per i lead' } }]),
+  });
+  const readsBefore = client.calls.filter((call) => call.method === 'GET').length;
+  // La prima rilettura dopo Affida, senza toccare Ricarica.
+  const followup = timers.find((handle) => handle.ms === FOLLOWUP_MS[0]);
+  assert.ok(followup, 'la prima rilettura è armata');
+  clearTimer(followup);
+  await followup.fn();
+  await flush();
+  assert.ok(client.calls.filter((call) => call.method === 'GET').length > readsBefore, 'ha riletto da sola');
+  const text = textOf(mount);
+  assert.ok(!text.includes('In attesa di partire'), 'lo stato nuovo senza ricaricare');
+  assert.ok(text.includes('Ogni lunedì alle 08:00 · Attivo'), 'il giro è arrivato');
+  assert.ok(text.includes('Bozza per i lead'), 'la proposta è in «Da fare»');
+  view.invalidate();
+  assert.equal(timers.length, 0, 'fuori dalla pagina niente letture');
 });

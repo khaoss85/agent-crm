@@ -236,7 +236,7 @@ button[aria-busy="true"] { opacity: .6; }
 .action-row .action-trigger { align-self: flex-start; }
 .action-row .hint { color: var(--dim); font-size: 12px; }
 .action-form { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-soft); border-radius: 9px; }
-.pipeline-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
+.pipeline-board { position: relative; display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
 .pipeline-column { min-width: 200px; flex: 1 1 200px; background: var(--surface-soft); border-radius: 9px; padding: 12px; }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
@@ -633,12 +633,15 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 10px; margin: 0 -12px; padding: 14px 12px 8px; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin: 0 -12px; padding: 6px 12px; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; font-weight: 750; }
+  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 24px; height: 24px; font-size: 10px; }
+  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 13px; line-height: 1.25; }
+  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 11px; line-height: 1.3; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
-  .bo-ai { flex: none; margin-left: 0; }
-  .bo-crumb { white-space: normal; }
-  .bo-main > .bo-topbar + * { margin-top: 6px; }
+  .bo-ai { flex: none; margin-left: 0; height: 36px; }
+  .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  .bo-main > .bo-topbar + * { margin-top: 4px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
 
@@ -659,7 +662,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -742,7 +749,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
@@ -912,13 +921,14 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-row[data-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .bo-seq-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bo-seq-name { margin: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
+/* The tint comes from the ui-chip-* class the state picks (backlog:bd9ae1482194). */
+.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .bo-seq-stats { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .bo-seq-open.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-seq-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 18px 20px; }
 .bo-seq-headcard { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
 .bo-seq-headtext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--data-soft); color: var(--data-ink); }
+.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; }
 .bo-seq-headactions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .bo-seq-headactions .ui-btn { height: 38px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 700; }
 .bo-seq-confirm { margin: 0; font-size: 13px; font-weight: 700; }
@@ -963,26 +973,39 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agenti-section > h3, .bo-agenti-sectionhead h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .bo-agenti-sectionhead { display: flex; align-items: center; gap: 10px; }
 .bo-agenti-count { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 99px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--pending-soft); color: var(--pending-ink); }
-.bo-agent-grid, .bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+/* Backlog «Agenti: layout delle card»: auto-fit, so one agent takes the
+   whole width and never sits in a narrow column; more agents share it. */
+.bo-agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .bo-agent-card, .bo-catalog-item, .bo-dafare-item { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
 .bo-agent-card { border-color: var(--agent-line); }
 .bo-agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .bo-agent-avatar { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--agent-soft); color: var(--agent-ink); }
 .bo-agent-avatar-sm { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; }
 .bo-agent-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.bo-agent-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-name { margin: 0; font-size: 17px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .bo-agent-role { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
-.bo-agent-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.bo-agent-fact { min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
-.bo-agent-fact dt { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
-.bo-agent-fact dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.bo-agent-assignment { padding: 8px 10px; border-left: 3px solid var(--agent-line); }
-.bo-agent-phrase { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.bo-agent-when { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* One metric per line: small label, clear value, never a broken word. */
+.bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.bo-agent-fact { min-width: 0; max-width: 100%; display: flex; align-items: baseline; gap: 8px; }
+.bo-agent-fact dt { margin: 0; flex: none; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.bo-agent-fact dd { margin: 0; min-width: 0; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The incarichi: compact rows, secondary to the agent name. */
+.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.bo-agent-assignment { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line-faint); }
+.bo-agent-assignment:first-child { border-top: 0; padding-top: 2px; }
+.bo-agent-run-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-agent-phrase.ui-btn { display: block; width: 100%; min-width: 0; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--ink); font-size: 13.5px; font-weight: 500; line-height: 1.35; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.bo-agent-phrase.ui-btn.is-open { white-space: normal; overflow-wrap: anywhere; }
+.bo-agent-when { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-agent-run-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.bo-agent-outcome.ui-badge { padding: 3px 8px; font-size: 10.5px; white-space: nowrap; }
+.bo-agent-outcome:not([class*="ui-badge-"]) { background: var(--surface-soft); color: var(--muted); }
+.bo-agent-run-date { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.bo-agent-runs-toggle.ui-btn { align-self: flex-start; height: auto; margin: -4px 0 0; padding: 2px 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
 .bo-agent-noassign { margin: 0; }
 .bo-agent-talk { display: flex; gap: 8px; align-items: center; }
 .bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
@@ -1009,7 +1032,6 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 @media (max-width: 420px) {
   .bo-agent-talk { flex-wrap: wrap; }
   .bo-agent-talk .ui-btn { flex: 1 1 100%; }
-  .bo-agent-facts { grid-template-columns: 1fr 1fr; }
 }
 
 /*
@@ -1145,6 +1167,11 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
 .bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bo-spazi-names { overflow: hidden; }
+/* backlog:67e14a50efb6: the calendar-and-channels line of every team row —
+   shared state with the Connettori tile vocabulary, small enough to wrap. */
+.bo-spazi-conns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.bo-spazi-calendar { font-size: 12px; color: var(--muted); }
+.bo-spazi-tile.ui-chip { font-size: 10px; padding: 3px 7px; }
 .bo-spazi-invite-toggle.ui-btn { white-space: nowrap; flex: none; }
 @media (max-width: 700px) {
   .bo-spazi-adder { min-height: 88px; }
@@ -1275,7 +1302,7 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; border-radius: 99px; padding: 5px 8px 5px 10px; background: var(--line-soft); }
 .bo-clienti-chipx.ui-chip { border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 0 2px; }
 .bo-clienti-clear.ui-btn { font-size: 12px; border: 0; background: transparent; color: var(--accent); }
-.bo-clienti-table { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow-x: auto; }
+.bo-clienti-table { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow-x: auto; }
 .bo-clienti-thead { display: grid; gap: 16px; padding: 12px 20px; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); min-width: 760px; }
 .bo-clienti-list { display: flex; flex-direction: column; }
 .bo-clienti-row { display: grid; gap: 16px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--line-faint); min-width: 760px; }
@@ -1411,6 +1438,19 @@ select.bo-spazi-input { flex: none; }
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
 .cal-day .cal-event, .cal-day .bo-add-button { cursor: pointer; }
+/* backlog:3d0fbe7dc8d1: movable events drag (grab) and stretch from the
+ * bottom edge (ns-resize); the drag never starts a page scroll or a text
+ * selection, on desktop or on the 390 px phone. The «Sposta» form in the
+ * detail card is the same move as named fields. */
+.cal-grid .cal-event.is-movable { cursor: grab; touch-action: none; user-select: none; }
+.cal-resize { display: block; height: 10px; margin: 3px -6px -4px; border-radius: 4px; cursor: ns-resize; touch-action: none;
+  background: linear-gradient(to bottom, transparent 4px, rgba(0, 0, 0, .28) 4px, rgba(0, 0, 0, .28) 6px, transparent 6px); }
+.cal-move { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cal-move-title { font-size: 13px; margin: 0 0 8px; }
+.cal-move-field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.cal-move-field input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.cal-move-note { font-size: 13px; }
 .cal-pick { z-index: 3; margin: 1px 3px; padding: 4px 8px; border-radius: 8px; border: 2px solid var(--accent);
   background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700;
   pointer-events: none; box-shadow: 0 6px 16px rgba(23, 107, 42, .14); }
@@ -1570,6 +1610,9 @@ select.bo-spazi-input { flex: none; }
 .bo-sync-pill[data-pill="attivo"] { background: var(--accent-soft); color: var(--accent); }
 .bo-sync-pill[data-pill="permesso"] { background: var(--pending-soft); color: var(--pending-ink); }
 .bo-sync-pill[data-pill="importazione"] { background: var(--data-soft); color: var(--data-ink); }
+/* Voce 1a3a0ba236c0 (C18): waiting for the first event is informational
+ * like an import in corso — the same pair, no new colour. */
+.bo-sync-pill[data-pill="attesa"] { background: var(--data-soft); color: var(--data-ink); }
 .bo-sync-pill[data-pill="altro"] { background: var(--human-soft); color: var(--human-ink); }
 .bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
 .bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
@@ -2018,6 +2061,30 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }
+/* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
+   card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+.pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
+.pipeline-card.dragging { opacity: .45; }
+.pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+.pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-card > .field-error { display: block; margin-top: 6px; }
+.pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
+.bo-scheda-composer.bo-pipeline-offer { top: 72px; bottom: 16px; width: min(420px, calc(100vw - 48px)); max-height: none; border-bottom: 1px solid var(--line); border-radius: 14px; }
+.bo-pipeline-offer .bo-composer-body.bo-pipeline-offer-body { gap: 16px; padding: 18px 18px 18px; }
+.bo-pipeline-offer .offer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.bo-pipeline-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-pipeline-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-pipeline-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-pipeline-offer-move { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-move label { font-size: 11px; font-weight: 700; color: var(--dim); }
+.bo-pipeline-offer-move-row { display: flex; gap: 8px; }
+.bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
+.bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
+@media (max-width: 560px) {
+  .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+  .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
+}
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }
 .pipeline-toolbar select.ui-field, .pipeline-toolbar input[type="date"].ui-field { border-color: var(--line-soft); background: var(--surface); color: var(--ink); font-weight: 600; }
@@ -2235,11 +2302,15 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-import-table-wrap { margin: 12px 0 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
 .bo-import-table { margin: 0; }
 .customer-data-mapping-row, .customer-data-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-/* backlog:49bd3657b0f8 — the bundle-update notice: one fixed bar on top of
-   every screen, product colors, readable on a phone. The notice is a single
+/* backlog:49bd3657b0f8 — the bundle-update notice: one bar above every
+   screen, product colors, readable on a phone. The notice is a single
    button whose label is the notice itself, so it reads and confirms in one
-   gesture; it stays on screen until the operator confirms. */
-.bo-update-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 200; display: block; width: 100%; margin: 0; padding: 12px 16px; border: none; border-bottom: 1px solid var(--line); background: var(--ink); color: var(--paper); font: inherit; font-size: 14px; font-weight: 700; text-align: center; cursor: pointer; }
+   gesture; it stays on screen until the operator confirms.
+   backlog:0d4c5c44 — the bar joins the normal flow instead of overlaying
+   the viewport: it pushes the sidebar, topbar and actions down, so it never
+   covers navigation or actions at any width (1440 or 390). It scrolls with
+   the page instead of staying pinned. */
+.bo-update-banner { position: static; display: block; width: 100%; margin: 0; padding: 12px 16px; border: none; border-bottom: 1px solid var(--line); background: var(--ink); color: var(--paper); font: inherit; font-size: 14px; font-weight: 700; text-align: center; cursor: pointer; }
 .bo-update-banner:hover { text-decoration: underline; }
 .bo-update-banner:focus-visible { outline: 2px solid var(--paper); outline-offset: -4px; }
 
@@ -2285,6 +2356,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-ai-line { margin: 6px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
 .bo-composer-ai-line:empty { display: none; }
 .bo-scheda-composer .bo-composer-ai-undo { min-height: 0; padding: 0; border: 0; background: none; color: var(--agent-ink); font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
+/* Le tre versioni (Corta/Lunga/Diretta) restano scegliibili fino all'invio; la scelta si vede piena. */
+.bo-composer-ai-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
+.bo-composer-ai-picks:empty { display: none; }
+.bo-scheda-composer .bo-composer-ai-pick { min-height: 0; padding: 4px 12px; border: 1px solid var(--agent-soft); border-radius: 999px; background: var(--surface); color: var(--agent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+.bo-scheda-composer .bo-composer-ai-pick:hover { border-color: var(--agent); }
+.bo-scheda-composer .bo-composer-ai-pick[aria-pressed="true"] { border-color: var(--agent); background: var(--agent); color: var(--surface); }
 .bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }

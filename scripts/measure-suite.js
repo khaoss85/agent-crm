@@ -89,6 +89,7 @@ import { spawnGit } from './git-env.js';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MeasurementError, assertMeasurementUnchanged, parseMeasurementReport } from './measurement-report.js';
+import { HEARTBEAT_SEC, fileMaxSecFrom, runPieceFiles } from './measure-piece-runner.js';
 
 const root = process.cwd();
 const claimsPath = join(root, 'site', 'claims.json');
@@ -141,7 +142,7 @@ async function main() {
   }
 
   if (shard !== undefined) {
-    runShard(shard, /** @type {string} */ (out));
+    await runShard(shard, /** @type {string} */ (out));
     return;
   }
 
@@ -392,10 +393,13 @@ function printPlan(text) {
 }
 
 /**
- * Run one piece: the same `node --test` flags as `npm test`
- * (`--test-concurrency=2`, proven on the shared runner), restricted to the
- * piece's explicit file list, with the measurement reporter writing the
- * machine summary beside stdout. A red piece, an unparsable report, or a
+ * Run one piece: the piece's explicit file list, two files at a time (the
+ * `--test-concurrency=2` of `npm test`), each file its own `node --test`
+ * child under a per-file ceiling (`MEASURE_FILE_MAX_SEC`, default 600 s) with
+ * the measurement reporter writing its machine summary beside the spec log —
+ * see scripts/measure-piece-runner.js. Each finished file is logged, the
+ * files still running are named every 60 s, and a file past its ceiling is
+ * killed, named, and reddens the piece at once. A red piece, an unparsable report, or a
  * HEAD that moved mid-piece leaves NO joinable report and exits non-zero:
  * any stale report already at the output path is removed before the piece
  * runs, so the combine finds no report and refuses — one red piece reddens
@@ -404,7 +408,7 @@ function printPlan(text) {
  * @param {string} text the `--shard` value
  * @param {string} outPath where the green piece report is written
  */
-function runShard(text, outPath) {
+async function runShard(text, outPath) {
   // Fail closed first: a green report left at outPath by an earlier run must
   // never survive a run that does not go green (re-run of one shard after
   // editing code, manual reuse of the path). Removing before any exit keeps
@@ -437,47 +441,50 @@ function runShard(text, outPath) {
   }
   process.stderr.write(`measure-suite: running piece ${index} of ${total} at ${sha.slice(0, 7)} over ${piece.length} test files…\n`);
 
-  const scratch = mkdtempSync(join(tmpdir(), 'accordo-measure-'));
+  let fileMaxSec;
   try {
-    const reportPath = join(scratch, 'summary.jsonl');
-    const reporter = fileURLToPath(new URL('./measurement-reporter.js', import.meta.url));
-    const run = spawnSync(process.execPath,
-      // Reporters and destinations pair positionally (node refuses a
-      // mismatch): spec to the log, the measurement reporter to the file —
-      // the same two channels the monolith's npm forwarding produces.
-      ['--no-warnings', '--test', '--test-concurrency=2',
-        '--test-reporter=spec', '--test-reporter-destination=stdout',
-        `--test-reporter=${reporter}`, `--test-reporter-destination=${reportPath}`, ...piece], {
-        cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: measurementEnv(),
-      });
-    if (run.status !== 0 || run.error || run.signal) {
-      writeAllSync(2, `${run.stdout ?? ''}\n${run.stderr ?? ''}\n`);
-      const failing = failingTestLines(run.stdout ?? '');
-      if (failing.length > 0) writeAllSync(2, `measure-suite: failing tests:\n${failing.join('\n')}\n`);
-      writeSync(2, `${formatVerifyFailure(run)}\n`);
-      throw new MeasurementError(formatVerifyFailure(run));
+    fileMaxSec = fileMaxSecFrom(process.env);
+  } catch (error) {
+    process.stderr.write(`measure-suite: ${/** @type {Error} */ (error).message}\n`);
+    process.exit(2);
+  }
+  process.stderr.write(`measure-suite: each file runs under its own ${fileMaxSec}s ceiling; progress every ${HEARTBEAT_SEC}s.\n`);
+  // File by file (backlog:3d560518f3e2): one buffered `node --test` over the
+  // whole piece printed nothing until it ended, so one file that never ended
+  // held the piece silent until the 1800 s lock maximum, unnamed.
+  const run = await runPieceFiles({ root, files: piece, env: measurementEnv(), concurrency: 2, fileMaxSec });
+  const bad = run.results.filter((result) => result.status !== 'green');
+  if (!run.ok) {
+    for (const result of bad) {
+      writeAllSync(2, `\n--- ${result.file} (${result.status}, ${result.seconds}s) ---\n${result.output}\n`);
     }
-    const measured = parseMeasurementReport(readFileSync(reportPath, 'utf8'), root, piece);
+    const failing = run.results.flatMap((result) => failingTestLines(result.output));
+    if (failing.length > 0) writeAllSync(2, `measure-suite: failing tests:\n${failing.join('\n')}\n`);
+    const reason = run.timedOut.length > 0
+      ? `piece ${index} of ${total}: ${run.timedOut.join(', ')} passed the ${fileMaxSec}s per-file ceiling and was killed; nothing recorded`
+      : `piece ${index} of ${total} is red: ${bad.map((result) => result.file).join(', ') || 'files missing'}; nothing recorded`;
+    writeSync(2, `measure-suite: ${reason}.\n`);
+    throw new MeasurementError(reason);
+  }
+  try {
     assertMeasurementUnchanged(git, sha);
     const report = {
       shard: index,
       shards: total,
       sha,
       testsTree,
-      tests: measured.pass,
-      failures: measured.fail,
-      files: measured.files,
+      tests: run.pass,
+      failures: run.fail,
+      files: run.files,
     };
     // Atomic publish: a crash between write and combine must never leave a
     // half-written file the combine would join as this run's green report.
     const pending = `${outPath}.tmp-${process.pid}`;
     writeFileSync(pending, `${JSON.stringify(report, null, 2)}\n`);
     renameSync(pending, outPath);
-    process.stderr.write(`measure-suite: piece ${index} of ${total} green: ${measured.pass} tests over ${piece.length} files.\n`);
+    process.stderr.write(`measure-suite: piece ${index} of ${total} green: ${run.pass} tests over ${piece.length} files.\n`);
   } catch (error) {
     throw new MeasurementError(/** @type {Error} */ (error).message);
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
   }
 }
 

@@ -5,15 +5,17 @@
  * What it must prove:
  * - one PNG per screen at 1440px and at 390px, none empty (the full run
  *   counts the files and checks every width and byte floor);
- * - the run works fully offline (loopback only) and exits 0 with a skip
- *   message where no runnable Chromium exists;
+ * - the run works fully offline (loopback only); where no runnable Chromium
+ *   exists, even with --no-sandbox, the command fails loudly (exit 1) and
+ *   says why instead of skipping in silence (backlog:cd0ad69b);
  * - the screen registry is exactly the fourteen delivered /bo screens plus the
  *   componenti catalog, and
  *   every harness page serves its real view module.
  *
- * The full render runs only where Chromium actually runs (the probe below
- * is the same one the `*-shots` tests use): elsewhere those tests skip and
- * the skip-path test below still proves the clean exit.
+ * The full render runs wherever Chromium runs, with or without the sandbox
+ * (the flags probe below retries once with --no-sandbox): elsewhere the
+ * render tests skip and the failure-path test below still proves the loud
+ * exit.
  */
 
 import test from 'node:test';
@@ -31,6 +33,7 @@ import {
   SHELL_SCREENS,
   USAGE,
   assertProbe,
+  chromiumFlags,
   chromiumRuns,
   findChromium,
   harnessHtml,
@@ -265,7 +268,7 @@ test('every harness probe carries the fields the review gate asserts', () => {
     ['sequenze', ['rows:', 'names:', 'detail:', 'steps:']],
     ['agenti', ['agents:', 'dafare:', 'catalog:', 'disabled:', 'talk:']],
     ['catalogo', ['table:', 'stripe:', 'rules:']],
-    ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'stats:', 'apri:']],
+    ['spazi-accessi', ['spaces:', 'members:', 'switches:', 'master:', 'masterAbove', 'stats:', 'apri:']],
     ['connettori', ['rows:', 'badges:', 'openers:', 'flows:']],
   ]);
   for (const [name, fields] of probes) {
@@ -325,7 +328,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('sequenze', {
     rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],
     detail: 'Bentornato in palestra', steps: 2, firstDay: 'Subito',
-    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Attivare questa sequenza?',
+    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Avviare questa sequenza?',
   }));
   assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
   assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 2, toConnect: 7 }));
@@ -351,7 +354,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
     apri: 1,
   }));
@@ -361,7 +366,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti'],
     apri: 1,
   }), /stats/);
@@ -371,10 +378,22 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     members: 2,
     avatars: 2,
     pills: 2,
-    switches: 5,
+    switches: 6,
+    master: 1,
+    masterAbove: true,
     stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
     apri: 0,
   }), /Apri/);
+  // backlog:2c3156a4: five switches without the master, or a master not
+  // above the five, never pass.
+  const spazi = {
+    spaces: 3, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2,
+    switches: 6, master: 1, masterAbove: true,
+    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], apri: 1,
+  };
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, switches: 5 }), /expected 6/);
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, master: 0 }), /master AI switches/);
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, masterAbove: false }), /not above the five/);
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
   assert.throws(() => assertProbe('oggi', null), /not a JSON object/);
@@ -398,16 +417,17 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
     () => assertProbe('catalogo', { table: 'Pacchetto 10 lezioni', stripe: null, rules: null }),
     /Stripe state/,
   );
-  assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 5 }), /members/);
+  assert.throws(() => assertProbe('spazi-accessi', { spaces: 3, members: 0, switches: 6, master: 1, masterAbove: true }), /members/);
   assert.throws(() => assertProbe('connettori', { rows: 0, badges: 0, openers: 0, flows: 0 }), /channel rows/);
   assert.throws(() => assertProbe('import', { back: 0, title: false, crumb: false, drop: 0, rows: 0 }), /back links/);
 });
 
-test('without a runnable Chromium the command skips cleanly with exit 0', () => {
+test('without a runnable Chromium the command fails loudly, never skips silently', () => {
   // A non-executable file stands in for a missing or unrunnable Chromium:
-  // findChromium returns it (it exists), the runnable probe rejects it, and
-  // the command must exit 0 with a skip message instead of failing the gate.
-  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-skip-'));
+  // findChromium returns it (it exists), both probes reject it, and the
+  // command must exit non-zero and say why: missing PNGs must never look
+  // like a pass (backlog:cd0ad69b).
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-nochromium-'));
   const inert = join(dir, 'not-a-browser');
   writeFileSync(inert, 'this file is not a browser\n');
   const out = join(dir, 'out');
@@ -417,13 +437,60 @@ test('without a runnable Chromium the command skips cleanly with exit 0', () => 
     cwd: root,
     env: { ...process.env, CHROMIUM_BIN: inert, HOME: mkdtempSync(join(tmpdir(), 'bo-shots-nohome-')) },
   });
-  assert.equal(run.status, 0, `a missing Chromium is a skip, not a failure (stderr: ${(run.stderr ?? '').slice(-300)})`);
-  assert.ok(String(run.stdout ?? '').includes('Skipping bo:shots'), 'the skip says why');
-  assert.ok(!existsSync(out) || readdirSync(out).filter((name) => name.endsWith('.png')).length === 0, 'no PNGs on a skip');
+  assert.notEqual(run.status, 0, `no runnable Chromium is a failure, never a silent skip (stdout: ${(run.stdout ?? '').slice(-300)})`);
+  assert.ok(String(run.stderr ?? '').includes('no runnable Chromium'), 'the failure says why');
+  assert.ok(!existsSync(out) || readdirSync(out).filter((name) => name.endsWith('.png')).length === 0, 'no PNGs on a failure');
+});
+
+test('a Chromium that only runs with --no-sandbox is used, not skipped (backlog:cd0ad69b)', () => {
+  // Repro for the Ubuntu server: Chromium dies with "No usable sandbox"
+  // without the flag but paints fine with it. The old plain probe called
+  // that "no runnable Chromium" and the command exited 0 with a skip; the
+  // flags probe must retry with --no-sandbox and the command must get past
+  // the gate instead of reporting "no runnable Chromium".
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-sandbox-'));
+  const fake = join(dir, 'fake-chromium');
+  writeFileSync(fake, [
+    '#!/bin/sh',
+    '# Fake Chromium with the sandbox-less-server shape: without --no-sandbox',
+    '# every launch dies like the Ubuntu zygote failure; with the flag the',
+    '# --dump-dom probe returns a page.',
+    'sandbox=0',
+    'dumpdom=0',
+    'for arg in "$@"; do',
+    '  case "$arg" in --no-sandbox) sandbox=1;; --dump-dom) dumpdom=1;; esac',
+    'done',
+    'if [ "$sandbox" = "0" ]; then',
+    "  echo '[FATAL:zygote_host_impl_linux.cc] No usable sandbox!' >&2",
+    '  exit 1',
+    'fi',
+    'if [ "$dumpdom" = "1" ]; then',
+    "  printf '<html><head></head><body></body></html>\\n'",
+    '  exit 0',
+    'fi',
+    'exit 0',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  assert.equal(chromiumRuns(fake), false, 'the plain probe still rejects the sandbox death (that was the old skip)');
+  assert.deepEqual(chromiumFlags(fake), ['--no-sandbox'], 'the flags probe retries without the sandbox');
+  assert.deepEqual(chromiumFlags(null), null, 'a missing binary has no flags');
+  assert.deepEqual(chromiumFlags(join(dir, 'does-not-exist')), null, 'a missing path has no flags');
+  // The command itself must get past the runnable gate with this binary: it
+  // cannot paint PNGs (the fake writes none), but it must fail at the render
+  // stage, never with "no runnable Chromium".
+  const out = join(dir, 'out');
+  const run = spawnSync(process.execPath, [join(root, 'scripts', 'bo-shots.js'), '--out', out, '--screen', 'login'], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    cwd: root,
+    env: { ...process.env, CHROMIUM_BIN: fake, HOME: mkdtempSync(join(tmpdir(), 'bo-shots-fakehome-')) },
+  });
+  assert.notEqual(run.status, 0, 'the fake cannot paint, so the run still fails');
+  assert.ok(!String(run.stderr ?? '').includes('no runnable Chromium'), 'but it tried with --no-sandbox instead of gating out');
 });
 
 const CHROMIUM = findChromium();
-const SHOTS_SKIP = chromiumRuns(CHROMIUM)
+const SHOTS_SKIP = chromiumFlags(CHROMIUM) !== null
   ? false
   : 'Chromium binary missing or unrunnable here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 

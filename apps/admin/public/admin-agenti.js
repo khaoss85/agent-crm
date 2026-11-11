@@ -46,6 +46,15 @@ import { el, uiBadge, uiButton, uiEmpty } from './admin-ui.js';
 /** How many rows each module read takes: one page, said out loud. */
 export const AGENTI_READ_LIMIT = 200;
 
+/**
+ * Backlog 2df6a513cc4d: the worker runs an assignment after Affida, so the
+ * card reads «In attesa di partire» until the first run lands. The screen
+ * reads again on its own: every AGENTI_POLL_MS while it is shown, plus one
+ * read at each AGENTI_FOLLOWUP_MS delay after an Affida that succeeded.
+ */
+export const AGENTI_POLL_MS = 20_000;
+export const AGENTI_FOLLOWUP_MS = Object.freeze([10_000, 30_000]);
+
 export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In pausa' });
 
 /** The one autonomy the package supports: proposals always wait. */
@@ -71,6 +80,24 @@ export const RUN_OUTCOME_LABEL = Object.freeze({
   failed: 'non riuscito',
   rejected: 'rifiutato',
 });
+
+/**
+ * Backlog «Agenti: layout delle card»: the outcome of a run as a short chip
+ * on its row — the label the operator reads and the authority tone of the
+ * design system (uiBadge). `artifact` has no authority: it reads neutral.
+ */
+export const RUN_OUTCOME_CHIP = Object.freeze({
+  started: Object.freeze({ label: 'In corso', tone: 'agent' }),
+  proposed: Object.freeze({ label: 'Da approvare', tone: 'pending' }),
+  applied: Object.freeze({ label: 'Applicato', tone: 'accord' }),
+  artifact: Object.freeze({ label: 'Niente da proporre', tone: 'neutral' }),
+  capped: Object.freeze({ label: 'Tetto di spesa', tone: 'pending' }),
+  failed: Object.freeze({ label: 'Non riuscito', tone: 'fault' }),
+  rejected: Object.freeze({ label: 'Rifiutato', tone: 'human' }),
+});
+
+/** How many incarichi a card shows before «Mostra tutti (N)». */
+export const AGENT_RUNS_VISIBLE = 2;
 
 export const ASSIGNMENT_STATUS_LABEL = Object.freeze({
   active: 'Attivo',
@@ -166,6 +193,8 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         schedule: describeSchedule(row),
         status: assignmentStatusLabel(row, runs),
         lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
+        lastOutcome: lastRunOf(runs, String(row.sourceKey ?? ''))?.outcome ?? null,
+        lastStamp: lastRunStamp(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
@@ -186,17 +215,25 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
 }
 
 /**
- * Backlog 31a76b6f19a3: an active assignment reads «Attivo» once the worker
- * ran it at least once, or when it recurs with its next run scheduled;
- * «In attesa di partire» only while it never started.
+ * Backlog 43e8e7c563c3 (narrows 31a76b6f19a3): an active assignment reads
+ * «Attivo» only once the worker ran it at least once. A recurring one that
+ * never ran reads «In attesa del primo giro» with its next run date, never
+ * «Attivo» — the Mac check of 09/11 found «ogni venerdì» reading «Attivo»
+ * before its first run, which tells the operator it already works.
+ * Anything else that never started reads «In attesa di partire».
  * @param {any} assignment @param {Array<any>} runs
  */
 export function assignmentStatusLabel(assignment, runs) {
   if (assignment?.status !== 'active') return ASSIGNMENT_STATUS_LABEL[assignment?.status] ?? 'Stato sconosciuto';
   const key = String(assignment.sourceKey ?? '');
   const ran = key !== '' && (Array.isArray(runs) ? runs : []).some((run) => run && run.assignmentSourceKey === key);
-  const recurring = assignment.cadence !== 'once' && Number.isFinite(Date.parse(String(assignment.nextRunAt ?? '')));
-  return ran || recurring ? ASSIGNMENT_STATUS_LABEL.active : 'In attesa di partire';
+  if (ran) return ASSIGNMENT_STATUS_LABEL.active;
+  const next = typeof assignment?.nextRunAt === 'string' ? assignment.nextRunAt : '';
+  if (assignment?.cadence !== 'once' && Number.isFinite(Date.parse(next))) {
+    const stamp = romeStamp(next);
+    return stamp === '' ? 'In attesa del primo giro' : `In attesa del primo giro, ${stamp}`;
+  }
+  return 'In attesa di partire';
 }
 
 /**
@@ -207,14 +244,32 @@ export function assignmentStatusLabel(assignment, runs) {
  * @returns {string | null}
  */
 export function lastRunLine(runs, assignmentSourceKey) {
-  if (assignmentSourceKey === '') return null;
-  const at = (run) => String(run?.decidedAt ?? run?.startedAt ?? '');
-  const last = (Array.isArray(runs) ? runs : [])
-    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
-    .sort((a, b) => at(b).localeCompare(at(a)))[0];
+  const last = lastRunOf(runs, assignmentSourceKey);
   if (!last) return null;
-  const stamp = romeStamp(at(last) || null);
+  const stamp = lastRunStamp(runs, assignmentSourceKey);
   return `Ultimo giro: ${RUN_OUTCOME_LABEL[last.outcome]}${stamp === '' ? '' : `, ${stamp}`}`;
+}
+
+/** @param {any} run */
+function runAt(run) {
+  return String(run?.decidedAt ?? run?.startedAt ?? '');
+}
+
+/**
+ * The newest run with a known outcome of one assignment, or null.
+ * @param {Array<any>} runs @param {string} assignmentSourceKey
+ */
+function lastRunOf(runs, assignmentSourceKey) {
+  if (assignmentSourceKey === '') return null;
+  return (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
+    .sort((a, b) => runAt(b).localeCompare(runAt(a)))[0] ?? null;
+}
+
+/** The Rome date of the last run, '' when it never ran. @param {Array<any>} runs @param {string} assignmentSourceKey */
+function lastRunStamp(runs, assignmentSourceKey) {
+  const last = lastRunOf(runs, assignmentSourceKey);
+  return last ? romeStamp(runAt(last) || null) : '';
 }
 
 /**
@@ -580,11 +635,85 @@ function romeStamp(iso) {
  * The Agenti screen.
  * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
  */
-export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString() }) {
+export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  const later = typeof setTimer === 'function' ? setTimer : (fn, ms) => setTimeout(fn, ms);
+  const forget = typeof clearTimer === 'function' ? clearTimer : (id) => clearTimeout(id);
   let renderToken = 0;
+  /** Backlog 2df6a513cc4d: the self-refresh below lives here. */
+  let polling = false;
+  let pollTimer = null;
+  const followupTimers = new Set();
+  function arm(fn, ms) {
+    let handle = null;
+    try {
+      handle = later(fn, ms);
+    } catch {
+      handle = null;
+    }
+    try {
+      handle?.unref?.();
+    } catch {
+      // Browsers answer a number: nothing to release.
+    }
+    return handle;
+  }
+  function stopAutoRefresh() {
+    polling = false;
+    if (pollTimer !== null) {
+      try {
+        forget(pollTimer);
+      } catch {
+        // Stopping is best-effort.
+      }
+      pollTimer = null;
+    }
+    for (const handle of [...followupTimers]) {
+      try {
+        forget(handle);
+      } catch {
+        // Stopping is best-effort.
+      }
+    }
+    followupTimers.clear();
+  }
+  function schedulePoll() {
+    if (!polling || pollTimer !== null) return;
+    pollTimer = arm(() => {
+      pollTimer = null;
+      if (!polling) return;
+      pollOnce();
+    }, AGENTI_POLL_MS);
+  }
+  async function pollOnce() {
+    try {
+      if (!polling || !state.space || readSpace() !== state.space) return;
+      if (documentNode && documentNode.visibilityState === 'hidden') return;
+      if (await reload()) paint();
+    } catch {
+      // A failed poll only waits for the next one, never breaks the screen.
+    } finally {
+      schedulePoll();
+    }
+  }
+  function scheduleFollowups() {
+    if (!polling) return;
+    for (const ms of AGENTI_FOLLOWUP_MS) {
+      const handle = arm(async () => {
+        followupTimers.delete(handle);
+        if (!polling) return;
+        try {
+          if (!state.space || readSpace() !== state.space) return;
+          if (await reload()) paint();
+        } catch {
+          // The next follow-up or poll still comes.
+        }
+      }, ms);
+      if (handle !== null && handle !== undefined) followupTimers.add(handle);
+    }
+  }
   const state = {
     loaded: false,
     available: false,
@@ -603,6 +732,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /** Agents whose card lists every incarico («Mostra tutti»). @type {Set<string>} */
+    expandedRuns: new Set(),
+    /** Incarichi whose phrase is shown whole. @type {Set<string>} */
+    openPhrases: new Set(),
     /**
      * Backlog 31a76b6f19a3: one Approva per run id — busy while the request
      * flies (a double click sends one request), then a done/pending/error
@@ -631,6 +764,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function invalidate() {
     renderToken += 1;
+    stopAutoRefresh();
   }
 
   function draftOf(key) {
@@ -841,6 +975,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       draft.attempt = null;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`;
       if (await reload()) paint();
+      // Backlog 2df6a513cc4d: the run lands after this answer, so read
+      // again twice: the card leaves «In attesa di partire» on its own.
+      scheduleFollowups();
     } catch (error) {
       draft.busy = false;
       if (isPhraseUnclear(error)) {
@@ -886,15 +1023,25 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     box.appendChild(facts);
 
     if (card.assignments.length > 0) {
+      // Backlog «Agenti: layout delle card»: the newest two incarichi as
+      // compact rows, the rest behind «Mostra tutti (N)».
+      const all = state.expandedRuns.has(card.sourceKey);
       const list = el(documentNode, 'ul', 'bo-agent-assignments');
-      for (const assignment of card.assignments.slice(0, 5)) {
-        const item = el(documentNode, 'li', 'bo-agent-assignment');
-        item.appendChild(el(documentNode, 'p', 'bo-agent-phrase', `«${assignment.phrase}»`));
-        item.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
-        if (assignment.lastRun) item.appendChild(el(documentNode, 'p', 'bo-agent-lastrun', assignment.lastRun));
-        list.appendChild(item);
-      }
+      const shown = all ? card.assignments : card.assignments.slice(0, AGENT_RUNS_VISIBLE);
+      for (const assignment of shown) list.appendChild(renderAssignmentRow(assignment));
       box.appendChild(list);
+      if (card.assignments.length > AGENT_RUNS_VISIBLE) {
+        const toggle = el(documentNode, 'button', 'bo-agent-runs-toggle', all ? 'Mostra meno' : `Mostra tutti (${card.assignments.length})`);
+        toggle.setAttribute('type', 'button');
+        toggle.setAttribute('data-action', 'runs-toggle');
+        toggle.setAttribute('aria-expanded', all ? 'true' : 'false');
+        toggle.addEventListener('click', () => {
+          if (state.expandedRuns.has(card.sourceKey)) state.expandedRuns.delete(card.sourceKey);
+          else state.expandedRuns.add(card.sourceKey);
+          paint();
+        });
+        box.appendChild(toggle);
+      }
     } else {
       box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-noassign', 'Nessun incarico per ora.'));
     }
@@ -932,6 +1079,45 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
     if (draft.done !== '') box.appendChild(el(documentNode, 'p', 'bo-agent-done', draft.done));
     return box;
+  }
+
+  /**
+   * One incarico as a compact row: the phrase on one line (cut with an
+   * ellipsis; its full text on hover and on click), schedule and state
+   * under it, the outcome chip and the date of the last run on the right.
+   * @param {any} assignment
+   */
+  function renderAssignmentRow(assignment) {
+    const item = el(documentNode, 'li', 'bo-agent-assignment');
+    if (assignment.lastRun) item.setAttribute('title', assignment.lastRun);
+    const main = el(documentNode, 'div', 'bo-agent-run-main');
+    const open = state.openPhrases.has(assignment.sourceKey);
+    const phrase = el(documentNode, 'button', `bo-agent-phrase${open ? ' is-open' : ''}`, `«${assignment.phrase}»`);
+    phrase.setAttribute('type', 'button');
+    phrase.setAttribute('title', assignment.phrase);
+    phrase.setAttribute('aria-expanded', open ? 'true' : 'false');
+    phrase.addEventListener('click', () => {
+      const next = !state.openPhrases.has(assignment.sourceKey);
+      if (next) state.openPhrases.add(assignment.sourceKey);
+      else state.openPhrases.delete(assignment.sourceKey);
+      phrase.classList.toggle('is-open', next);
+      phrase.setAttribute('aria-expanded', next ? 'true' : 'false');
+    });
+    main.appendChild(phrase);
+    main.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
+    item.appendChild(main);
+    const chip = assignment.lastOutcome ? RUN_OUTCOME_CHIP[assignment.lastOutcome] : null;
+    if (chip) {
+      const side = el(documentNode, 'div', 'bo-agent-run-side');
+      // The design-system badge; `neutral` has no authority colour of its
+      // own and reads as the plain surface chip.
+      const badge = el(documentNode, 'span', null, chip.label);
+      badge.setAttribute('class', `ui-badge${chip.tone === 'neutral' ? '' : ` ui-badge-${chip.tone}`} bo-agent-outcome bo-agent-outcome-${assignment.lastOutcome}`);
+      side.appendChild(badge);
+      if (assignment.lastStamp !== '') side.appendChild(el(documentNode, 'span', 'bo-agent-run-date', assignment.lastStamp));
+      item.appendChild(side);
+    }
+    return item;
   }
 
   function renderMine(page, cards) {
@@ -1173,10 +1359,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   async function render() {
+    stopAutoRefresh();
+    polling = true;
     const space = readSpace();
     if (space !== state.space) {
       state.space = space;
       state.drafts = new Map();
+      state.expandedRuns = new Set();
+      state.openPhrases = new Set();
       state.notice = '';
       state.addError = '';
     }
@@ -1187,6 +1377,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.loaded = false;
     paint();
     if (await reload()) paint();
+    // Backlog 2df6a513cc4d: keep reading while the screen is shown, so a
+    // run that lands after Affida paints without a manual reload.
+    schedulePoll();
   }
 
   return { render, paint, state, invalidate };

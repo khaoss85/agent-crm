@@ -15,6 +15,10 @@ import {
   fingerprintPlan, inspectionFingerprint, planRequirements, validateSolutionPlan,
 } from '../packages/core/src/solution-plan.js';
 import { EVIDENCE_LIMITATIONS, effectiveRequirementCategory } from '../packages/core/src/implementation-evidence.js';
+import { inspectApplicationCommand } from '../packages/cli/src/app-inspect-command.js';
+import { projectVerifyCommand } from '../packages/cli/src/project-verify-command.js';
+import { scenarioRunCommand } from '../packages/cli/src/scenario-run-command.js';
+import { runJourney } from '../packages/cli/src/scenario-journey.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -1198,16 +1202,34 @@ test('the same observation code in two compositions is two different facts', asy
 // plans in this repository still exit 1, which is the true state of both.
 // ---------------------------------------------------------------------------
 
-test('the checked-in verifier fixture reaches exit 0 through the real command', async () => {
+test('the checked-in verifier fixture reaches exit 0 through the real command', async (t) => {
   const plan = 'examples/solution-plans/verifier-fixture-exit-zero.plan.json';
   const evidence = 'examples/implementation-evidence/verifier-fixture-exit-zero.evidence.json';
   let stdout = '';
+
+  // The work, counted where it starts. Every child process this command can
+  // start goes through one of these delegates: AX1 (`inspect`, one loader
+  // child), a scenario's journey (`journey`, one installer child) and
+  // `project verify` (`verify`, one child per step). The wrappers are
+  // pass-through counters over the real functions, so nothing is stubbed and
+  // this stays the one run of the real command.
+  const calls = { inspect: 0, scenario: 0, journey: 0, verify: 0 };
+  const inspect = (options) => { calls.inspect += 1; return inspectApplicationCommand(options); };
+  const journey = (options) => { calls.journey += 1; return runJourney(options); };
+  const verify = (options) => { calls.verify += 1; return projectVerifyCommand(options); };
+  const scenario = (options) => {
+    calls.scenario += 1;
+    return scenarioRunCommand({ ...options, inspect, journey });
+  };
+
   const started = Date.now();
   const { exitCode, report } = await solutionVerifyCommand({
     planPath: plan, evidencePath: evidence, rootDir: repoRoot, json: true,
     out: (text) => { stdout += text; }, err: () => {}, env: {},
+    inspect, scenario, verify,
   });
-  const elapsed = Date.now() - started;
+  // Diagnostic only: wall time measures the machine's load, not this code.
+  t.diagnostic(`the fixture ran in ${Date.now() - started}ms`);
 
   assert.equal(exitCode, 0, `the fixture must be fully machine-verified: ${JSON.stringify(report?.problems ?? stdout.slice(0, 400))}. When the composition moved on purpose, run \`npm run repin:verifier-fixture\` (scripts/repin-verifier-fixture.js) and commit the two fixture files instead of hand-editing the pins.`);
   assert.equal(report.status, 'verified');
@@ -1226,11 +1248,19 @@ test('the checked-in verifier fixture reaches exit 0 through the real command', 
   }
 
   // B18: AX1 once, one scenario, and `project verify` not at all, because
-  // nothing in the document cites it. The whole invocation is seconds.
+  // nothing in the document cites it.
   const ran = report.authorities.filter((row) => row.ran).map((row) => row.kind).sort();
   assert.deepEqual(ran, ['application-inspection', 'scenario']);
   assert.equal(report.authorities.filter((row) => row.kind === 'scenario' && row.ran).length, 1);
-  assert.ok(elapsed < 120_000, `the fixture ran in ${elapsed}ms`);
+
+  // The same rule measured from outside the report, which only lists what the
+  // verifier chose to record. The ceiling is today's value with no margin, on
+  // purpose: these counts do not vary with load, and the cap exists to go red
+  // on one extra AX1, one extra scenario or any `project verify`. AX1 runs
+  // twice in total, and that is still "AX1 once": the verifier's own call,
+  // plus the one the scenario makes on the application it composed.
+  assert.deepEqual(calls, { inspect: 2, scenario: 1, journey: 1, verify: 0 },
+    'the fixture launched more work than B18 allows: AX1 once, one scenario, project verify not at all');
 
   // And it promotes nothing, exactly like every other report.
   assert.equal(report.promotion.performed, false);
