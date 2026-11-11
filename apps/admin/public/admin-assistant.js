@@ -33,6 +33,7 @@ import {
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
 import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
+import { messagePreview } from './admin-message-preview.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -1028,11 +1029,11 @@ async function answerLeadSito(client) {
   answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
   // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
   const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
-  const distinctSite = uniqueLabels(listedSite.map((row) => shortText(row?.body, 60) || '(senza testo)'));
+  const distinctSite = uniqueLabels(listedSite.map((row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
   listedSite.forEach((row, index) => {
     answer.lines.push(`• ${distinctSite[index]}`);
   });
-  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => shortText(row?.body, 60) || '(senza testo)'));
+  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
   const first = inbound[0];
   if (isSafeRecordId(first?.conversationId)) {
     const conversationId = /** @type {string} */ (first.conversationId);
