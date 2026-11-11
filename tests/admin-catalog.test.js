@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents, buildCreateBody } from '../apps/admin/public/admin-catalog.js';
+import { createCatalogView, commercialBlock, bpsLabel, parseEuroToCents, buildCreateBody, draftProductFromSentence } from '../apps/admin/public/admin-catalog.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -1459,34 +1459,44 @@ test('buildCreateBody posts the single one-time flat component', () => {
   assert.equal(body.components[0].flatAmountCents, 100);
 });
 
-test('\u2726 Aggiungi con l\u2019AI opens the assistant with the catalog context and sends nothing', async () => {
+test('AI voice opens a field to write in and sends nothing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const asked = [];
-  const view = createCatalogView({ doc, mount, client, onAskAi: (screen, description) => { asked.push([screen, description]); } });
+  const view = createCatalogView({ doc, mount, client });
   await view.renderTable({});
 
-  clickButton(mount, '\u2726 Aggiungi con l\u2019AI');
-  assert.equal(asked.length, 1, 'the voice opens the assistant');
-  assert.equal(asked[0][0], 'catalogo', 'the catalog screen is the context');
-  assert.ok(String(asked[0][1]).toLowerCase().includes('catalogo'), 'the description names the catalog');
-  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'opening the assistant sends nothing');
-  assert.ok(!mount.textContent.includes('Interpreta'), 'no sentence parser renders anymore');
+  const aiButton = mount.findAll('button').find((node) => node.textContent.includes('Aggiungi con'));
+  assert.ok(aiButton, 'the AI voice renders beside the manual one');
+  aiButton.dispatch('click');
+  assert.ok(mount.findAll('input').some((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase'), 'a field opens to write in');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'opening the field sends nothing');
+});
+test('AI draft Annulla writes nothing', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  mount.findAll('button').find((node) => node.textContent.includes('Aggiungi con')).dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase').value = 'Lezione di prova 15 euro a lezione';
+  clickButton(mount, 'Proponi');
+  clickButton(mount, 'Annulla');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'Annulla writes nothing');
 });
 
-test('\u2726 Aggiungi con l\u2019AI without an assistant names the keyboard shortcut and sends nothing', async () => {
+test('\u2726 Aggiungi con l\u2019AI needs no assistant: it opens the field inline and sends nothing', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient();
-  const toasted = [];
-  const view = createCatalogView({ doc, mount, client, toast: (message) => { toasted.push(message); } });
+  const view = createCatalogView({ doc, mount, client });
   await view.renderTable({});
 
   clickButton(mount, '\u2726 Aggiungi con l\u2019AI');
-  assert.equal(toasted.length, 1, 'the fallback names the way in');
-  assert.ok(toasted[0].includes('\u2318K'), 'the fallback names the AI shortcut');
-  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the fallback sends nothing');
+  assert.ok(mount.findAll('input').some((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase'), 'the field opens inline, no assistant needed');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'opening the field sends nothing');
 });
 
 // backlog:b44fe65ac3e5 \u2014 supervisor design review at 1440: one line per
@@ -1546,4 +1556,61 @@ test('the filters sit in one row beside the chips and act by themselves, no Filt
   assert.match(css, /\.catalog-filters \{[^}]*flex-wrap:\s*nowrap/);
   assert.match(css, /\.catalog-thead > span \{[^}]*white-space:\s*nowrap/);
   assert.match(css, /\.catalog-cell-price, \.catalog-cell-switch \{[^}]*display:\s*flex/, 'price and switch cells lay out inline');
+});
+
+test('draftProductFromSentence drafts name, code, price and unit, fail-closed otherwise', () => {
+  assert.deepEqual(draftProductFromSentence('Lezione di prova 15 euro a lezione'), {
+    draft: { name: 'Lezione di prova', sku: 'LEZIONE-DI-PROVA', category: null, currency: 'EUR', unit: 'lezione', cents: 1500 },
+  });
+  assert.equal(draftProductFromSentence('Abbonamento 99,00 euro al mese').draft.unit, 'mese');
+  assert.equal(draftProductFromSentence('Abbonamento 99,00 euro al mese').draft.cents, 9900);
+  assert.equal(draftProductFromSentence('Lezione €15').draft.cents, 1500);
+  assert.equal(draftProductFromSentence('Pacchetto yoga 99 euro').draft.unit, null);
+  assert.ok(draftProductFromSentence('').error, 'an empty phrase explains itself');
+  assert.ok(draftProductFromSentence('Lezione di prova').error, 'no price reads an error, never a half draft');
+  assert.ok(draftProductFromSentence('15 euro').error, 'no name reads an error');
+  assert.ok(draftProductFromSentence('x'.repeat(281)).error, 'a document is refused');
+});
+
+test("Aggiungi con l'AI opens a field, drafts the product and writes only on Conferma", async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  const aiButton = mount.findAll('button').find((node) => node.textContent.includes('Aggiungi con'));
+  assert.ok(aiButton, 'the AI voice renders beside the manual one');
+  aiButton.dispatch('click');
+  const phrase = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase');
+  assert.ok(phrase, 'the button opens a field to write in');
+  phrase.value = 'Lezione di prova 15 euro a lezione';
+  clickButton(mount, 'Proponi');
+  assert.ok(mount.textContent.includes('15 €'), 'the draft shows the price');
+  assert.ok(mount.textContent.includes('LEZIONE-DI-PROVA'), 'the draft shows the code');
+  assert.ok(mount.textContent.includes('lezione'), 'the draft shows the unit');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'the draft sends nothing');
+  clickButton(mount, 'Conferma');
+  await flush();
+  const created = client.calls.find((call) => call.path === '/api/catalog/products' && call.method === 'POST');
+  assert.ok(created, 'confirmation sends the creation');
+  assert.equal(created.body.name, 'Lezione di prova');
+  assert.equal(created.body.sku, 'LEZIONE-DI-PROVA');
+  assert.equal(created.body.components[0].flatAmountCents, 1500, '15 euro becomes 1500 cents');
+  assert.equal(created.body.unit, 'lezione');
+});
+
+test("Aggiungi con l'AI refuses a sentence without a price and sends nothing", async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient();
+  const view = createCatalogView({ doc, mount, client });
+  await view.renderTable({});
+
+  mount.findAll('button').find((node) => node.textContent.includes('Aggiungi con')).dispatch('click');
+  const phrase = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Descrivi il prodotto in una frase');
+  phrase.value = 'Lezione di prova';
+  clickButton(mount, 'Proponi');
+  assert.ok(mount.textContent.includes('prezzo'), 'the refusal names the missing price');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
 });

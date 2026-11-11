@@ -510,6 +510,14 @@ export function buildRouter(app) {
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
     return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
   });
+  router.add('POST', '/api/appointments/reschedule', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.rescheduleAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment reschedule');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
   // and the «Crea con l'AI» confirmation create through the declared

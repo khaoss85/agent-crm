@@ -111,7 +111,13 @@ const client = {
       return { spaceId: 'spazio-1', overrides: [] };
     }
     if (path.indexOf('/api/connectors') === 0) {
-      return { spaceId: 'spazio-1', connectors: [{ status: 'active' }, { status: 'active' }] };
+      // backlog:67e14a50efb6: production-shaped entries, so the CI PNGs
+      // prove the channel tiles on the team rows (two active channels keep
+      // the C7 '2 canali' assertions below exact).
+      return { spaceId: 'spazio-1', connectors: [
+        { connectionKey: 'wa-1', channel: 'whatsapp', account: '+39 02 1234567', status: 'active' },
+        { connectionKey: 'ig-1', channel: 'instagram', account: 'studio.esempio', status: 'active' },
+      ] };
     }
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
