@@ -650,6 +650,10 @@ export function createCustomerCardView(deps) {
   const onCustomerTitle = typeof deps.onCustomerTitle === 'function' ? deps.onCustomerTitle : null;
   let lastTitle;
   let titleKnown = false;
+  const resetTitle = () => {
+    titleKnown = false;
+    lastTitle = undefined;
+  };
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -3337,6 +3341,10 @@ export function createCustomerCardView(deps) {
       channelFilter = 'all';
       noteAuthorFilter = null;
       timelineShown = TIMELINE_PAGE;
+      // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
+      // so the dedup must forget the previous name — a different customer
+      // with the same name re-narrows the crumb instead of staying silent.
+      resetTitle();
     }
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
@@ -3489,5 +3497,20 @@ export function createCustomerCardView(deps) {
       .catch(() => {});
   }
 
-  return { renderCard };
+  /**
+   * Drops a pending card read (voce 2f2d22f2, review #722): the card reads
+   * before its first paint, so a late response must not repaint a screen
+   * the operator already left — and must not retitle its breadcrumb either.
+   * The shell calls this on every route that is not the card; the render
+   * token already covers overlapping card reads, never navigation. Leaving
+   * also forgets the narrowed name: on re-entry the router repaints plain
+   * «Clienti» and the fresh read narrows it again instead of staying silent
+   * behind the once-per-name dedup.
+   */
+  function invalidate() {
+    cardRenderToken += 1;
+    resetTitle();
+  }
+
+  return { renderCard, invalidate };
 }

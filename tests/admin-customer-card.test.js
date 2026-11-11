@@ -1622,6 +1622,60 @@ test('2f2d22f2: the card names its customer to the shell breadcrumb, once per na
   assert.deepEqual(titles, ['Guido Presti'], 'the name fires once, not on every re-read');
 });
 
+test('2f2d22f2 review #722 P2-1: another customer with the same name re-narrows the breadcrumb', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // Same name on another customer (the router repainted plain «Clienti» on
+  // entry): the dedup must not swallow the second narrowing.
+  await view.renderCard('contact', 'c2');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 'same name, other customer: the crumb narrows again');
+});
+
+test('2f2d22f2 review #722 P2-1: re-entering the same card after navigation restores the name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // The operator leaves the card (the router repaints plain «Clienti»)
+  // and comes back on the same scheda with the same hash.
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 're-entry restores «Clienti / <nome>»');
+});
+
+test('2f2d22f2 review #722 P2-2: a card read resolving after navigation never titles the new screen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  let releaseCard;
+  const cardGate = new Promise((resolve) => { releaseCard = resolve; });
+  const inner = stubClient();
+  const slowClient = {
+    ...inner,
+    async request(path, options = {}) {
+      if (path.includes('/card/')) await cardGate;
+      return inner.request(path, options);
+    },
+  };
+  const view = createCustomerCardView({
+    doc, mount, client: slowClient, onCustomerTitle: (title) => { titles.push(title); },
+  });
+  const pending = view.renderCard('contact', 'c1');
+  // The operator navigates on (Calendario) while the card read is in flight.
+  view.invalidate();
+  releaseCard();
+  await pending;
+  assert.deepEqual(titles, [], 'the stale read stays silent on the new screen');
+});
+
 test('2f2d22f2: a failed card read clears the shell breadcrumb', async () => {
   const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
   const doc = createFakeDocument();
