@@ -4,10 +4,13 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
+  BOOKING_SERVICES_PATH,
+  bookingServicesFromWorker,
   catalogBookingServices,
   channelOf,
   createCalendarioView,
   calendarRefusalText,
+  loadBookingServiceMenu,
   servicePresendError,
   dayHead,
   formatPriceCents,
@@ -105,7 +108,7 @@ function payload(call) {
   return call.body;
 }
 
-function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined, catalog = null, failPhraseWith = null } = {}) {
+function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, customers = null, failWith = null, failConfirmWith = null, memberships = undefined, membershipsError = null, profile = undefined, suggestGroups = undefined, catalog = null, failPhraseWith = null, services = undefined } = {}) {
   const calls = [];
   const notFound = () => {
     const error = new Error('not composed');
@@ -125,6 +128,12 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
       }
       if (path.startsWith('/api/catalog/products')) {
         if (catalog) return catalog;
+        throw notFound();
+      }
+      if (path === '/api/appointments/services') {
+        // backlog:f8ee5575ce64: the worker's list. Unknown by default, so
+        // every older test keeps reading the catalog fallback unchanged.
+        if (services !== undefined) return services;
         throw notFound();
       }
       if (path.startsWith('/api/customer-data/customers')) {
@@ -304,7 +313,10 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(texts(mount, 'p').some((text) => text.includes('Scegli le persone')));
   // No appointment read without named members (fetta 7 refines this pin:
   // the Team roster read is not a week read and may go out on its own).
-  assert.ok(client.calls.every((call) => !String(call.path).startsWith('/api/appointments/')));
+  // The bookable-services menu read (backlog:f8ee5575ce64) is not a week
+  // read either: it goes out on entry, like the catalog read it replaces.
+  assert.ok(client.calls.every((call) => !String(call.path).startsWith('/api/appointments/')
+    || String(call.path) === '/api/appointments/services'));
 
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -3946,6 +3958,66 @@ test('catalogBookingServices drops non-EUR singles the claim could never book', 
     { active: true, sku: 'shave', name: 'Rasatura', offers: [single({ currency: 'USD' })] },
   ] });
   assert.deepEqual(out.map((entry) => entry.key), ['taglio'], 'the USD single never reaches the euro menu');
+});
+
+// ---- backlog:f8ee5575ce64 — la tendina dalla stessa fonte della conferma ----
+// The worker's answer reduced to menu entries: only sendable keys with a
+// name and an EUR price paint. Null when the answer is unusable, so the
+// caller reads the catalog instead; an empty list stays empty, because
+// the worker is authoritative.
+test('bookingServicesFromWorker keeps only sendable EUR entries', () => {
+  const out = bookingServicesFromWorker({ services: [
+    { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    { serviceKey: 'trattamento-viso-pv', name: 'Trattamento viso PV', priceCents: 3000, currency: 'EUR' },
+    { serviceKey: 'senza-prezzo', name: 'Senza prezzo', priceCents: null, currency: 'EUR' },
+    { serviceKey: 'in-dollari', name: 'In dollari', priceCents: 1000, currency: 'USD' },
+    { serviceKey: 'BAD KEY', name: 'Chiave sporca', priceCents: 1000, currency: 'EUR' },
+    { serviceKey: 'lezione-prova', name: 'Lezione di prova due', priceCents: 1500, currency: 'EUR' },
+    null,
+  ] });
+  assert.deepEqual(out.map((entry) => entry.key), ['lezione-prova', 'trattamento-viso-pv']);
+  assert.equal(out[0].name, 'Lezione di prova');
+  assert.ok(Object.isFrozen(out), 'the menu list is frozen');
+  assert.equal(bookingServicesFromWorker({ services: [] }).length, 0, 'an empty worker list stays empty');
+  assert.equal(bookingServicesFromWorker({}), null, 'no list: the catalog fallback reads');
+  assert.equal(bookingServicesFromWorker(null), null);
+  assert.equal(bookingServicesFromWorker({ services: 'tre' }), null);
+});
+
+test('loadBookingServiceMenu prefers the worker list over the catalog', async () => {
+  const client = stubClient({
+    services: { services: [
+      { serviceKey: 'personal-training', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+    ] },
+    catalog: { products: [
+      { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    ] },
+  });
+  const menu = await loadBookingServiceMenu(client);
+  assert.deepEqual(menu.bookable.map((entry) => entry.key), ['personal-training']);
+  assert.equal(menu.names.get('personal-training'), 'PT singola');
+  assert.deepEqual(
+    client.calls.map((call) => call.path),
+    [BOOKING_SERVICES_PATH],
+    'the catalog is not read when the worker answers',
+  );
+});
+
+test('loadBookingServiceMenu falls back to the catalog without the endpoint', async () => {
+  const client = stubClient({
+    catalog: { products: [
+      { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    ] },
+  });
+  const menu = await loadBookingServiceMenu(client);
+  assert.deepEqual(menu.bookable.map((entry) => entry.key), ['taglio']);
+  assert.equal(menu.names.get('taglio'), 'Taglio');
+});
+
+test('loadBookingServiceMenu leaves an empty menu when both reads fail', async () => {
+  const menu = await loadBookingServiceMenu(stubClient());
+  assert.deepEqual(menu.bookable, []);
+  assert.equal(menu.names.size, 0);
 });
 
 // backlog:810ed0bf review (P2 person key): generic userId/personId fields

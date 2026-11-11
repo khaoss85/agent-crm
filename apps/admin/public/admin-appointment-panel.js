@@ -2,10 +2,10 @@
 // (Dan 11/11): the appointment is booked where the customer is, like
 // «Scrivi» and «Nuova offerta», with the customer already chosen.
 //
-// The window asks for the service (the listino singles the booking worker
-// accepts), the duration, the team person, then shows that person's free
-// slots and books one with Conferma. Every step is the Calendario's own:
-// `catalogBookingServices` for the menu, `personRows` for the team,
+// The window asks for the service (the worker's bookable list the booking
+// worker accepts), the duration, the team person, then shows that person's
+// free slots and books one with Conferma. Every step is the Calendario's
+// own: `loadBookingServiceMenu` for the menu, `personRows` for the team,
 // `suggest-slots` read through `personFreeSlots`/`filterPhraseProposals`/
 // `rankPhraseProposals`, and the claim built by `bookingClaim` and sent to
 // `/api/appointments/confirm` like the Calendario's Conferma. No AI is
@@ -14,9 +14,9 @@
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError, humanWriteError, isNotComposedFailure } from './admin-core.js';
 import {
-  BOOKING_MINUTES, bookingClaim, calendarRefusalText, catalogBookingServices, filterPhraseProposals,
-  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, servicePresendError, slotInGrid, slotLabel,
-  suggestSlotsPath,
+  BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
+  formatPriceCents, loadBookingServiceMenu, personFreeSlots, personRows, rankPhraseProposals, servicePresendError,
+  slotInGrid, slotLabel, suggestSlotsPath,
 } from './admin-calendario.js';
 import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
 
@@ -140,10 +140,12 @@ export function openAppointmentPanel(deps) {
   const say = (node, text) => { node.textContent = text; };
 
   // ---- Listino ---------------------------------------------------------
-  client.request('/api/catalog/products?limit=200').then(
-    (answer) => {
+  // The worker's list first, the catalog fallback second
+  // (backlog:f8ee5575ce64): the menu offers only what the confirm accepts.
+  loadBookingServiceMenu(client).then(
+    (menu) => {
       if (gone()) return;
-      services = catalogBookingServices(answer);
+      services = menu.bookable;
       fillServices();
     },
     (error) => {

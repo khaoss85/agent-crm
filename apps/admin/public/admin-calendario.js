@@ -694,6 +694,9 @@ export function serviceKeyFor(typed, names) {
 /** A listino product key: lowercase slug, like the booking server requires. */
 const CATALOG_SLUG_RE = /^[a-z][a-z0-9-]{0,47}$/;
 
+/** The worker's bookable-services read (backlog:f8ee5575ce64). */
+export const BOOKING_SERVICES_PATH = '/api/appointments/services';
+
 /**
  * backlog:810ed0bf — the catalog slug of a product or offer name
  * («Lezione prova» → `lezione-prova`): lowercase, spaces and underscores
@@ -757,6 +760,77 @@ export function catalogBookingServices(payload) {
     }
   }
   return Object.freeze(out);
+}
+
+/**
+ * backlog:f8ee5575ce64 — the worker's bookable-services answer reduced to
+ * the menu entries: one per service with a sendable key, a display name
+ * and an EUR price. Null when the answer is unusable, so the caller falls
+ * back to the catalog read; an empty (but well-shaped) list stays empty,
+ * because the worker is authoritative: a catalog service without a price
+ * never books, so it never lists either. Non-EUR rows stay out like in
+ * the catalog fallback — the claim below only speaks EUR.
+ * @param {unknown} payload
+ */
+export function bookingServicesFromWorker(payload) {
+  const items = Array.isArray(payload?.services) ? payload.services : null;
+  if (items === null) return null;
+  const out = [];
+  const seen = new Set();
+  for (const entry of items) {
+    if (!entry || typeof entry !== 'object') continue;
+    const key = typeof entry.serviceKey === 'string' ? entry.serviceKey.trim() : '';
+    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+    if (!CATALOG_SLUG_RE.test(key)) continue;
+    if (name === '' || name.length > 200) continue;
+    if (!Number.isSafeInteger(entry.priceCents) || entry.priceCents < 0) continue;
+    if (entry.currency !== 'EUR') continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
+  }
+  return Object.freeze(out);
+}
+
+/**
+ * backlog:f8ee5575ce64 — the tendina's menu from the worker first, the
+ * catalog second: the worker lists exactly the services its confirm
+ * accepts (same source, same rule), so the menu never offers a service
+ * the booking would refuse. Without the endpoint — a framework without
+ * the pilot's read, or an honestly unavailable catalog — the menu falls
+ * back to the catalog-products singles filter. Never throws: both reads
+ * failing leaves an empty menu with its honest «no service» sentence.
+ * @param {{request: (path: string, options?: unknown) => Promise<unknown>}} client
+ */
+export async function loadBookingServiceMenu(client) {
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  try {
+    const listed = bookingServicesFromWorker(await client.request(BOOKING_SERVICES_PATH));
+    if (listed !== null) {
+      for (const entry of listed) {
+        if (!names.has(entry.key)) names.set(entry.key, entry.name);
+      }
+      return { names, bookable: listed };
+    }
+  } catch {
+    // The framework or an unwired space: the catalog fallback below.
+  }
+  /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
+  let bookable = [];
+  try {
+    const answer = await client.request('/api/catalog/products?limit=200');
+    for (const product of Array.isArray(answer?.products) ? answer.products : []) {
+      const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+      const name = typeof product?.name === 'string' ? product.name.trim() : '';
+      if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+    }
+    bookable = catalogBookingServices(answer);
+  } catch {
+    // No catalog in this project (or a stale bundle): the readable key
+    // stays, the menu stays empty with its honest sentence.
+  }
+  return { names, bookable };
 }
 
 /**
@@ -1488,25 +1562,15 @@ export function createCalendarioView(deps) {
     return servicesRead;
   }
 
-  /** Catalog product names for the block titles; fail-soft to the readable key. */
+  /** Catalog service names for the block titles; fail-soft to the readable key. */
   async function loadServices() {
-    /** @type {Map<string, string>} */
-    const names = new Map();
-    /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
-    let bookable = [];
+    // The manual form's service menu (backlog:f8ee5575ce64): the worker's
+    // list first, the catalog fallback second — read once with the names.
+    // An unexpected failure is logged without the message, like before.
+    let menu;
     try {
-      const answer = await client.request('/api/catalog/products?limit=200');
-      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
-        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
-        const name = typeof product?.name === 'string' ? product.name.trim() : '';
-        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
-      }
-      // The manual form's service menu (backlog:810ed0bf): the same
-      // singles rule the booking worker applies, read once with the names.
-      bookable = catalogBookingServices(answer);
+      menu = await loadBookingServiceMenu(client);
     } catch (error) {
-      // No catalog in this project (or a stale bundle): the readable key
-      // stays. Anything else is unexpected and logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
           'bo-calendario catalog unreadable:',
@@ -1514,9 +1578,10 @@ export function createCalendarioView(deps) {
           `spaceId=${readSpace()}`,
         );
       }
+      menu = { names: new Map(), bookable: [] };
     }
-    state.services = names;
-    state.catalogServices = bookable;
+    state.services = menu.names;
+    state.catalogServices = menu.bookable;
     // The service menu paints from this read: repaint once it settles while
     // the calendar is still mounted (same guard as the roster read).
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
