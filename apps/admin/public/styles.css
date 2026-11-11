@@ -2547,7 +2547,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-offer-field:focus-within { border-bottom-color: var(--ink); }
 .bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
 .bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
-.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+/* backlog 0c9a27bb9ac0: a placeholder reads as a hint, never as a typed value. */
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); opacity: .5; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
 .bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }

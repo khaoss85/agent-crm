@@ -23,12 +23,18 @@ const CATALOG = {
   ],
 };
 
-function fakeClient({ draft = null, create = null, catalog = CATALOG, profile = { member: { name: 'Elena Rinaldi' } } } = {}) {
+// The price book of each catalog offer, as the offer record carries it.
+const BOOKS = { pt10: 'pb-eur', pt1: 'pb-eur', prova: 'pb-eur' };
+
+function fakeClient({ draft = null, create = null, catalog = CATALOG, profile = { member: { name: 'Elena Rinaldi' } }, books = BOOKS, quoteFail = null } = {}) {
   const calls = [];
+  let quotes = 0;
   return {
     calls,
     drafts: () => calls.filter((call) => call.path === '/api/customer-hub/offers/draft'),
     creates: () => calls.filter((call) => call.path === '/api/opportunities'),
+    quotes: () => calls.filter((call) => call.path.endsWith('/actions/create-quote')),
+    lines: () => calls.filter((call) => call.path.endsWith('/actions/add-line')),
     async request(path, options = {}) {
       const method = String(options.method ?? 'GET').toUpperCase();
       calls.push({ path, method, body: options.body ? JSON.parse(options.body) : null, key: options.idempotencyKey ?? null });
@@ -44,6 +50,19 @@ function fakeClient({ draft = null, create = null, catalog = CATALOG, profile = 
       if (path === '/api/opportunities') {
         if (typeof create === 'function') return create(calls.filter((call) => call.path === path).length);
         return { id: 'o1' };
+      }
+      const offer = /^\/api\/modules\/offer\/records\/([^/?]+)$/.exec(path);
+      if (offer && method === 'GET') return { id: offer[1], priceBookId: books[decodeURIComponent(offer[1])] ?? null };
+      if (/^\/api\/modules\/opportunity\/records\/[^/]+\/actions\/create-quote$/.test(path)) {
+        if (quoteFail === 'create-quote') throw Object.assign(new Error('refused'), { status: 409, code: 'PRICE_BOOK_INACTIVE' });
+        quotes += 1;
+        return { ok: true, result: { quote: { id: `q${quotes}`, draftRevision: 1 } } };
+      }
+      const line = /^\/api\/modules\/quote\/records\/([^/]+)\/actions\/add-line$/.exec(path);
+      if (line) {
+        if (quoteFail === 'add-line') throw Object.assign(new Error('gateway'), { status: 502 });
+        const before = calls.filter((call) => call.path === path).length;
+        return { ok: true, result: { quote: { id: line[1], draftRevision: 1 + before } } };
       }
       throw new Error(`unexpected ${path}`);
     },
@@ -100,12 +119,12 @@ test('catalog chips price the offer until a value is typed; tiered offers stay o
   assert.equal(chip(panel, 'tier'), undefined, 'a tiered price is never a chip');
   chip(panel, 'pt10').dispatch('click');
   assert.equal(chip(panel, 'pt10').getAttribute('aria-pressed'), 'true');
-  assert.equal(input(panel, 'value').value, '350.00');
+  assert.equal(input(panel, 'value').value, '350,00');
   chip(panel, 'pt1').dispatch('click');
   const qty = panel.findAll('input').find((node) => node.getAttribute('aria-label') === 'Quantità per PT singola');
   qty.value = '3';
   qty.dispatch('input');
-  assert.equal(input(panel, 'value').value, '470.00', '350 + 3 × 40');
+  assert.equal(input(panel, 'value').value, '470,00', '350 + 3 × 40');
   assert.match(panel.textContent, /Totale prodotti 470/);
   input(panel, 'value').value = '400';
   input(panel, 'value').dispatch('input');
@@ -122,7 +141,7 @@ test('Compila fills the fields from one sentence, never creates, and Annulla put
   await flush();
   assert.deepEqual(client.drafts()[0].body, { spaceId: 'presti', resource: 'contact', id: 'c1', prompt: '10 PT scontato a 320, valido fino a fine mese' });
   assert.equal(input(panel, 'title').value, 'Pacchetto 10 PT');
-  assert.equal(input(panel, 'value').value, '320.00', 'the AI value wins over the chip total');
+  assert.equal(input(panel, 'value').value, '320,00', 'the AI value wins over the chip total');
   assert.equal(input(panel, 'expiry').value, '2026-11-30');
   assert.equal(chip(panel, 'pt10').getAttribute('aria-pressed'), 'true', 'the named catalog offer is chosen');
   assert.equal(byAction(panel, 'offer-ai-fill').textContent, 'Ricompila');
@@ -251,11 +270,12 @@ test('✕ closes the window; a hostile name stays text', async () => {
   assert.equal(panel.parentNode, null);
 });
 
-test('euroToCents reads plain euro amounts only', () => {
+test('euroToCents reads plain and Italian euro amounts only', () => {
   assert.equal(euroToCents('350'), 35000);
   assert.equal(euroToCents('350,5'), 35050);
   assert.equal(euroToCents(' 12.30 '), 1230);
-  assert.equal(euroToCents('1.250,00'), null);
+  assert.equal(euroToCents('1.250,00'), 125000, 'the Italian form the field shows reads back');
+  assert.equal(euroToCents('1.250'), null, 'a dotted thousand without a comma stays ambiguous');
   assert.equal(euroToCents('-5'), null);
   assert.equal(euroToCents(''), null);
 });
@@ -293,7 +313,7 @@ test('review #616 round 3: an AI USD value is never filed as EUR after an EUR ch
   byAction(panel, 'offer-ai-fill').dispatch('click');
   await flush();
   chip(panel, 'pt10').dispatch('click');
-  assert.equal(input(panel, 'value').value, '320.00', 'the AI value stays');
+  assert.equal(input(panel, 'value').value, '320,00', 'the AI value stays');
   await panel.__submit();
   assert.equal(client.creates().length, 0, 'USD 320 is never filed as EUR 320');
   assert.match(panel.textContent, /Il valore è in USD, i prodotti scelti in EUR/);
@@ -301,7 +321,7 @@ test('review #616 round 3: an AI USD value is never filed as EUR after an EUR ch
   // Emptying the value lets the chips price it, in their own currency.
   input(panel, 'value').value = '';
   input(panel, 'value').dispatch('input');
-  assert.equal(input(panel, 'value').value, '350.00');
+  assert.equal(input(panel, 'value').value, '350,00');
   assert.match(panel.textContent, /Valore \(€\)/);
   await panel.__submit();
   assert.equal(client.creates().length, 1);
@@ -361,7 +381,7 @@ test('review #616: AI-chosen offers wait for a slow catalog, then are pressed an
   release();
   await flush();
   assert.equal(chip(panel, 'pt10').getAttribute('aria-pressed'), 'true', 'the AI choice lands once the chips exist');
-  assert.equal(input(panel, 'value').value, '350.00', 'and prices the offer');
+  assert.equal(input(panel, 'value').value, '350,00', 'and prices the offer');
 });
 
 test('review #616: AI-chosen offers the catalog does not have are said, never claimed as filled', async () => {
@@ -428,7 +448,7 @@ test('review #616 round 5: an invalid quantity blocks Crea offerta with the quan
   const { panel } = await open({ client });
   input(panel, 'title').value = 'PT singole';
   chip(panel, 'pt1').dispatch('click');
-  assert.equal(input(panel, 'value').value, '40.00');
+  assert.equal(input(panel, 'value').value, '40,00');
   const qty = panel.findAll('input').find((node) => node.getAttribute('aria-label') === 'Quantità per PT singola');
   for (const bad of ['0', '', '1.5']) {
     qty.value = bad;
@@ -442,4 +462,143 @@ test('review #616 round 5: an invalid quantity blocks Crea offerta with the quan
   await panel.__submit();
   assert.equal(client.creates().length, 1);
   assert.equal(client.creates()[0].body.valueCents, 12000, '3 × 40');
+});
+
+// Backlog 0c9a27bb9ac0 (giro UX 11/11, punti 16-17): the products chosen in
+// «Nuova offerta» become the quote of the offer, the title follows them,
+// the amounts read in Italian and the placeholder reads as a hint.
+test('backlog 0c9a27bb9ac0: the chosen products become the quote lines, priced by the server', async () => {
+  const client = fakeClient();
+  const { panel, toasts, created } = await open({ client });
+  chip(panel, 'pt10').dispatch('click');
+  chip(panel, 'pt1').dispatch('click');
+  const qty = panel.findAll('input').find((node) => node.getAttribute('aria-label') === 'Quantità per PT singola');
+  qty.value = '3';
+  qty.dispatch('input');
+  byAction(panel, 'offer-create').dispatch('click');
+  await flush(12);
+  assert.equal(client.creates().length, 1, 'one offer');
+  const offerReads = client.calls.filter((call) => call.path.startsWith('/api/modules/offer/records/'));
+  assert.deepEqual(offerReads.map((call) => call.path), ['/api/modules/offer/records/pt10', '/api/modules/offer/records/pt1'],
+    'the price book is read from each offer record, never guessed');
+  assert.equal(client.quotes().length, 1, 'one quote for one price book');
+  assert.equal(client.quotes()[0].path, '/api/modules/opportunity/records/o1/actions/create-quote', 'on the new offer');
+  assert.deepEqual(client.quotes()[0].body, { priceBookId: 'pb-eur' });
+  assert.deepEqual(client.lines().map((call) => call.body), [
+    { offerId: 'pt10', quantity: 1, expectedRevision: 1 },
+    { offerId: 'pt1', quantity: 3, expectedRevision: 2 },
+  ], 'only offer and quantity travel: the server prices each line');
+  assert.ok(client.lines().every((call) => call.path === '/api/modules/quote/records/q1/actions/add-line'));
+  const keys = [client.creates()[0].key, client.quotes()[0].key, ...client.lines().map((call) => call.key)];
+  assert.equal(new Set(keys).size, keys.length, 'every write owns its own submission key');
+  assert.ok(keys.every((key) => typeof key === 'string' && key !== ''));
+  assert.equal(panel.parentNode, null, 'the window closes');
+  assert.deepEqual(toasts, ['Offerta e preventivo creati']);
+  assert.equal(created.length, 1, 'the scheda re-reads');
+});
+
+test('backlog 0c9a27bb9ac0: without products no quote is opened', async () => {
+  const client = fakeClient();
+  const { panel, toasts } = await open({ client });
+  input(panel, 'title').value = 'Consulenza';
+  input(panel, 'value').value = '100';
+  byAction(panel, 'offer-create').dispatch('click');
+  await flush(12);
+  assert.equal(client.quotes().length, 0);
+  assert.equal(client.lines().length, 0);
+  assert.deepEqual(toasts, ['Offerta creata']);
+});
+
+test('backlog 0c9a27bb9ac0: products from two price books file two quotes, never a mismatched line', async () => {
+  const client = fakeClient({ books: { pt10: 'pb-a', prova: 'pb-b' } });
+  const { panel } = await open({ client });
+  chip(panel, 'pt10').dispatch('click');
+  chip(panel, 'prova').dispatch('click');
+  await panel.__submit();
+  await flush(12);
+  assert.deepEqual(client.quotes().map((call) => call.body.priceBookId), ['pb-a', 'pb-b']);
+  assert.deepEqual(client.lines().map((call) => [call.path.split('/')[5], call.body.offerId]), [['q1', 'pt10'], ['q2', 'prova']]);
+});
+
+test('backlog 0c9a27bb9ac0: a quote that fails never hides it — the offer stays, the toast says what to do', async () => {
+  for (const quoteFail of ['create-quote', 'add-line']) {
+    const client = fakeClient({ quoteFail });
+    const toasts = [];
+    const errors = [];
+    const created = [];
+    const doc = createFakeDocument();
+    const host = createMount();
+    let keys = 0;
+    const panel = openOfferPanel({
+      doc, host, client, issueKey: () => `key-${(keys += 1)}`, card: { name: 'Guido Presti' },
+      navCtx: { resource: 'contact', id: 'c1' }, company: { id: 'co1', name: 'X' }, spaceId: 'presti',
+      toast: (text, error = false) => { toasts.push(text); errors.push(error); },
+      onCreated: (answer) => created.push(answer),
+    });
+    await flush();
+    chip(panel, 'pt10').dispatch('click');
+    const logged = [];
+    const realError = console.error;
+    console.error = (...args) => { logged.push(args); };
+    try {
+      await panel.__submit();
+      await flush(12);
+    } finally {
+      console.error = realError;
+    }
+    assert.equal(client.creates().length, 1, `${quoteFail}: the offer is filed once`);
+    assert.equal(panel.parentNode, null);
+    assert.equal(toasts.length, 1);
+    assert.match(toasts[0], /Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo»/);
+    assert.deepEqual(errors, [true], 'an error toast');
+    assert.equal(created.length, 1, 'the scheda still re-reads the new offer');
+    const line = logged.find((args) => args[0] === '[bo] preventivo dell’offerta non creato');
+    assert.ok(line, `${quoteFail}: the cause reaches the log`);
+    assert.deepEqual(Object.keys(line[1]).sort(), ['code', 'spaceId', 'status']);
+  }
+});
+
+test('backlog 0c9a27bb9ac0: the chosen product writes the title; a typed title is never overwritten', async () => {
+  const { panel } = await open();
+  chip(panel, 'pt10').dispatch('click');
+  assert.equal(input(panel, 'title').value, 'Pacchetto 10 PT', 'one product names the offer');
+  chip(panel, 'prova').dispatch('click');
+  assert.equal(input(panel, 'title').value, 'Pacchetto 10 PT e un altro prodotto');
+  chip(panel, 'pt1').dispatch('click');
+  assert.equal(input(panel, 'title').value, 'Pacchetto 10 PT e altri 2 prodotti');
+  chip(panel, 'pt1').dispatch('click');
+  chip(panel, 'prova').dispatch('click');
+  chip(panel, 'pt10').dispatch('click');
+  assert.equal(input(panel, 'title').value, '', 'no product, no title of theirs left behind');
+  input(panel, 'title').value = 'Pacchetto estate';
+  chip(panel, 'pt10').dispatch('click');
+  assert.equal(input(panel, 'title').value, 'Pacchetto estate', 'what the person typed stays');
+});
+
+test('backlog 0c9a27bb9ac0: amounts read in Italian — «15,00», «1.250,00» — and file the right cents', async () => {
+  const big = { products: [{ name: 'Annuale', offers: [{ offerId: 'year', name: 'Abbonamento annuale', active: true, currency: 'EUR', components: [{ pricingModel: 'flat_fee', flatAmountCents: 125000 }] }] }, ...CATALOG.products] };
+  const client = fakeClient({ catalog: big, books: { ...BOOKS, year: 'pb-eur' } });
+  const { panel } = await open({ client });
+  assert.equal(input(panel, 'value').getAttribute('placeholder'), '350,00');
+  chip(panel, 'prova').dispatch('click');
+  assert.equal(input(panel, 'value').value, '15,00', 'never «15.00»');
+  chip(panel, 'prova').dispatch('click');
+  chip(panel, 'year').dispatch('click');
+  assert.equal(input(panel, 'value').value, '1.250,00');
+  await panel.__submit();
+  assert.equal(client.creates()[0].body.valueCents, 125000);
+  const other = await open();
+  input(other.panel, 'title').value = 'X';
+  input(other.panel, 'value').value = 'abc';
+  await other.panel.__submit();
+  assert.match(other.panel.textContent, /Scrivi il valore in euro, es\. 350,00\./);
+});
+
+test('backlog 0c9a27bb9ac0: the field placeholder is a light hint, not a value', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const rule = /\.bo-scheda-composer \.bo-offer-input::placeholder\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rule, 'the offer fields own a placeholder rule');
+  const opacity = /opacity:\s*([0-9.]+)/.exec(rule[1]);
+  assert.ok(opacity && Number(opacity[1]) <= 0.6, 'lighter than a typed value (var(--dim) alone reads as ink)');
 });

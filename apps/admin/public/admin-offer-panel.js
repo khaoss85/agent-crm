@@ -24,17 +24,39 @@ import { isPricedOffer, offerPriceText, selectedProductTotal } from './admin-mod
 export const OFFER_PROMPT_MAX = 500;
 export const OFFER_DRAFT_PATH = '/api/customer-hub/offers/draft';
 
-/** Euro text («250», «250,5», «1.250,00» is refused) to integer cents, or null. */
+/**
+ * Euro text to integer cents, or null. Reads the Italian form the field
+ * shows («1.250,00», «350,5») and the plain one («350», «12.30»); a dotted
+ * thousand without a comma («1.250») stays refused as ambiguous.
+ */
 export function euroToCents(raw) {
-  const text = String(raw ?? '').trim().replace(',', '.');
+  let text = String(raw ?? '').trim();
+  if (/^\d{1,3}(\.\d{3})+,\d{1,2}$/.test(text)) text = text.replace(/\./g, '');
+  text = text.replace(',', '.');
   if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
   const cents = Math.round(Number(text) * 100);
   return Number.isSafeInteger(cents) ? cents : null;
 }
 
-/** Integer cents to the field's text («350.00»). */
-function centsToField(cents) {
-  return (cents / 100).toFixed(2);
+/**
+ * Integer cents to the field's text in the Italian form (backlog
+ * 0c9a27bb9ac0: «15,00», «1.250,00», never «15.00»).
+ */
+export function centsToField(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${whole},${String(cents % 100).padStart(2, '0')}`;
+}
+
+/** The quantity of one chosen chip: its own field for a per-unit price, else 1. */
+function pickQuantity(pick) {
+  if (pick.qtyInput === null) return 1;
+  const raw = String(pick.qtyInput.value ?? '1').trim();
+  return /^\d+$/.test(raw) ? Number(raw) : NaN;
+}
+
+/** The name a chip shows for one catalog offer. */
+function pickName(pick) {
+  return typeof pick.offer.name === 'string' && pick.offer.name.trim() !== '' ? pick.offer.name.trim() : String(pick.productName ?? 'Prodotto');
 }
 
 /** A YYYY-MM-DD day from an ISO date or day, or '' when there is none. */
@@ -157,13 +179,27 @@ export function openOfferPanel(deps) {
     return input;
   };
   field('title', 'Titolo', { placeholder: 'Pacchetto 10 lezioni', wide: true });
-  field('value', 'Valore (€)', { placeholder: '350.00', inputmode: 'decimal' });
+  field('value', 'Valore (€)', { placeholder: '350,00', inputmode: 'decimal' });
   field('expiry', 'Scadenza', { type: 'date' });
   field('owner', 'Referente', { placeholder: 'Chi la segue', wide: true });
   body.appendChild(fields);
 
   // The value follows the catalog total until the person types one.
   let valueTyped = false;
+  // Backlog 0c9a27bb9ac0: the title follows the chosen products while it is
+  // empty or still the one they wrote; a title typed or drafted by the AI
+  // is never overwritten.
+  let autoTitle = '';
+  const refreshTitle = () => {
+    const current = String(inputs.title.value ?? '').trim();
+    if (current !== '' && current !== autoTitle) return;
+    const names = picks.filter((pick) => pick.checkbox.checked).map(pickName);
+    const others = names.length - 1;
+    const next = names.length === 0 ? ''
+      : (others === 0 ? names[0] : `${names[0]} e ${others === 1 ? 'un altro prodotto' : `altri ${others} prodotti`}`);
+    inputs.title.value = next;
+    autoTitle = next;
+  };
   // Review #616 (P1): the currency the AI drafted the value in. Chosen
   // catalog chips in one currency still decide; without them the AI's
   // currency files the offer, and only without either it is EUR.
@@ -192,7 +228,7 @@ export function openOfferPanel(deps) {
   // Hidden until the catalog answers with at least one priced offer.
   catalogBox.setAttribute('data-empty', 'true');
   body.appendChild(catalogBox);
-  /** @type {Array<{offer: any, checkbox: {checked: boolean}, qtyInput: any, chip: any, wrap: any}>} */
+  /** @type {Array<{offer: any, productName: unknown, checkbox: {checked: boolean}, qtyInput: any, chip: any, wrap: any}>} */
   const picks = [];
   // Review #616 (P2): Compila may answer before the catalog does. The
   // offers the AI chose wait here and are pressed once the chips exist.
@@ -236,6 +272,7 @@ export function openOfferPanel(deps) {
     pick.chip.setAttribute('aria-pressed', on ? 'true' : 'false');
     pick.wrap.setAttribute('data-on', on ? 'true' : 'false');
     refreshTotal();
+    refreshTitle();
   };
   const paintCatalog = (catalog) => {
     const products = Array.isArray(catalog?.products) ? catalog.products : [];
@@ -264,7 +301,7 @@ export function openOfferPanel(deps) {
         wrap.setAttribute('data-on', 'false');
         wrap.appendChild(chip);
         if (qtyInput !== null) wrap.appendChild(qtyInput);
-        const pick = { offer, checkbox: { checked: false }, qtyInput, chip, wrap };
+        const pick = { offer, productName: product?.name ?? null, checkbox: { checked: false }, qtyInput, chip, wrap };
         chip.addEventListener('click', () => choose(pick, !pick.checkbox.checked));
         chips.appendChild(wrap);
         picks.push(pick);
@@ -443,6 +480,54 @@ export function openOfferPanel(deps) {
   foot.appendChild(el('span', 'bo-composer-limit', 'Non viene inviata al cliente'));
   panel.appendChild(foot);
 
+  /**
+   * Backlog 0c9a27bb9ac0: the chosen products become the lines of the
+   * offer's quote, through the commercial actions that already exist —
+   * `create-quote` on the new offer, then `add-line` per product with its
+   * quantity. The server prices every line from the catalog; the window
+   * sends only the offer id and the quantity. A quote binds one price book,
+   * read from the offer record (never guessed), so products from two books
+   * file two quotes. Each write owns its own submission key.
+   * @param {string} opportunityId
+   * @param {Array<any>} chosen
+   */
+  async function fileQuote(opportunityId, chosen) {
+    /** @type {Map<string, Array<any>>} */
+    const byBook = new Map();
+    for (const pick of chosen) {
+      const offerId = String(pick.offer.offerId ?? '');
+      const record = await client.request(`/api/modules/offer/records/${encodeURIComponent(offerId)}`);
+      const book = typeof record?.priceBookId === 'string' && record.priceBookId !== '' ? record.priceBookId : null;
+      if (book === null) throw Object.assign(new Error('offer without price book'), { code: 'OFFER_PRICE_BOOK_UNKNOWN' });
+      byBook.set(book, [...(byBook.get(book) ?? []), pick]);
+    }
+    for (const [priceBookId, group] of byBook) {
+      const opened = await client.request(
+        `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
+        { method: 'POST', idempotencyKey: deps.issueKey(), body: JSON.stringify({ priceBookId }) },
+      );
+      const quote = opened?.result?.quote;
+      if (typeof quote?.id !== 'string' || quote.id === '') throw Object.assign(new Error('quote without id'), { code: 'QUOTE_UNREADABLE' });
+      let revision = Number.isSafeInteger(quote.draftRevision) ? quote.draftRevision : null;
+      for (const pick of group) {
+        const added = await client.request(
+          `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/add-line`,
+          {
+            method: 'POST',
+            idempotencyKey: deps.issueKey(),
+            body: JSON.stringify({
+              offerId: String(pick.offer.offerId ?? ''),
+              quantity: pickQuantity(pick),
+              ...(revision !== null ? { expectedRevision: revision } : {}),
+            }),
+          },
+        );
+        const next = added?.result?.quote?.draftRevision;
+        revision = Number.isSafeInteger(next) ? next : null;
+      }
+    }
+  }
+
   const clearErrors = () => {
     generalError.textContent = '';
     for (const node of Object.values(errors)) node.textContent = '';
@@ -465,7 +550,7 @@ export function openOfferPanel(deps) {
     const currencies = new Set(chosen.map((pick) => String(pick.offer.currency ?? '').toUpperCase()));
     let bad = false;
     if (name === '') { errors.title.textContent = 'Scrivi il titolo.'; bad = true; }
-    if (cents === null) { errors.value.textContent = 'Scrivi il valore in euro, es. 350.00.'; bad = true; }
+    if (cents === null) { errors.value.textContent = 'Scrivi il valore in euro, es. 350,00.'; bad = true; }
     if (owner === '') { errors.owner.textContent = 'Scrivi chi la segue.'; bad = true; }
     if (expiry !== '' && Number.isNaN(Date.parse(expiry))) { errors.expiry.textContent = 'La data non è valida.'; bad = true; }
     // Review #616 round 5: the selection is re-checked here, not only in the
@@ -502,8 +587,29 @@ export function openOfferPanel(deps) {
         }),
       });
       submissionKey = null;
+      // The offer exists: its products become the quote lines. A quote that
+      // fails never undoes the offer, and is said, never hidden.
+      let quoteFailed = false;
+      const createdId = typeof created?.id === 'string' && created.id !== '' ? created.id : null;
+      if (chosen.length > 0) {
+        if (!gone()) create.textContent = 'Creo il preventivo…';
+        try {
+          if (createdId === null) throw Object.assign(new Error('offer without id'), { code: 'OFFER_UNREADABLE' });
+          await fileQuote(createdId, chosen);
+        } catch (error) {
+          quoteFailed = true;
+          if (typeof console !== 'undefined' && typeof console.error === 'function') {
+            console.error('[bo] preventivo dell’offerta non creato', {
+              code: error?.code ?? null,
+              status: typeof error?.status === 'number' ? error.status : null,
+              spaceId: deps.spaceId ?? null,
+            });
+          }
+        }
+      }
       shut();
-      toast('Offerta creata');
+      if (quoteFailed) toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
+      else toast(chosen.length > 0 ? 'Offerta e preventivo creati' : 'Offerta creata');
       if (typeof deps.onCreated === 'function') deps.onCreated(created);
     } catch (error) {
       // Review #616 round 4: a failed create is always logged (code, status
