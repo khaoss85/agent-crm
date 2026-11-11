@@ -781,6 +781,7 @@ export function uiHold(button, label) {
  */
 export function uiMarkBusy(button, label) {
   button.disabled = true;
+  button.setAttribute('disabled', 'disabled');
   button.setAttribute('aria-busy', 'true');
   button.textContent = label;
   return button;

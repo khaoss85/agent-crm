@@ -21,7 +21,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { UI_BUSY_LOCKED, uiBusy, uiIcon, uiMarkBusy } from '../apps/admin/public/admin-ui.js';
+import { UI_BUSY_LOCKED, uiBusy, uiHold, uiIcon, uiMarkBusy } from '../apps/admin/public/admin-ui.js';
 import { addFieldForm } from '../apps/admin/public/admin-custom-fields.js';
 import { createFakeDocument } from './helpers/fake-dom.js';
 
@@ -127,6 +127,22 @@ test('uiBusy: icons come back, a button that was off stays off, LOCKED keeps it 
   const renamed = button(doc, 'Invia');
   await uiBusy(renamed, 'Invio…', async () => { renamed.textContent = 'Inviato'; });
   assert.equal(renamed.textContent, 'Inviato', 'a label the work wrote itself stays');
+});
+
+test('uiHold: a write that starts mid-handler holds the button and gives it back', () => {
+  const doc = createFakeDocument();
+  const confirm = button(doc, 'Conferma');
+  const release = uiHold(confirm, 'Prenoto…');
+  assert.equal(confirm.textContent, 'Prenoto…');
+  assert.equal(confirm.getAttribute('aria-busy'), 'true');
+  assert.equal(confirm.disabled, true);
+  release();
+  assert.equal(confirm.textContent, 'Conferma');
+  assert.equal(confirm.getAttribute('aria-busy'), null);
+  assert.equal(confirm.disabled, false);
+  const locked = uiHold(confirm, 'Prenoto…');
+  locked(true);
+  assert.equal(confirm.disabled, true, 'keepOff leaves it off');
 });
 
 test('uiMarkBusy: the busy look for a rebuilt button', () => {
@@ -238,13 +254,13 @@ test('guard: no click or submit handler writes without uiBusy', () => {
     'a write handler goes through uiBusy(button, \'Salvo…\', async () => {…}) so the button shows it is working');
 });
 
-test('guard: every /bo file that writes uses uiBusy or uiMarkBusy, or says why not', () => {
+test('guard: every /bo file that writes uses uiBusy, uiHold or uiMarkBusy, or says why not', () => {
   const missing = [];
   const stale = [];
   for (const file of viewFiles()) {
     const source = readFileSync(join(ADMIN_PUBLIC, file), 'utf8');
     if (!WRITE.test(source)) continue;
-    const helped = /\buiBusy\(|\buiMarkBusy\(/.test(source);
+    const helped = /\buiBusy\(|\buiMarkBusy\(|\buiHold\(/.test(source);
     if (OWN_BUSY.has(file)) {
       if (helped) stale.push(file);
       continue;
