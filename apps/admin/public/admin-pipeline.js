@@ -452,10 +452,18 @@ export function createPipelineBoard(deps) {
   async function postMove(pipeline, recordId, fromStage, toStage, reason) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
-    await client.request(
-      `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`,
-      { method: 'POST', body: JSON.stringify(input) },
-    );
+    const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
+    try {
+      await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+    } catch (error) {
+      // The failure log names the request (backlog:2f72000d4a4d) even when
+      // the client did not stamp it.
+      if (error !== null && typeof error === 'object' && Object.isExtensible(error)) {
+        if (typeof error.method !== 'string') error.method = 'POST';
+        if (typeof error.path !== 'string') error.path = path;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1354,14 +1362,30 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
+  /**
+   * backlog:2f72000d4a4d: the shared /bo write-failure line — «[bo] scrittura
+   * fallita POST <percorso> · <stato> <codice>: messaggio» — the format of
+   * admin-core's reportFailure, which #808 exports as logWriteFailure. Until
+   * that lands on main the board writes the same line here; then this
+   * becomes a call to logWriteFailure.
+   */
+  function logMoveFailure(record, code, message) {
+    if (typeof console === 'undefined' || typeof console.error !== 'function') return;
+    const method = typeof record.method === 'string' ? record.method.toUpperCase() : 'POST';
+    const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
+    const status = typeof record.status === 'number' ? record.status : null;
+    const outcome = [status === null ? '' : String(status), code || 'UNKNOWN'].filter((part) => part !== '').join(' ');
+    const request = path !== null ? ` ${method} ${path}` : '';
+    console.error(`[bo] scrittura fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
+      { code: code || 'UNKNOWN', status, message, method, path });
+  }
+
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    if (typeof console !== 'undefined' && typeof console.error === 'function') {
-      console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
-    }
+    logMoveFailure(record, code, message);
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';

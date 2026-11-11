@@ -237,3 +237,21 @@ test('review Muse #799: «Senza azienda» is no customer in any case, spacing or
   assert.equal(company('a'), '—');
   assert.equal(company('b'), '—');
 });
+
+test('2f72000d4a4d: a failed move logs the shared write line, never «spostamento non riuscito»', async () => {
+  const { mount, client } = await board([record('a', 'discovery')]);
+  const lines = [];
+  const original = console.error;
+  console.error = (text) => { lines.push(String(text)); };
+  try {
+    drop(mount, 'a', 'demo');
+    await tick();
+    client.posts[0].fail();
+    await tick();
+  } finally {
+    console.error = original;
+  }
+  assert.ok(lines.includes('[bo] scrittura fallita POST /api/modules/opportunity/records/a/actions/move-stage · 500 INTERNAL: boom'),
+    `the shared format (${lines.join(' | ')})`);
+  assert.ok(!lines.some((line) => line.includes('spostamento non riuscito')), 'the old line is gone');
+});
