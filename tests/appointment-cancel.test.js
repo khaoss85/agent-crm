@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   cancelAppointment,
   createAppointmentBookCapability,
+  readSchedule,
   rescheduleAppointment,
 } from '../packages/appointments/src/appointments.js';
 import { AppError, NotFoundError, ValidationError } from '../packages/core/index.js';
@@ -235,4 +236,14 @@ test('appointment-book@1 opens cancelAppointment beside reschedule and advance',
   assert.equal(typeof handle.cancelAppointment, 'function');
   const out = await handle.cancelAppointment({ id: 'a-1', reason: 'Disdetto' });
   assert.equal(out.appointment.status, 'cancelled');
+});
+
+test('the customer schedule keeps the cancelled row with its reason and the decision instant', async () => {
+  const service = fakeAppointments([row()]);
+  await cancelAppointment(contextFor(service), { id: 'a-1', reason: 'Il cliente ha disdetto' });
+  const schedule = await readSchedule({ appointments: service }, SUBJECT);
+  assert.equal(schedule.length, 1, 'the cancelled slot stays in the history');
+  assert.equal(schedule[0].status, 'cancelled');
+  assert.equal(schedule[0].cancelReason, 'Il cliente ha disdetto');
+  assert.equal(schedule[0].decidedAt, '2026-10-19T09:00:00.000Z');
 });

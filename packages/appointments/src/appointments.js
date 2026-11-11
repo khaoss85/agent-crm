@@ -1434,6 +1434,10 @@ export async function readSchedule({ appointments }, subject) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    // backlog:5346ab531538: a cancelled slot keeps its reason and the
+    // instant of the decision, so the scheda's history reads it.
+    cancelReason: row.cancelReason ?? null,
+    decidedAt: row.decidedAt ?? null,
   })));
 }
 

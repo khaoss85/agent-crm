@@ -3232,8 +3232,10 @@ export function createCalendarioView(deps) {
    * never the browser's confirm(). «No» takes the focus (Enter never cancels
    * by accident); the optional reason rides the cancellation, else «Annullato
    * dal calendario». An event imported from Google Calendar says plainly
-   * that the cancellation happens here and Google follows only when the
-   * calendar syncs: the backoffice holds no calendar write of its own.
+   * that the event stays on Google: the backoffice cancel names no calendar
+   * and nothing in this application runs the two-way sync that would carry
+   * the cancellation there (calendar-sync's push/sync operations are not
+   * wired to any route or job), so «cancellalo anche lì» is the truth.
    * @param {any} row
    */
   function renderCancelAsk(row) {
@@ -3246,7 +3248,7 @@ export function createCalendarioView(deps) {
       box.appendChild(el(doc, 'p', {
         className: 'cal-pop-hint',
         attrs: { 'data-role': 'cancel-google' },
-        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar resta finché il calendario non si sincronizza.',
+        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
     const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });

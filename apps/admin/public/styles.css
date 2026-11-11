@@ -2562,6 +2562,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* A note reads as a note: a pencil mark and one paper card in the pending
    tone, never a channel bubble; the Note chip and its writer chips filter. */
 .bo-scheda-chan.bo-tile-note { background: var(--pending-soft); color: var(--pending-ink); font-family: inherit; font-size: 15px; }
+/* backlog:5346ab531538: a cancelled appointment in the cronologia — the
+   note card shape, in the neutral tone, with an × mark. */
+.bo-scheda-chan.bo-tile-cancelled { background: var(--surface-soft); color: var(--muted); font-family: inherit; font-size: 15px; }
+.bo-scheda-entry-cancelled .bo-scheda-note-paper { border-color: var(--line-soft); background: var(--surface-soft); }
+.bo-scheda-entry .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head, .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head { color: var(--ink); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }

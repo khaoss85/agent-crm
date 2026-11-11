@@ -262,7 +262,10 @@ test('annulla: an event from Google Calendar names the limit before the cancel',
   const box = await askCancel(mount, 'g1');
   const hint = box.findAll('p').find((node) => node.getAttribute('data-role') === 'cancel-google');
   assert.ok(hint, 'the Google limit is stated');
-  assert.match(hint.textContent, /Google Calendar/);
+  // Nothing in the application carries a cancellation to Google (no route
+  // or job runs calendar-sync's push): the text never promises a sync.
+  assert.equal(hint.textContent, 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.');
+  assert.doesNotMatch(hint.textContent, /sincronizz/i, 'never a sync the application does not run');
   const local = await askCancel(mount, 'p1');
   assert.ok(!local.findAll('p').some((node) => node.getAttribute('data-role') === 'cancel-google'), 'a booking made here carries no Google line');
 });
