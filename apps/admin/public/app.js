@@ -552,6 +552,7 @@ const offerDetail = createOfferDetail({
   mount: mountGate.owned('offer-detail'),
   client: moduleClient,
   submissions,
+  toast,
   navigate: (hash) => { window.location.hash = hash; },
 });
 

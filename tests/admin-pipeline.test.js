@@ -1513,7 +1513,8 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   assert.ok(!(list.getAttribute('class') ?? '').includes('hidden'), 'the click unfolds the offers');
   const links = list.findAll('a');
   assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/x', '#/offerte/y'], 'each offer opens its page');
-  assert.equal(links[0].textContent, 'Proposta esempio · proposta', 'the stage reads in Italian like the scheda');
+  assert.equal(links[0].textContent, 'Proposta esempio', 'the name opens the offer');
+  assert.equal(list.findAll('li')[0].textContent, 'Proposta esempio · Acme · Proposta', 'customer and stato in Italian, capitalised');
   assert.ok(!list.textContent.includes('Deal a'), 'offers of this board are not listed');
 });
 
@@ -1609,4 +1610,23 @@ test('9d2209b24f0b: una risposta ancora in coda non legge mai come fallimento', 
   assert.ok(!toasts.some((message) => message.includes('non riuscito')), 'no failure toast for a queued move');
   const moveButton = card.findAll('button').find((n) => n.getAttribute('aria-busy') === 'true');
   assert.ok(moveButton, 'the move stays locked: no second POST while queued');
+});
+
+test('169cd4bc988c: the offers of other pipelines read in the /bo dress — customer, stato capitalised, never «Senza azienda»', async () => {
+  const records = [
+    record('a', 'demo'),
+    { ...record('x', 'demo'), name: 'Pacchetto', companyName: 'Senza azienda', contactName: 'Guido Presti', pipelineKey: null, pipelineStage: null, stage: 'qualification' },
+    { ...record('z', 'demo'), name: 'Prova', companyName: 'Senza azienda', pipelineKey: null, pipelineStage: null, stage: 'proposal' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  const list = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list');
+  const rows = list.findAll('li').map((node) => node.textContent);
+  assert.deepEqual(rows, ['Pacchetto · Guido Presti · Qualificazione', 'Prova · Proposta']);
+  assert.ok(!list.textContent.includes('Senza azienda'));
+  for (const link of list.findAll('a')) assert.equal(link.getAttribute('class'), 'pipeline-off-name', 'a styled link, never the browser default');
+  const css = (await import('node:fs')).readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.pipeline-off-list \.pipeline-off-name \{[^}]*color: var\(--ink\)/, 'the name reads in ink, not link blue');
 });
