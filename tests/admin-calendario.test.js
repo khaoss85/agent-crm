@@ -325,12 +325,12 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(!texts(mount, 'span').includes('cancelled'), 'C14: never the raw English status');
   // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
-  // Selecting the block opens the card, and the card buttons at the scheda.
+  // Selecting the block opens the popover, and the customer links the scheda.
   const block = mount.findAll('button').find((node) => /taglio/i.test(node.textContent));
   assert.ok(block, 'the taglio block is a button');
   block.dispatch('click');
-  const open = mount.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
-  assert.ok(open, 'the card buttons at the scheda, never a raw id');
+  const open = mount.findAll('a').find((node) => node.getAttribute('title') === 'Apri scheda cliente');
+  assert.ok(open, 'the popover links the scheda, never a raw id');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -1297,12 +1297,13 @@ test('selecting a block opens the detail card and × deselects it', async () => 
   const card = findCards()[0];
   assert.ok(card, 'C6: the click opens the detail card');
   assert.ok(/taglio/i.test(card.textContent), 'C6: the card carries the title');
-  assert.ok(card.textContent.includes('Giovedì 22 ott · 18:00–18:30'), 'C6: the card carries the day · time row');
-  assert.ok(card.textContent.includes('Marco, Ada'), 'C6: the card names the participants');
+  assert.ok(card.textContent.includes('Giovedì 22 ottobre · 18:00–18:30'), 'C6: the popover carries the day · time row, full month');
+  assert.ok(card.textContent.includes('Marco'), 'C6: the popover names the team person');
+  assert.ok(card.textContent.includes('Ada'), 'C6: the popover names the customer');
   assert.ok(selected.getAttribute('class').includes('cal-selected'), 'C9: the selected block reads selected');
   assert.equal(selected.getAttribute('aria-pressed'), 'true');
-  const close = card.findAll('button').find((node) => node.textContent === '×');
-  assert.ok(close, 'C9: the card carries a close ×');
+  const close = card.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi');
+  assert.ok(close, 'C9: the popover carries a close ×');
   close.dispatch('click');
   assert.equal(findCards().length, 0, 'C9: × hides the card');
   // A second click on the block toggles the selection off as well.
@@ -1416,9 +1417,9 @@ test('memberColorIndex and memberInitials never print a name', () => {
   assert.equal(memberInitials(null), '··');
 });
 
-// BO-F6-11 fetta 5 (specs/calendario.md C7): the detail card carries a dark
-// primary "Apri scheda cliente" button for linked events, riding the shared
-// customer-card route; unlinked events carry no button.
+// BO-F6-11 fetta 5 (specs/calendario.md C7), popover Dan 11/11: the linked
+// customer is a link to the shared customer-card route; unlinked events
+// carry no link.
 test('the detail card opens the customer card for linked events only', async () => {
   const profilePath = '/api/customer-data/profile/contact/c1';
   const doc = createFakeDocument();
@@ -1447,11 +1448,11 @@ test('the detail card opens the customer card for linked events only', async () 
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'C7: the card opens');
-  assert.ok(card.textContent.includes('Marco, Ada Rossi'), 'C7: the participants name the resolved customer');
-  const open = card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente');
-  assert.ok(open, 'C7: the linked card carries Apri scheda cliente');
-  assert.match(open.getAttribute('class') ?? '', /ui-btn-primary/, 'the button is the dark primary action');
-  open.dispatch('click');
+  const open = card.findAll('a').find((node) => node.getAttribute('title') === 'Apri scheda cliente');
+  assert.ok(open, 'C7: the linked customer is a link to the scheda');
+  assert.equal(open.textContent, 'Ada Rossi', 'C7: the link names the resolved customer');
+  assert.equal(open.getAttribute('href'), '#/customer-card/contact/c1');
+  open.dispatch('click', { preventDefault() {} });
   assert.deepEqual(seen, ['#/customer-card/contact/c1'], 'C7: the button opens the customer scheda route');
 });
 
@@ -1489,11 +1490,7 @@ test('the detail card hides the customer button without a linked customer', asyn
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the card opens for the team-only event');
-  assert.equal(
-    card.findAll('button').filter((node) => node.textContent === 'Apri scheda cliente').length,
-    0,
-    'C7: no customer button without a linked customer',
-  );
+  assert.equal(card.findAll('a').length, 0, 'C7: no customer link without a linked customer');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync claim without sync state');
 });
 
@@ -1614,7 +1611,7 @@ test('overlapping profile reads cache under their own keys', async () => {
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
-  assert.ok(card.textContent.includes('Marco, Nome-c1'), 'the first name survives the second selection');
+  assert.ok(card.textContent.includes('Nome-c1'), 'the first name survives the second selection');
   assert.equal(
     calls.filter((path) => path.startsWith('/api/customer-data/profile/')).length,
     2,
@@ -1664,10 +1661,12 @@ test('the detail card falls back honestly when the profile is unavailable', asyn
   await new Promise((resolve) => setImmediate(resolve));
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the card opens without a profile');
-  assert.ok(card.textContent.includes('c9<script>'), 'the id falls back as inert text');
+  assert.ok(!card.textContent.includes('c9<script>'), 'an id is not a name: the link says where it goes instead');
+  const link = card.findAll('a').find((node) => node.getAttribute('title') === 'Apri scheda cliente');
+  assert.equal(link?.textContent, 'Apri scheda cliente');
   assert.ok(card.textContent.includes('Prenotato su WhatsApp'), 'the WA pill degrades without inventing a name');
   assert.ok(!card.textContent.includes('NOT_FOUND') && !card.textContent.includes('404'), 'C22: no technical text');
-  card.findAll('button').find((node) => node.textContent === 'Apri scheda cliente').dispatch('click');
+  link.dispatch('click', { preventDefault() {} });
   assert.deepEqual(seen, ['#/customer-card/contact/c9%3Cscript%3E'], 'the hostile id travels encoded');
 });
 
@@ -1954,9 +1953,9 @@ test('hiding the selected block member closes the detail card', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   mount.findAll('button').find((node) => /piega/i.test(node.textContent)).dispatch('click');
-  assert.ok(mount.findAll('button').some((node) => node.textContent === '×'), 'the detail card opens');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'the detail card opens');
   teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
-  assert.ok(!mount.findAll('button').some((node) => node.textContent === '×'), 'hiding the member closes the card');
+  assert.ok(!mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'hiding the member closes the card');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 });
 
@@ -2215,7 +2214,7 @@ test('the Team card merges one human across roster subjects', async () => {
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the detail card opens');
-  assert.ok(card.textContent.includes('Dan, Ada'), 'the card names the person and the customer');
+  assert.ok(card.textContent.includes('Dan') && card.textContent.includes('Ada'), 'the popover names the person and the customer');
   assert.ok(!card.textContent.includes('|'), 'no pipe id in the card');
 });
 

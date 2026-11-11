@@ -1489,6 +1489,26 @@ select.bo-spazi-input { flex: none; }
 .cal-pop .cal-manual .actions, .cal-pop .cal-manual .cal-form-actions { margin-top: 4px; }
 .cal-pop .ui-search, .cal-pop .ui-select { display: flex; width: 100%; }
 .cal-pop .ui-search .ui-search-input { padding-left: 36px; }
+/* The event popover (Dan 11/11, like Google Calendar and Outlook): actions
+ * on top, a larger title with the event colour square, then when, customer,
+ * person, note and origin. Placed beside the event by eventPopoverPlacement. */
+.cal-event-pop { padding: 10px 18px 16px; max-height: calc(100vh - 16px); overflow-y: auto; box-sizing: border-box; }
+.cal-event-pop:focus { outline: none; }
+.cal-event-pop:focus-visible { box-shadow: 0 24px 60px rgba(23, 25, 18, .18), 0 0 0 1px var(--ink); }
+.cal-pop-tools { display: flex; justify-content: flex-end; gap: 4px; margin: 0 -8px 4px 0; }
+.cal-pop-tools .cal-pop-tool { display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: none;
+  border-radius: 8px; background: transparent; color: var(--muted); line-height: 1; box-shadow: none; cursor: pointer; }
+.cal-pop-tools .cal-pop-tool:hover, .cal-pop-tools .cal-pop-tool[aria-expanded="true"] { background: var(--surface-soft); color: var(--ink); }
+.cal-event-pop .cal-detail-title { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 4px; font-size: 20px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
+.cal-swatch { flex: none; width: 14px; height: 14px; margin-top: 5px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .12); }
+.cal-pop-when { margin: 0 0 12px 24px; font-size: 14px; color: var(--muted); }
+.cal-event-pop .cal-move-note { margin: 0 0 10px 24px; }
+.cal-event-pop .cal-move { margin: 0 0 12px; }
+.cal-pop-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 24px; font-size: 14px; color: var(--ink); }
+.cal-pop-link { color: var(--ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.cal-pop-person .cal-avatar { min-width: 24px; height: 24px; line-height: 24px; color: var(--ink); }
+.cal-pop-note { color: var(--muted); }
+.cal-event-pop .cal-sync { margin-left: 24px; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
@@ -1519,12 +1539,11 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
   /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
-   * detail, «Fissa con una frase», the week, Team, the manual form, online
+   * «Fissa con una frase», the week, Team, the manual form, online
    * booking — so the grid is not pushed under every rail card. The rail
    * dissolves into the column and each card takes its place by order. */
   .cal-layout { display: flex; flex-direction: column; gap: 14px; }
   .cal-layout > .cal-rail { display: contents; }
-  .cal-rail > [data-role="event-detail"] { order: 1; }
   .cal-rail > .cal-ai { order: 2; }
   .cal-layout > .cal-main { order: 3; }
   .cal-rail > .cal-team { order: 4; }
