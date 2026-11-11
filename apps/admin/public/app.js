@@ -914,6 +914,23 @@ if (boSidebar && boTopbar) {
     onAiSubmit: (text) => {
       if (assistantPanel) void assistantPanel.open(currentScreenId, undefined, undefined, text);
     },
+    // backlog:be99004b06e4: ⌘K lists customers and offers while typing,
+    // from the reads Clienti and Pipeline already make — never the AI.
+    commandSearch: {
+      async customers(query) {
+        if (!shellItems.some((item) => item.id === 'clienti' && item.available === true)) return null;
+        const params = new URLSearchParams({ q: query, pageSize: '10' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('spaceId', spaceId);
+        const answer = await moduleClient.request(`/api/customer-data/customers?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
+      async offers() {
+        if (!shellItems.some((item) => item.id === 'pipeline' && item.available === true)) return null;
+        const answer = await moduleClient.request('/api/opportunities?limit=100');
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
+    },
     onPickSpace: (id) => {
       shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {

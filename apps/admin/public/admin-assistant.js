@@ -1863,6 +1863,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // Review #596 P2: a top-bar question asked while an answer is still
     // running waits here (only the newest one) and starts when it ends.
     queued: null,
+    /** backlog:be99004b06e4: the question echoed while the probe runs. @type {string | null} */
+    waiting: null,
     // Voce 34fd687c: the last free data answer's context (lead-day list),
     // so «e ieri?» and «chi è il primo?» keep the thread. In-session only,
     // like the history — never persisted.
@@ -2117,6 +2119,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   function doClose() {
     state.open = false;
     state.queued = null;
+    state.waiting = null;
     openGeneration += 1;
     render();
   }
@@ -2140,10 +2143,20 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     const generation = (openGeneration += 1);
+    // backlog:be99004b06e4: a question asked from ⌘K shows at once, with a
+    // waiting line, while the status probe runs (production 11/11: 4.8 s of
+    // nothing). Only the waiting echo changes here — review #596 P2 still
+    // holds: screen, draft and answer move only after the probe.
+    if (typed !== '') {
+      state.open = true;
+      state.waiting = typed;
+      render();
+    }
     // Review #596 P2: nothing shared changes before the probe answers — a
     // run started meanwhile keeps its screen, draft and asked header.
     const status = await probeAssistantBackend(client);
     if (generation !== openGeneration) return;
+    state.waiting = null;
     if (state.busy && typed !== '') {
       state.open = true;
       state.queued = { screenId, draft, customer, question: typed };
@@ -2397,6 +2410,16 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.queued.question, 140)}»`));
       waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
       scroll.appendChild(waiting);
+    }
+    if (typeof state.waiting === 'string' && state.waiting !== '') {
+      const waiting = el(doc, 'div', 'bo-assistant-asked');
+      waiting.setAttribute('data-waiting', 'true');
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.waiting, 140)}»`));
+      scroll.appendChild(waiting);
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Chiedo all\u2019assistente…'));
+      panel.appendChild(scroll);
+      mount.appendChild(panel);
+      return;
     }
     const mentionBox = renderMention();
     if (mentionBox) scroll.appendChild(mentionBox);
