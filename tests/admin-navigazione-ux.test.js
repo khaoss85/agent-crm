@@ -237,3 +237,36 @@ test('Nuova sequenza: a second step gets its own ids and labels', async () => {
   assert.ok(panel.findAll('label').some((node) => node.getAttribute('for') === second.getAttribute('id')));
   assert.ok(panel.findAll('p').some((node) => node.textContent === 'Passo 2'));
 });
+
+test('the phone save path: a 400 through the mutation wrapper logs «scrittura fallita POST /api/customer-hub/phone»', async () => {
+  const { bindAdminMutations } = await import('../apps/admin/public/admin-submission.js');
+  const { apiFailure } = await import('../apps/admin/public/admin-core.js');
+  const { phoneRefusalText } = await import('../apps/admin/public/admin-customer-card.js');
+  // The inner client tags like app.js moduleClient.request does.
+  const inner = {
+    async request(path, options = {}) {
+      throw tagRequestFailure(apiFailure(400, { error: { code: 'VALIDATION_FAILED', message: 'Numero non valido' } }), options.method ?? 'GET', path);
+    },
+  };
+  const memory = new Map();
+  const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, String(v)), removeItem: (k) => memory.delete(k) };
+  const { client } = bindAdminMutations(inner, { storage });
+  let caught = null;
+  try {
+    await client.request('/api/customer-hub/phone', { method: 'POST', body: JSON.stringify({ phone: '123' }) });
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught, 'the POST is refused');
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    phoneRefusalText(caught);
+  } finally {
+    console.error = original;
+  }
+  const line = String(logged[0]?.[0] ?? '');
+  assert.ok(line.startsWith('[bo] scrittura fallita POST /api/customer-hub/phone · 400 VALIDATION_FAILED'), line);
+  assert.ok(!logged.some((args) => String(args[0]).includes('lettura fallita')));
+});
