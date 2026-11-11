@@ -3186,14 +3186,16 @@ export function createCustomerCardView(deps) {
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
       const noteError = el('small', 'field-error', '');
-      let noteBusy = false;
       const addNote = () => uiBusy(noteButton, 'Salvo…', async () => {
-        if (noteBusy) return;
+        // Review #793 (P2): the guard is the view's, not this form's — a
+        // repaint while the note is saving (the roster arriving) rebuilds
+        // the form, and its Invio must not post the same note again.
+        if (noteSaving) return;
         if (String(noteInput.value ?? '').trim() === '') {
           noteError.textContent = 'Scrivi la nota prima di aggiungerla.';
           return;
         }
-        noteBusy = true;
+        noteSaving = true;
         noteError.textContent = '';
         try {
           const written = noteInput.value;
@@ -3213,7 +3215,7 @@ export function createCustomerCardView(deps) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
           toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
         } finally {
-          noteBusy = false;
+          noteSaving = false;
         }
       });
       noteButton.addEventListener('click', addNote);
@@ -3963,6 +3965,8 @@ export function createCustomerCardView(deps) {
    * @type {Promise<Array<any>> | null}
    */
   let rosterRead = null;
+  /** A note being saved, view-wide (review #793): one POST per note. */
+  let noteSaving = false;
   /** @type {Array<any> | null} */
   let rosterPeople = null;
   function readRoster() {

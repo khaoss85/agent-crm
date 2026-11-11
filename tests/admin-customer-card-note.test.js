@@ -203,3 +203,46 @@ test('82235e46e3e9: in Dettagli Invio saves and Esc cancels', async () => {
   assert.equal(client.writes.length, 1, 'Esc writes nothing');
   assert.ok(!mount.textContent.includes('cambiata@esempio.it'), 'the edit is gone');
 });
+
+// Review Muse #793 (P2): the roster arriving while a note is saving
+// repaints the scheda; the rebuilt field's Invio must not post it again.
+test('82235e46e3e9: a repaint while the note is saving never posts it twice', async () => {
+  let releaseRoster;
+  const rosterGate = new Promise((resolve) => { releaseRoster = resolve; });
+  let releasePost;
+  const postGate = new Promise((resolve) => { releasePost = resolve; });
+  const note = { entry: 'note', id: 'n0', body: 'Vecchia', teamAuthorId: 'google|118', occurredAt: '2026-11-10T10:00:00.000Z' };
+  const base = fakeClient({ timeline: entries([MESSAGE, note]) });
+  const client = {
+    writes: base.writes,
+    reads: base.reads,
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships') {
+        await rosterGate;
+        return ROSTER;
+      }
+      if (options.method === 'POST' && path === '/api/customer-hub/notes') {
+        const answer = base.request(path, options);
+        await postGate;
+        return answer;
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: () => {} }).renderCard('contact', 'c1');
+  noteField(mount).value = 'Richiamare domani';
+  noteField(mount).dispatch('keydown', key('Enter'));
+  await flush();
+  assert.equal(client.writes.length, 1, 'the note is saving');
+  releaseRoster();
+  await flush();
+  assert.ok(mount.textContent.includes('Nota · da Elena Rinaldi'), 'the roster repaint happened');
+  noteField(mount).value = 'Richiamare domani';
+  noteField(mount).dispatch('keydown', key('Enter'));
+  await flush();
+  assert.equal(client.writes.length, 1, 'the rebuilt field does not post the same note again');
+  releasePost();
+  await flush();
+});
