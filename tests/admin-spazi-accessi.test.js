@@ -259,7 +259,7 @@ test('the screen lists spaces with roles, team, the master AI switch and the fiv
   // screen never says «postazione».
   assert.match(rendered, /Lo stesso team per tutta l’organizzazione/);
   assert.doesNotMatch(rendered, /postazione/);
-  assert.match(rendered, /marco/);
+  assert.match(rendered, /Marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
   assert.equal(SPAZI_AI_MASTER.key, 'ai-enabled');
   assert.equal(SPAZI_AI_MASTER_DEFAULT, true);
@@ -381,8 +381,8 @@ test('inviting names subject, role and reason; removal asks twice with a reason'
   assert.equal(granted?.body?.reason, 'commesso del negozio');
 
   const lucaRow = text(mount);
-  assert.match(lucaRow, /luca/);
-  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('luca'));
+  assert.match(lucaRow, /Luca/);
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Luca'));
   assert.ok(remove, 'each member has its own removal');
   await remove.listeners.click[0]();
   await flush();
@@ -882,7 +882,7 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
   // Without enrichment the row reads exactly as before.
   const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
-  assert.equal(bare.name, 'marco');
+  assert.equal(bare.name, 'Marco');
   assert.equal(bare.email, null);
   assert.equal(bare.initials, 'MA');
   // A suspended subject is not suspended twice.

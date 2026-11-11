@@ -25,7 +25,7 @@ import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
+import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
 import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
@@ -274,61 +274,13 @@ export function teamRows(named, hidden) {
 }
 
 /**
- * Non-empty trimmed text, or null. Display names and mailboxes travel
- * through here, so a blank or non-string value never becomes a person.
- * @param {unknown} value
- */
-function cleanPersonText(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text === '' ? null : text;
-}
-
-/** Lower-cased person key for grouping, or null when there is none. @param {unknown} value */
-function personKeyOf(value) {
-  const text = cleanPersonText(value);
-  return text === null ? null : text.toLowerCase();
-}
-
-/**
- * backlog:810ed0bf — the control-plane same-person key of a roster row
- * (`operatorAccountId`, one per human), or null when the roster carries
- * none. The pilot forwards it beside the subject when it knows it, so the
- * Team card unites one member's identities (broker, github, google) even
- * when they carry different mailboxes. Only this documented key merges:
- * generic `personKey`/`personId`/`userId` fields have no producer contract
- * in this repo, and two unrelated humans sharing one would merge into a
- * single unbookable row — so they never merge here.
- * @param {any} member
- */
-function rosterPersonId(member) {
-  if (!member || typeof member !== 'object') return null;
-  const value = member.operatorAccountId;
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
- * Member creation instant (epoch ms), or null when the roster carries none.
- * The roster's own order is the fallback: it lists members oldest first.
- * @param {any} member
- */
-function memberBornAt(member) {
-  const raw = member?.createdAt ?? member?.created_at ?? null;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
-  }
-  return null;
-}
-
-/**
  * backlog:df55cf25 — one Team row per PERSON, never a technical id on
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
- * mailbox (unique per person), so Dan is one row called Dan. A shared
+ * (`github|…`, `google|…`, mailbox): subjects merge through the shared
+ * `teamPeople` (admin-labels.js) — the person key first, then mailbox AND
+ * name together, so Dan is one row called Dan. A mailbox alone or a shared
  * display name alone never merges — two email-less homonyms are two humans,
  * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
  * «Rossi (2)» in member-creation order, never a technical id). A group
@@ -347,45 +299,16 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
-  const groups = [];
+  // backlog:3ce220e60c33 (famiglia F5): one person per row through the
+  // shared teamPeople (admin-labels.js) — person key first, then mailbox AND
+  // name; a mailbox alone or a name alone never merges (backlog:f4a1f25048c8,
+  // the Spazi e accessi rule of agent-crm#644/#742).
+  const groups = teamPeople(roster).map((person, index) => ({
+    subjects: [...person.subjects], displayName: person.name, email: person.email, born: person.born, bornIndex: index,
+  }));
   const bySubject = new Map();
-  const byEmail = new Map();
-  const byPerson = new Map();
+  for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
   const groupFor = (subject) => bySubject.get(subject) ?? null;
-  for (const member of roster) {
-    const subject = member.subject;
-    if (bySubject.has(subject)) continue;
-    const personId = rosterPersonId(member);
-    // The shared member filter (admin-labels.js, production 10/11): a broker
-    // mailbox or a provider id never names or merges a person.
-    const email = personKeyOf(memberText(member.email));
-    const display = memberText(member.displayName);
-    // One human shares one mailbox — or one control-plane person key when
-    // the roster carries it (backlog:810ed0bf): either merges two subjects
-    // into one person row. A shared display name alone never merges — two
-    // email-less homonyms are two humans, two rows.
-    let group = (personId !== null && byPerson.get(personId))
-      || (email !== null && byEmail.get(email))
-      || null;
-    if (!group) {
-      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
-      groups.push(group);
-    }
-    group.subjects.push(subject);
-    bySubject.set(subject, group);
-    const born = memberBornAt(member);
-    if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
-    if (personId !== null && group.personId === null) {
-      group.personId = personId;
-      byPerson.set(personId, group);
-    }
-    if (email !== null && group.email === null) {
-      group.email = member.email.trim();
-      byEmail.set(email, group);
-    }
-    if (group.displayName === null && display !== null) group.displayName = display;
-  }
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
@@ -409,7 +332,9 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
+    // An id with no person behind it reads as a name («marco» → «Marco»,
+    // subjectText), never as the raw id (design check #750).
+    const base = name ?? (listed ? subjectText(primary) : null) ?? 'Membro del team';
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -471,7 +396,8 @@ export function resolveMemberName(subject, named, members) {
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
   // a technical subject and never paints — the caller omits it instead.
-  if (!isTechnicalMemberText(subject)) return subject;
+  const words = subjectText(subject);
+  if (words !== null) return words;
   return null;
 }
 

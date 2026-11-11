@@ -45,7 +45,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { memberText } from './admin-labels.js';
+import { subjectText, teamPeople } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -311,22 +311,6 @@ function nameInitials(name) {
 }
 
 /**
- * backlog:810ed0bfd505 AC-2 — the control-plane same-person key of a roster
- * row (`operatorAccountId`, one per human), or null when the roster carries
- * none. The same union the Calendario team reads (`personRows` there): this
- * key unites one member's identities (broker, github, google) even when
- * they carry different mailboxes. Only this documented key merges —
- * generic `personKey`/`userId`-style fields have no producer contract here,
- * and two unrelated humans sharing one would fold into a single row.
- * @param {unknown} member
- */
-function rosterPersonKey(member) {
-  if (!member || typeof member !== 'object') return null;
-  const value = /** @type {{operatorAccountId?: unknown}} */ (member).operatorAccountId;
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
  * carry, beside each opaque subject, the control-plane displayName, email
  * and `operatorAccountId` the pilot enriches it with — the same fields the
@@ -354,61 +338,23 @@ function rosterPersonKey(member) {
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
 export function buildTeamRows(members = []) {
-  const list = Array.isArray(members) ? members : [];
-  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, key: string|null, roles: unknown[], statuses: unknown[]}>} */
-  const people = [];
-  const byIdentity = new Map();
-  const byPersonKey = new Map();
-  const seen = new Set();
-  for (const member of list) {
-    if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
-    if (seen.has(member.subject)) continue;
-    seen.add(member.subject);
-    // Never a technical identity on screen (production 10/11: the team read
-    // «broker+…@accordo.invalid»): the shared member filter drops a broker
-    // mailbox or a provider id the enrichment carried as name or email.
-    const email = memberText(member.email);
-    const displayName = memberText(member.displayName);
-    const personKey = rosterPersonKey(member);
-    const key = email === null || displayName === null
-      ? null
-      : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    let person = (personKey !== null && byPersonKey.get(personKey)) || null;
-    if (person === null && key !== null) {
-      const candidate = byIdentity.get(key) ?? null;
-      // Two explicit operator keys never fold into one row: the mailbox
-      // fallback only joins a group with no key of its own, or the same
-      // key — otherwise a shared mailbox would bridge two operator
-      // accounts and «Rimuovi» would suspend a stranger (Codex P2 on
-      // backlog:ed0552dc1933).
-      if (candidate !== null && (personKey === null || candidate.key === null || candidate.key === personKey)) {
-        person = candidate;
-      }
-    }
-    if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email: null, key: null, roles: [], statuses: [] };
-      people.push(person);
-    }
-    if (person.key === null) person.key = personKey;
-    if (personKey !== null && !byPersonKey.has(personKey)) byPersonKey.set(personKey, person);
-    if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
-    person.subjects.push(member.subject);
-    if (member.status !== 'suspended') person.live.push(member.subject);
-    person.roles.push(member.role);
-    person.statuses.push(member.status);
-    if (person.displayName === null) person.displayName = displayName;
-    // The row shows a real mailbox only (`memberText` already dropped the
-    // broker/technical ones), so the first real mailbox of the person wins
-    // whatever the store order.
-    if (person.email === null) person.email = email;
-  }
+  // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
+  // teamPeople (admin-labels.js), the same rows the Calendario team reads.
+  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
+    subjects: row.subjects,
+    live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
+    displayName: row.name,
+    email: row.email,
+    roles: row.members.map((member) => member.role),
+    statuses: row.members.map((member) => member.status),
+  }));
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
       // No readable name or mailbox: the subject when it reads as a word,
       // else a generic label — never a technical subject (`google|…`,
       // `broker+…`), the same fallback the Calendario team uses.
-      const readable = person.displayName ?? person.email ?? memberText(subject);
+      const readable = person.displayName ?? person.email ?? subjectText(subject);
       const name = readable ?? 'Membro del team';
       const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
       const role = known.length > 0
