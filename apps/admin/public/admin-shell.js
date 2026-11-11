@@ -743,6 +743,8 @@ export function createShellView({
   let aiInput = null;
   /** @type {any} */
   let aiForm = null;
+  /** The space the ⌘K list last read for; undefined before the first bar. */
+  let commandSpaceId;
 
   /**
    * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
@@ -825,6 +827,9 @@ export function createShellView({
     form.appendChild(hint);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      // backlog:be99004b06e4 (review #779): every submit path goes through
+      // the results list — the selected row opens, exactly once per Enter.
+      if (commandMenu.submit()) return;
       if (typeof onAiSubmit === 'function') {
         onAiSubmit(aiInput !== null && typeof aiInput.value === 'string' ? aiInput.value : '');
       } else {
@@ -833,6 +838,12 @@ export function createShellView({
     });
     topbar.appendChild(form);
     aiForm = form;
+    // Review #779: what the list read belongs to one space — a switch
+    // (menu, ⌘1/2/3, setSpaces) drops it before the bar is bound again.
+    if (commandSpaceId !== state.activeSpaceId) {
+      if (commandSpaceId !== undefined) commandMenu.invalidate();
+      commandSpaceId = state.activeSpaceId;
+    }
     commandMenu.attach(form, aiInput);
   }
 

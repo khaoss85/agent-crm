@@ -273,3 +273,80 @@ test('a second Enter while the read still hangs asks the AI', async () => {
   s.key('Enter');
   assert.deepEqual(s.seen.asked, ['Ada']);
 });
+
+// ---- review Muse #779, giro 1 --------------------------------------------
+
+test('review #779: a failed read is logged without the typed words and reads as its own state, not «no match»', async () => {
+  const original = console.warn;
+  const logged = [];
+  console.warn = (...args) => logged.push(args);
+  try {
+    const s = shell({
+      customers: async () => { throw Object.assign(new Error('Ada Lovelace not found'), { status: 502, code: 'BAD_GATEWAY' }); },
+      offers: async () => [],
+    });
+    await s.type('Ada');
+    const text = s.list().textContent;
+    assert.ok(text.includes('Non riesco a leggere i clienti adesso'), text);
+    assert.ok(!text.includes('Nessun cliente, offerta o pagina'), 'a failure is not shown as an empty result');
+    assert.equal(logged.length, 1);
+    assert.ok(String(logged[0][0]).includes('lettura clienti non riuscita'));
+    assert.deepEqual(logged[0][1], { name: 'Error', status: 502, code: 'BAD_GATEWAY' });
+    assert.ok(!JSON.stringify(logged).includes('Ada'), 'neither the query nor the message reach the log');
+  } finally {
+    console.warn = original;
+  }
+});
+
+test('review #779: the form submit (mobile «Vai», requestSubmit) opens the selected row, never the AI', async () => {
+  const s = shell();
+  await s.type('Ada');
+  const form = s.topbar.findAll('form')[0];
+  form.dispatch('submit', { preventDefault() {} });
+  assert.deepEqual(s.seen.navigate, ['#/customer-card/contact/c-1']);
+  assert.deepEqual(s.seen.asked, []);
+});
+
+test('review #779: keydown Enter followed by the browser submit acts once', async () => {
+  const s = shell();
+  await s.type('Ada');
+  s.key('Enter');
+  const form = s.topbar.findAll('form')[0];
+  form.dispatch('submit', { preventDefault() {} });
+  assert.deepEqual(s.seen.navigate, ['#/customer-card/contact/c-1']);
+  assert.deepEqual(s.seen.asked, [], 'the trailing submit does not also open the assistant');
+});
+
+test('review #779: an empty bar submitted still opens the assistant', async () => {
+  const s = shell();
+  const form = s.topbar.findAll('form')[0];
+  form.dispatch('submit', { preventDefault() {} });
+  assert.deepEqual(s.seen.asked, ['']);
+});
+
+test('review #779: a hung offers read never locks the offers group after the menu resets', async () => {
+  let calls = 0;
+  const s = shell({
+    customers: async () => [],
+    offers: () => { calls += 1; return calls === 1 ? new Promise(() => {}) : Promise.resolve(OFFERS); },
+  });
+  await s.type('Ada');
+  s.key('Enter');
+  s.key('Enter'); // the second Enter asks the AI and resets the menu
+  assert.deepEqual(s.seen.asked, ['Ada']);
+  await s.type('Pacch');
+  assert.equal(calls, 2, 'the next query reads the offers again');
+  assert.ok(s.options().some((row) => row.getAttribute('href') === '#/offerte/o-1'));
+  assert.ok(!s.list().textContent.includes('Cerco tra clienti e offerte'));
+});
+
+test('review #779: a space switch drops what the list read in the space left behind', async () => {
+  const s = shell();
+  await s.type('Ada');
+  assert.ok(s.options().some((row) => row.textContent.includes('Ada Lovelace')));
+  s.view.setSpaces([{ id: 'prova', name: 'Spazio di prova' }, { id: 'altro', name: 'Altro spazio' }], 'altro');
+  assert.equal(s.input().value, '', 'the words go with the space');
+  assert.equal(s.options().length, 0);
+  for (const handler of s.winListeners.keydown ?? []) handler({ key: 'k', metaKey: true, preventDefault() {} });
+  assert.equal(s.options().length, 0, '⌘K does not bring back the other space’s customers');
+});

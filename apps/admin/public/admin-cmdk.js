@@ -169,7 +169,14 @@ export function createCommandMenu({
     offers: null,
     offersAt: 0,
     offersLoading: false,
+    offersStartedAt: 0,
     enterWaited: false,
+    // Review #779: a read that failed is not «no match» — the list says so.
+    customersFailed: false,
+    offersFailed: false,
+    // Review #779 P1: the Enter that already chose a row also ends the
+    // form submit that may follow it — one action per Enter.
+    consumed: false,
   };
   /** @type {any} */
   let input = null;
@@ -178,6 +185,24 @@ export function createCommandMenu({
   /** @type {any} */
   let timer = null;
   let token = 0;
+  let offersToken = 0;
+
+  /**
+   * Review #779 P2: a failed read is logged (which read, status and code —
+   * never the typed words or a record) and shown as its own state.
+   * @param {'clienti' | 'offerte'} read
+   * @param {unknown} error
+   */
+  function logFailure(read, error) {
+    const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn(`[bo] ricerca ⌘K: lettura ${read} non riuscita`, {
+        name: typeof record.name === 'string' ? record.name : null,
+        status: typeof record.status === 'number' ? record.status : null,
+        code: typeof record.code === 'string' ? record.code : null,
+      });
+    }
+  }
 
   function rows() {
     const fresh = state.customersFor === state.query.trim() ? state.customers : null;
@@ -207,6 +232,11 @@ export function createCommandMenu({
         const remote = state.query.trim().length >= COMMAND_MIN_CHARS && !state.query.trim().startsWith('@');
         if (remote && (state.customersLoading || state.offersLoading)) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco tra clienti e offerte…'));
+        } else if (remote && (state.customersFailed || state.offersFailed)) {
+          const what = state.customersFailed && state.offersFailed
+            ? 'clienti e offerte'
+            : (state.customersFailed ? 'i clienti' : 'le offerte');
+          list.appendChild(el(doc, 'p', 'bo-cmdk-status bo-cmdk-failed', `Non riesco a leggere ${what} adesso: riprova tra poco.`));
         } else if (remote && current.length === 1) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Nessun cliente, offerta o pagina con queste parole.'));
         }
@@ -251,6 +281,12 @@ export function createCommandMenu({
     if (timer !== null) cancel(timer);
     timer = null;
     state.customersLoading = false;
+    state.customersFailed = false;
+    // Review #779 P1: an offers read still in flight never keeps the group
+    // locked: its answer is dropped and the next query reads again.
+    offersToken += 1;
+    state.offersLoading = false;
+    state.enterWaited = false;
     if (input !== null) input.value = '';
     render();
   }
@@ -268,34 +304,47 @@ export function createCommandMenu({
   }
 
   async function loadOffers() {
-    if (typeof search?.offers !== 'function' || state.offersLoading) return;
-    if (state.offers !== null && now() - state.offersAt < COMMAND_OFFERS_TTL_MS) return;
+    if (typeof search?.offers !== 'function') return;
+    // A read in flight is reused — unless it hangs past the TTL, then a
+    // fresh one replaces it (its late answer is dropped by the token).
+    if (state.offersLoading && now() - state.offersStartedAt < COMMAND_OFFERS_TTL_MS) return;
+    if (!state.offersLoading && state.offers !== null && now() - state.offersAt < COMMAND_OFFERS_TTL_MS) return;
+    const mine = (offersToken += 1);
     state.offersLoading = true;
+    state.offersStartedAt = now();
     render();
     let items = null;
+    let failed = false;
     try {
       items = await search.offers();
-    } catch {
-      items = null;
+    } catch (error) {
+      failed = true;
+      logFailure('offerte', error);
     }
+    if (mine !== offersToken) return;
     state.offersLoading = false;
+    state.offersFailed = failed;
     state.offers = Array.isArray(items) ? items : null;
-    state.offersAt = now();
+    // A failure is retried at the next keystroke, never cached for a minute.
+    state.offersAt = failed ? 0 : now();
     render();
   }
 
   async function loadCustomers(query) {
     const mine = (token += 1);
     let items = null;
+    let failed = false;
     try {
       items = await /** @type {any} */ (search).customers(query);
-    } catch {
-      items = null;
+    } catch (error) {
+      failed = true;
+      logFailure('clienti', error);
     }
     // A newer query (or a closed menu) wins: a slow answer never lands
     // under words the operator already changed.
     if (mine !== token) return;
     state.customersLoading = false;
+    state.customersFailed = failed;
     state.customers = Array.isArray(items) ? items : null;
     state.customersFor = query;
     render();
@@ -306,6 +355,7 @@ export function createCommandMenu({
     state.open = state.query.trim() !== '';
     state.active = 0;
     state.enterWaited = false;
+    state.customersFailed = false;
     if (timer !== null) cancel(timer);
     timer = null;
     const query = state.query.trim();
@@ -332,8 +382,32 @@ export function createCommandMenu({
     render();
   }
 
+  /**
+   * Enter, from a key or from the form submit (mobile «Vai», assistive
+   * tech, requestSubmit): the selected row, or the explicit ask row. Same
+   * wait rule while the reads run. Returns whether it acted or waited.
+   */
+  function submitActive() {
+    const current = rows();
+    if (current.length === 0) return false;
+    // Still reading customers and offers (2-4 s in production): Enter
+    // waits for them instead of sending a name to the AI. The list stays
+    // open on «Cerco…» and the first result arrives selected. A second
+    // Enter asks: a read that hangs never locks the AI row away.
+    if (!state.enterWaited && (state.customersLoading || state.offersLoading)
+      && current.every((row) => row.kind === 'ask')) {
+      state.enterWaited = true;
+      state.open = true;
+      render();
+      return true;
+    }
+    choose(state.open ? current[Math.min(state.active, current.length - 1)] : current[current.length - 1]);
+    return true;
+  }
+
   function onKeydown(event) {
     const key = event?.key;
+    state.consumed = false;
     const prevent = () => { if (typeof event?.preventDefault === 'function') event.preventDefault(); };
     if (key === 'ArrowDown' || key === 'ArrowUp') {
       if (!state.open && state.query.trim() !== '') state.open = true;
@@ -342,19 +416,11 @@ export function createCommandMenu({
       return;
     }
     if (key === 'Enter') {
-      const current = rows();
-      if (current.length === 0) return;
+      if (rows().length === 0) return;
       prevent();
-      // Still reading customers and offers (2-4 s in production): Enter
-      // waits for them instead of sending a name to the AI. The list stays
-      // open on «Cerco…» and the first result arrives selected. A second
-      // Enter asks: a read that hangs never locks the AI row away.
-      if (state.open && !state.enterWaited && (state.customersLoading || state.offersLoading)
-        && current.every((row) => row.kind === 'ask')) {
-        state.enterWaited = true;
-        return;
-      }
-      choose(state.open ? current[Math.min(state.active, current.length - 1)] : current[current.length - 1]);
+      submitActive();
+      // The submit that may still follow this keydown is the same Enter.
+      state.consumed = true;
       return;
     }
     if (key === 'Escape' && state.open) {
@@ -389,6 +455,30 @@ export function createCommandMenu({
       form.appendChild(list);
       render();
       if (hadFocus && typeof input.focus === 'function') input.focus();
+    },
+    /**
+     * The top-bar form submit (review #779 P1): the same action as Enter,
+     * once. Returns false when there is nothing typed, so the shell keeps
+     * its empty-bar behaviour (opening the assistant).
+     */
+    submit() {
+      if (state.consumed) {
+        state.consumed = false;
+        return true;
+      }
+      return submitActive();
+    },
+    /**
+     * A space switch (review #779 P1): what was read belongs to the space
+     * left behind — drop it, words included, and close the list.
+     */
+    invalidate() {
+      state.customers = null;
+      state.customersFor = '';
+      state.offers = null;
+      state.offersAt = 0;
+      state.offersFailed = false;
+      reset();
     },
     /** ⌘K: back to the bar, with the list of what was typed. */
     focus() {
