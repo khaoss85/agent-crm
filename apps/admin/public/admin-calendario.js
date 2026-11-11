@@ -1106,8 +1106,8 @@ export function createCalendarioView(deps) {
   let memberToken = 0;
   /**
    * The event drag in flight (backlog:3d0fbe7dc8d1): `{ mode, id, startMin,
-   * endMin, grabOffset, dayKey, targetDay, targetStart, targetEnd, moved }`,
-   * or null.
+   * endMin, grabOffset, dayKey, targetDay, targetStart, targetEnd, moved,
+   * originCol }`, or null.
    * Shared by every day column: the press starts on one, the release may
    * land on another. A full renderAll mid-drag never happens — the ghost is
    * painted directly — so no token guards it; the commit clears it first.
@@ -2088,6 +2088,18 @@ export function createCalendarioView(deps) {
     col.addEventListener('pointerdown', (event) => {
       if (event.button !== undefined && event.button !== 0) return;
       if (eventDrag) return;
+      // One move at a time (review #757): while a reschedule is in flight
+      // no second drag starts; a press on an event names the wait in
+      // Italian instead of dropping the move silently.
+      if (state.moveBusy) {
+        const busyBlock = (event.target ?? null)?.closest?.('.cal-event') ?? null;
+        if (busyBlock !== null) {
+          event.preventDefault?.();
+          state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+          if (mount.querySelector('.cal-wrap') !== null) renderAll();
+        }
+        return;
+      }
       // A press on a movable event starts an event drag (backlog:3d0fbe7dc8d1),
       // never a slot pick: the body moves the block, the bottom edge
       // stretches it. Presses on ghosts, the pick or the add-slot button keep
@@ -2120,6 +2132,9 @@ export function createCalendarioView(deps) {
           targetStart: startMin,
           targetEnd: endMin,
           moved: false,
+          // The column the press started on (review #757): a resize ghost
+          // always paints here, never on the hovered column.
+          originCol: col,
         };
         hookDocDragEnd();
         return;
@@ -2225,9 +2240,11 @@ export function createCalendarioView(deps) {
   /**
    * Follow the pointer across columns while an event drag is in flight
    * (backlog:3d0fbe7dc8d1): a move keeps its duration and takes the hovered
-   * day and hour, a resize keeps its start and takes the hovered end. Both
+   * day and hour, a resize keeps its start and day and takes the hovered
+   * end on the same column. Both
    * stay inside the painted 09:00–18:00 hours in half-hour steps; the ghost
-   * paints the target range on the hovered column.
+   * paints the target range on the hovered column, except a resize ghost,
+   * which stays on the origin column (review #757).
    * @param {string} dayKey @param {number} minute @param {any} col
    */
   function retargetEventDrag(dayKey, minute, col) {
@@ -2235,8 +2252,11 @@ export function createCalendarioView(deps) {
     if (!drag) return;
     const durationMin = Math.max(GRID_SLOT_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
     if (drag.mode === 'resize') {
+      // The stretch stays on the origin day (review #757): sideways motion
+      // into another column is ignored, so preview and commit agree.
+      if (dayKey !== drag.dayKey) return;
       const end = Math.min(Math.max(minute + GRID_SLOT_MINUTES, drag.startMin + GRID_SLOT_MINUTES), GRID_END_MINUTES);
-      if (end === drag.targetEnd && dayKey === drag.targetDay) return;
+      if (end === drag.targetEnd) return;
       drag.targetDay = drag.dayKey;
       drag.targetStart = drag.startMin;
       drag.targetEnd = end;
@@ -2261,7 +2281,9 @@ export function createCalendarioView(deps) {
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
-    col.appendChild(ghost);
+    // A resize ghost paints on the origin column (review #757); a move
+    // ghost paints on the hovered column.
+    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
   }
 
   /**
@@ -2276,6 +2298,14 @@ export function createCalendarioView(deps) {
     eventDrag = null;
     detachNode(mount.querySelector('.cal-drag-ghost'));
     if (!drag || !drag.moved) return;
+    // A second move while a reschedule is in flight is never dropped
+    // silently (review #757): no suppress flag, an Italian note, the grid
+    // repaints while the first request runs.
+    if (state.moveBusy) {
+      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
     suppressEventClick = true;
     const durationMs = Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt);
     const startIso = romeWallToIso(drag.targetDay, Math.floor(drag.targetStart / 60), drag.targetStart % 60);
@@ -2303,7 +2333,13 @@ export function createCalendarioView(deps) {
     // repaint the calendar over the next screen nor start another week load.
     // The busy flag still clears in the finally below.
     const token = renderToken;
-    if (state.moveBusy) return;
+    // A form submit racing a drag's request names the wait in Italian
+    // instead of dropping silently (review #757).
+    if (state.moveBusy) {
+      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
     const id = String(row?.id ?? '');
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
     state.selectedId = id !== '' ? id : null;

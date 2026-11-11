@@ -417,6 +417,107 @@ test('3d0fbe7d: a route away during the request never repaints the next screen (
   assert.equal(rescheduleBodies.length, 2, 'the view takes another move after the dropped completion');
 });
 
+test('3d0fbe7d: a second move while a reschedule is in flight names the wait (review #757 P2)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = DRAG_WEEK();
+  let releaseReschedule;
+  const pending = new Promise((resolve) => { releaseReschedule = resolve; });
+  const base = stubClient({ week });
+  const rescheduleBodies = [];
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/reschedule') {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        rescheduleBodies.push(body);
+        return pending;
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  let button = eventButton(mount, 'a9');
+  let col = button.parentNode;
+  attachClosest(mount);
+  col.getBoundingClientRect = () => ({ top: 0, height: 540 });
+  // First move: press mid-event, drag one hour, release. The request stays
+  // in flight, so the view is busy.
+  col.dispatch('pointerdown', { target: button, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(10);
+  assert.equal(rescheduleBodies.length, 1, 'the first move leaves while busy');
+  // The optimistic repaint rebuilt the grid: re-query and re-attach.
+  button = eventButton(mount, 'a9');
+  col = button.parentNode;
+  attachClosest(mount);
+  col.getBoundingClientRect = () => ({ top: 0, height: 540 });
+  // Second move while the first is in flight: never dropped silently, never
+  // wedging the click guard — an Italian note names the wait.
+  col.dispatch('pointerdown', { target: button, button: 0, clientY: 330 });
+  col.dispatch('pointerup', {});
+  await settle(5);
+  assert.equal(rescheduleBodies.length, 1, 'no second request leaves while busy');
+  assert.ok(
+    mount.findAll('p').some((node) => node.textContent.includes('già uno spostamento')),
+    'the wait reads Italian beside the event',
+  );
+  // The first request lands: the grid confirms the new time, and the click
+  // guard is eaten exactly once afterwards — never stuck.
+  releaseReschedule({ appointment: { id: 'a9', startsAt: rescheduleBodies[0].startsAt, endsAt: rescheduleBodies[0].endsAt } });
+  await settle(15);
+  assert.equal(rescheduleBodies.length, 1, 'the landing sends nothing new');
+  assert.ok(
+    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
+    'the landing confirms the new time',
+  );
+  const firstClick = eventButton(mount, 'a9');
+  firstClick.dispatch('click', { target: firstClick });
+  await settle(5);
+  assert.ok(
+    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
+    'the drag click is eaten once, the note stays',
+  );
+  const secondClick = eventButton(mount, 'a9');
+  secondClick.dispatch('click', { target: secondClick });
+  await settle(5);
+  assert.ok(
+    !mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
+    'the next click selects again: the guard is not wedged',
+  );
+});
+
+test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P2)', async () => {
+  const { mount, client, week, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  const before = { ...week.members[0].appointments[0] };
+  const cols = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day'));
+  const neighbor = cols.find((node) => node !== col);
+  assert.ok(neighbor, 'another day column paints beside the origin one');
+  neighbor.getBoundingClientRect = () => ({ top: 0, height: 540 });
+  const ghostsIn = (node) => (node.childNodes ?? []).filter((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  assert.equal(ghostsIn(col).length, 1, 'the stretch ghost paints on the origin column');
+  // Sideways into the next day column: ignored, so preview and commit agree.
+  neighbor.dispatch('pointermove', { clientY: 390 });
+  assert.equal(ghostsIn(neighbor).length, 0, 'sideways motion paints no ghost on the other day');
+  assert.equal(ghostsIn(col).length, 1, 'the ghost stays on the origin column');
+  neighbor.dispatch('pointerup', {});
+  await settle(15);
+  const reschedule = client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  assert.ok(reschedule, 'the stretch still commits on release');
+  const body = typeof reschedule.body === 'string' ? JSON.parse(reschedule.body) : reschedule.body;
+  assert.equal(Date.parse(body.startsAt), Date.parse(before.startsAt), 'the start stays where it was');
+  assert.ok(Date.parse(body.endsAt) > Date.parse(before.endsAt), 'the end moves later');
+  assert.equal(String(body.endsAt).slice(0, 10), String(before.startsAt).slice(0, 10), 'the commit writes the new end on the origin day');
+});
+
 test('3d0fbe7d: bad move fields fail closed in Italian before any request', async () => {
   const { mount, client } = await openWeek();
   await selectEvent(mount, 'a1');
