@@ -47,7 +47,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel, personLabel, teamPeople } from './admin-labels.js';
 
@@ -89,6 +89,20 @@ function dayOf(value) {
 function ownerInitials(name) {
   const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
+ * The customer an offer is for, as the scheda names it (backlog:fb47ab99b6ee):
+ * the contact, else the company — never a placeholder company standing in
+ * for a contact. Null when the offer names nobody.
+ * @param {Record<string, any>} record
+ */
+export function customerOf(record) {
+  const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+  if (contact !== '') return contact;
+  const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  // «Senza azienda» is the scheda's placeholder company, not a customer.
+  return company !== '' && company !== 'Senza azienda' ? company : null;
 }
 
 /**
@@ -227,6 +241,8 @@ export function createPipelineBoard(deps) {
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
+  /** Lista sort (backlog:fb47ab99b6ee): the clicked header and its direction; null = server order. */
+  const listSort = { key: /** @type {string | null} */ (null), dir: /** @type {'asc' | 'desc'} */ ('asc') };
   /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, pipelines: [], records: [] };
   /** The team as people (famiglia F5): names the referente, never its id. */
@@ -1102,27 +1118,50 @@ export function createPipelineBoard(deps) {
 
   /**
    * Read-only Lista table over the same filtered records (moves stay on Kanban).
-   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
-   * state pill with its dot, the value, the stage probability, the expected
-   * close, the creation day and the referente (BO-F6-10 C20). Values are set
-   * through textContent/setAttribute only, never innerHTML.
+   * Headers follow the prototype order (BO-F6-10 C19) plus Cliente
+   * (backlog:fb47ab99b6ee); every row shows the state pill with its dot, the
+   * value, the stage probability, the expected close, the creation day and the
+   * referente by the person's name (BO-F6-10 C20). Dates read «11 nov 2026».
+   * Each header sorts the list (click again to reverse), like a spreadsheet;
+   * the sort lives in the view and survives filters. Values are set through
+   * textContent/setAttribute only, never innerHTML.
    */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
-      headRow.appendChild(el(doc, 'th', { text: label }));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    const stageRank = new Map(pipeline.stages.map((stage, index) => [stage.key, index]));
+    const columns = listColumns(stageOf, stageRank);
+    for (const column of columns) {
+      const active = listSort.key === column.key;
+      const th = el(doc, 'th', {
+        attrs: { 'aria-sort': active ? (listSort.dir === 'asc' ? 'ascending' : 'descending') : 'none', 'data-sort-key': column.key },
+      });
+      const button = el(doc, 'button', {
+        class: 'pipeline-sort',
+        text: column.label,
+        attrs: { type: 'button', 'data-action': 'sort-list', 'data-sort': column.key },
+      });
+      button.addEventListener('click', () => {
+        if (listSort.key === column.key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else {
+          listSort.key = column.key;
+          listSort.dir = 'asc';
+        }
+        renderAll(renderToken);
+      });
+      th.appendChild(button);
+      headRow.appendChild(th);
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
     // card — the name is the link (keyboard, new tab), the whole row clicks.
     const detailed = pipeline.module === 'opportunity';
-    for (const record of visible) {
+    for (const record of sortedForList(visible, columns)) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       const name = String(record.name ?? record.id);
@@ -1150,13 +1189,14 @@ export function createPipelineBoard(deps) {
       } else {
         row.appendChild(el(doc, 'td', { text: name }));
       }
+      row.appendChild(el(doc, 'td', { text: customerOf(record) ?? '—' }));
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—' }));
       body.appendChild(row);
     }
@@ -1166,6 +1206,53 @@ export function createPipelineBoard(deps) {
       wrap.appendChild(el(doc, 'p', { class: 'empty', text: 'Nessuna offerta con questi filtri.' }));
     }
     return wrap;
+  }
+
+  /**
+   * The Lista columns: label, sort key and the value each one sorts by
+   * (null sorts last whatever the direction, like a spreadsheet's blanks).
+   * @param {Map<string, any>} stageOf @param {Map<string, number>} stageRank
+   */
+  function listColumns(stageOf, stageRank) {
+    const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim().toLocaleLowerCase('it') : null);
+    return [
+      { key: 'name', label: 'Offerta', value: (record) => text(record.name) },
+      { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
+      { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
+      { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
+      {
+        key: 'probability', label: 'Probabilità',
+        value: (record) => {
+          const probability = stageOf.get(record.pipelineStage)?.probability;
+          return typeof probability === 'number' ? probability : null;
+        },
+      },
+      { key: 'close', label: 'Chiusura', value: (record) => dayOf(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => (typeof record.createdAt === 'string' && record.createdAt ? record.createdAt : null) },
+      {
+        key: 'owner', label: 'Referente',
+        value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
+      },
+    ];
+  }
+
+  /** The visible records in the chosen Lista order; the server order without a sort. */
+  function sortedForList(visible, columns) {
+    const column = columns.find((candidate) => candidate.key === listSort.key);
+    if (!column) return visible;
+    const sign = listSort.dir === 'desc' ? -1 : 1;
+    return visible
+      .map((record, index) => ({ record, index, value: column.value(record) }))
+      .sort((left, right) => {
+        if (left.value === null && right.value === null) return left.index - right.index;
+        if (left.value === null) return 1;
+        if (right.value === null) return -1;
+        const order = typeof left.value === 'number' && typeof right.value === 'number'
+          ? left.value - right.value
+          : String(left.value).localeCompare(String(right.value), 'it');
+        return order === 0 ? left.index - right.index : sign * order;
+      })
+      .map((entry) => entry.record);
   }
 
   /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
