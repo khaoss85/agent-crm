@@ -2094,10 +2094,10 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
   );
 });
 
-// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
-// customer as a one-time pick — with the linked company the offer form needs
-// — and navigate to the creation screens. The destinations take the pick.
-test('714433c2: quick actions stash the picked customer and navigate to the creation screens', async () => {
+// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start with the
+// shown customer already chosen. Since Dan 06/11 (offer) and 11/11
+// (appointment) both open a window over the scheda instead of navigating.
+test('714433c2: quick actions open their windows over the scheda with the customer already chosen', async () => {
   const map = new Map();
   const storage = {
     getItem: (key) => (map.has(key) ? map.get(key) : null),
@@ -2122,13 +2122,16 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'no appointment pick leaks from the offer voice');
 
+  // Dan 11/11: Nuovo appuntamento opens its window over the scheda too (see
+  // tests/admin-appointment-panel.test.js) — no navigation, no stash, and
+  // only one window at a time.
   byAction('new-appointment').dispatch('click');
-  assert.deepEqual(navs, ['#/calendario'],
-    'Nuovo appuntamento opens the calendar manual booking');
-  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
-    resource: 'contact', id: 'c1', name: 'Guido Presti',
-    company: { id: 'co1', name: 'Palestra Esempio' },
-  }, 'the appointment pick names the same record');
+  assert.deepEqual(navs, [], 'Nuovo appuntamento stays on the scheda');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'),
+    'the appointment window opens');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'the offer window steps aside');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -4242,7 +4245,7 @@ test('review #612: a phone number being typed survives a re-read, Annulla closes
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-phone').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer').dispatch('click');
   const phoneField = () => mount.findAll('input').find((node) => node.getAttribute('type') === 'tel');
   phoneField().value = '+39333000111';
 

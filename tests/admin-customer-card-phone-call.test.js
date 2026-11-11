@@ -1,19 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import { NUMBER_FORMAT_HINT, dialableNumber, knownNumbers } from '../apps/admin/public/admin-call-number.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
 /**
- * Scheda cliente «Aggiungi telefono» e «Chiama» voice-aware (voce 105563eea902).
+ * Scheda cliente «Chiama» voice-aware (voce 105563eea902) and «Chiama»
+ * without a number (Dan 11/11).
  *
- * What it must prove: without a held number the card names the empty state
- * AND offers «Aggiungi telefono», which saves through
- * POST /api/customer-hub/phone and re-reads the server card; with a number,
- * «Chiama» is voice-aware — without an active voice connection the card says
- * so and falls back to `tel:`, logging nothing, while with one the operator
- * declares the outcome and the call is logged through
- * POST /api/customer-hub/calls with a fresh key. The dialed number is shown,
+ * What it must prove: «Chiama» is always offered. Without a held number,
+ * or with several known numbers, it opens the number window, which saves a
+ * new number through POST /api/customer-hub/phone and re-reads the server
+ * card before calling; with one number «Chiama» is voice-aware — without an
+ * active voice connection the card says so and falls back to `tel:`,
+ * logging nothing, while with one the operator declares the outcome and the
+ * call is logged through POST /api/customer-hub/calls with a fresh key. The
+ * dialed number is shown,
  * never sent; hostile server text stays text.
  */
 
@@ -35,7 +38,7 @@ const CARD_WITH_PHONE = {
 
 const VOICE = { channel: 'voice', status: 'active', connectionKey: 'voice:presti:1' };
 
-function stubClient({ card = CARD_NO_PHONE, connectors = [], connectorsError = null, onPost = null } = {}) {
+function stubClient({ card = CARD_NO_PHONE, connectors = [], connectorsError = null, onPost = null, profile = null } = {}) {
   const state = { card, connectors };
   const posts = [];
   return {
@@ -64,6 +67,7 @@ function stubClient({ card = CARD_NO_PHONE, connectors = [], connectorsError = n
         return { connectors: state.connectors };
       }
       if (path.startsWith('/api/customer-hub/card/')) return state.card;
+      if (profile !== null && path.startsWith('/api/customer-data/profile/')) return profile;
       throw Object.assign(new Error('Not Found'), { status: 404 });
     },
   };
@@ -84,86 +88,253 @@ const flush = async () => {
   await new Promise((resolve) => setImmediate(resolve));
 };
 
-test('105563eea902: without a phone the card names the empty state and offers Aggiungi telefono', async () => {
-  const mount = await renderCard(stubClient());
-  assert.ok(mount.textContent.includes('Nessun telefono collegato'), 'the empty state is named');
-  assert.ok(button(mount, 'add-phone'), 'Aggiungi telefono is offered as the cure');
-  assert.equal(button(mount, 'call-customer'), null, 'no Chiama without a number');
-});
+// Dan 11/11: «Chiama» is always offered. Without a number it opens the
+// number window (same frame as Scrivi and Nuova offerta), which saves the
+// number through POST /api/customer-hub/phone and then starts the usual
+// Chiama flow on the re-read card. The old «Aggiungi telefono» tile is gone.
+const phoneWindow = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-phone') === 'open') ?? null;
+const numberField = (mount) => mount.findAll('input').find((node) => node.getAttribute('name') === 'call-number') ?? null;
+const windowError = (mount) => phoneWindow(mount)?.findAll('p').find((node) => node.getAttribute('class') === 'field-error') ?? null;
 
-test('105563eea902: Aggiungi telefono saves the number and the card re-reads the server', async () => {
+test('Dan 11/11: without a phone Chiama is offered and opens the number window, never a dead tile', async () => {
   const client = stubClient();
   const mount = await renderCard(client);
-  button(mount, 'add-phone').listeners.click[0]();
-  const input = mount.findAll('input')[0];
-  assert.ok(input, 'the phone panel opens an input');
-  input.value = '+393331234567';
-  await button(mount, 'save-phone').listeners.click[0]();
+  const call = button(mount, 'call-customer');
+  assert.ok(call, 'Chiama is offered without a number');
+  assert.equal(button(mount, 'add-phone'), null, 'no separate Aggiungi telefono tile');
+  const grid = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-actions');
+  assert.ok(!grid.textContent.includes('Nessun telefono collegato'), 'no dead «no phone» label in the grid');
+  assert.equal(grid.findAll('span').filter((node) => node.getAttribute('class') === 'bo-scheda-disabled'
+    && node.textContent.includes('telefono')).length, 0, 'no disabled phone label among the tiles');
+  call.listeners.click[0]();
+  const win = phoneWindow(mount);
+  assert.ok(win, 'the number window opens');
+  assert.equal(win.getAttribute('role'), 'dialog');
+  assert.ok(win.findAll('div').some((node) => node.getAttribute('class') === 'bo-composer-head'),
+    'the window has the scheda window head like Scrivi and Nuova offerta');
+  assert.ok(win.textContent.includes('Guido Presti'), 'the head names the customer');
+  assert.ok(numberField(mount), 'a field for the new number');
+  assert.equal(client.posts.length, 0, 'opening the window writes nothing');
+});
+
+test('Dan 11/11: a new number is saved on the contact, then the call starts on the re-read card', async () => {
+  const client = stubClient({ connectors: [] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '333 123 4567';
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
   assert.equal(client.posts.length, 1);
   assert.equal(client.posts[0].path, '/api/customer-hub/phone');
   assert.deepEqual(
     { resource: client.posts[0].body.resource, id: client.posts[0].body.id, phone: client.posts[0].body.phone },
     { resource: 'contact', id: 'c1', phone: '+393331234567' },
+    'the Italian number is saved in the international form',
   );
-  assert.ok(mount.textContent.includes('+393331234567'), 'the saved number is the re-read server value');
-  assert.ok(button(mount, 'call-customer'), 'with a number the card offers Chiama');
+  assert.equal(phoneWindow(mount), null, 'the number window closes');
+  assert.ok(mount.textContent.includes('Nessun connettore voce collegato'), 'the usual Chiama flow starts');
+  const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
+  assert.ok(String(fallback?.getAttribute('href')).startsWith('tel:+393331234567'), 'it calls the saved number');
+  assert.equal(button(mount, 'call-customer').getAttribute('title'), 'Chiama +393331234567',
+    'the card now holds the server number');
 });
 
-test('105563eea902: an empty number never posts, a refused one stays Italian', async () => {
-  const emptyClient = stubClient();
-  const emptyMount = await renderCard(emptyClient);
-  button(emptyMount, 'add-phone').listeners.click[0]();
-  await button(emptyMount, 'save-phone').listeners.click[0]();
-  assert.equal(emptyClient.posts.length, 0, 'nothing is sent without a number');
-  assert.ok(emptyMount.textContent.includes('Scrivi il numero prima di salvarlo.'));
+test('Dan 11/11: a number saved while another customer takes the screen never calls on that one', async () => {
+  const base = stubClient({ connectors: [] });
+  let gate = null;
+  let openGate = () => {};
+  const client = {
+    ...base,
+    async request(path, opts = {}) {
+      if (path === '/api/customer-hub/card/contact/c2') {
+        return { ...CARD_NO_PHONE, subject: { resource: 'contact', id: 'c2' }, name: 'Altra Persona' };
+      }
+      if (gate !== null && path === '/api/customer-hub/card/contact/c1') await gate;
+      return base.request(path, opts);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const toasts = [];
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: (text) => toasts.push(text) });
+  await view.renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '+393331234567';
+  // The re-read of c1 after the save waits; meanwhile c2 takes the screen.
+  gate = new Promise((resolve) => { openGate = resolve; });
+  const saving = button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  assert.equal(base.posts.length, 1, 'the number is saved on c1');
+  await view.renderCard('contact', 'c2');
+  openGate();
+  await saving;
+  await flush();
+  assert.ok(mount.textContent.includes('Altra Persona'), 'the other customer is on screen');
+  assert.ok(!mount.textContent.includes('Nessun connettore voce collegato'), 'no call panel opens on the other customer');
+  assert.ok(!mount.findAll('a').some((node) => node.getAttribute('data-action') === 'call-fallback'));
+  assert.ok(!toasts.some((text) => text.includes('non lo mostra ancora')), 'no stray notice either');
+});
 
-  const refused = stubClient({
-    onPost: { phone: () => { throw Object.assign(new Error('held'), { status: 409, code: 'PHONE_ALREADY_HELD' }); } },
+test('Dan 11/11: an empty or malformed number never posts and says why in plain words', async () => {
+  const client = stubClient();
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await button(mount, 'call-with-number').listeners.click[0]();
+  assert.equal(windowError(mount).textContent, 'Scrivi il numero prima di chiamare.');
+  for (const typed of ['333 12', 'abc', '+0 12345678', '393331234567']) {
+    numberField(mount).value = typed;
+    await button(mount, 'call-with-number').listeners.click[0]();
+    assert.equal(windowError(mount).textContent, NUMBER_FORMAT_HINT, `«${typed}» is refused before any request`);
+    assert.equal(numberField(mount).value, typed, 'the typed number stays for the correction');
+  }
+  assert.equal(client.posts.length, 0, 'nothing is sent');
+  // Enter in the field submits like the button.
+  numberField(mount).value = '+39 02 1234 567';
+  numberField(mount).dispatch('keydown', { key: 'Enter', preventDefault() {} });
+  await flush();
+  assert.equal(client.posts[0]?.body.phone, '+39021234567', 'Enter saves the valid number');
+});
+
+test('Dan 11/11: Annulla and Escape close the number window with no effect', async () => {
+  const client = stubClient();
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '+393331234567';
+  button(mount, 'cancel-phone').listeners.click[0]();
+  assert.equal(phoneWindow(mount), null, 'Annulla closes it');
+  button(mount, 'call-customer').listeners.click[0]();
+  phoneWindow(mount).dispatch('keydown', { key: 'Escape' });
+  assert.equal(phoneWindow(mount), null, 'Escape closes it');
+  assert.equal(client.posts.length, 0, 'nothing is saved');
+});
+
+test('Dan 11/11: while the number is saved the button waits («Salvo…») and a second click sends nothing', async () => {
+  let release;
+  const client = stubClient({
+    onPost: {
+      phone: (body) => new Promise((resolve) => {
+        release = () => resolve({ outcome: 'linked', system: 'phone', externalId: body.phone });
+      }),
+    },
   });
-  const refusedMount = await renderCard(refused);
-  button(refusedMount, 'add-phone').listeners.click[0]();
-  refusedMount.findAll('input')[0].value = '+393331234567';
-  await button(refusedMount, 'save-phone').listeners.click[0]();
-  assert.ok(refusedMount.textContent.includes('Questo numero è già collegato a un altro cliente'),
-    'the refusal reads its Italian reason, never the code or the English message');
-  assert.ok(!refusedMount.textContent.includes('held'), 'no English server text on screen');
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  numberField(mount).value = '+393331234567';
+  const go = button(mount, 'call-with-number');
+  const first = go.listeners.click[0]();
+  assert.equal(go.textContent, 'Salvo…');
+  assert.equal(go.getAttribute('disabled'), 'disabled');
+  assert.equal(go.getAttribute('aria-busy'), 'true');
+  await go.listeners.click[0]();
+  assert.equal(client.posts.length, 1, 'one save only');
+  release();
+  await first;
+});
+
+test('Dan 11/11: with several known numbers Chiama asks which one; the held one calls without saving', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    connectors: [],
+    profile: {
+      externalIdentities: [
+        { system: 'phone', externalId: '+393331234567' },
+        { system: 'whatsapp', externalId: '+39 345 765 4321' },
+        { system: 'instagram', externalId: 'guido.presti' },
+        { system: 'sms', externalId: 'CRM-1' },
+      ],
+    },
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  const win = phoneWindow(mount);
+  assert.ok(win, 'two numbers: the window asks which one');
+  const choices = win.findAll('label').map((node) => node.getAttribute('data-number'));
+  assert.deepEqual(choices, ['+393331234567', '+393457654321', 'altro'],
+    'the held number first, the WhatsApp one, then «Un altro numero» — never a handle that does not dial');
+  assert.ok(win.textContent.includes('+393457654321 · WhatsApp'));
+  assert.equal(win.findAll('label')[0].getAttribute('data-selected'), 'true', 'the held number is preselected');
+  assert.equal(numberField(mount).getAttribute('hidden'), 'hidden', 'the new-number field waits for «Un altro numero»');
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.length, 0, 'the held number is called without a write');
+  assert.equal(phoneWindow(mount), null);
+  assert.ok(mount.findAll('a').some((node) => String(node.getAttribute('href')).startsWith('tel:+393331234567')));
+});
+
+test('Dan 11/11: picking another known number saves it on the contact before calling', async () => {
+  const client = stubClient({
+    card: CARD_WITH_PHONE,
+    connectors: [],
+    profile: { externalIdentities: [{ system: 'whatsapp', externalId: '+393457654321' }] },
+  });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  const other = phoneWindow(mount).findAll('label').find((node) => node.getAttribute('data-number') === '+393457654321');
+  other.findAll('input')[0].dispatch('change');
+  assert.equal(other.getAttribute('data-selected'), 'true');
+  await button(mount, 'call-with-number').listeners.click[0]();
+  await flush();
+  assert.equal(client.posts.length, 1);
+  assert.equal(client.posts[0].body.phone, '+393457654321');
+  assert.ok(mount.findAll('a').some((node) => String(node.getAttribute('href')).startsWith('tel:+393457654321')),
+    'the call starts on the number the card now holds');
+});
+
+test('Dan 11/11: «Un altro numero» shows the field; a single held number still calls at once', async () => {
+  const several = stubClient({
+    card: CARD_WITH_PHONE,
+    profile: { externalIdentities: [{ system: 'whatsapp', externalId: '+393457654321' }] },
+  });
+  const mount = await renderCard(several);
+  button(mount, 'call-customer').listeners.click[0]();
+  const other = phoneWindow(mount).findAll('label').find((node) => node.getAttribute('data-number') === 'altro');
+  other.findAll('input')[0].dispatch('change');
+  assert.equal(numberField(mount).getAttribute('hidden'), null, 'the field shows');
+
+  const single = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const singleMount = await renderCard(single);
+  button(singleMount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.equal(phoneWindow(singleMount), null, 'one number: no question');
+  assert.ok(singleMount.textContent.includes('Nessun connettore voce collegato'), 'the call flow starts as before');
 });
 
 /**
  * Pilot #426: POST /bo/api/customer-hub/phone answers 400/404/409 with an
- * Italian sentence. The panel reads that sentence (production 07/11 it
- * always said «Numero non salvato…»), keeps the typed number, and keeps the
- * generic retry line for anything else.
+ * Italian sentence. The window reads that sentence, keeps the typed
+ * number, and keeps the generic retry line for anything else.
  */
 const refusedWith = async (failure, typed = '+393331234567') => {
   const client = stubClient({ onPost: { phone: () => { throw failure; } } });
   const mount = await renderCard(client);
-  button(mount, 'add-phone').listeners.click[0]();
-  const input = mount.findAll('input')[0];
+  button(mount, 'call-customer').listeners.click[0]();
+  const input = numberField(mount);
   input.value = typed;
-  await button(mount, 'save-phone').listeners.click[0]();
-  const error = mount.findAll('p').find((node) => node.getAttribute('class') === 'field-error');
-  return { client, mount, input, error };
+  await button(mount, 'call-with-number').listeners.click[0]();
+  return { client, mount, input, error: windowError(mount) };
 };
 
 const failure = (status, code, message) => Object.assign(new Error(message), { status, code });
 
-test('Aggiungi telefono: a 409 shows the server reason and keeps the typed number', async () => {
-  const { error, input, client } = await refusedWith(
+test('Chiama senza numero: a 409 shows the server reason and keeps the typed number', async () => {
+  const { error, input, client, mount } = await refusedWith(
     failure(409, 'PHONE_ALREADY_HELD', 'Questo numero è già collegato a un altro cliente'));
   assert.equal(client.posts.length, 1);
   assert.equal(error.textContent, 'Questo numero è già collegato a un altro cliente');
   assert.equal(input.value, '+393331234567', 'the typed number stays for the correction');
+  assert.ok(phoneWindow(mount), 'the window stays open');
+  assert.equal(button(mount, 'call-with-number').getAttribute('disabled'), null, 'the button is usable again');
+  assert.equal(button(mount, 'call-with-number').textContent, 'Chiama');
 });
 
-test('Aggiungi telefono: a 400 shows the server format hint', async () => {
+test('Chiama senza numero: a 400 shows the server format hint', async () => {
   const message = 'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567';
-  const { error, input } = await refusedWith(failure(400, 'VALIDATION_ERROR', message), '333 12');
+  const { error } = await refusedWith(failure(400, 'VALIDATION_ERROR', message));
   assert.equal(error.textContent, message);
-  assert.equal(input.value, '333 12', 'the typed number stays for the correction');
 });
 
-test('Aggiungi telefono: a 404 says the customer is gone; an English or generic message reads our Italian', async () => {
+test('Chiama senza numero: a 404 says the customer is gone; an English or generic message reads our Italian', async () => {
   const gone = await refusedWith(failure(404, 'PHONE_SUBJECT_NOT_FOUND', 'Il cliente non è più in questo spazio: ricarica la scheda'));
   assert.equal(gone.error.textContent, 'Il cliente non è più in questo spazio: ricarica la scheda');
   const english = await refusedWith(failure(400, 'VALIDATION_ERROR', 'phone must be E.164'));
@@ -174,12 +345,35 @@ test('Aggiungi telefono: a 404 says the customer is gone; an English or generic 
     'Numero non valido: scrivilo in formato internazionale, per esempio +393331234567');
 });
 
-test('Aggiungi telefono: unknown and 5xx failures keep the generic retry line', async () => {
+test('Chiama senza numero: unknown and 5xx failures keep the generic retry line', async () => {
   const down = await refusedWith(failure(503, 'BO_BRIDGE_NOT_CONFIGURED', 'Scrittura del pannello rifiutata'));
   assert.equal(down.error.textContent, 'Numero non salvato. Riprova più tardi.');
   const network = await refusedWith(new Error('Failed to fetch'));
   assert.equal(network.error.textContent, 'Numero non salvato. Riprova più tardi.');
   assert.equal(network.input.value, '+393331234567');
+});
+
+test('dialableNumber: international and Italian forms, nothing guessed', () => {
+  assert.equal(dialableNumber('+39 333 123 4567'), '+393331234567');
+  assert.equal(dialableNumber('0039 333-123-4567'), '+393331234567');
+  assert.equal(dialableNumber('333 1234567'), '+393331234567');
+  assert.equal(dialableNumber('(02) 1234.567'), '+39021234567');
+  assert.equal(dialableNumber('+44 20 7946 0958'), '+442079460958');
+  for (const bad of ['', '12', '333 12', 'abc', '+0123456789', '393331234567', null, undefined]) {
+    assert.equal(dialableNumber(bad), null, String(bad));
+  }
+});
+
+test('knownNumbers: held first, deduplicated on the dialable form, non-phone systems ignored', () => {
+  const numbers = knownNumbers({
+    held: '+393331234567',
+    identities: [{ system: 'whatsapp', externalId: '+39 333 123 4567' }, { system: 'email', externalId: '+393330000000' }],
+    observed: [{ system: 'sms', externalId: '3457654321' }, { system: 'voice', externalId: null }],
+  });
+  assert.deepEqual(numbers, [
+    { number: '+393331234567', held: true, systems: ['WhatsApp'] },
+    { number: '+393457654321', held: false, systems: ['SMS'] },
+  ]);
 });
 
 test('105563eea902: without a linked voice Chiama says so and falls back to tel:, logging nothing', async () => {
