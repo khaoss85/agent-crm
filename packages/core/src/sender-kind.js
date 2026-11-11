@@ -170,7 +170,7 @@ export function isAutomatedSender(handle, ...labels) {
 
 /**
  * Whether one inbound message is a notification, not a person waiting for
- * a reply (production 11/11, Presti › Da rispondere). A general rule, never
+ * a reply (production 11/11, the pilot inbox). A general rule, never
  * a list of names:
  * - a website contact form is a real person writing: never a notification,
  *   whatever mailbox the form sends from (the form channel, or

@@ -121,7 +121,7 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // read state (no member, no watermark table) carry unreadCount null and
   // never match — the view reads empty, never everybody.
   { id: 'da-leggere', label: 'Da leggere', filters: Object.freeze({ daLeggere: true }) },
-  // «Da rispondere» (backlog:c2bf6b206d96, MVP Presti): customers with a
+  // «Da rispondere» (backlog:c2bf6b206d96, pilot MVP): customers with a
   // conversation whose last message is a person's, never answered after —
   // notifications (core/sender-kind.js) never wait. Newest waiting first.
   { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
