@@ -1073,7 +1073,7 @@ export function testJobs(
  */
 export function runTestShards(
   /** @type {string[]} */ tests,
-  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void }} */ options,
 ) {
   const jobs = testJobs(tests, options.parts);
   const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
@@ -1097,15 +1097,27 @@ export function runTestShards(
     /** @type {string[]} */
     const failedFiles = [];
     let settled = false;
+    // Assigned below once the bound is armed. Declared first so a timer
+    // that fires synchronously (an injected one may) finds a callable
+    // cancel instead of a temporal-dead-zone ReferenceError.
+    /** @type {() => void} */
+    let cancelTimer = () => {};
     const settle = (
       /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }} */ result,
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cancelTimer();
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
+    // when the bound fires — e.g. once a given file has finished — instead
+    // of racing a wall-clock second against the machine's load.
+    const startTimer = options.startTimer ?? ((fire, ms) => {
+      const handle = setTimeout(fire, ms);
+      return () => clearTimeout(handle);
+    });
+    const cancel = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1123,6 +1135,8 @@ export function runTestShards(
         failedFiles: [...failedFiles],
       });
     }, options.timeoutSec * 1000);
+    // Fired already (settled): nothing left to cancel later, cancel now.
+    if (settled) cancel(); else cancelTimer = cancel;
     const startNext = (/** @type {number} */ part) => {
       const tag = `touched ${part + 1}/${parts}`;
       if (settled) return;
@@ -1189,6 +1203,12 @@ export function runTestShards(
         if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+        try {
+          options.onJobDone?.(files, status);
+        } catch (error) {
+          // An observer must never stall its part: log and keep draining.
+          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        }
         startNext(part);
       });
     };

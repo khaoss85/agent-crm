@@ -895,18 +895,27 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
    */
   function renderManualPanel() {
     const form = state.creating;
+    // backlog:c6759700e359: each field reads its own label above it (the
+    // system ui-field-row + ui-label), tied by for/id — never a label text
+    // beside the neighbouring menu, never a field without one.
+    const fieldRow = (text, id, control, wrap = control) => {
+      const row = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', text);
+      label.setAttribute('for', id);
+      control.setAttribute('id', id);
+      row.appendChild(label);
+      row.appendChild(wrap);
+      return row;
+    };
     const panel = el(documentNode, 'section', 'bo-seq-panel');
     panel.appendChild(el(documentNode, 'h3', undefined, 'Nuova sequenza'));
     if (form.error !== '') panel.appendChild(el(documentNode, 'p', 'bo-seq-create-error', form.error));
-    const nameLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Nome');
     const name = el(documentNode, 'input', 'ui-field', undefined);
     name.setAttribute('type', 'text');
     name.setAttribute('name', 'seq-name');
     name.value = form.name;
     name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
-    nameLabel.appendChild(name);
-    panel.appendChild(nameLabel);
-    const triggerLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Quando parte');
+    panel.appendChild(fieldRow('Nome', 'bo-seq-new-name', name));
     const triggerWrap = uiSelect(documentNode, {
       name: 'seq-trigger',
       value: form.trigger,
@@ -914,11 +923,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     });
     const trigger = triggerWrap.querySelector('select');
     if (trigger) trigger.addEventListener('change', () => { form.trigger = String(trigger.value ?? ''); });
-    triggerLabel.appendChild(triggerWrap);
-    panel.appendChild(triggerLabel);
+    panel.appendChild(trigger ? fieldRow('Quando parte', 'bo-seq-new-trigger', trigger, triggerWrap) : triggerWrap);
     panel.appendChild(el(documentNode, 'h4', undefined, 'Passi'));
     form.steps.forEach((step, index) => {
       const row = el(documentNode, 'div', 'bo-seq-step-edit');
+      row.appendChild(el(documentNode, 'p', 'bo-seq-step-title', `Passo ${index + 1}`));
       const channelWrap = uiSelect(documentNode, {
         name: `seq-step-${index}-channel`,
         value: step.channel,
@@ -929,11 +938,10 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         channel.setAttribute('aria-label', `Passo ${index + 1}: canale`);
         channel.addEventListener('change', () => { step.channel = String(channel.value ?? ''); });
       }
-      row.appendChild(channelWrap);
+      row.appendChild(channel ? fieldRow('Canale', `bo-seq-new-step-${index}-channel`, channel, channelWrap) : channelWrap);
       // The wait reads labelled with its unit: a bare number («0») says
       // nothing about what it counts, so the label names both — attesa in
       // giorni — in plain sight, not only in the aria-label.
-      const waitLabel = el(documentNode, 'label', 'bo-seq-field-label', `Passo ${index + 1}: attesa (giorni)`);
       const wait = el(documentNode, 'input', 'ui-field', undefined);
       wait.setAttribute('type', 'number');
       wait.setAttribute('name', `seq-step-${index}-wait`);
@@ -945,15 +953,14 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         const parsed = Number(String(wait.value ?? ''));
         step.wait = Number.isInteger(parsed) ? parsed : String(wait.value ?? '');
       });
-      waitLabel.appendChild(wait);
-      row.appendChild(waitLabel);
+      row.appendChild(fieldRow('Attesa (giorni)', `bo-seq-new-step-${index}-wait`, wait));
       const template = el(documentNode, 'input', 'ui-field', undefined);
       template.setAttribute('type', 'text');
       template.setAttribute('name', `seq-step-${index}-template`);
       template.setAttribute('aria-label', `Passo ${index + 1}: nome del messaggio`);
       template.value = step.template;
       template.addEventListener('input', () => { step.template = String(template.value ?? ''); });
-      row.appendChild(template);
+      row.appendChild(fieldRow('Messaggio', `bo-seq-new-step-${index}-template`, template));
       if (form.steps.length > 1) {
         const remove = uiButton(documentNode, {
           variant: 'secondary', label: 'Togli', attrs: { 'data-action': 'step-remove', 'data-index': String(index) },

@@ -47,7 +47,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerStageLabel, personLabel, teamPeople } from './admin-labels.js';
 
@@ -71,6 +71,24 @@ const MONTHS_IT = [
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
 
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Review #789: the sort key of a date column is the same Rome day the cell
+ * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
+ * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
+ * @param {unknown} value
+ */
+export function romeDayKey(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  return ROME_DAY_KEY.format(new Date(time));
+}
+
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
   if (typeof value !== 'string' || !value) return null;
@@ -89,6 +107,22 @@ function dayOf(value) {
 function ownerInitials(name) {
   const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
+ * The customer an offer is for, as the scheda names it (backlog:fb47ab99b6ee):
+ * the contact, else the company — never a placeholder company standing in
+ * for a contact. Null when the offer names nobody.
+ * @param {Record<string, any>} record
+ */
+export function customerOf(record) {
+  const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+  if (contact !== '') return contact;
+  const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  // «Senza azienda» is the scheda's placeholder company, not a customer —
+  // in any case or spacing (review #789).
+  const placeholder = company.toLocaleLowerCase('it').replace(/\s+/g, ' ') === 'senza azienda';
+  return company !== '' && !placeholder ? company : null;
 }
 
 /**
@@ -203,7 +237,7 @@ export function readStageConfirm(panel, target) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean, options?: {action?: {label: string, run: () => void}}) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -227,6 +261,8 @@ export function createPipelineBoard(deps) {
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
+  /** Lista sort (backlog:fb47ab99b6ee): the clicked header and its direction; null = server order. */
+  const listSort = { key: /** @type {string | null} */ (null), dir: /** @type {'asc' | 'desc'} */ ('asc') };
   /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, pipelines: [], records: [] };
   /** The team as people (famiglia F5): names the referente, never its id. */
@@ -334,7 +370,7 @@ export function createPipelineBoard(deps) {
    * read (Riprova) releases it, never a second POST.
    * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
@@ -347,7 +383,24 @@ export function createPipelineBoard(deps) {
       await postMove(pipeline, id, fromStage, toStage, reason);
       settled = true;
       moveLocks.delete(id);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
+      // backlog:7b2203e69826: «Annulla» in the toast, like Trello — only
+      // between working stages: a won or lost offer never reopens (the
+      // server refuses TERMINAL_STAGE), so a closing move offers none.
+      const working = (key) => {
+        const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+        return type === 'open' || type === 'renewal';
+      };
+      const undoable = undo && working(fromStage) && working(toStage);
+      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            void runMove(pipeline, id, toStage, fromStage, undefined, {
+              undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+            });
+          },
+        },
+      } : undefined);
       await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
       return { moved: true };
     } catch (error) {
@@ -519,6 +572,9 @@ export function createPipelineBoard(deps) {
       state.owner = '';
       state.stage = '';
       state.created = '';
+      // Review #789: the Lista sort is part of the board's view state too.
+      listSort.key = null;
+      listSort.dir = 'asc';
     }
     cached = { pipeline, pipelines: composed, records };
     // A fresh read is the truth a queued move waited for: it releases it.
@@ -1091,8 +1147,8 @@ export function createPipelineBoard(deps) {
     // open offer shares one currency (Codex P2 on #467).
     const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
       ? ownerText(riskiest.owner)
-      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
-        ? riskiest.companyName
+      : openCurrencies.size === 1 && customerName(riskiest)
+        ? customerName(riskiest)
         : null;
     if (riskName) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
@@ -1102,27 +1158,50 @@ export function createPipelineBoard(deps) {
 
   /**
    * Read-only Lista table over the same filtered records (moves stay on Kanban).
-   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
-   * state pill with its dot, the value, the stage probability, the expected
-   * close, the creation day and the referente (BO-F6-10 C20). Values are set
-   * through textContent/setAttribute only, never innerHTML.
+   * Headers follow the prototype order (BO-F6-10 C19) plus Cliente
+   * (backlog:fb47ab99b6ee); every row shows the state pill with its dot, the
+   * value, the stage probability, the expected close, the creation day and the
+   * referente by the person's name (BO-F6-10 C20). Dates read «11 nov 2026».
+   * Each header sorts the list (click again to reverse), like a spreadsheet;
+   * the sort lives in the view and survives filters. Values are set through
+   * textContent/setAttribute only, never innerHTML.
    */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
-      headRow.appendChild(el(doc, 'th', { text: label }));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    const stageRank = new Map(pipeline.stages.map((stage, index) => [stage.key, index]));
+    const columns = listColumns(stageOf, stageRank);
+    for (const column of columns) {
+      const active = listSort.key === column.key;
+      const th = el(doc, 'th', {
+        attrs: { 'aria-sort': active ? (listSort.dir === 'asc' ? 'ascending' : 'descending') : 'none', 'data-sort-key': column.key },
+      });
+      const button = el(doc, 'button', {
+        class: 'pipeline-sort',
+        text: column.label,
+        attrs: { type: 'button', 'data-action': 'sort-list', 'data-sort': column.key },
+      });
+      button.addEventListener('click', () => {
+        if (listSort.key === column.key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else {
+          listSort.key = column.key;
+          listSort.dir = 'asc';
+        }
+        renderAll(renderToken);
+      });
+      th.appendChild(button);
+      headRow.appendChild(th);
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
     // card — the name is the link (keyboard, new tab), the whole row clicks.
     const detailed = pipeline.module === 'opportunity';
-    for (const record of visible) {
+    for (const record of sortedForList(visible, columns)) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       const name = String(record.name ?? record.id);
@@ -1150,13 +1229,14 @@ export function createPipelineBoard(deps) {
       } else {
         row.appendChild(el(doc, 'td', { text: name }));
       }
+      row.appendChild(el(doc, 'td', { text: customerOf(record) ?? '—' }));
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—' }));
       body.appendChild(row);
     }
@@ -1168,6 +1248,47 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
+  /**
+   * The Lista columns: label, sort key and the value each one sorts by
+   * (null sorts last whatever the direction, like a spreadsheet's blanks).
+   * @param {Map<string, any>} stageOf @param {Map<string, number>} stageRank
+   */
+  function listColumns(stageOf, stageRank) {
+    const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim().toLocaleLowerCase('it') : null);
+    return [
+      { key: 'name', label: 'Offerta', value: (record) => text(record.name) },
+      { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
+      { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
+      { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
+      { key: 'probability', label: 'Probabilità', value: (record) => stageProbability(stageOf.get(record.pipelineStage)) },
+      { key: 'close', label: 'Chiusura', value: (record) => romeDayKey(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => romeDayKey(record.createdAt) },
+      {
+        key: 'owner', label: 'Referente',
+        value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
+      },
+    ];
+  }
+
+  /** The visible records in the chosen Lista order; the server order without a sort. */
+  function sortedForList(visible, columns) {
+    const column = columns.find((candidate) => candidate.key === listSort.key);
+    if (!column) return visible;
+    const sign = listSort.dir === 'desc' ? -1 : 1;
+    return visible
+      .map((record, index) => ({ record, index, value: column.value(record) }))
+      .sort((left, right) => {
+        if (left.value === null && right.value === null) return left.index - right.index;
+        if (left.value === null) return 1;
+        if (right.value === null) return -1;
+        const order = typeof left.value === 'number' && typeof right.value === 'number'
+          ? left.value - right.value
+          : String(left.value).localeCompare(String(right.value), 'it');
+        return order === 0 ? left.index - right.index : sign * order;
+      })
+      .map((entry) => entry.record);
+  }
+
   /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
   function renderStagePill(stage, stageKey) {
     const pill = el(doc, 'span', { class: 'pill' });
@@ -1176,11 +1297,16 @@ export function createPipelineBoard(deps) {
     return pill;
   }
 
+  /** A stage's probability when it is a real percentage (0-100), else null: one rule for the cell and its sort. */
+  function stageProbability(stage) {
+    const probability = stage?.probability;
+    return typeof probability === 'number' && probability >= 0 && probability <= 100 ? probability : null;
+  }
+
   /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
   function probabilityText(stage) {
-    const probability = stage?.probability;
-    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
-    return `${probability}%`;
+    const probability = stageProbability(stage);
+    return probability === null ? '—' : `${probability}%`;
   }
 
   /**
@@ -1296,15 +1422,20 @@ export function createPipelineBoard(deps) {
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-    card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
+    // backlog:7b2203e69826: the customer the offer is for — the contact,
+    // else the company — never «Senza azienda».
+    card.appendChild(el(doc, 'p', { class: 'card-company', text: customerName(record) ?? '—' }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
+      // backlog:7b2203e69826: the initials name the person — on hover and
+      // for a screen reader («Referente: Guido Presti»).
+      const who = `Referente: ${ownerText(record.owner)}`;
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
         text: ownerInitials(ownerText(record.owner)),
-        attrs: { title: ownerText(record.owner) },
+        attrs: { title: who, 'aria-label': who },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
@@ -1352,6 +1483,18 @@ export function createPipelineBoard(deps) {
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
+      // backlog:7b2203e69826: the whole card opens the panel, like a Trello
+      // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
+      // click, and a click that ends a text selection stays on the board.
+      card.setAttribute('data-openable', 'true');
+      card.addEventListener('click', (event) => {
+        const target = event?.target ?? null;
+        if (target && typeof target.closest === 'function'
+          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+        const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+        if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+        go();
+      });
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1517,10 +1660,11 @@ export function createPipelineBoard(deps) {
 
   /** The customer's name as the scheda shows it: the contact, else the company. */
   function customerName(record) {
-    for (const value of [record?.contactName, record?.companyName]) {
-      if (typeof value === 'string' && value.trim() !== '') return value.trim();
-    }
-    return null;
+    const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+    if (contact !== '') return contact;
+    const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+    // «Senza azienda» is the scheda's placeholder company, not a customer.
+    return company !== '' && company !== 'Senza azienda' ? company : null;
   }
 
   /**

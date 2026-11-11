@@ -45,8 +45,8 @@ test('sidebar voices are the prototype voices, in Italian', () => {
   const groups = Object.fromEntries(SHELL_ITEMS.map((item) => [item.id, item.group]));
   assert.equal(groups.oggi, 'home');
   for (const id of ['clienti', 'pipeline', 'calendario', 'agenti', 'sequenze']) assert.equal(groups[id], 'native');
-  // backlog:33782ba68747: Agenti take Sequenze's sidebar place; Sequenze
-  // keep their route but no sidebar voice.
+  // backlog:33782ba68747 + backlog:b368bbf992ce: Sequenze stay hidden by
+  // default and get their voice only when the module is composed.
   assert.equal(SHELL_ITEMS.find((item) => item.id === 'sequenze').nav, false);
   assert.notEqual(SHELL_ITEMS.find((item) => item.id === 'agenti').nav, false);
   assert.equal(groups.reporting, 'custom');

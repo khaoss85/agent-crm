@@ -266,6 +266,16 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .pipeline-table th { font-size: 11px; color: var(--dim); }
+/* backlog:fb47ab99b6ee: ogni intestazione della Lista ordina; la freccia dice
+   quale colonna e in che verso, il resto resta un'etichetta grigia. */
+.pipeline-table th .pipeline-sort.ui-btn { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; font-weight: 700; letter-spacing: inherit; text-transform: inherit; cursor: pointer; transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:hover { color: var(--ink); transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pipeline-table th .pipeline-sort.ui-btn::after { content: "↕"; opacity: .35; font-size: 10px; }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn::after { content: "↑"; opacity: 1; }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn::after { content: "↓"; opacity: 1; }
 .pipeline-table tr[data-openable="true"] { cursor: pointer; transition: background-color .12s ease; }
 .pipeline-table tbody tr[data-openable="true"]:hover { background: var(--surface-soft); }
 .pipeline-row-link { color: inherit; font-weight: 600; text-decoration: none; }
@@ -596,6 +606,19 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   font-family: var(--mono); font-size: 11px; color: var(--muted);
   border: none; border-radius: 6px; padding: 3px 7px; background: var(--surface-soft);
 }
+/* backlog:be99004b06e4: the ⌘K results under the bar — the add-menu card
+ * (.ui-add-menu) at the bar's width: groups, rows, the ask row last. */
+.bo-ai { position: relative; }
+.bo-ai .bo-cmdk { position: absolute; top: calc(100% + 6px); left: 0; right: 0; width: auto; max-width: none; max-height: min(70vh, 460px); overflow-y: auto; z-index: 40; }
+.bo-cmdk-group { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); }
+.bo-cmdk-status { margin: 6px 10px; font-size: 12px; color: var(--muted); }
+.bo-cmdk-row, .bo-cmdk-row.ui-btn { display: flex; align-items: baseline; gap: 8px; width: 100%; min-height: 0; height: auto; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; justify-content: flex-start; }
+.bo-cmdk-row:hover, .bo-cmdk-row[aria-selected="true"] { background: var(--surface-soft); transform: none; }
+.bo-cmdk-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-cmdk-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--muted); }
+.bo-cmdk-ask { margin-top: 4px; border-top: 1px solid var(--line-soft); border-radius: 0 0 8px 8px; color: var(--agent-ink); }
+.bo-cmdk-ask:hover, .bo-cmdk-ask[aria-selected="true"] { background: var(--agent-card); }
+.bo-cmdk-spark { color: var(--agent); flex: none; }
 .bo-kicker { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--accent); text-transform: uppercase; }
 /* The sidebar controls are flat like the prototype: the ui-btn defaults
  * (border, surface fill) would box them, so these win by specificity. */
@@ -662,7 +685,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -745,7 +772,9 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
@@ -949,8 +978,18 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-person-name { margin: 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .bo-seq-person-step { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .bo-seq-person-status { margin: 0; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--data-soft); color: var(--data-ink); }
+/* backlog:c6759700e359: Nuova sequenza — each label above its own field;
+ * a step names itself once, then Canale · Attesa · Messaggio in a row. */
+.bo-seq-panel .bo-seq-field { margin-bottom: 14px; }
+.bo-seq-panel .bo-seq-field .ui-label { margin-bottom: 0; }
+.bo-seq-panel .bo-seq-field .ui-select { display: flex; }
+.bo-seq-step-edit { display: grid; grid-template-columns: minmax(0, 1fr) 130px minmax(0, 2fr) auto; gap: 0 12px; align-items: end; margin-bottom: 6px; }
+.bo-seq-step-title { grid-column: 1 / -1; margin: 6px 0 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.bo-seq-step-edit > .ui-btn { margin-bottom: 14px; }
 
 @media (max-width: 700px) {
+  .bo-seq-step-edit { grid-template-columns: minmax(0, 1fr); }
+  .bo-seq-step-edit > .ui-btn { justify-self: start; }
   .bo-seq-btns button { flex: 1; }
   .bo-seq-left { max-width: none; }
   .bo-seq-step { grid-template-columns: 52px 34px minmax(0, 1fr); gap: 8px; }
@@ -1460,6 +1499,26 @@ select.bo-spazi-input { flex: none; }
 .cal-pop .cal-manual .actions, .cal-pop .cal-manual .cal-form-actions { margin-top: 4px; }
 .cal-pop .ui-search, .cal-pop .ui-select { display: flex; width: 100%; }
 .cal-pop .ui-search .ui-search-input { padding-left: 36px; }
+/* The event popover (Dan 11/11, like Google Calendar and Outlook): actions
+ * on top, a larger title with the event colour square, then when, customer,
+ * person, note and origin. Placed beside the event by eventPopoverPlacement. */
+.cal-event-pop { padding: 10px 18px 16px; max-height: calc(100vh - 16px); overflow-y: auto; box-sizing: border-box; }
+.cal-event-pop:focus { outline: none; }
+.cal-event-pop:focus-visible { box-shadow: 0 24px 60px rgba(23, 25, 18, .18), 0 0 0 1px var(--ink); }
+.cal-pop-tools { display: flex; justify-content: flex-end; gap: 4px; margin: 0 -8px 4px 0; }
+.cal-pop-tools .cal-pop-tool { display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: none;
+  border-radius: 8px; background: transparent; color: var(--muted); line-height: 1; box-shadow: none; cursor: pointer; }
+.cal-pop-tools .cal-pop-tool:hover, .cal-pop-tools .cal-pop-tool[aria-expanded="true"] { background: var(--surface-soft); color: var(--ink); }
+.cal-event-pop .cal-detail-title { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 4px; font-size: 20px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
+.cal-swatch { flex: none; width: 14px; height: 14px; margin-top: 5px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .12); }
+.cal-pop-when { margin: 0 0 12px 24px; font-size: 14px; color: var(--muted); }
+.cal-event-pop .cal-move-note { margin: 0 0 10px 24px; }
+.cal-event-pop .cal-move { margin: 0 0 12px; }
+.cal-pop-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 24px; font-size: 14px; color: var(--ink); }
+.cal-pop-link { color: var(--ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.cal-pop-person .cal-avatar { min-width: 24px; height: 24px; line-height: 24px; color: var(--ink); }
+.cal-pop-note { color: var(--muted); }
+.cal-event-pop .cal-sync { margin-left: 24px; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
@@ -1490,12 +1549,11 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
   /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
-   * detail, «Fissa con una frase», the week, Team, the manual form, online
+   * «Fissa con una frase», the week, Team, the manual form, online
    * booking — so the grid is not pushed under every rail card. The rail
    * dissolves into the column and each card takes its place by order. */
   .cal-layout { display: flex; flex-direction: column; gap: 14px; }
   .cal-layout > .cal-rail { display: contents; }
-  .cal-rail > [data-role="event-detail"] { order: 1; }
   .cal-rail > .cal-ai { order: 2; }
   .cal-layout > .cal-main { order: 3; }
   .cal-rail > .cal-team { order: 4; }
@@ -2057,6 +2115,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 /* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
    card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+/* backlog:7b2203e69826: tutta la card apre il pannello; il toast ha «Annulla». */
+.pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+.pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
+.ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
+.ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
@@ -2392,7 +2455,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* Assistente (05/11): domanda della barra in testa alla colonna, nota di fondo con margine. */
 .bo-assistant-asked { display: flex; flex-direction: column; gap: 4px; align-self: flex-end; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: var(--surface); }
 .bo-assistant-asked-text { margin: 0; font-size: 14px; line-height: 1.45; }
-.bo-assistant-asked-note { margin: 0; font-size: 11.5px; line-height: 1.4; opacity: .75; }
+/* backlog:1968c3320cd3: the system reply is its own bubble, on the
+ * assistant's side, like the answer card. */
+.bo-assistant-reply { margin: 0; align-self: flex-start; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--agent-card); border: 1px solid var(--agent-line); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.bo-assistant-foot .bo-assistant-source-link { margin-left: 6px; }
 .bo-assistant .bo-assistant-foot { margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-assistant-draft.bo-assistant-foot { padding-top: 0; border-top: 0; color: var(--ink); font-size: 13px; }
 

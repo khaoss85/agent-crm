@@ -132,6 +132,12 @@ async function selectEvent(mount, id) {
 }
 
 function moveForm(mount) {
+  // Dan 11/11: the form opens from the popover's «Modifica o sposta» icon.
+  if (!mount.querySelector('div[data-role="move-form"]')) {
+    const edit = mount.querySelector('button[data-action="event-edit"]');
+    assert.ok(edit, 'the popover carries «Modifica o sposta»');
+    edit.dispatch('click');
+  }
   const form = mount.querySelector('div[data-role="move-form"]');
   assert.ok(form, 'the Sposta form paints beside the selected event');
   return form;

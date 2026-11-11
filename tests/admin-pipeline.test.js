@@ -486,7 +486,7 @@ test('Lista view renders the same filtered records as a read-only table', async 
   assert.equal(rows.length, 5, 'all placed records are listed');
   assert.ok(rows[0].textContent.includes('Discovery'), 'stage renders as its label');
   assert.ok(rows[0].textContent.includes('Alice'), 'referente is visible');
-  assert.ok(rows[0].textContent.includes('2026-11-01'), 'expected close renders as a day');
+  assert.ok(rows[0].textContent.includes('1 nov 2026'), 'expected close renders as an Italian day');
 
   const kanbanButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban');
   kanbanButton.dispatch('click');
@@ -1069,26 +1069,27 @@ test('pipeline lista follows the prototype: headers order, pill, probability, da
   const headers = list.findAll('th').map((node) => node.textContent);
   assert.deepEqual(
     headers,
-    ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente'],
-    'C19: lista headers follow the prototype order',
+    ['Offerta', 'Cliente', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente'],
+    'C19: lista headers follow the prototype order, with Cliente after the offer (backlog:fb47ab99b6ee)',
   );
 
   // C20: one row carries the state pill with its dot, value, probability,
   // close day, creation day and referente.
   const row = list.findAll('tr').find((node) => node.getAttribute('data-record') === 'a');
   const cells = row.findAll('td');
-  assert.equal(cells.length, 7, 'one cell per header');
+  assert.equal(cells.length, 8, 'one cell per header');
   assert.ok(cells[0].textContent.includes('Cucina per Giulia'), 'offerta shows the record title');
-  assert.ok(cells[1].textContent.includes('Discovery'), 'stato shows the stage label');
+  assert.equal(cells[1].textContent, 'Rossi', 'cliente shows the customer');
+  assert.ok(cells[2].textContent.includes('Discovery'), 'stato shows the stage label');
   assert.ok(
-    cells[1].findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
+    cells[2].findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
     'stato pill carries its dot hook',
   );
-  assert.ok(cells[2].textContent.includes('27.500') || cells[2].textContent.includes('27,500'), `valore shows the amount (${cells[2].textContent})`);
-  assert.equal(cells[3].textContent, '10%', 'probabilità shows the discovery stage probability');
-  assert.equal(cells[4].textContent, '2026-11-20', 'chiusura shows the expected close day');
-  assert.equal(cells[5].textContent, '2026-10-02', 'creata shows the creation day');
-  assert.ok(cells[6].textContent.includes('Maria'), 'referente shows the owner');
+  assert.ok(cells[3].textContent.includes('27.500') || cells[3].textContent.includes('27,500'), `valore shows the amount (${cells[3].textContent})`);
+  assert.equal(cells[4].textContent, '10%', 'probabilità shows the discovery stage probability');
+  assert.equal(cells[5].textContent, '20 nov 2026', 'chiusura shows the expected close day as a person writes it');
+  assert.equal(cells[6].textContent, '2 ott 2026', 'creata shows the creation day as a person writes it');
+  assert.ok(cells[7].textContent.includes('Maria'), 'referente shows the owner');
 
   // C21: an empty filter shows the exact prototype message.
   const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
@@ -1209,8 +1210,9 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
     .find((n) => n.textContent === ({ a: 'MR', b: 'M', c: 'P' })[id]);
   const cardA = ownerOf('a');
   assert.ok(cardA, 'card a shows the referente initials');
-  assert.equal(cardA.getAttribute('title'), 'Maria Rossi', 'the badge title names the referente');
-  assert.equal(ownerOf('b').getAttribute('title'), 'Maria', 'single-word names read as a name in the title');
+  assert.equal(cardA.getAttribute('title'), 'Referente: Maria Rossi', 'the badge title names the referente');
+  assert.equal(cardA.getAttribute('aria-label'), 'Referente: Maria Rossi', 'and so does its accessible name (backlog:7b2203e69826)');
+  assert.equal(ownerOf('b').getAttribute('title'), 'Referente: Maria', 'single-word names read as a name in the title');
   assert.equal(ownerOf('c').textContent, 'P', 'single-word names badge the first letter');
 
   const closeOf = (id) => mount.findAll('div')

@@ -128,8 +128,12 @@ function leaveForSpaceLogin(target) {
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   // One schema read per open, shared by every view (admin-schema-cache.js).
+  // backlog:e7bdcbcc6864: every rejection names its request, so the log
+  // helpers tell a failed POST from a failed read.
   request(path, options = {}) {
-    return schemaCachedRequest(path, options);
+    return schemaCachedRequest(path, options).catch((error) => {
+      throw tagRequestFailure(error, options.method ?? 'GET', path);
+    });
   },
   async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
@@ -407,12 +411,22 @@ function toggleBusy(element, busy) {
 }
 
 let toastTimer;
-function toast(message, error = false) {
+/**
+ * @param {string} message @param {boolean} [error]
+ * @param {{ action?: { label: string, run: () => void } }} [options] one action
+ *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); the toast
+ *   then stays a little longer so the button can be reached.
+ */
+function toast(message, error = false, options = {}) {
   clearTimeout(toastTimer);
-  elements.toast.textContent = message;
-  elements.toast.classList.toggle('error', error);
+  const hide = () => elements.toast.classList.add('hidden');
+  paintToast(document, elements.toast, message, {
+    error,
+    action: options?.action ?? null,
+    onDone: () => { clearTimeout(toastTimer); hide(); },
+  });
   elements.toast.classList.remove('hidden');
-  toastTimer = setTimeout(() => elements.toast.classList.add('hidden'), 3200);
+  toastTimer = setTimeout(hide, options?.action ? 6000 : 3200);
 }
 
 function escapeHtml(value) {
@@ -469,10 +483,11 @@ import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
+import { paintToast } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -872,6 +887,10 @@ if (boAssistant) {
     notify: (message) => toast(message),
     // backlog:33782ba68747: «@Agente …» in the bar reads this space's agents.
     spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+    // backlog:1968c3320cd3: Esc closes the panel; the titolare is never
+    // told to ask the titolare.
+    role: () => shellUser?.role ?? null,
+    win: window,
   });
 }
 
@@ -913,6 +932,23 @@ if (boSidebar && boTopbar) {
     // they run the closest suggestion instead of being dropped.
     onAiSubmit: (text) => {
       if (assistantPanel) void assistantPanel.open(currentScreenId, undefined, undefined, text);
+    },
+    // backlog:be99004b06e4: ⌘K lists customers and offers while typing,
+    // from the reads Clienti and Pipeline already make — never the AI.
+    commandSearch: {
+      async customers(query) {
+        if (!shellItems.some((item) => item.id === 'clienti' && item.available === true)) return null;
+        const params = new URLSearchParams({ q: query, pageSize: '10' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('spaceId', spaceId);
+        const answer = await moduleClient.request(`/api/customer-data/customers?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
+      async offers() {
+        if (!shellItems.some((item) => item.id === 'pipeline' && item.available === true)) return null;
+        const answer = await moduleClient.request('/api/opportunities?limit=100');
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
     },
     onPickSpace: (id) => {
       shellActiveSpace = id;

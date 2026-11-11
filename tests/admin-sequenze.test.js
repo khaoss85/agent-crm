@@ -833,7 +833,7 @@ test('the wait field reads its label and unit in plain sight', async () => {
   mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('attesa'), 'the wait has a visible label, not only an aria-label');
+  assert.match(text, /attesa/i, 'the wait has a visible label, not only an aria-label');
   assert.ok(text.includes('giorni'), 'the wait names its unit in days');
 });
 
