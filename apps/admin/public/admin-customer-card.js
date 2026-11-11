@@ -2224,7 +2224,9 @@ export function createCustomerCardView(deps) {
         toast,
         // Review #776 (P2): only while this customer is still on screen.
         onBooked: () => {
-          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void renderCard(navCtx.resource, navCtx.id);
+          // backlog:2a214b66fe12: the booking reads in the cronologia
+          // («Prossimo appuntamento»): only the cronologia is read again.
+          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void refreshParts(navCtx.resource, navCtx.id, ['timeline']);
         },
       });
     });
