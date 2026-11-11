@@ -21,12 +21,12 @@
 
 import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
-import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
+import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -36,13 +36,40 @@ import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton,
  */
 let openMenu = null;
 
+/**
+ * The open event popover (Dan 11/11: the event detail opens beside the
+ * event, like Google Calendar and Outlook): one live view at a time, so one
+ * slot is enough. Set while a popover is painted, cleared when it closes or
+ * the view routes away.
+ * @type {{ close: () => void } | null}
+ */
+let openEventPop = null;
+
 /** The document the single outside-click closer is installed on, if any. */
 let outsideInstalledOn = null;
 
 /**
- * Install once per document: a click outside the open menu closes it. The
- * containment walk uses parentNode, so the dependency-free fake DOM used by
- * the unit tests behaves like a real Element. Documents without
+ * True when the click landed in the event popover or on an event block.
+ * Matched by attribute, never by node identity: a click that repaints the
+ * view (the block toggling its selection, a popover button) leaves its
+ * target in the detached old tree, which still carries the same markers.
+ * @param {any} target
+ */
+function insideEventPop(target) {
+  let node = target ?? null;
+  while (node) {
+    const read = typeof node.getAttribute === 'function' ? (name) => node.getAttribute(name) : () => null;
+    if (read('data-role') === 'event-detail' || read('data-event-id') !== null) return true;
+    node = node.parentNode ?? null;
+  }
+  return false;
+}
+
+/**
+ * Install once per document: a click outside the open menu closes it, and
+ * a click outside the event popover (or Esc anywhere) closes the popover.
+ * The containment walk uses parentNode, so the dependency-free fake DOM
+ * used by the unit tests behaves like a real Element. Documents without
  * addEventListener (the fake document) skip the closer; the toggle button,
  * the voices and Escape still work there.
  * @param {any} doc
@@ -51,6 +78,7 @@ function installOutsideCloser(doc) {
   if (outsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
   outsideInstalledOn = doc;
   doc.addEventListener('click', (event) => {
+    if (openEventPop && !insideEventPop(event?.target)) openEventPop.close({ restoreFocus: false });
     const current = openMenu;
     if (!current) return;
     let node = event?.target ?? null;
@@ -60,6 +88,42 @@ function installOutsideCloser(doc) {
     }
     current.close();
   });
+  doc.addEventListener('keydown', (event) => {
+    if ((event?.key === 'Escape' || event?.key === 'Esc') && openEventPop) {
+      // Focus lost to a repaint (on the page body) goes back to the event;
+      // focus the operator put in another control stays there.
+      const active = doc.activeElement ?? null;
+      const lost = active === null || active === doc.body || insideEventPop(active);
+      openEventPop.close({ restoreFocus: lost });
+    }
+  });
+}
+
+/**
+ * Where the event popover sits (Dan 11/11): right of the event, or left of
+ * it when the right side has no room, and never past the screen edges.
+ * Rects are viewport coordinates (getBoundingClientRect); the answer is
+ * relative to `box`, the positioned container the popover is absolute in.
+ * Pure, so the placement is unit-tested without a browser.
+ * @param {{ anchor: {left: number, right: number, top: number}, box: {left: number, top: number},
+ *   width: number, height: number, viewportWidth: number, viewportHeight: number, gap?: number, margin?: number }} input
+ * @returns {{ left: number, top: number, side: 'right' | 'left' }}
+ */
+export function eventPopoverPlacement(input) {
+  const gap = input.gap ?? 12;
+  const margin = input.margin ?? 8;
+  const { anchor, box, width, height, viewportWidth, viewportHeight } = input;
+  const rightStart = anchor.right + gap;
+  const leftStart = anchor.left - gap - width;
+  const fitsRight = rightStart + width <= viewportWidth - margin;
+  const fitsLeft = leftStart >= margin;
+  // Neither side fits whole: the side with more room, clamped on screen.
+  const side = fitsRight || (!fitsLeft && viewportWidth - anchor.right >= anchor.left) ? 'right' : 'left';
+  const maxLeft = Math.max(margin, viewportWidth - margin - width);
+  const left = Math.min(Math.max(side === 'right' ? rightStart : leftStart, margin), maxLeft);
+  const maxTop = Math.max(margin, viewportHeight - margin - height);
+  const top = Math.min(Math.max(anchor.top, margin), maxTop);
+  return { left: Math.round(left - box.left), top: Math.round(top - box.top), side };
 }
 
 /**
@@ -1062,7 +1126,47 @@ export function createCalendarioView(deps) {
     memberToken += 1;
     // A search pending or in flight dies with the route, like the week.
     cancelCustomerSearch();
+    // The popover closer never repaints a screen the operator left.
+    if (openEventPop === eventPopHandle) openEventPop = null;
     trackRetainedDraft();
+  }
+
+  /** This view's popover handle, registered while its popover is painted. */
+  const eventPopHandle = { close: (/** @type {{restoreFocus?: boolean}} */ options = {}) => closeEventPop(options) };
+  /** Painted event blocks by id, so focus returns to the event on close. @type {Map<string, any>} */
+  const paintedEvents = new Map();
+  /** The painted event popover, or null. @type {any} */
+  let paintedPop = null;
+
+  /**
+   * Closes the event popover (×, Esc, a click outside). × and Esc put focus
+   * back on the event it belonged to; a click outside leaves focus where the
+   * operator clicked (a field, a toggle). A view no longer mounted only
+   * drops the handle: the shared mount may already hold another screen.
+   * @param {{restoreFocus?: boolean}} [options]
+   */
+  function closeEventPop({ restoreFocus = true } = {}) {
+    if (openEventPop === eventPopHandle) openEventPop = null;
+    if (state.selectedId === null) return;
+    const id = state.selectedId;
+    state.selectedId = null;
+    state.moveOpen = false;
+    state.moveNote = '';
+    if (mount.querySelector('.cal-wrap') === null) return;
+    renderAll();
+    if (!restoreFocus) return;
+    const block = paintedEvents.get(id);
+    if (block && typeof block.focus === 'function') block.focus();
+  }
+
+  /** True when keyboard focus sits inside the painted event popover. */
+  function popHasFocus() {
+    let node = doc?.activeElement ?? null;
+    while (node) {
+      if (node === paintedPop) return true;
+      node = node.parentNode ?? null;
+    }
+    return false;
   }
 
   /**
@@ -1121,6 +1225,8 @@ export function createCalendarioView(deps) {
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
     moveBusy: false,
+    /** The «Modifica o sposta» form shows in the event popover (Dan 11/11). */
+    moveOpen: false,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -1568,8 +1674,12 @@ export function createCalendarioView(deps) {
 
   function renderAll() {
     const kept = focusedField();
+    // A late repaint (customer name, week) must not drop the operator out
+    // of the popover: Esc and Tab keep working where they were.
+    const keepPop = paintedPop !== null && popHasFocus();
     renderView();
     restoreField(kept);
+    if (keepPop && kept === null && paintedPop && typeof paintedPop.focus === 'function') paintedPop.focus();
   }
 
   function renderView() {
@@ -1587,24 +1697,35 @@ export function createCalendarioView(deps) {
       trackRetainedDraft();
       return;
     }
-    // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
-    // the grid while a block stays selected. Fetta 6 seats the Team toggles
-    // between the detail and the grid they filter; fetta 7 adds the honest
-    // booking card at the rail end (its final left-column home lands with
-    // the responsive pass, fetta 8).
     // Supervisor design pass: the prototype's two columns — a 300 px rail
-    // (selected block, phrase, team, manual form when asked) beside the grid.
+    // (phrase, team, manual form when asked, online booking) beside the
+    // grid. The selected block's detail is a popover over the grid (Dan
+    // 11/11), no longer a rail card.
     const layout = el(doc, 'div', { className: 'cal-layout' });
     const rail = el(doc, 'div', { className: 'cal-rail' });
     const main = el(doc, 'div', { className: 'cal-main' });
+    paintedEvents.clear();
+    paintedPop = null;
     const selected = selectedRow();
-    if (selected) rail.appendChild(renderDetailCard(selected));
-    else state.selectedId = null;
+    if (!selected) {
+      state.selectedId = null;
+      state.moveOpen = false;
+    }
     rail.appendChild(renderAi());
     rail.appendChild(renderTeam());
     if (!state.selection) rail.appendChild(renderManual());
     rail.appendChild(renderBooking());
     main.appendChild(renderWeek());
+    // Dan 11/11: the event detail opens beside the event, like Google
+    // Calendar and Outlook — never only in the rail, which keeps the
+    // phrase, the team and the forms.
+    if (selected) {
+      paintedPop = renderEventPopover(selected);
+      main.appendChild(paintedPop);
+      openEventPop = eventPopHandle;
+    } else if (openEventPop === eventPopHandle) {
+      openEventPop = null;
+    }
     let pop = null;
     if (state.selection) {
       // The form opens beside the chosen block, like a calendar app; × or
@@ -1622,7 +1743,29 @@ export function createCalendarioView(deps) {
     wrap.appendChild(layout);
     mount.appendChild(wrap);
     if (pop) placePopover(main, pop);
+    if (paintedPop) placeEventPopover(main, paintedPop, selected);
     trackRetainedDraft();
+  }
+
+  /** Seats the event popover beside its event: right, or left without room, always on screen. */
+  function placeEventPopover(main, pop, row) {
+    const anchor = paintedEvents.get(String(row?.id ?? ''));
+    if (!anchor || typeof anchor.getBoundingClientRect !== 'function' || typeof main.getBoundingClientRect !== 'function') return;
+    const view = doc?.defaultView ?? null;
+    const viewportWidth = Number(view?.innerWidth) || Number(doc?.documentElement?.clientWidth) || 0;
+    const viewportHeight = Number(view?.innerHeight) || Number(doc?.documentElement?.clientHeight) || 0;
+    if (viewportWidth <= 0 || viewportHeight <= 0) return;
+    const size = typeof pop.getBoundingClientRect === 'function' ? pop.getBoundingClientRect() : null;
+    const placed = eventPopoverPlacement({
+      anchor: anchor.getBoundingClientRect(),
+      box: main.getBoundingClientRect(),
+      width: Number(size?.width) || 340,
+      height: Number(size?.height) || 280,
+      viewportWidth,
+      viewportHeight,
+    });
+    pop.setAttribute('style', `left: ${placed.left}px; top: ${placed.top}px`);
+    pop.setAttribute('data-side', placed.side);
   }
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */
@@ -2272,6 +2415,9 @@ export function createCalendarioView(deps) {
     }
     const id = String(row?.id ?? '');
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
+    // A drag on another event opens its popover folded, never with the
+    // form left open for the previous one.
+    if (state.selectedId !== id) state.moveOpen = false;
     state.selectedId = id !== '' ? id : null;
     if (before.startsAt === startsAt && before.endsAt === endsAt) {
       state.moveNote = '';
@@ -2295,6 +2441,7 @@ export function createCalendarioView(deps) {
         if (typeof moved.endsAt === 'string') row.endsAt = moved.endsAt;
       }
       const day = romeDayKey(row.startsAt);
+      state.moveOpen = false;
       state.moveNote = `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`;
       ok = true;
     } catch (error) {
@@ -2563,6 +2710,7 @@ export function createCalendarioView(deps) {
         attrs: { 'data-role': 'event-resize', 'aria-hidden': 'true', title: 'Allunga o accorcia' },
       }));
     }
+    if (id !== '') paintedEvents.set(id, item);
     item.addEventListener('click', () => {
       if (suppressEventClick) {
         suppressEventClick = false;
@@ -2570,7 +2718,13 @@ export function createCalendarioView(deps) {
       }
       state.selectedId = state.selectedId === id ? null : id;
       state.moveNote = '';
+      state.moveOpen = false;
+      // One popover at a time: an event opens over a slot pick, not beside it.
+      state.selection = null;
       renderAll();
+      // Focus follows the popover in, and back to the event when it closes.
+      if (state.selectedId !== null && paintedPop && typeof paintedPop.focus === 'function') paintedPop.focus();
+      else paintedEvents.get(id)?.focus?.();
     });
     return item;
   }
@@ -2652,72 +2806,125 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * BO-F6-11 fetta 5 (specs/calendario.md C7, C8): the selected-event card —
-   * title, day · time row, participant names, the channel pill and the
-   * customer button. No location paints because team-week rows carry none;
-   * the row names day and time only. The customer name resolves through the
-   * read-only customer profile (the map's own read), falling back to the row
-   * label or id when the profile is unavailable. The WA pill paints only
-   * from the explicit row marker (fetta 4's fail-closed rule) with the
-   * shared channel chip. backlog:29bb3f2c0d64: the other origins come from
-   * the row's source key (originOf) — never "✦ Fissato con l'AI", which the
-   * row cannot prove — and the «↔ Google Calendar» line paints only for
-   * events calendar-sync imported (`gcal:`); a booking made here carries no
-   * sync state, so it gets no «invito inviato» guess. "Apri scheda cliente"
-   * is the dark primary button over the shared customer-card route, only for linked events.
+   * The event popover (Dan 11/11, like Google Calendar and Outlook): it opens
+   * beside the clicked event and replaces the old rail card. On top the
+   * actions — «Modifica o sposta» for a held booking, and × — then the title
+   * with the event's colour square, the day · time row with the full month,
+   * the customer as a link to the scheda, the team person with avatar and
+   * name, the note and the origin. There is no «Annulla appuntamento»: the
+   * appointments package exposes no cancel write over HTTP, so the popover
+   * shows only the actions that exist.
+   *
+   * Kept from the rail card (BO-F6-11 fetta 5, specs/calendario.md C7, C8):
+   * the customer name resolves through the read-only profile (the row label
+   * meanwhile, never an id as a name); the team person is the roster or
+   * typed name, never the opaque subject; the WA pill paints only from the
+   * explicit row marker; the other origins come from the source key
+   * (originOf), never «✦ Fissato con l'AI»; the «↔ Google Calendar» line
+   * only for events calendar-sync imported (`gcal:`).
    * @param {any} row
    */
-  function renderDetailCard(row) {
-    const card = el(doc, 'div', { className: 'panel', attrs: { 'data-role': 'event-detail' } });
-    // backlog:29bb3f2c0d64 (production 08/11): the card title is a card
-    // title, never the 46px page title.
-    const head = el(doc, 'div', { className: 'panel-heading cal-detail-head' });
-    head.appendChild(el(doc, 'h2', { className: 'cal-detail-title', text: titleOf(row) }));
+  function renderEventPopover(row) {
+    const pop = el(doc, 'div', {
+      className: 'cal-pop cal-event-pop',
+      attrs: {
+        'data-role': 'event-detail',
+        role: 'dialog',
+        'aria-labelledby': 'cal-event-pop-title',
+        tabindex: '-1',
+      },
+    });
+    pop.addEventListener?.('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeEventPop();
+    });
+    const tools = el(doc, 'div', { className: 'cal-pop-tools' });
+    if (isMovableAppointment(row)) {
+      const edit = el(doc, 'button', {
+        className: 'icon-button cal-pop-tool',
+        attrs: {
+          type: 'button',
+          'data-action': 'event-edit',
+          'aria-label': 'Modifica o sposta',
+          title: 'Modifica o sposta',
+          'aria-expanded': state.moveOpen ? 'true' : 'false',
+        },
+      });
+      edit.appendChild(uiIcon(doc, 'matita'));
+      edit.addEventListener('click', () => {
+        state.moveOpen = !state.moveOpen;
+        renderAll();
+        const first = state.moveOpen ? paintedPop?.querySelector?.('input[name="move-date"]') : paintedPop;
+        if (first && typeof first.focus === 'function') first.focus();
+      });
+      tools.appendChild(edit);
+    }
     const close = el(doc, 'button', {
-      className: 'small secondary',
-      attrs: { type: 'button', 'aria-label': 'Chiudi dettaglio' },
-      text: '×',
+      className: 'icon-button cal-pop-tool',
+      attrs: { type: 'button', 'aria-label': 'Chiudi', title: 'Chiudi', 'data-action': 'event-close' },
     });
-    close.addEventListener('click', () => {
-      state.selectedId = null;
-      renderAll();
-    });
-    head.appendChild(close);
-    card.appendChild(head);
+    close.appendChild(uiIcon(doc, 'x'));
+    close.addEventListener('click', () => closeEventPop());
+    tools.appendChild(close);
+    pop.appendChild(tools);
+    const tint = `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`;
+    const title = el(doc, 'h2', { className: 'cal-detail-title', attrs: { id: 'cal-event-pop-title' } });
+    title.appendChild(el(doc, 'span', { className: `cal-swatch ${tint}`, attrs: { 'aria-hidden': 'true' } }));
+    title.appendChild(el(doc, 'span', { text: titleOf(row) }));
+    pop.appendChild(title);
     const key = romeDayKey(row?.startsAt);
-    const when = `${key ? `${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}` : '?'} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`;
-    card.appendChild(el(doc, 'p', { text: when }));
+    const day = key ? `${dayName(key)} ${romeLongDay(`${key}T12:00:00Z`) ?? ''}` : '?';
+    pop.appendChild(el(doc, 'p', {
+      className: 'cal-pop-when',
+      text: `${day} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`,
+    }));
     // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
     // refusal, beside the event it belongs to. It clears on the next
     // selection change (the click handler above).
     if (state.moveNote !== '') {
-      card.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'move-note' }, text: state.moveNote }));
+      pop.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'move-note', 'aria-live': 'polite' }, text: state.moveNote }));
     }
-    if (isMovableAppointment(row)) card.appendChild(renderMoveForm(row));
+    if (state.moveOpen && isMovableAppointment(row)) pop.appendChild(renderMoveForm(row));
     const linked = subjectKeyOf(row);
     if (linked && !(linked.key in state.profiles)) {
-      // In flight: the label or id paints meanwhile, and one request serves
+      // In flight: the label paints meanwhile, and one request serves
       // every re-render until it resolves.
       state.profiles[linked.key] = null;
       void loadSubjectName(linked);
     }
     const display = displayNameOf(row, linked);
-    const customer = display ?? (linked ? linked.id : null);
-    // backlog:df55cf25 — the member part is a person name, never the opaque
-    // team subject: the roster person name when known, else the operator's
-    // own typed words, else nothing (a pipe id never paints). The customer
-    // fallback (label, then id as inert text) stays: the card must name whom
-    // the booking is for even without a profile.
+    if (linked) {
+      const route = `#/customer-card/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`;
+      const line = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-customer' } });
+      const link = el(doc, 'a', {
+        className: 'cal-pop-link',
+        // Without a name yet the link says where it goes: an id is not a name.
+        text: display ?? 'Apri scheda cliente',
+        attrs: { href: route, title: 'Apri scheda cliente' },
+      });
+      link.addEventListener('click', (event) => {
+        event?.preventDefault?.();
+        navigate(route);
+      });
+      line.appendChild(link);
+      pop.appendChild(line);
+    } else if (display) {
+      pop.appendChild(el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-customer' }, text: display }));
+    }
+    // backlog:df55cf25 — the team person is a person name, never the opaque
+    // team subject: the roster name when known, else the operator's own
+    // typed words, else nothing (a pipe id or a login never paints).
     const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const participants = [member, customer].filter((part) => typeof part === 'string' && part !== '');
-    if (participants.length > 0) {
-      card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
+    if (typeof member === 'string' && member !== '') {
+      const person = el(doc, 'p', { className: 'cal-pop-row cal-pop-person', attrs: { 'data-role': 'event-member' } });
+      person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
+      person.appendChild(el(doc, 'span', { text: member }));
+      pop.appendChild(person);
     }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
-    if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
+    if (notes !== '') pop.appendChild(el(doc, 'p', { className: 'cal-pop-row cal-pop-note', text: `Nota: ${notes}` }));
     const origin = originOf(row);
     if (origin === 'whatsapp') {
-      const pill = el(doc, 'p');
+      const pill = el(doc, 'p', { className: 'cal-pop-row' });
       pill.appendChild(uiChannelChip(doc, 'WA'));
       // Leading space: the chip and the sentence are sibling inline boxes. A
       // raw id is not a name, so the pill degrades to the nameless sentence
@@ -2725,7 +2932,7 @@ export function createCalendarioView(deps) {
       pill.appendChild(el(doc, 'span', {
         text: display ? ` Prenotato da ${display} su WhatsApp` : ' Prenotato su WhatsApp',
       }));
-      card.appendChild(pill);
+      pop.appendChild(pill);
     } else if (origin !== null) {
       // backlog:29bb3f2c0d64 (C8): the other origins the row proves, in the
       // prototype pill. A booking made here never claims «Fissato con
@@ -2735,20 +2942,16 @@ export function createCalendarioView(deps) {
         link: 'Prenotato dal cliente con il link online',
         calendario: 'Fissato dal calendario',
       }[origin];
-      const pill = el(doc, 'p');
+      const pill = el(doc, 'p', { className: 'cal-pop-row' });
       pill.appendChild(el(doc, 'span', { className: `cal-via cal-via-${origin}`, attrs: { 'data-role': 'event-origin' }, text: words }));
-      card.appendChild(pill);
+      pop.appendChild(pill);
     }
     if (origin === 'google') {
-      // backlog:29bb3f2c0d64 (C8): the «↔ Google Calendar» line, only where
-      // the row proves the link — an event calendar-sync imported. A
-      // booking made here carries no sync evidence on the row, so it stays
-      // without the line (no «invito inviato» guess).
       // Review #678: «collegato» only on positive proof from the profile; an
       // unknown state (profile unavailable or unread) says only where the
       // event came from.
       const connected = state.calendar?.connected;
-      card.appendChild(el(doc, 'p', {
+      pop.appendChild(el(doc, 'p', {
         className: 'cal-sync',
         attrs: { 'data-role': 'event-sync' },
         text: connected === true
@@ -2758,19 +2961,7 @@ export function createCalendarioView(deps) {
             : '↔ Google Calendar · evento importato da Google Calendar',
       }));
     }
-    if (linked) {
-      const open = uiButton(doc, {
-        variant: 'primary',
-        small: true,
-        label: 'Apri scheda cliente',
-        attrs: { type: 'button' },
-      });
-      open.addEventListener('click', () => {
-        navigate(`#/customer-card/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`);
-      });
-      card.appendChild(open);
-    }
-    return card;
+    return pop;
   }
 
   /**
@@ -2805,8 +2996,10 @@ export function createCalendarioView(deps) {
       label: state.moveBusy ? 'Spostamento in corso…' : 'Sposta',
       attrs: { type: 'button', 'data-action': 'move-submit' },
     });
-    if (state.moveBusy) move.setAttribute('disabled', 'true');
-    else {
+    if (state.moveBusy) {
+      move.setAttribute('disabled', 'true');
+      move.setAttribute('aria-busy', 'true');
+    } else {
       move.addEventListener('click', () => {
         void submitMoveForm(row, {
           date: String(inputs['move-date']?.value ?? ''),
