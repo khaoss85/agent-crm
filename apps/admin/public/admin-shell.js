@@ -2,6 +2,7 @@
 
 import { sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { createCommandMenu } from './admin-cmdk.js';
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -438,6 +439,8 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
  *   onAiSubmit?: ((text: string) => void) | null,
+ *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null> } | null,
+ *   schedule?: (fn: () => void, ms: number) => any,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
  */
@@ -454,6 +457,8 @@ export function createShellView({
   onLogout = () => {},
   onPickSpace = () => {},
   onAiSubmit = null,
+  commandSearch = null,
+  schedule = undefined,
   win = null,
 } = {}) {
   const state = {
@@ -736,9 +741,45 @@ export function createShellView({
 
   /** @type {object | null} */
   let aiInput = null;
+  /** @type {any} */
+  let aiForm = null;
+
+  /**
+   * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
+   * shell's own voices and settings areas; customers and offers from the
+   * reads app.js already makes (commandSearch). The AI is the last row.
+   */
+  function commandPages() {
+    const customerData = state.items.some((item) => item.id === 'clienti' && item.available === true);
+    const pages = [];
+    for (const item of state.items) {
+      if (item.available === true && typeof item.route === 'string' && item.route.startsWith('#/')) {
+        pages.push({ label: item.label, href: item.route });
+      }
+    }
+    for (const area of SETTINGS_AREAS) {
+      if (area.id === 'stato-sync' && !customerData) continue;
+      pages.push({ label: area.label, href: area.route, sub: 'Impostazioni' });
+    }
+    pages.push({ label: 'Connettori', href: '#/connettori', sub: 'Impostazioni' });
+    pages.push({ label: 'Profilo', href: '#/profilo' });
+    return pages;
+  }
+
+  const commandMenu = createCommandMenu({
+    doc,
+    pages: commandPages,
+    search: commandSearch,
+    navigate: (href) => go(href),
+    ask: (text) => {
+      if (typeof onAiSubmit === 'function') onAiSubmit(text);
+      else notify('Barra AI: descrivi cosa fare e premi Invio.');
+    },
+    ...(typeof schedule === 'function' ? { schedule, cancel: () => {} } : {}),
+  });
 
   function focusAiEntry() {
-    if (aiInput !== null && typeof aiInput.focus === 'function') aiInput.focus();
+    commandMenu.focus();
   }
 
   function renderTopbar() {
@@ -791,6 +832,8 @@ export function createShellView({
       }
     });
     topbar.appendChild(form);
+    aiForm = form;
+    commandMenu.attach(form, aiInput);
   }
 
   function screenLabelFor(id) {
@@ -848,6 +891,7 @@ export function createShellView({
     // without this the tap that dismisses the menu would also press the
     // button underneath it.
     win.addEventListener('click', (event) => {
+      commandMenu.closeUnlessInside(event?.target ?? null, aiForm);
       if (!state.drawerOpen) return;
       const target = event?.target ?? null;
       if (sidebar.contains(target) || (menuToggle !== null && menuToggle.contains(target))) return;

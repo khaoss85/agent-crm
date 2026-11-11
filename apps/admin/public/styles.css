@@ -596,6 +596,19 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   font-family: var(--mono); font-size: 11px; color: var(--muted);
   border: none; border-radius: 6px; padding: 3px 7px; background: var(--surface-soft);
 }
+/* backlog:be99004b06e4: the ⌘K results under the bar — the add-menu card
+ * (.ui-add-menu) at the bar's width: groups, rows, the ask row last. */
+.bo-ai { position: relative; }
+.bo-ai .bo-cmdk { position: absolute; top: calc(100% + 6px); left: 0; right: 0; width: auto; max-width: none; max-height: min(70vh, 460px); overflow-y: auto; z-index: 40; }
+.bo-cmdk-group { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); }
+.bo-cmdk-status { margin: 6px 10px; font-size: 12px; color: var(--muted); }
+.bo-cmdk-row, .bo-cmdk-row.ui-btn { display: flex; align-items: baseline; gap: 8px; width: 100%; min-height: 0; height: auto; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; justify-content: flex-start; }
+.bo-cmdk-row:hover, .bo-cmdk-row[aria-selected="true"] { background: var(--surface-soft); transform: none; }
+.bo-cmdk-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-cmdk-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--muted); }
+.bo-cmdk-ask { margin-top: 4px; border-top: 1px solid var(--line-soft); border-radius: 0 0 8px 8px; color: var(--agent-ink); }
+.bo-cmdk-ask:hover, .bo-cmdk-ask[aria-selected="true"] { background: var(--agent-card); }
+.bo-cmdk-spark { color: var(--agent); flex: none; }
 .bo-kicker { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--accent); text-transform: uppercase; }
 /* The sidebar controls are flat like the prototype: the ui-btn defaults
  * (border, surface fill) would box them, so these win by specificity. */
