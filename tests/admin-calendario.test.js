@@ -4016,6 +4016,72 @@ test('P1 11/11: a served list that fails never falls back to keys the worker wou
     'without a served list (the framework alone) the catalog rule stays');
 });
 
+// Review Muse giro 1 su #805: a served list is the whole truth.
+async function servedCalendar(servicesAnswer) {
+  const base = stubClient({
+    memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }],
+    catalog: TEST_SPACE_CATALOG,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') {
+        base.calls.push({ path, method: 'GET' });
+        if (servicesAnswer instanceof Error) throw servicesAnswer;
+        return servicesAnswer;
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  return { mount, client };
+}
+
+async function tryPropose(mount, client) {
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  choosePerson(mount, 'sara');
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await flushMany(4);
+  return client.calls.filter((call) => call.path === '/api/appointments/propose' || call.path === '/api/appointments/confirm');
+}
+
+test('review #805: a served list that fails blocks the service field and books nothing, never SKU free text', async () => {
+  const { mount, client } = await servedCalendar(Object.assign(new Error('boom'), { status: 503 }));
+  assert.equal(mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length, 0, 'no free-text service');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.equal(service.getAttribute('disabled'), 'disabled', 'the field is blocked');
+  assert.ok(mount.textContent.includes('I servizi prenotabili non si sono potuti leggere'), 'and says why');
+  assert.deepEqual(await tryPropose(mount, client), [], 'nothing is sent');
+});
+
+test('review #805: a served empty list blocks the field with what to do', async () => {
+  const { mount, client } = await servedCalendar({ services: [] });
+  assert.equal(mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length, 0);
+  assert.ok(mount.textContent.includes('Nessun servizio prenotabile nel listino'));
+  assert.deepEqual(await tryPropose(mount, client), [], 'nothing is sent');
+});
+
+test('review #805: with a served list the week titles and the typed-name mapping know only its keys', async () => {
+  const { mount } = await servedCalendar(PILOT_SERVICES);
+  const service = mount.querySelector('select[name="serviceKey"]');
+  const values = service.findAll('option').map((node) => node.getAttribute('value'));
+  assert.ok(!values.includes('pt') && !values.includes('prova') && !values.includes('pv-0711-b'), 'no SKU key anywhere in the menu');
+  assert.equal(serviceKeyFor('Personal Training', new Map(PILOT_SERVICES.services.map((entry) => [entry.serviceKey, entry.name]))),
+    'Personal Training', 'a catalog product name maps to no served key (the presend check stops it)');
+  assert.equal(serviceKeyFor('PT singola', new Map(PILOT_SERVICES.services.map((entry) => [entry.serviceKey, entry.name]))),
+    'personal-training', 'the served name maps to the served key');
+});
+
 // backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
 // non-EUR single stays out of the menu instead of being mislabeled in euro.
 test('catalogBookingServices drops non-EUR singles the claim could never book', () => {
