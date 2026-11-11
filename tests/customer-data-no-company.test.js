@@ -126,16 +126,19 @@ test('the backoffice hides the flagged placeholder and shows a real company what
   assert.equal(ADMIN_NO_COMPANY_NAME, NO_COMPANY_NAME);
   assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: true } }), null);
   assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: 1 } }), null);
-  // A real company shows — even with the placeholder's own name.
+  // A real company shows — even with the placeholder's own name — as long
+  // as it carries its flag down. A flag-less shape with the reserved name
+  // (stale cache, old server) hides through the name fallback (giro 2).
   for (const company of [
     { name: 'Senza azienda', placeholder: false },
     { name: 'SENZA AZIENDA', placeholder: false },
     { name: 'Palestra Esempio', placeholder: false },
-    { name: 'Senza azienda' },
     { name: 'Palestra Esempio' },
   ]) {
     assert.equal(shownCompanyName({ company }), company.name.trim(), JSON.stringify(company));
   }
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda' } }), null, 'flag-less reserved name hides (legacy fallback)');
+  assert.equal(shownCompanyName({ company: { id: 'k-old', name: 'Senza azienda' } }), null, 'flag-less legacy card hides');
   assert.equal(shownCompanyName({ company: null }), null);
   assert.equal(shownCompanyName({ company: { name: '  ' } }), null);
 });

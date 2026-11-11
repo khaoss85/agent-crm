@@ -78,7 +78,11 @@ export class CompanyService {
         operation: 'company.create',
         target: '',
         contractVersion: 'write.v1',
-        input: { name, domain, placeholder },
+        // The scoped input stays the caller-visible contract ({name,
+        // domain}): `placeholder` is derived server-side from the context
+        // grant, so it never enters the request fingerprint — otherwise
+        // every reconcileWrite of a company.create diverges (DIVERGENT_REPLAY).
+        input: { name, domain },
       }, async ({ emit }) => {
         const timestamp = nowIso();
         const company = {
