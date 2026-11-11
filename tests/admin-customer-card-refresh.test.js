@@ -309,3 +309,87 @@ test('2a214b66fe12: the patch helpers never touch what they read', () => {
   assert.equal(moved.profile.opportunities.items[0].pipelineStage, 'proposta');
   assert.equal(loaded.profile.opportunities.items[0].pipelineStage, undefined);
 });
+
+// Review Muse giro 1 su #787.
+test('review #787: what Aggiorna read survives the repaint after a note', async () => {
+  let enriched = { customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' }, linked: true, optedOut: null, items: [] };
+  const client = fakeClient({
+    onWrite: ({ body, state }) => {
+      const row = { id: 'n1', body: body.body, actorId: 'elena', occurredAt: '2026-11-11T10:00:00.000Z' };
+      state.timeline = { ...state.timeline, entries: { ...state.timeline.entries, items: [{ entry: 'note', ...row, teamAuthorId: 'elena' }, ...state.timeline.entries.items] } };
+      return row;
+    },
+  });
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path.startsWith('/api/customer-data/enriched/')) return enriched;
+    return base(path, options);
+  };
+  const { mount } = await open(client);
+  enriched = { ...enriched, items: [{ field: 'role', value: 'Personal trainer', source: 'email-signature', observedAt: '2026-11-10T09:00:00.000Z' }] };
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  assert.ok(mount.textContent.includes('Personal trainer'), 'Aggiorna paints the fresh row');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Nota dopo Aggiorna';
+  await byAction(mount, 'add-note').listeners.click[0]();
+  await flush();
+  assert.ok(mount.textContent.includes('Nota dopo Aggiorna'));
+  assert.ok(mount.textContent.includes('Personal trainer'), 'the repaint keeps what Aggiorna read');
+});
+
+test('review #787: a cronologia re-read older than a full read never paints over it', async () => {
+  const client = fakeClient({ onWrite: ({ body }) => ({ id: 'n1', body: body.body, actorId: 'elena' }) });
+  const { mount, view } = await open(client);
+  let releaseOld;
+  const oldGate = new Promise((resolve) => { releaseOld = resolve; });
+  const base = client.request.bind(client);
+  let held = 0;
+  client.request = async (path, options = {}) => {
+    // The first cronologia re-read (after the note) answers late, with the
+    // server state of that moment.
+    if (path.startsWith('/api/customer-hub/timeline/') && held === 0) {
+      held += 1;
+      const stale = client.state.timeline;
+      await oldGate;
+      return stale;
+    }
+    return base(path, options);
+  };
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Prima nota';
+  const saving = byAction(mount, 'add-note').listeners.click[0]();
+  await flush();
+  // Meanwhile the server gains a second write and a full read sees it.
+  client.state.timeline = {
+    ...client.state.timeline,
+    entries: { ...client.state.timeline.entries, items: [
+      { entry: 'note', id: 'n1', body: 'Prima nota', teamAuthorId: 'elena', occurredAt: '2026-11-11T10:00:00.000Z' },
+      { entry: 'note', id: 'n2', body: 'Seconda nota', teamAuthorId: 'elena', occurredAt: '2026-11-11T10:01:00.000Z' },
+      ...TIMELINE.entries.items,
+    ] },
+  };
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Seconda nota'), 'the full read shows the second write');
+  releaseOld();
+  await saving;
+  await flush();
+  assert.ok(mount.textContent.includes('Seconda nota'), 'the older re-read never hides it');
+});
+
+test('review #787: a failed re-read after a write is logged with its cause, never the note', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const client = fakeClient({ onWrite: ({ body }) => ({ id: 'n1', body: body.body, actorId: 'elena' }) });
+    const { mount } = await open(client);
+    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Testo riservato';
+    client.failReads(true);
+    await byAction(mount, 'add-note').listeners.click[0]();
+    await flush();
+  } finally {
+    console.error = original;
+  }
+  const entry = logged.find(([label]) => label === '[bo] scheda non riletta');
+  assert.ok(entry, 'the failed re-read is logged');
+  assert.deepEqual(entry[1], { area: 'scheda-timeline', code: null, name: 'Error', spaceId: 'presti', status: 503 });
+  assert.ok(!JSON.stringify(logged).includes('Testo riservato'), 'never the note itself');
+});

@@ -3651,6 +3651,9 @@ export function createCustomerCardView(deps) {
     const renderToken = ++cardRenderToken;
     // A section re-read that starts while this full read is in flight is
     // newer for its part: the full answer never paints over it.
+    // Review #787 (P2): a section re-read already in flight is older than
+    // this full read: it never paints over it.
+    for (const part of Object.keys(partSeq)) partSeq[part] += 1;
     const startSeq = { ...partSeq };
     historyReads.clear();
     if (key !== shownKey) {
@@ -3726,6 +3729,13 @@ export function createCustomerCardView(deps) {
     const reloadEnrichment = () => client.request(enrichedPath).catch((error) => {
       if (error && error.status === 404) return null;
       throw error;
+    }).then((fresh) => {
+      // Review #787 (P2): what Aggiorna read is what the scheda now shows —
+      // a later repaint after a write keeps it, never the older copy.
+      if (lastShown !== null && lastShown.key === key) {
+        lastShown = { ...lastShown, loaded: { ...lastShown.loaded, enrichment: fresh, enrichmentError: null } };
+      }
+      return fresh;
     });
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
     if (key === shownKey && retainedDrafts !== null) {
@@ -3784,7 +3794,21 @@ export function createCustomerCardView(deps) {
     asked.forEach(({ part, seq }, index) => {
       if (seq !== partSeq[part]) return;
       const answer = part === 'card' ? answers[index] : nullOn404(answers[index]);
-      if (answer.error) return;
+      if (answer.error) {
+        // Review #787 (P2): the write went through, the screen keeps it;
+        // the failed re-read is logged with its cause, never its payload.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          const error = answer.error;
+          console.error('[bo] scheda non riletta', {
+            area: `scheda-${part}`,
+            code: error?.code ?? null,
+            name: typeof error?.name === 'string' ? error.name : null,
+            spaceId: activeSpaceId(),
+            status: Number(error?.status ?? 0) || null,
+          });
+        }
+        return;
+      }
       loaded = { ...loaded, [part]: answer.value, [`${part}Error`]: null };
       changed = true;
     });
