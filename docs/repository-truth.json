@@ -1,9 +1,9 @@
 {
   "repositoryTruthContract": 1,
-  "sourceSha": "3590305fcca472fb36b0323bd5e37e914e8d36315481d34fba09c1e57829e9bf",
+  "sourceSha": "1777c224661b6879cf185aa837b915be68f8aacfefc7c478cc0d0e5968c5cfaa",
   "environment": {
     "node": "v24.10.0",
-    "pg": "unresolvable"
+    "pg": "resolvable"
   },
   "authorities": [
     {
