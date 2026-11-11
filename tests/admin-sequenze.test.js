@@ -250,6 +250,39 @@ test('hostile names are inert text, never markup', () => {
   });
 });
 
+test('opening with sequences selects the first: detail visible without a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const other = { ...SEQUENCE, id: 8, sourceKey: 'seq-seconda', name: 'Seconda sequenza', status: 'active' };
+  const client = stubClient({ sequences: [SEQUENCE, other] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  assert.equal(view.state.selectedKey, 'seq-bentornato');
+  assert.ok(!mount.textContent.includes('Scegli una sequenza per vedere i passi'));
+  assert.ok(mount.textContent.includes('Passi'));
+  assert.ok(mount.textContent.includes('WhatsApp · Ciao, ci manchi'));
+  assert.ok(mount.textContent.includes('Persone nella sequenza'));
+  assert.ok(mount.textContent.includes('Giulia Rossi'));
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=seq-bentornato')), 'the first steps are read');
+});
+
+test('opening with a whitespace-only first sourceKey selects the elenco key, like a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const blank = { ...SEQUENCE, id: 7, sourceKey: '   ' };
+  const client = stubClient({ sequences: [blank] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  const elencoKey = buildSequenzeElenco({ sequences: [blank] })[0].sourceKey;
+  assert.equal(elencoKey, '7');
+  assert.equal(view.state.selectedKey, '7');
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=7')), 'auto-open and click query the same key');
+});
+
 test('full screen: elenco, dettaglio with passi, double-ask activate posts once', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

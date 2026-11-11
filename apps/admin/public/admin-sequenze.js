@@ -1272,6 +1272,16 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     state.capped = data.capped;
     state.unavailable = data.unavailable;
     state.loaded = true;
+    // The prototype opens with a sequence already selected: with no explicit
+    // choice the first elenco row is selected, like the creation flows do
+    // (select-before-reload). The key reuses buildSequenzeElenco's rule —
+    // sourceKey, else the record id — never an invented key.
+    if (state.selectedKey === '' && state.available && state.sequences.length > 0) {
+      const first = state.sequences[0];
+      const firstKey = nonEmptyText(first?.sourceKey)
+        ?? (first?.id !== undefined && first?.id !== null ? String(first.id) : '');
+      if (firstKey !== '') state.selectedKey = firstKey;
+    }
     if (state.selectedKey !== '' && state.available) {
       const outcome = await loadSequenzaSteps(client, state.selectedKey, state.space);
       if (token !== renderToken) return;
