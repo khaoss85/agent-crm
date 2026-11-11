@@ -1058,3 +1058,149 @@ test('0c9a27bb: a failed quote filing says the offer is filed and stays for a re
   assert.equal(posts.length, 1, 'only the offer filed, no quote write after the refusal');
   assert.equal(posts[0].path, '/api/opportunities', 'the offer write stands for the retry');
 });
+
+// Voce 0c9a27bb, giro 2 (review Codex P1/P2): mounted /bo writes ride
+// `{ saved, spaceId }`, and a retry resumes instead of reposting. The stub
+// below speaks the mounted shape on switch and fails one step at a time.
+function resumeFilingStub(state = {}) {
+  const calls = [];
+  return {
+    calls,
+    state,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (String(path).startsWith('/api/catalog/products')) return CATALOG_FLAT;
+      if (String(path).startsWith('/api/modules/offer/records/')) {
+        const id = decodeURIComponent(String(path).split('/').pop());
+        return { id, priceBookId: 'pb1' };
+      }
+      if (String(path) === '/api/opportunities' && (options.method ?? 'GET') === 'POST') {
+        return state.mounted === true ? { saved: { id: 'opp-9' }, spaceId: 'sp1' } : { id: 'opp-1' };
+      }
+      if (String(path).endsWith('/actions/create-quote')) {
+        if (state.failQuote === true) throw Object.assign(new Error('boom'), { code: 'BOOM' });
+        return state.mounted === true
+          ? { saved: { result: { quote: { id: 'q9' } } }, spaceId: 'sp1' }
+          : { ok: true, result: { quote: { id: 'q1' } } };
+      }
+      if (String(path).endsWith('/actions/add-line')) {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        if (state.failLine === body.offerId) throw Object.assign(new Error('boom'), { code: 'BOOM' });
+        return state.mounted === true
+          ? { saved: { result: { line: { id: 'l9' } } }, spaceId: 'sp1' }
+          : { ok: true, result: { line: { id: 'l1' } } };
+      }
+      throw new Error(`unexpected request ${options.method ?? 'GET'} ${path}`);
+    },
+  };
+}
+
+async function submitNewOffer({ stub, ticks = ['flat'], value = '99,00', owner = 'elena' } = {}) {
+  const storage = memoryStorage();
+  assert.equal(writePendingCustomerPick(storage, 'offer', {
+    resource: 'company', id: 'c1', name: 'Palestra Esempio',
+  }), true);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navs = [];
+  const toasts = [];
+  const admin = createModuleAdmin({
+    doc, mount, client: stub, navigate: (h) => navs.push(h), toast: (message) => toasts.push(message), storage,
+  });
+  const form = await admin.renderNew('opportunity');
+  const [flat, unit] = form.__productPicks;
+  if (ticks.includes('flat')) {
+    flat.checkbox.checked = true;
+    flat.checkbox.dispatch('change');
+  }
+  if (ticks.includes('unit')) {
+    unit.checkbox.checked = true;
+    unit.qtyInput.value = '2';
+    unit.checkbox.dispatch('change');
+  }
+  form.__inputs.value.value = value;
+  form.__inputs.owner.value = owner;
+  await form.__submit({ preventDefault() {} });
+  return { form, mount, navs, toasts };
+}
+
+test('0c9a27bb giro 2 P1: a mounted write envelope still files the quote on the real offer', async () => {
+  const stub = resumeFilingStub({ mounted: true });
+  const { navs, toasts } = await submitNewOffer({ stub });
+  const quoteOpens = stub.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/create-quote'));
+  assert.equal(quoteOpens.length, 1, 'one quote opens');
+  assert.ok(quoteOpens[0].path.includes('/records/opp-9/'), 'the quote opens on the unwrapped offer, never undefined');
+  assert.ok(!quoteOpens[0].path.includes('undefined'), 'no undefined id in the quote path');
+  const lineAdds = stub.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/add-line'));
+  assert.equal(lineAdds.length, 1, 'the ticked product files one line');
+  assert.ok(lineAdds[0].path.includes('/records/q9/'), 'the line files on the unwrapped quote');
+  assert.deepEqual(toasts, ['Offerta creata'], 'the creation toasts in Italian');
+  assert.deepEqual(navs, ['#/pipelines/accordo-sales'], 'success lands on the offers board');
+});
+
+test('0c9a27bb giro 2 P1: fileQuoteWithLines opens the mounted envelope before reading the quote id', async () => {
+  const client = quoteFilingClient();
+  const mounted = {
+    calls: client.calls,
+    async request(path, options = {}) {
+      const answer = await client.request(path, options);
+      if ((options.method ?? 'GET') !== 'GET') return { saved: answer, spaceId: 'sp1' };
+      return answer;
+    },
+  };
+  const filed = await fileQuoteWithLines(mounted, {
+    opportunityId: 'opp-1',
+    lines: [{ offerId: 'o-flat', quantity: 1 }],
+    keyPrefix: 'k',
+  });
+  assert.deepEqual(filed, { quoteId: 'q1' }, 'the quote id is read through the envelope');
+  const lineAdds = mounted.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/add-line'));
+  assert.equal(lineAdds.length, 1, 'the line files once');
+  assert.ok(lineAdds[0].path.includes('/records/q1/'), 'the line files on the opened quote, never undefined');
+});
+
+test('0c9a27bb giro 2 P2: a retry after a failed quote resumes without a second offer', async () => {
+  const stub = resumeFilingStub({ failQuote: true });
+  const first = await submitNewOffer({ stub });
+  assert.ok(
+    first.mount.textContent.includes('Offerta creata, ma il preventivo non si'),
+    'the half-filed offer is said out loud with a way back',
+  );
+  assert.deepEqual(first.navs, [], 'no landing without the lines');
+  stub.state.failQuote = false;
+  await first.form.__submit({ preventDefault() {} });
+  const offerPosts = stub.calls.filter((call) => call.method === 'POST' && call.path === '/api/opportunities');
+  assert.equal(offerPosts.length, 1, 'the retry files no second offer');
+  const quoteOpens = stub.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/create-quote'));
+  assert.equal(quoteOpens.length, 2, 'the unopened quote opens once it can (one failure, one filing)');
+  const lineAdds = stub.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/add-line'));
+  assert.equal(lineAdds.length, 1, 'the line files once the quote opens');
+  assert.deepEqual(first.toasts, ['Offerta creata'], 'the completed retry toasts in Italian');
+  assert.deepEqual(first.navs, ['#/pipelines/accordo-sales'], 'the completed retry lands on the offers board');
+});
+
+test('0c9a27bb giro 2 P2: a retry after a half-filed line files only the missing lines', async () => {
+  const stub = resumeFilingStub({ failLine: 'o-unit' });
+  const first = await submitNewOffer({ stub, ticks: ['flat', 'unit'] });
+  assert.ok(
+    first.mount.textContent.includes('Offerta creata, ma il preventivo non si'),
+    'the half-filed quote stays for a retry',
+  );
+  stub.state.failLine = null;
+  await first.form.__submit({ preventDefault() {} });
+  const offerPosts = stub.calls.filter((call) => call.method === 'POST' && call.path === '/api/opportunities');
+  assert.equal(offerPosts.length, 1, 'the retry files no second offer');
+  const quoteOpens = stub.calls.filter((call) => call.method === 'POST' && String(call.path).includes('/actions/create-quote'));
+  assert.equal(quoteOpens.length, 1, 'the kept quote opens no second quote');
+  const flatAdds = stub.calls.filter((call) => (
+    call.method === 'POST' && String(call.path).includes('/actions/add-line') && String(call.body).includes('"offerId":"o-flat"')
+  ));
+  assert.equal(flatAdds.length, 1, 'the filed line is not filed again');
+  const unitAdds = stub.calls.filter((call) => (
+    call.method === 'POST' && String(call.path).includes('/actions/add-line') && String(call.body).includes('"offerId":"o-unit"')
+  ));
+  assert.equal(unitAdds.length, 2, 'the missing line is retried once (one failure, one filing)');
+  assert.deepEqual(first.toasts, ['Offerta creata'], 'the completed retry toasts in Italian');
+  assert.deepEqual(first.navs, ['#/pipelines/accordo-sales'], 'the completed retry lands on the offers board');
+});

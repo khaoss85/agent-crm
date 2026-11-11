@@ -21,7 +21,7 @@ import {
   isNotComposedFailure,
   isUnsupportedContractFailure,
 } from './admin-core.js';
-import { createSubmissionController } from './admin-submission.js';
+import { createSubmissionController, unwrapBoWriteAnswer } from './admin-submission.js';
 import { takePendingCustomerPick } from './admin-prefill.js';
 
 function memoryStorage() {
@@ -174,13 +174,19 @@ export function quoteLineInputs(picks) {
  * chosen offer is re-read for its price book, and one draft quote opens on
  * their single shared book before the lines file. `client` routes every
  * write through the caller's submission controller (idempotency slots ride
- * in `options.idempotencySlot`, one per write, so a retry replays instead
- * of filing twice, like the offer write itself). Mixed books or an
+ * in `options.idempotencySlot`, one per write). Mixed books or an
  * unreadable offer refuse with a named error — the offer stays filed, and
- * the caller says so.
+ * the caller says so. Mounted /bo writes ride `{ saved, spaceId }`, so the
+ * create-quote answer is unwrapped before the quote id is read. A retry
+ * passes `resume` with the kept `{ quoteId, filedOfferIds }`: the kept
+ * quote id opens no second quote and filed lines are not filed again —
+ * the controller keeps no completed results and SQLite replays a reposted
+ * write, so without this a retry doubles the quote or its lines. Partial
+ * progress rides on the thrown error as `partialQuote`, for the caller to
+ * keep and pass back.
  * @param {{request: (path: string, options?: any) => Promise<any>}} client reads open; writes go through the caller's submission controller
  */
-export async function fileQuoteWithLines(client, { opportunityId, lines, keyPrefix }) {
+export async function fileQuoteWithLines(client, { opportunityId, lines, keyPrefix, resume }) {
   if (!Array.isArray(lines) || lines.length === 0) return null;
   const records = await Promise.all(lines.map((line) =>
     client.request(`/api/modules/offer/records/${encodeURIComponent(line.offerId)}`)));
@@ -189,24 +195,41 @@ export async function fileQuoteWithLines(client, { opportunityId, lines, keyPref
   if (bookIds.length !== 1) {
     throw Object.assign(new Error('the chosen products do not share one price book'), { code: 'QUOTE_BOOKS_MISMATCH' });
   }
-  const created = await client.request(
-    `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
-    { method: 'POST', idempotencySlot: `${keyPrefix}-quote`, body: JSON.stringify({ priceBookId: bookIds[0] }) },
+  const resumedQuoteId = typeof resume?.quoteId === 'string' && resume.quoteId !== '' ? resume.quoteId : null;
+  const alreadyFiled = new Set(
+    (Array.isArray(resume?.filedOfferIds) ? resume.filedOfferIds : []).filter((id) => typeof id === 'string'),
   );
-  const quoteId = created?.result?.quote?.id;
-  if (typeof quoteId !== 'string' || quoteId === '') {
-    throw Object.assign(new Error('the quote did not open'), { code: 'QUOTE_NOT_OPENED' });
-  }
-  for (const line of lines) {
-    // eslint-disable-next-line no-await-in-loop
-    await client.request(
-      `/api/modules/quote/records/${encodeURIComponent(quoteId)}/actions/add-line`,
-      {
-        method: 'POST',
-        idempotencySlot: `${keyPrefix}-line-${line.offerId}`,
-        body: JSON.stringify({ offerId: line.offerId, quantity: line.quantity }),
-      },
-    );
+  const filedOfferIds = [...alreadyFiled];
+  let quoteId = resumedQuoteId;
+  try {
+    if (quoteId === null) {
+      const created = unwrapBoWriteAnswer(await client.request(
+        `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
+        { method: 'POST', idempotencySlot: `${keyPrefix}-quote`, body: JSON.stringify({ priceBookId: bookIds[0] }) },
+      ));
+      quoteId = created?.result?.quote?.id ?? null;
+      if (typeof quoteId !== 'string' || quoteId === '') {
+        throw Object.assign(new Error('the quote did not open'), { code: 'QUOTE_NOT_OPENED' });
+      }
+    }
+    for (const line of lines) {
+      if (alreadyFiled.has(line.offerId)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await client.request(
+        `/api/modules/quote/records/${encodeURIComponent(quoteId)}/actions/add-line`,
+        {
+          method: 'POST',
+          idempotencySlot: `${keyPrefix}-line-${line.offerId}`,
+          body: JSON.stringify({ offerId: line.offerId, quantity: line.quantity }),
+        },
+      );
+      filedOfferIds.push(line.offerId);
+    }
+  } catch (error) {
+    if (error !== null && typeof error === 'object') {
+      error.partialQuote = { quoteId, filedOfferIds };
+    }
+    throw error;
   }
   return { quoteId };
 }
@@ -720,25 +743,42 @@ export function createModuleAdmin(deps) {
         // Through the view's submission controller like every other write:
         // the raw client refuses a mutation without a submission-owned key
         // before any request leaves (production 04/11, same class as #581).
-        // The keys stay on the form until the quote lines are filed too, so
-        // a retry after a half-filed quote replays instead of doubling.
+        // The write answers and the keys stay on the form until the quote
+        // lines are filed too, so a retry after a half-filed quote resumes
+        // instead of doubling: the kept offer id skips a second offer
+        // POST, the kept quote progress skips the finished quote steps
+        // (the controller keeps no completed results, and SQLite replays a
+        // reposted write instead of refusing it).
         const submissionKey = form.__submissionKey ?? (form.__submissionKey = submissions.issueKey());
-        const created = await submissions.submit({
-          path: '/api/opportunities',
-          method: 'POST',
-          body: {
-            companyId,
-            ...(contactId !== null ? { contactId } : {}),
-            name: title,
-            valueCents: cents,
-            currency: chosenCurrencies.size === 1 ? [...chosenCurrencies][0] : 'EUR',
-            ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
-            owner,
-          },
-          key: submissionKey,
-        });
+        let opportunityId = typeof form.__createdOpportunityId === 'string' && form.__createdOpportunityId !== ''
+          ? form.__createdOpportunityId
+          : null;
+        let created = null;
+        if (opportunityId === null) {
+          // Mounted /bo writes ride `{ saved, spaceId }`: open the envelope
+          // before reading the id, or the quote opens on «undefined» while
+          // the offer is saved.
+          created = unwrapBoWriteAnswer(await submissions.submit({
+            path: '/api/opportunities',
+            method: 'POST',
+            body: {
+              companyId,
+              ...(contactId !== null ? { contactId } : {}),
+              name: title,
+              valueCents: cents,
+              currency: chosenCurrencies.size === 1 ? [...chosenCurrencies][0] : 'EUR',
+              ...(expiry !== '' ? { expectedCloseDate: expiry } : {}),
+              owner,
+            },
+            key: submissionKey,
+          }));
+          opportunityId = created?.result?.id ?? created?.id ?? null;
+          if (typeof opportunityId !== 'string' || opportunityId === '') {
+            throw Object.assign(new Error('the offer write returned no id'), { code: 'OFFER_ID_MISSING' });
+          }
+          form.__createdOpportunityId = opportunityId;
+        }
         if (picked !== null) {
-          const opportunityId = created?.result?.id ?? created?.id;
           const quoteKeys = (form.__quoteKeys ??= {});
           const filingClient = {
             request: (path, options = {}) => {
@@ -752,8 +792,17 @@ export function createModuleAdmin(deps) {
             },
           };
           try {
-            await fileQuoteWithLines(filingClient, { opportunityId, lines: picked.lines, keyPrefix: submissionKey });
+            await fileQuoteWithLines(filingClient, {
+              opportunityId,
+              lines: picked.lines,
+              keyPrefix: submissionKey,
+              resume: form.__filedQuote ?? undefined,
+            });
           } catch (quoteError) {
+            const partial = quoteError?.partialQuote;
+            if (partial && typeof partial.quoteId === 'string' && partial.quoteId !== '') {
+              form.__filedQuote = partial;
+            }
             setBusy(false);
             showErrors({}, `Offerta creata, ma il preventivo non si \u00e8 compilato (${humanWriteError(quoteError, { failed: 'il server non ha risposto' })}). Premi di nuovo Crea offerta per riprovare.`);
             return null;
@@ -761,6 +810,8 @@ export function createModuleAdmin(deps) {
         }
         form.__submissionKey = undefined;
         form.__quoteKeys = undefined;
+        form.__createdOpportunityId = undefined;
+        form.__filedQuote = undefined;
         toast('Offerta creata');
         navigate('#/pipelines/accordo-sales');
         return created;
