@@ -490,8 +490,9 @@ export function openOfferPanel(deps) {
    * file two quotes. Each write owns its own submission key.
    * @param {string} opportunityId
    * @param {Array<any>} chosen
+   * @param {{opened: number}} progress how many quotes already exist, for the failure line
    */
-  async function fileQuote(opportunityId, chosen) {
+  async function fileQuote(opportunityId, chosen, progress) {
     /** @type {Map<string, Array<any>>} */
     const byBook = new Map();
     for (const pick of chosen) {
@@ -508,6 +509,7 @@ export function openOfferPanel(deps) {
       );
       const quote = opened?.result?.quote;
       if (typeof quote?.id !== 'string' || quote.id === '') throw Object.assign(new Error('quote without id'), { code: 'QUOTE_UNREADABLE' });
+      progress.opened += 1;
       let revision = Number.isSafeInteger(quote.draftRevision) ? quote.draftRevision : null;
       for (const pick of group) {
         const added = await client.request(
@@ -590,12 +592,13 @@ export function openOfferPanel(deps) {
       // The offer exists: its products become the quote lines. A quote that
       // fails never undoes the offer, and is said, never hidden.
       let quoteFailed = false;
+      const progress = { opened: 0 };
       const createdId = typeof created?.id === 'string' && created.id !== '' ? created.id : null;
       if (chosen.length > 0) {
         if (!gone()) create.textContent = 'Creo il preventivo…';
         try {
           if (createdId === null) throw Object.assign(new Error('offer without id'), { code: 'OFFER_UNREADABLE' });
-          await fileQuote(createdId, chosen);
+          await fileQuote(createdId, chosen, progress);
         } catch (error) {
           quoteFailed = true;
           if (typeof console !== 'undefined' && typeof console.error === 'function') {
@@ -608,7 +611,10 @@ export function openOfferPanel(deps) {
         }
       }
       shut();
-      if (quoteFailed) toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
+      // A quote already opened is completed from its own page, never
+      // opened twice: the line names the step that is left.
+      if (quoteFailed && progress.opened > 0) toast('Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe.', true);
+      else if (quoteFailed) toast('Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo».', true);
       else toast(chosen.length > 0 ? 'Offerta e preventivo creati' : 'Offerta creata');
       if (typeof deps.onCreated === 'function') deps.onCreated(created);
     } catch (error) {

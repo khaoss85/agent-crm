@@ -549,7 +549,13 @@ test('backlog 0c9a27bb9ac0: a quote that fails never hides it — the offer stay
     assert.equal(client.creates().length, 1, `${quoteFail}: the offer is filed once`);
     assert.equal(panel.parentNode, null);
     assert.equal(toasts.length, 1);
-    assert.match(toasts[0], /Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo»/);
+    if (quoteFail === 'create-quote') {
+      assert.match(toasts[0], /Offerta creata, ma il preventivo non si è salvato: apri l’offerta e premi «Crea preventivo»/);
+    } else {
+      assert.match(toasts[0], /Offerta creata, ma il preventivo è incompleto: apri l’offerta, poi il preventivo, e aggiungi le righe\./,
+        'a quote already opened is completed, never opened a second time');
+      assert.doesNotMatch(toasts[0], /Crea preventivo/);
+    }
     assert.deepEqual(errors, [true], 'an error toast');
     assert.equal(created.length, 1, 'the scheda still re-reads the new offer');
     const line = logged.find((args) => args[0] === '[bo] preventivo dell’offerta non creato');
