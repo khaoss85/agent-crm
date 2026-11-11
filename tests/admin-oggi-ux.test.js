@@ -8,7 +8,8 @@ import {
   buildInbox, buildPreCallBrief, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
-import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent } from '../apps/admin/public/admin-prefill.js';
+import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
+import { createCustomerListView } from '../apps/admin/public/admin-clienti.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { isAutomatedGmailSender } from '../packages/channels/src/gmail.js';
 import { isTechnicalLocalPart } from '../packages/customer-data/src/display-name.js';
@@ -670,4 +671,52 @@ test('c2bf6b206d96: a view that cannot be read falls back to the messages read, 
   await view.render({ spaceName: 'Spazio', links: [], now: NOW });
   const section = mount.querySelector('section[data-oggi-section="inbox"]');
   assert.ok(section.textContent.includes('1 in attesa') && section.textContent.includes('Lia Marroni'), section.textContent);
+});
+
+// Review Muse #795 (giro 1, testa 291c29a).
+test('review #795 P2: a count from a truncated scan is a floor — never «Niente in sospeso», «Hai finito» or «Nessun messaggio»', async () => {
+  const client = serverClient({ ...repliesAnswer(0), totalIsExact: false, complete: false });
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const text = mount.textContent;
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', 'Nessun messaggio aspetta una risposta']) {
+    assert.ok(!text.includes(claim), `no exact claim over a floor: ${claim}`);
+  }
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('almeno 0 in attesa'), section.textContent);
+  assert.ok(section.querySelector('a[data-action="inbox-all"]'), 'Clienti is one click away');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 4, waitingExact: false }),
+    'Ti aspettano almeno 4 messaggi da rispondere e nessun appuntamento per oggi.');
+});
+
+test('review #795 P2: «Vedi tutte» opens Clienti on the view alone, without the filters left from an earlier visit', async () => {
+  const storage = memoryStorage();
+  const calls = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      return { items: [], total: 0, page: 1, pageSize: 10, pages: 1, complete: true, totalIsExact: true, views: [], sorts: [], columns: [], customColumns: [], pageSizes: [10, 25, 50] };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const list = createCustomerListView({ doc, mount, client, storage, navigate: () => {}, schedule: () => null });
+  await list.render();
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  assert.ok(search, 'the search box');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault: () => {} });
+  await flush();
+  assert.equal(list.getState().q, 'rossi', 'the earlier visit searched');
+  writePendingClientiView(storage, 'da-rispondere');
+  await list.render();
+  const last = new URLSearchParams(calls[calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search');
+  assert.equal(last.get('sort'), 'recent');
+  assert.equal(list.getState().q, '');
 });

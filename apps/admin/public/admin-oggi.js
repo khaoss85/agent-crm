@@ -675,7 +675,7 @@ function countNoun(count, singular, plural) {
  * names them, and «Niente in sospeso» is said only when nothing waits.
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0 } = {}) {
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
@@ -687,11 +687,18 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
   // the verb agrees with the count, and zero reads as a person says it.
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
-  const waitingLine = (also) => (unanswered === 1
-    ? `Ti aspetta${also ? ' anche' : ''} 1 messaggio da rispondere`
-    : `Ti aspettano${also ? ' anche' : ''} ${unanswered} messaggi da rispondere`);
+  // review Muse #795: a count from a truncated scan is a floor, never a
+  // zero — «almeno N», or the honest «non riesco a contarli» at zero.
+  const floor = waitingExact === false;
+  const waitingLine = (also) => {
+    if (floor && unanswered === 0) return 'Non riesco a contare tutti i messaggi da rispondere: guardali in Clienti';
+    const least = floor ? 'almeno ' : '';
+    return unanswered === 1 && !floor
+      ? `Ti aspetta${also ? ' anche' : ''} 1 messaggio da rispondere`
+      : `Ti aspettano${also ? ' anche' : ''} ${least}${unanswered} ${unanswered === 1 ? 'messaggio' : 'messaggi'} da rispondere`;
+  };
   if (tasks.length === 0) {
-    if (unanswered > 0) {
+    if (unanswered > 0 || floor) {
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
       return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
@@ -702,7 +709,7 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
-  return unanswered > 0 ? `${recap} ${waitingLine(true)}.` : recap;
+  return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
 }
 
 /**
@@ -1845,8 +1852,12 @@ export function renderOggi({
   // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
   // day is done only when nothing waits in «Da rispondere» either.
   const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
-  if (allDone && waitingReplies === 0) {
+  // review Muse #795: a floor from a truncated scan never reads «finito».
+  const waitingFloor = home.inbox != null && home.inbox.available !== false && home.inbox.totalIsExact === false;
+  if (allDone && waitingReplies === 0 && !waitingFloor) {
     advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  } else if (allDone && waitingFloor) {
+    advisor.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
   } else if (allDone) {
     advisor.appendChild(el(doc, 'p', 'bo-muted', waitingReplies === 1
       ? 'Nessun suggerimento aperto. Resta 1 messaggio da rispondere, qui sotto.'
@@ -1864,7 +1875,8 @@ export function renderOggi({
     const inboxHead = el(doc, 'div', 'bo-oggi-head');
     inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
     const waitingCount = Number(home.inbox.total ?? 0);
-    inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', waitingCount === 1 ? '1 in attesa' : `${waitingCount} in attesa`));
+    const countFloor = home.inbox.totalIsExact === false;
+    inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', `${countFloor ? 'almeno ' : ''}${waitingCount} in attesa`));
     inbox.appendChild(inboxHead);
     const inboxRows = Array.isArray(home.inbox.rows) ? home.inbox.rows : [];
     /** One inbox row; `reply` adds the «Rispondi» button (people only). */
@@ -1900,6 +1912,20 @@ export function renderOggi({
     };
     if (home.inbox.available === false) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'I messaggi non si sono potuti leggere. Riprova più tardi.'));
+    } else if (inboxRows.length === 0 && countFloor) {
+      // review Muse #795: an empty page of a truncated scan proves nothing.
+      const note = el(doc, 'p', 'bo-muted', 'Non riesco a contare tutti i messaggi da rispondere qui. ');
+      if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Guardali in Clienti →');
+        all.setAttribute('href', '#/customer-data');
+        all.setAttribute('data-action', 'inbox-all');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView(REPLIES_VIEW);
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'Nessun messaggio aspetta una risposta.'));
     } else {
@@ -2350,7 +2376,7 @@ export function createOggiView(deps) {
       navigate,
       now: lastMeta.now,
       home: {
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available ? inbox.total : 0 }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
         actions,
         triage,
         capped,

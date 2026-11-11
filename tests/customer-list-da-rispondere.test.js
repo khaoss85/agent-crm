@@ -128,3 +128,25 @@ test('c2bf6b206d96: the kernel sender rule ships byte-identical to the /bo shell
   assert.equal(copy, source);
   assert.equal(typeof isNotificationMessage, 'function');
 });
+
+test('review #795 P2: a partial or failing conversation read refuses the view and names no count, never closed threads as waiting', async () => {
+  const closedForGuido = [{ id: 'wa:1', status: 'closed', subjectResource: 'contact', subjectId: 'c1' }];
+  const withConversations = (service) => {
+    const modules = fakeModules(SCENE);
+    return { get: (name) => (name === 'conversation' ? { service } : modules.get(name)) };
+  };
+  // Exact read: Guido's closed thread does not wait.
+  const exact = { modules: withConversations({ listWhere: async (filters) => closedForGuido.filter((row) => (filters.subjectId ?? []).includes(row.subjectId) && row.subjectResource === filters.subjectResource) }), core: {}, names: { identity: 'external-identity' } };
+  const page = await listCustomerRecords(exact, { vista: 'da-rispondere' });
+  assert.deepEqual(page.items.map((item) => item.name), ['Anna Bianchi'], 'the closed thread is not waiting');
+  // Partial read (bounded list only): refuse, no pill count.
+  const partial = { modules: withConversations({ list: async () => [] }), core: {}, names: { identity: 'external-identity' } };
+  await assert.rejects(listCustomerRecords(partial, { vista: 'da-rispondere' }),
+    (error) => error.code === 'CUSTOMER_LIST_UNAVAILABLE' && /conversation/.test(error.message));
+  const all = await listCustomerRecords(partial, { vista: 'tutti' });
+  assert.ok(!('count' in all.views.find((view) => view.id === 'da-rispondere')), 'no exact-looking pill');
+  assert.ok(all.items.every((item) => item.awaitingReplyCount === null), 'rows carry no invented count');
+  // No conversation module at all: nothing to close, the view still answers.
+  const none = { modules: fakeModules(SCENE), core: {}, names: { identity: 'external-identity' } };
+  assert.equal((await listCustomerRecords(none, { vista: 'da-rispondere' })).total, 2);
+});

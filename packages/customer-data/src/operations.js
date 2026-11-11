@@ -1128,9 +1128,17 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     && (messages.readable !== true || messages.complete === false)) {
     throw new AppError('the da-leggere view needs the interaction-message records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
-  if (query.view?.id === 'da-rispondere'
-    && (messages.readable !== true || messages.complete === false)) {
-    throw new AppError('the da-rispondere view needs the interaction-message records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  // «Da rispondere» stands on the messages and on the threads' closed state
+  // (review Muse #795): a missing conversation module has no closed threads
+  // to hide, but a partial or failing read would count closed threads as
+  // waiting with an exact-looking total — refuse instead, like da-leggere.
+  const conversationsSound = conversations.readable !== true
+    ? optional(modules, 'conversation') === null
+    : conversations.complete !== false;
+  const repliesReadable = messages.readable === true && messages.complete !== false && conversationsSound;
+  if (query.view?.id === 'da-rispondere' && !repliesReadable) {
+    const missing = messages.readable !== true || messages.complete === false ? 'interaction-message' : 'conversation';
+    throw new AppError(`the da-rispondere view needs the ${missing} records, which are not readable here`, { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
   if (query.view?.id === 'da-leggere' && watermarks === null) {
     throw new AppError('the da-leggere view needs the read-state records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
@@ -1193,7 +1201,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       : null;
     // «Da rispondere»: from the same message rows, no new query. Unreadable
     // messages shape nulls, never «nobody waits».
-    const myAwaiting = messages.readable === true
+    const myAwaiting = repliesReadable
       ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine))
       : null;
     // The channels observed on this customer's own messages and calls, read
@@ -1271,7 +1279,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     if (complete !== true) return entry;
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
     if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
-    if (view.id === 'da-rispondere' && (messages.readable !== true || messages.complete === false)) return entry;
+    if (view.id === 'da-rispondere' && !repliesReadable) return entry;
     if (view.id === 'rinnovi-30-giorni'
       && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
     return { ...entry, count: filterCustomerRows(rows, query, view, today).length };
