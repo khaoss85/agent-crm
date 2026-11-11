@@ -1564,6 +1564,13 @@ select.bo-spazi-input { flex: none; }
 .cal-pop-person .cal-avatar { min-width: 24px; height: 24px; line-height: 24px; color: var(--ink); }
 .cal-pop-note { color: var(--muted); }
 .cal-event-pop .cal-sync { margin-left: 24px; }
+/* backlog:5346ab531538: «Annullare l'appuntamento?» asked inside the popover. */
+.cal-pop-confirm { margin: 0 0 12px; padding: 12px; border-radius: 12px; background: var(--danger-soft); }
+.cal-pop-question { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.cal-pop-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.cal-pop-confirm .cal-move-field input { background: var(--surface); }
+.cal-pop-actions { display: flex; gap: 8px; }
+.cal-pop-confirm .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
