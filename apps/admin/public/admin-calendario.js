@@ -1893,7 +1893,6 @@ export function createCalendarioView(deps) {
     }
     rail.appendChild(renderAi());
     rail.appendChild(renderTeam());
-    if (!state.selection) rail.appendChild(renderManual());
     rail.appendChild(renderBooking());
     main.appendChild(renderWeek());
     // Dan 11/11: the event detail opens beside the event, like Google
@@ -1907,17 +1906,26 @@ export function createCalendarioView(deps) {
       openEventPop = null;
     }
     let pop = null;
-    if (state.selection) {
-      // The form opens beside the chosen block, like a calendar app; × or
-      // Esc closes it and the rail form comes back.
-      pop = el(doc, 'div', { className: 'cal-pop', attrs: { role: 'dialog', 'aria-label': 'Nuovo appuntamento' } });
-      const close = el(doc, 'button', { className: 'cal-pop-close', text: '×', attrs: { type: 'button', 'aria-label': 'Chiudi' } });
-      close.addEventListener('click', () => closeSlot());
-      pop.appendChild(close);
-      pop.appendChild(renderManual());
-      pop.addEventListener?.('keydown', (event) => { if (event.key === 'Escape') closeSlot(); });
-      main.appendChild(pop);
-    }
+    // backlog:6e6750ff8163 — the «Nuovo appuntamento» form lives in one
+    // place only: this popover over the grid. A slot picked on the grid
+    // seats it beside the pick; «Compila manualmente», «+ Prenota», «Compila
+    // a mano» and a phrase draft open it at the top of the grid. The rail
+    // never holds a second copy. × or Esc closes it and empties it.
+    const formOpen = Boolean(state.selection || state.manualOpen || state.draftFill);
+    // Painted closed too (hidden), like the prototype: a phrase draft or a
+    // proposal Conferma always reads one live form — never a second copy.
+    const formPop = el(doc, 'div', {
+      className: `cal-pop cal-form-pop${formOpen ? '' : ' hidden'}`,
+      attrs: { role: 'dialog', 'aria-label': 'Nuovo appuntamento', 'data-role': 'manual-pop', 'data-anchor': state.selection ? 'slot' : 'grid' },
+    });
+    if (!formOpen) formPop.setAttribute('hidden', '');
+    const close = el(doc, 'button', { className: 'cal-pop-close', text: '×', attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'manual-close' } });
+    close.addEventListener('click', () => closeManual());
+    formPop.appendChild(close);
+    formPop.appendChild(renderManual());
+    formPop.addEventListener?.('keydown', (event) => { if (event?.key === 'Escape' || event?.key === 'Esc') closeManual(); });
+    main.appendChild(formPop);
+    if (formOpen && state.selection) pop = formPop;
     layout.appendChild(rail);
     layout.appendChild(main);
     wrap.appendChild(layout);
@@ -2012,10 +2020,12 @@ export function createCalendarioView(deps) {
         title: 'Compila manualmente',
         sub: 'Giorno, ora, cliente e partecipanti',
         focus: () => {
-          // Open the painted form in place: a re-render would swap the
-          // field the operator is about to type in.
+          // backlog:6e6750ff8163: the voice opens the form popover over the
+          // grid — never a scroll down to a rail card — with focus on the
+          // customer field. An open event popover gives way: one at a time.
           state.manualOpen = true;
-          state.manualPanel?.classList?.add('open');
+          state.selectedId = null;
+          renderAll();
           return state.manualFirst;
         },
       },
@@ -2027,7 +2037,9 @@ export function createCalendarioView(deps) {
         close();
         const target = voice.focus();
         if (target && typeof target.focus === 'function') target.focus();
-        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+        // The phrase field sits in the rail and may be off screen; the form
+        // opens where the operator looks, so it never scrolls the page.
+        if (voice.title !== 'Compila manualmente' && target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
       });
       menu.appendChild(item);
     }
@@ -2319,10 +2331,31 @@ export function createCalendarioView(deps) {
     state.manualFirst?.focus?.();
   }
 
-  function closeSlot() {
-    if (!state.selection) return;
+  /**
+   * backlog:6e6750ff8163 — × or Esc on the «Nuovo appuntamento» form:
+   * it closes AND empties, so the next opening starts clean — never the
+   * old slot, customer or price left behind. Focus goes back to the
+   * «Nuovo appuntamento» button.
+   */
+  function closeManual() {
+    if (!state.selection && !state.manualOpen && !state.draftFill) return;
+    cancelCustomerSearch();
     state.selection = null;
+    state.manualOpen = false;
+    state.manual = null;
+    state.draftFill = null;
+    state.draftWrote = null;
+    state.customerPick = null;
+    state.customerQuery = '';
+    state.customerItems = [];
+    state.customerError = null;
+    state.customerPartial = false;
+    state.bookingNote = '';
+    state.serviceError = '';
+    state.confirmed = null;
     renderAll();
+    const toggle = mount.querySelector('button[aria-haspopup="true"]');
+    if (toggle && typeof toggle.focus === 'function') toggle.focus();
   }
 
   /**
@@ -2957,8 +2990,10 @@ export function createCalendarioView(deps) {
       state.selectedId = state.selectedId === id ? null : id;
       state.moveNote = '';
       resetPopSteps();
-      // One popover at a time: an event opens over a slot pick, not beside it.
+      // One popover at a time: an event opens over a slot pick or the form,
+      // not beside it (the form keeps its values until × or Esc).
       state.selection = null;
+      if (state.selectedId !== null) state.manualOpen = false;
       renderAll();
       // Focus follows the popover in, and back to the event when it closes.
       if (state.selectedId !== null && paintedPop && typeof paintedPop.focus === 'function') paintedPop.focus();
@@ -4180,6 +4215,21 @@ export function createCalendarioView(deps) {
    * the screen — they ride the claim from `pickedCustomer()` only.
    * @param {any} form
    */
+  /**
+   * backlog:6e6750ff8163 — every field of «Nuovo appuntamento» carries its
+   * visible label (Cliente, Persona del team, Servizio, Prezzo, Giorno,
+   * Inizio, Fine, Note): a placeholder alone vanishes as soon as the field
+   * holds a value («1.00» read as nothing). The label wraps its control, so
+   * a click on the words focuses the field and screen readers name it.
+   * @param {string} label @param {any} control @param {{wide?: boolean}} [options]
+   */
+  function fieldBox(label, control, { wide = false } = {}) {
+    const box = el(doc, 'label', { className: `cal-field${wide ? ' cal-field-wide' : ''}` });
+    box.appendChild(el(doc, 'span', { className: 'cal-field-label', text: label }));
+    box.appendChild(control);
+    return box;
+  }
+
   function renderCustomerPick(form) {
     const pick = state.customerPick;
     if (pick && typeof pick?.name === 'string') {
@@ -4198,9 +4248,11 @@ export function createCalendarioView(deps) {
       state.manualFirst = change;
       return;
     }
+    // A short placeholder: the label says what the field is, so the hint
+    // never gets cut on the 340 px popover.
     const search = uiSearchField(doc, {
       name: 'customerSearch',
-      placeholder: 'Cerca il cliente per nome…',
+      placeholder: 'Cerca per nome…',
       value: state.customerQuery,
     });
     const box = el(doc, 'div', { attrs: { 'data-role': 'customer-results' } });
@@ -4211,7 +4263,7 @@ export function createCalendarioView(deps) {
         scheduleCustomerSearch(state.customerQuery);
       });
     }
-    form.appendChild(search);
+    form.appendChild(fieldBox('Cliente', search, { wide: true }));
     form.appendChild(box);
     paintCustomerResults(box);
     if (field) state.manualFirst = field;
@@ -4255,7 +4307,7 @@ export function createCalendarioView(deps) {
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Persona del team', input, { wide: true }));
       return input;
     }
     // One option per PERSON under the person label (backlog:810ed0bf:
@@ -4280,9 +4332,10 @@ export function createCalendarioView(deps) {
       };
       select.addEventListener('input', track);
       select.addEventListener('change', track);
-      form.appendChild(wrap);
+      form.appendChild(fieldBox('Persona del team', wrap, { wide: true }));
       return select;
     }
+    form.appendChild(fieldBox('Persona del team', wrap, { wide: true }));
     return wrap;
   }
 
@@ -4330,7 +4383,7 @@ export function createCalendarioView(deps) {
       const select = wrap.querySelector('select') ?? wrap;
       select.value = '';
       select.setAttribute('disabled', 'disabled');
-      form.appendChild(wrap);
+      form.appendChild(fieldBox('Servizio', wrap, { wide: true }));
       form.appendChild(el(doc, 'small', {
         className: 'field-error',
         attrs: { role: 'alert', 'data-role': 'services-blocked' },
@@ -4346,74 +4399,64 @@ export function createCalendarioView(deps) {
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
       return input;
     }
     const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
     const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
     const wanted = kept !== '' ? kept : drafted;
-    // A kept or drafted service is never replaced by the default: the
-    // match is case-insensitive (plus the catalog-name mapping), and an
-    // unknown key keeps the typed value in a text field instead of
-    // booking a service the operator never chose. Only with nothing kept
-    // and nothing drafted does the first entry preselect.
+    // A kept or drafted service is never replaced by a default: the match
+    // is case-insensitive (plus the catalog-name mapping), and an unknown
+    // key keeps the typed value in a text field instead of booking a
+    // service the operator never chose. backlog:6e6750ff8163: with nothing
+    // kept and nothing drafted the menu starts on «Scegli il servizio» —
+    // never the first catalog entry, which on a real listino was a test
+    // product — unless the listino holds exactly one bookable service,
+    // like the scheda's «Nuovo appuntamento» window.
     const mapped = serviceKeyFor(wanted, state.services);
     const match = bookable.find((entry) => entry.key === wanted)
       ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
       ?? bookable.find((entry) => entry.key === mapped)
-      ?? (wanted === '' ? bookable[0] : null);
-    if (match === null && state.servicesMode === 'served') {
-      // A kept or drafted service the served list does not hold: the menu
-      // asks for a choice, never a free-text key.
-      const wrap = uiSelect(doc, {
-        name: 'serviceKey', value: '',
-        options: [{ value: '', label: 'Scegli il servizio' }, ...bookable.map((entry) => ({
-          value: entry.key, label: `${entry.name} · ${formatPriceCents(entry.priceCents) ?? ''} €`,
-        }))],
-      });
-      const select = wrap.querySelector('select') ?? wrap;
-      select.value = '';
+      ?? (wanted === '' && bookable.length === 1 ? bookable[0] : null);
+    if (match === null && wanted !== '' && state.servicesMode === 'served') {
+      // A kept or drafted service the served list does not hold (#805): the
+      // menu asks for a choice on its placeholder, never a free-text key.
       state.manual = { ...(state.manual ?? {}), serviceKey: '' };
-      const track = () => {
-        const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
-        state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
-        if (chosen !== null && priceInput) {
-          priceInput.value = formatPriceCents(chosen.priceCents) ?? '';
-          state.manual = { ...(state.manual ?? {}), price: priceInput.value };
-        }
-      };
-      select.addEventListener('input', track);
-      select.addEventListener('change', track);
-      form.appendChild(wrap);
-      paintUnder(select);
-      return select;
-    }
-    if (match === null) {
+    } else if (match === null && wanted !== '') {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       input.value = wanted;
       state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
       return input;
     }
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
-    const options = bookable.map((entry) => ({
-      value: entry.key,
-      label: serviceOptionLabel(entry),
-    }));
-    const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
+    const options = [
+      ...(match === null ? [{ value: '', label: 'Scegli il servizio' }] : []),
+      ...bookable.map((entry) => ({
+        value: entry.key,
+        label: serviceOptionLabel(entry),
+      })),
+    ];
+    const chosenKey = match === null ? '' : match.key;
+    const wrap = uiSelect(doc, { name: 'serviceKey', value: chosenKey, options });
     const select = wrap.querySelector('select') ?? wrap;
-    select.value = match.key;
+    select.value = chosenKey;
     const track = () => {
       const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
       state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      } else if (chosen === null && priceInput) {
+        // Back on «Scegli il servizio» (review #790, Muse P2): no service,
+        // no price — never the price of a service nobody chose any more.
+        priceInput.value = '';
+        state.manual = { ...(state.manual ?? {}), price: '' };
       }
     };
     select.addEventListener('input', track);
@@ -4424,19 +4467,21 @@ export function createCalendarioView(deps) {
     // render all read the live menu, so a preselect stored here could
     // never shadow a later draft as a «kept» choice (a kept choice is
     // only what the operator or an absorbed draft actually set).
-    if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
+    if (match !== null && priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
       priceInput.value = priceText(match);
       state.manual = { ...(state.manual ?? {}), price: priceInput.value };
     }
-    form.appendChild(wrap);
+    form.appendChild(fieldBox('Servizio', wrap, { wide: true }));
     paintUnder(select);
     return select;
   }
 
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
-    // form stays in the DOM, so a draft can still prefill it.
-    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draftFill || state.manual ? ' open' : ''}` });
+    // form stays in the DOM inside its hidden popover, so a draft can still
+    // prefill it.
+    // The popover around it opens and closes the form (backlog:6e6750ff8163).
+    const panel = el(doc, 'div', { className: 'panel cal-manual open' });
     state.manualPanel = panel;
     panel.appendChild(el(doc, 'h2', { text: 'Nuovo appuntamento' }));
     panel.appendChild(el(doc, 'p', {
@@ -4464,7 +4509,7 @@ export function createCalendarioView(deps) {
     // The price rides the chosen catalog entry (backlog:810ed0bf): it
     // prefills from the menu default and follows every service change
     // until the operator types their own price.
-    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', placeholder: 'Prezzo EUR (es. 45.00)' } });
+    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', inputmode: 'decimal', placeholder: 'es. 45.00' } });
     if (state.manual?.price != null) priceInput.value = String(state.manual.price);
     priceInput.addEventListener('input', () => {
       state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
@@ -4473,16 +4518,16 @@ export function createCalendarioView(deps) {
     // free text (backlog:810ed0bf): the claim sends the menu key the worker
     // books by, with its price precompiled beside it.
     inputs.serviceKey = renderServiceChoice(form, priceInput);
-    form.appendChild(priceInput);
+    form.appendChild(fieldBox('Prezzo (€)', priceInput, { wide: true }));
     inputs.price = priceInput;
     const fields = [
-      ['date', 'date', 'Giorno'],
-      ['start', 'time', 'Inizio'],
-      ['end', 'time', 'Fine'],
-      ['notes', 'text', 'Note'],
+      ['date', 'date', 'Giorno', ''],
+      ['start', 'time', 'Inizio', ''],
+      ['end', 'time', 'Fine', ''],
+      ['notes', 'text', 'Note', 'Facoltative'],
     ];
-    for (const [name, type, placeholder] of fields) {
-      const input = el(doc, 'input', { attrs: { type, name, placeholder } });
+    for (const [name, type, label, placeholder] of fields) {
+      const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
       // rebuilds the inputs, so restore the last manual values first — and
       // track every keystroke live, so an unrelated re-render (week load,
@@ -4492,7 +4537,9 @@ export function createCalendarioView(deps) {
         state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
       });
       inputs[name] = input;
-      form.appendChild(input);
+      // Giorno and Note take the row; Inizio and Fine sit side by side, so
+      // no date ever gets cut on the 340 px popover.
+      form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
