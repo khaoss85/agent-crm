@@ -4525,7 +4525,7 @@
     }
   ],
   "source": {
-    "apps/admin/public/admin-quotes.js": "93cd859cbf7bf2a37d607f092b4ba273dfc94ab6e01329a7e88ab34c4046f019",
+    "apps/admin/public/admin-quotes.js": "fea618426300d4e46aa40b1fb05fe956319732deb349aad2e10b9272a409cbb8",
     "apps/server/src/http-server.js": "969cda7e740d24b7167bdac1309348319312ea267f1c46368fd01ff81246a4d6",
     "examples/starters/b2b-lead-qualification/commercial.js": "cd2c196857611313d4ef7b5496af48ad86f84207e0a6556af353488641a0e6de",
     "packages/app/src/create-app.js": "2b204d52a648d906d129353643f2811c76f627d4b2874e15a06dd28f416ab021",

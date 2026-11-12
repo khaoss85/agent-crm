@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, UI_BUSY_LOCKED, uiBusy, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
 import { customerImportReasonLabel } from './admin-core.js';
 import { isSessionLostCode } from './admin-session.js';
@@ -632,9 +632,11 @@ export function createCustomerFormView(deps) {
     // lands while the reads below are still out waits for them, then saves.
     let setupDone = false;
     let saveQueued = false;
+    // cta-loading: «Salvo…» while it works; a just-created customer keeps Salva off.
+    const busySave = () => uiBusy(save, 'Salvo…', async () => { await saveCustomer(); return created ? UI_BUSY_LOCKED : undefined; });
     save.addEventListener('click', () => {
       if (setupDone) {
-        void saveCustomer();
+        void busySave();
         return;
       }
       saveQueued = true;
@@ -763,7 +765,7 @@ export function createCustomerFormView(deps) {
     if (saveQueued) {
       saveQueued = false;
       save.disabled = false;
-      void saveCustomer();
+      void busySave();
     }
 
     // The session may die after the customer exists (phone, custom value,
@@ -1051,7 +1053,7 @@ export function createCustomerFormView(deps) {
       const error = el('small', 'field-error', '');
       box.appendChild(error);
       let working = false;
-      go.addEventListener('click', async () => {
+      go.addEventListener('click', () => uiBusy(go, 'Interpreto…', async () => {
         if (working) return;
         const phrase = String(area.value ?? '').trim();
         if (phrase === '') {
@@ -1072,7 +1074,7 @@ export function createCustomerFormView(deps) {
           working = false;
           go.disabled = false;
         }
-      });
+      }));
     }
 
     function renderPreview(box, draft, ctx) {
@@ -1116,7 +1118,7 @@ export function createCustomerFormView(deps) {
       back.addEventListener('click', () => {
         while (box.firstChild) box.removeChild(box.firstChild);
       });
-      confirm.addEventListener('click', async () => {
+      confirm.addEventListener('click', () => uiBusy(confirm, 'Creo…', async () => {
         if (working) return;
         working = true;
         confirm.disabled = true;
@@ -1158,7 +1160,7 @@ export function createCustomerFormView(deps) {
           working = false;
           confirm.disabled = false;
         }
-      });
+      }));
     }
 
   }

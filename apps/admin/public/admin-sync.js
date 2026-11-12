@@ -833,7 +833,7 @@ export function syncFeedItems(activity) {
   return items;
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -1174,7 +1174,7 @@ export function createSyncView(deps) {
         keep.setAttribute('data-action', 'dismiss-duplicate-candidate');
         keep.setAttribute('data-candidate-id', card.id);
         keep.addEventListener('click', () => {
-          void dismissCandidate(card.id, keep);
+          void uiBusy(keep, 'Salvo…', () => dismissCandidate(card.id, keep));
         });
         node.appendChild(keep);
       }
@@ -1194,7 +1194,7 @@ export function createSyncView(deps) {
         button.setAttribute('data-connection-key', item.action.connectionKey);
         if (state.syncing.has(item.action.connectionKey)) button.setAttribute('disabled', '');
         button.addEventListener('click', () => {
-          void syncNow(item.action.connectionKey, button);
+          void uiBusy(button, 'Sincronizzo…', () => syncNow(item.action.connectionKey, button));
         });
         card.appendChild(button);
       }

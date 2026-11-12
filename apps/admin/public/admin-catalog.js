@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, UI_BUSY_LOCKED, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
@@ -325,7 +325,7 @@ export function createCatalogView(deps) {
         no.addEventListener('click', () => {
           while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
         });
-        yes.addEventListener('click', async () => {
+        yes.addEventListener('click', () => uiBusy(yes, 'Sincronizzo…', async () => {
           yes.disabled = true;
           try {
             await submissions.submit({ path: '/api/catalog/sync', method: 'POST', body: { provider } });
@@ -335,7 +335,7 @@ export function createCatalogView(deps) {
           } finally {
             yes.disabled = false;
           }
-        });
+        }));
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         confirmBox.appendChild(confirmError);
@@ -410,7 +410,7 @@ export function createCatalogView(deps) {
       no.addEventListener('click', () => {
         while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
       });
-      yes.addEventListener('click', async () => {
+      yes.addEventListener('click', () => uiBusy(yes, 'Salvo…', async () => {
         yes.disabled = true;
         try {
           await submissions.submit({
@@ -424,7 +424,7 @@ export function createCatalogView(deps) {
         } finally {
           yes.disabled = false;
         }
-      });
+      }));
       confirmBox.appendChild(yes);
       confirmBox.appendChild(no);
       confirmBox.appendChild(confirmError);
@@ -460,7 +460,7 @@ export function createCatalogView(deps) {
       no.addEventListener('click', () => {
         while (confirmBox.firstChild) confirmBox.removeChild(confirmBox.firstChild);
       });
-      yes.addEventListener('click', async () => {
+      yes.addEventListener('click', () => uiBusy(yes, 'Rimuovo…', async () => {
         yes.disabled = true;
         try {
           await submissions.submit({
@@ -474,7 +474,7 @@ export function createCatalogView(deps) {
         } finally {
           yes.disabled = false;
         }
-      });
+      }));
       confirmBox.appendChild(yes);
       confirmBox.appendChild(no);
       confirmBox.appendChild(confirmError);
@@ -597,7 +597,7 @@ export function createCatalogView(deps) {
         const yes = el('button', undefined, 'Conferma');
         const no = el('button', undefined, 'Annulla');
         no.addEventListener('click', async () => { await renderTable(); });
-        yes.addEventListener('click', async () => {
+        yes.addEventListener('click', () => uiBusy(yes, 'Salvo…', async () => {
           yes.disabled = true;
           try {
             const offers = product.offers.map((offer) => ({
@@ -643,7 +643,7 @@ export function createCatalogView(deps) {
           } finally {
             yes.disabled = false;
           }
-        });
+        }));
         review.appendChild(yes);
         review.appendChild(no);
         formBox.appendChild(review);
@@ -791,7 +791,7 @@ export function createCatalogView(deps) {
         const yes = el('button', undefined, 'Conferma');
         const no = el('button', undefined, 'Annulla');
         no.addEventListener('click', async () => { await renderTable(); });
-        yes.addEventListener('click', async () => {
+        yes.addEventListener('click', () => uiBusy(yes, 'Creo…', async () => {
           yes.disabled = true;
           try {
             await submissions.submit({
@@ -817,13 +817,13 @@ export function createCatalogView(deps) {
               }
               formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
               review.appendChild(formError);
-              return;
+              return UI_BUSY_LOCKED;
             }
             formError.textContent = error?.message ?? 'Creazione fallita';
             review.appendChild(formError);
             yes.disabled = false;
           }
-        });
+        }));
         review.appendChild(yes);
         review.appendChild(no);
         formBox.appendChild(review);
@@ -896,7 +896,7 @@ export function createCatalogView(deps) {
         const yes = el('button', undefined, 'Conferma');
         const no = el('button', undefined, 'Annulla');
         no.addEventListener('click', async () => { await renderTable(); });
-        yes.addEventListener('click', async () => {
+        yes.addEventListener('click', () => uiBusy(yes, 'Creo…', async () => {
           yes.disabled = true;
           try {
             await submissions.submit({
@@ -913,13 +913,13 @@ export function createCatalogView(deps) {
               }
               formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
               review.appendChild(formError);
-              return;
+              return UI_BUSY_LOCKED;
             }
             formError.textContent = error?.message ?? 'Creazione fallita';
             review.appendChild(formError);
             yes.disabled = false;
           }
-        });
+        }));
         review.appendChild(yes);
         review.appendChild(no);
         formBox.appendChild(review);

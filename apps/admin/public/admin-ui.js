@@ -709,3 +709,86 @@ export function uiSecretField(doc, options = {}) {
   }
   return wrap;
 }
+
+/**
+ * Backlog cta-loading (Dan 11/11: «quando clicco … non c'è un loader sul
+ * CTA che fa capire che la sta salvando»): the one way a write button shows
+ * it is working. While `work` runs the button is disabled, marked
+ * aria-busy and reads `label` («Salvo…», «Invio…»). When it settles —
+ * success or error — the button gets back its own content (icons too) and
+ * its previous disabled state; a view that closes or re-renders simply
+ * drops it. A second click while busy runs nothing, so a double tap is one
+ * write. Errors are not caught: the caller's own try/catch keeps showing
+ * its message next to the command. A `work` that must leave the button off
+ * (an uncertain create that must not be blindly retried) returns
+ * UI_BUSY_LOCKED.
+ *
+ * @template T
+ * @param {any} button
+ * @param {string} label
+ * @param {() => Promise<T> | T} work
+ * @returns {Promise<T | undefined>}
+ */
+export async function uiBusy(button, label, work) {
+  if (!button) return work();
+  if (button.getAttribute('aria-busy') === 'true') return undefined;
+  const release = uiHold(button, label);
+  let result;
+  try {
+    result = await work();
+    return result;
+  } finally {
+    release(result === UI_BUSY_LOCKED);
+  }
+}
+
+/**
+ * The same waiting state for a write that starts mid-handler (after its
+ * own checks): returns the function that gives the button back — its own
+ * content, icons too, and its previous disabled state; `keepOff` leaves
+ * it off. A label the work wrote itself stays.
+ *
+ * @param {any} button
+ * @param {string} label
+ * @returns {(keepOff?: boolean) => void}
+ */
+export function uiHold(button, label) {
+  const wasDisabled = button.disabled === true;
+  const ownText = button.textContent;
+  const ownNodes = Array.from(button.childNodes ?? []);
+  const hadElements = ownNodes.some((node) => node && node.nodeType !== 3 && typeof node.tagName === 'string');
+  uiMarkBusy(button, label);
+  return (keepOff = false) => {
+    button.removeAttribute('aria-busy');
+    // A label the work wrote itself stays, on text and icon buttons alike.
+    if (button.textContent === label) {
+      if (hadElements) {
+        button.textContent = '';
+        for (const node of ownNodes) button.appendChild(node);
+      } else {
+        button.textContent = ownText;
+      }
+    }
+    button.disabled = wasDisabled || keepOff === true;
+    if (!button.disabled) button.removeAttribute('disabled');
+  };
+}
+
+/**
+ * The busy look alone, for views that re-render while a write is in
+ * flight and rebuild the button from their own state (the button uiBusy
+ * would restore no longer exists): off, aria-busy, «Salvo…».
+ *
+ * @param {any} button
+ * @param {string} label
+ */
+export function uiMarkBusy(button, label) {
+  button.disabled = true;
+  button.setAttribute('disabled', 'disabled');
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = label;
+  return button;
+}
+
+/** What a uiBusy `work` returns to keep its button off once it settles. */
+export const UI_BUSY_LOCKED = Symbol('ui-busy-locked');

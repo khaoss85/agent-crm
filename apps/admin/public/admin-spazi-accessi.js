@@ -436,7 +436,7 @@ export function masterEnabled(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
@@ -725,6 +725,7 @@ export function createSpaziAccessiView(deps) {
 
   async function mutate(path, body) {
     state.busy = true;
+    busyPath = path; // cta-loading: the button that wrote reads «…» on the re-render
     render();
     try {
       return await client.request(path, { method: 'POST', body });
@@ -732,6 +733,8 @@ export function createSpaziAccessiView(deps) {
       state.busy = false;
     }
   }
+  let busyPath = '';
+  const busyOn = (test) => state.busy && test(busyPath);
 
   function activeSpace() {
     const spaces = readSpaces();
@@ -978,6 +981,7 @@ export function createSpaziAccessiView(deps) {
           attrs: { type: 'button' },
         });
         yes.disabled = state.busy;
+        if (busyOn((path) => path.endsWith('/suspend'))) uiMarkBusy(yes, 'Rimuovo…');
         yes.addEventListener('click', async () => {
           const motive = String(reason.value ?? '').trim();
           if (motive === '') {
@@ -1067,6 +1071,7 @@ export function createSpaziAccessiView(deps) {
     invite.appendChild(reason);
     const send = el(doc, 'button', { text: 'Invita', cls: 'bo-spazi-open', attrs: { type: 'button' } });
     send.disabled = state.busy;
+    if (busyOn((path) => path === '/api/spine/memberships')) uiMarkBusy(send, 'Invito…');
     send.addEventListener('click', async () => {
       const who = String(subject.value ?? '').trim();
       const picked = String(role.value ?? '').trim() || 'operator';
@@ -1181,6 +1186,7 @@ export function createSpaziAccessiView(deps) {
         }));
         const yes = el(doc, 'button', { text: 'Conferma', cls: 'bo-spazi-open', attrs: { type: 'button' } });
         yes.disabled = state.busy;
+        if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
           try {
             await mutate('/api/space-permissions/set-permission', {

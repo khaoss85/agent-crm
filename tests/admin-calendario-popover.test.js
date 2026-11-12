@@ -350,7 +350,7 @@ test('popover: «Modifica o sposta» opens the existing move form, prefilled, wi
   form.findAll('button').find((node) => node.getAttribute('data-action') === 'move-submit').dispatch('click');
   // While the write runs the button waits.
   const busy = popover(mount).querySelector('button[data-action="move-submit"]');
-  assert.equal(busy.getAttribute('disabled'), 'true', 'no second submit while the move runs');
+  assert.notEqual(busy.getAttribute('disabled'), null, 'no second submit while the move runs');
   assert.equal(busy.getAttribute('aria-busy'), 'true');
   assert.equal(busy.textContent, 'Spostamento in corso…');
   await settle();

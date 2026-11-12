@@ -4454,6 +4454,59 @@ test('Conferma in flight replaces the draft note with «Prenotazione in corso…
   assert.ok(!panel.includes('Bozza'), 'the stale draft note is gone while Conferma runs');
 });
 
+// cta-loading (Dan 11/11): the pressed Conferma itself reads «Prenoto…»
+// while the booking is in flight, and pressing it again books nothing more.
+test('cta-loading: Conferma reads «Prenoto…» while booking and a second press books once', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  let release = () => {};
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/appointments/confirm') {
+        base.calls.push({ path, method: options.method ?? 'GET', body: options.body });
+        return new Promise((_, reject) => { release = () => reject(Object.assign(new Error('boom'), { status: 500 })); });
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  const proponiBefore = manualButton(mount, 'Proponi');
+  manualButton(mount, 'Conferma').dispatch('click');
+  // Review Muse #775 giro 2: off at once, before the first await.
+  assert.equal(proponiBefore.disabled, true, 'Proponi goes off synchronously with the Conferma press');
+  await flushMany();
+  const busy = manualButton(mount, 'Prenoto…');
+  assert.ok(busy, 'the pressed Conferma says it is booking');
+  assert.equal(busy.getAttribute('aria-busy'), 'true');
+  assert.equal(busy.disabled, true);
+  busy.dispatch('click');
+  await flushMany();
+  const confirms = () => base.calls.filter((call) => call.path === '/api/appointments/confirm').length;
+  assert.equal(confirms(), 1, 'one booking for two presses');
+  // Review Muse #775: the other booking buttons are off meanwhile, never
+  // pressable and silently dropped.
+  const propose = manualButton(mount, 'Proponi');
+  assert.equal(propose.disabled, true, 'Proponi is off while Conferma books');
+  assert.equal(propose.getAttribute('aria-busy'), null, 'only the pressed button reads busy');
+  release();
+  await flushMany();
+  const back = manualButton(mount, 'Conferma');
+  assert.ok(back, 'after the refusal the button reads Conferma again');
+  assert.equal(back.getAttribute('aria-busy'), null);
+  assert.equal(back.disabled, false);
+});
+
 test('AI off is remembered for its own space only', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

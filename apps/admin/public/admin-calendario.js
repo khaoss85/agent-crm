@@ -26,7 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -1248,7 +1248,12 @@ export function createCalendarioView(deps) {
     }
   };
 
+  /** The booking buttons of the current paint, by key (cleared on every repaint). */
+  /** @type {Map<string, Array<{ button: any, label: string }>>} */
+  const bookingButtons = new Map();
   const state = {
+    /** @type {string | null} cta-loading: the booking button whose write is in flight */
+    bookingBusy: null,
     memberFilter: '',
     /** True while the filter holds the roster auto-fill nobody edited yet:
      * a later roster refusal clears it back to the honest prompt instead of
@@ -1797,6 +1802,7 @@ export function createCalendarioView(deps) {
   }
 
   function renderView() {
+    bookingButtons.clear();
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -2727,7 +2733,8 @@ export function createCalendarioView(deps) {
           attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        ghost.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3159,12 +3166,11 @@ export function createCalendarioView(deps) {
     const move = uiButton(doc, {
       variant: 'secondary',
       small: true,
-      label: state.moveBusy ? 'Spostamento in corso…' : 'Sposta',
+      label: 'Sposta',
       attrs: { type: 'button', 'data-action': 'move-submit' },
     });
     if (state.moveBusy) {
-      move.setAttribute('disabled', 'true');
-      move.setAttribute('aria-busy', 'true');
+      uiMarkBusy(move, 'Spostamento in corso…'); // cta-loading: the shared waiting state
     } else {
       move.addEventListener('click', () => {
         void submitMoveForm(row, {
@@ -3296,7 +3302,8 @@ export function createCalendarioView(deps) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
         const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        confirm.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         item.appendChild(confirm);
         list.appendChild(item);
       }
@@ -4341,9 +4348,11 @@ export function createCalendarioView(deps) {
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
-    propose.addEventListener('click', () => void submitBooking(inputs, false));
+    holdBookingButton(propose, 'propose', 'Controllo…');
+    propose.addEventListener('click', () => void busyBooking('propose', () => submitBooking(inputs, false)));
     const confirm = el(doc, 'button', { className: 'secondary small', text: 'Conferma' });
-    confirm.addEventListener('click', () => void submitBooking(inputs, true));
+    holdBookingButton(confirm, 'confirm', 'Prenoto…');
+    confirm.addEventListener('click', () => void busyBooking('confirm', () => submitBooking(inputs, true)));
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
@@ -4465,6 +4474,46 @@ export function createCalendarioView(deps) {
   }
 
   /** @param {any} inputs @param {boolean} confirm */
+  /**
+   * cta-loading (Dan 11/11): one booking at a time, and the pressed button
+   * reads «Prenoto…» on every re-render until the answer is in.
+   * @param {string} key @param {() => Promise<void>} work
+   */
+  async function busyBooking(key, work) {
+    if (state.bookingBusy) return;
+    state.bookingBusy = key;
+    // Review Muse #775 giro 2: the buttons on screen go off now, before the
+    // first await, not at the next repaint — no window where a second
+    // booking button looks pressable and drops its click.
+    for (const [shownKey, entries] of bookingButtons) {
+      for (const { button, label } of entries) holdBookingButton(button, shownKey, label, false);
+    }
+    try {
+      await work();
+    } finally {
+      state.bookingBusy = null;
+      renderAll();
+    }
+  }
+  /**
+   * Review Muse #775: while one booking is in flight every booking button is
+   * off — the pressed one reads «Prenoto…», the others are simply not
+   * pressable — so no click is ever silently dropped.
+   * @param {any} button @param {string} key @param {string} label
+   */
+  function holdBookingButton(button, key, label, remember = true) {
+    if (remember) bookingButtons.set(key, [...(bookingButtons.get(key) ?? []), { button, label }]);
+    if (!state.bookingBusy) return;
+    if (state.bookingBusy === key) {
+      uiMarkBusy(button, label);
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute('disabled', 'disabled');
+  }
+  /** @param {any} slot */
+  const slotBusyKey = (slot) => `slot:${slot?.teamMemberId ?? ''}:${slot?.startsAt ?? ''}`;
+
   async function submitBooking(inputs, confirm) {
     await ensureServices();
     const { claim } = claimFrom(inputs);
