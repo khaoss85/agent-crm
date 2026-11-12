@@ -1086,6 +1086,23 @@ test('Oggi counts legacy connections without spaceId in the active space (backlo
   assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), "space A's WhatsApp still invites in space B");
 });
 
+test('Oggi marks channels partial when the legacy page is refused (backlog:803d127c4458)', async () => {
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) {
+        if (path.includes('filter.spaceId=')) return { items: [{ channel: 'email', status: 'active', spaceId: 'spazio-b' }] };
+        throw Object.assign(new Error('legacy refused'), { status: 403 });
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(data.channelsPartial, true, 'a refused legacy page is partial, never a silent undercount');
+  assert.equal(data.connections.length, 1, 'the scoped rows still show');
+});
+
 test('Oggi with unreadable channels still links Connettori (backlog:803d127c4458)', () => {
   const doc = createFakeDocument();
   const mount = createMount();

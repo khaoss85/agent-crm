@@ -1394,6 +1394,7 @@ async function readSpaceConnections(client, space) {
   const scopedItems = Array.isArray(scopedAnswer?.items) ? scopedAnswer.items : [];
   let legacyItems = [];
   let legacyPageFull = false;
+  let legacyFailed = false;
   try {
     const legacyQuery = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
     const legacyAnswer = await client.request(`/api/modules/channel-connection/records?${legacyQuery.toString()}`);
@@ -1402,15 +1403,16 @@ async function readSpaceConnections(client, space) {
     legacyItems = legacyPage.filter((row) => row != null
       && (row.spaceId === undefined || row.spaceId === null || String(row.spaceId).trim() === ''));
   } catch (error) {
-    // A refused legacy page never hides the scoped rows: the strip may
-    // undercount old connections, but the cap note already discloses a
-    // partial read and the failure is named on the console.
+    // A refused legacy page never hides the scoped rows, but the strip may
+    // undercount old connections: the failure marks the read partial, so the
+    // partial note discloses it, and the cause is named on the console.
+    legacyFailed = true;
     noteReadFailure('channel-connection-legacy', error);
   }
   const merged = [...scopedItems, ...legacyItems];
   return {
     rows: merged.slice(0, OGGI_READ_LIMIT),
-    capped: scopedItems.length > OGGI_READ_LIMIT || legacyPageFull || merged.length > OGGI_READ_LIMIT,
+    capped: scopedItems.length > OGGI_READ_LIMIT || legacyPageFull || merged.length > OGGI_READ_LIMIT || legacyFailed,
   };
 }
 
