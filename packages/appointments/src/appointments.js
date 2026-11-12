@@ -418,39 +418,80 @@ export function validateAppointmentRequest(request) {
  * Owner busy blocks (backlog:af190faf): a commitment with no guest holds its
  * member like a booking, without becoming a booking — no customer, no
  * appointment row. Shape `{ teamMemberId, startsAt, endsAt, title? }`, the
- * same shape the Google sync writes. Absent or null means no blocks, and
- * every caller keeps its old behaviour; a non-array value is a caller bug
- * and is refused.
+ * same shape the Google sync writes.
+ *
+ * One source of truth, server-side only: blocks enter this package ONLY
+ * through the composed `calendarSync` handle (`listOwnerBlocks`), never
+ * through caller/request input. A request `busyBlocks` key is never read —
+ * omitting it changes nothing and forging it changes nothing — so the write
+ * paths cannot be bypassed by dropping the field and the GET routes carry
+ * no private titles in the URL. The deployment that wires the handle (its
+ * own calendar-sync store) gets enforcement; a composition without the
+ * handle keeps main behaviour (no blocks). A wired store that cannot be
+ * read fails the call closed: the error propagates, never an empty block
+ * list over unknown state.
  *
  * Every block is proven up front, on every path (week read, suggestion,
- * proposal, booking): a block must name its member with a non-empty string,
- * and its slot must parse with `endsAt` after `startsAt`. An unattributed
- * block is refused rather than widened to every member — a malformed entry
- * must never wedge the whole team, and a read that silently drops a corrupt
- * block while the booking path 500s over it would let the grid and the
- * booking disagree. One rule, one code (`ValidationError`, 400, field
- * `busyBlocks`), everywhere: a caller bug surfaces as a 400 the caller
- * fixes, never as storage corruption and never as a free slot.
+ * proposal, booking): exactly `{ teamMemberId, startsAt, endsAt, title? }` —
+ * any other key (`status`, `id`, `kind`, ...) is refused, so a crafted entry
+ * can never flip the owner/appointment discriminator. The member identity
+ * is trimmed exactly like the member filter, so a padded store identity
+ * holds its member instead of silently holding nobody. An unattributed or
+ * unprovable entry fails closed 400 (field `busyBlocks`) on every path
+ * alike: grid and booking never disagree. No wildcard — a block holds
+ * exactly the member it names.
  *
- * @param {any} source the filter or request carrying the optional `busyBlocks`
- * @returns {Array<object>} the proven blocks, in caller order
+ * @param {any} calendarSync the composed calendar-sync handle, or null
+ * @param {string} teamMemberId the member the caller checks (already normalized)
+ * @param {string} fromIso window start, ISO instant
+ * @param {string} toIso window end, ISO instant
+ * @returns {Promise<Array<object>>} the proven blocks holding that member, tagged
  */
-function validateBusyBlocks(source) {
-  const value = source && typeof source === 'object' ? source.busyBlocks : undefined;
+async function ownerBlocksFor(calendarSync, teamMemberId, fromIso, toIso) {
+  if (!calendarSync || typeof calendarSync.listOwnerBlocks !== 'function') return [];
+  const found = await calendarSync.listOwnerBlocks({ teamMemberId, from: fromIso, to: toIso });
+  return proveOwnerBlocks(found).filter((block) => block.teamMemberId === teamMemberId);
+}
+
+/** The tag an owner block carries from construction: the only discriminator. */
+const OWNER_BLOCK_KIND = 'owner-block';
+
+/** The only keys a server-provided owner block may carry. */
+const OWNER_BLOCK_KEYS = Object.freeze(['teamMemberId', 'startsAt', 'endsAt', 'title']);
+
+/**
+ * Prove server-provided owner blocks: closed shape, trimmed identity,
+ * provable slot, tagged at construction. A store bug surfaces as a 400 the
+ * deployment fixes, never as storage corruption and never as a free slot.
+ *
+ * @param {unknown} value the store answer
+ * @returns {Array<object>} the proven blocks, in store order
+ */
+function proveOwnerBlocks(value) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
-    throw new ValidationError('busyBlocks must be an array of owner blocks: one member holds one slot at a time', {
+    throw new ValidationError('owner blocks must be an array of owner blocks: one member holds one slot at a time', {
       field: 'busyBlocks',
     });
   }
-  value.forEach((block, index) => {
+  return value.map((block, index) => {
     const where = `busyBlocks[${index}]`;
     if (!block || typeof block !== 'object' || Array.isArray(block)) {
-      throw new ValidationError(`${where} must be an object { teamMemberId, startsAt, endsAt }: a hold nobody described holds nobody`, {
+      throw new ValidationError(`${where} must be an object { teamMemberId, startsAt, endsAt, title? }: a hold nobody described holds nobody`, {
         field: 'busyBlocks',
       });
     }
-    if (typeof block.teamMemberId !== 'string' || block.teamMemberId.trim() === '') {
+    for (const key of Object.keys(block)) {
+      if (!OWNER_BLOCK_KEYS.includes(key)) {
+        throw new ValidationError(`${where} carries no "${key}": an owner block is exactly { teamMemberId, startsAt, endsAt, title? }`, {
+          field: 'busyBlocks',
+        });
+      }
+    }
+    let member;
+    try {
+      member = safeText(block.teamMemberId, 'teamMemberId', MAX_ID);
+    } catch {
       throw new ValidationError(`${where}.teamMemberId must be a non-empty member identity: an unattributed hold is refused, never widened to the whole team`, {
         field: 'busyBlocks',
       });
@@ -462,21 +503,15 @@ function validateBusyBlocks(source) {
         field: 'busyBlocks',
       });
     }
+    if (block.title !== undefined && block.title !== null && typeof block.title !== 'string') {
+      throw new ValidationError(`${where}.title must be a string when named`, {
+        field: 'busyBlocks',
+      });
+    }
+    return {
+      teamMemberId: member, startsAt: block.startsAt, endsAt: block.endsAt, title: block.title, kind: OWNER_BLOCK_KIND,
+    };
   });
-  return value;
-}
-
-/**
- * The proven owner blocks holding one member: the strict validation above,
- * then an exact member match. No wildcard — a block holds exactly the member
- * it names, so one malformed or unattributed entry can never wedge the team.
- *
- * @param {any} source the filter or request carrying the optional `busyBlocks`
- * @param {string} teamMemberId the member the caller checks
- * @returns {Array<object>} the blocks holding that member
- */
-function busyBlocksFor(source, teamMemberId) {
-  return validateBusyBlocks(source).filter((block) => block.teamMemberId === teamMemberId);
 }
 
 /**
@@ -486,11 +521,15 @@ function busyBlocksFor(source, teamMemberId) {
  * cancelled booking holds nothing — cancelling is how a slot is freed — but
  * every other state holds its slot even after it ends, because the slot was
  * real: the member was busy then, and the row is the evidence. An owner busy
- * block (backlog:af190faf, no `status`) holds its slot the same way: the
- * member is busy then, with no guest and no appointment row.
+ * block (backlog:af190faf, tagged `kind: 'owner-block'` at construction by
+ * `proveOwnerBlocks`) holds its slot the same way: the member is busy then,
+ * with no guest and no appointment row. Behaviour is keyed ONLY on that tag,
+ * never on `status === undefined`: a closed shape at the boundary means a
+ * block can carry no `status` at all, so `cancelled` can never turn a hold
+ * into a free slot.
  *
  * @param {{teamMemberId: string, startMs: number, endMs: number}} candidate
- * @param {Array<any>} held the team member's existing rows, owner blocks included
+ * @param {Array<any>} held the team member's existing rows, tagged owner blocks included
  * @returns {any|null} the conflicting row or block, or null
  */
 export function findOverlap(candidate, held) {
@@ -502,7 +541,7 @@ export function findOverlap(candidate, held) {
     // free slot: ignoring it would silently switch the no-double-booking
     // invariant off, so the booking is refused instead of booked over it.
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-      const kind = row.status === undefined ? 'owner block' : 'appointment';
+      const kind = row.kind === OWNER_BLOCK_KIND ? 'owner block' : 'appointment';
       throw new AppError(
         `The held ${kind} "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
         + `(startsAt "${String(row.startsAt)}", endsAt "${String(row.endsAt)}"): a booking overlapping an unprovable slot is refused, never booked over it.`,
@@ -532,7 +571,7 @@ export function findOverlap(candidate, held) {
  * @returns {AppError}
  */
 function overlapRefusal(teamMemberId, conflict) {
-  if (conflict && conflict.status === undefined) {
+  if (conflict && conflict.kind === OWNER_BLOCK_KIND) {
     return new AppError(
       `The team member "${teamMemberId}" holds an owner commitment overlapping this slot `
         + `(${conflict.startsAt} to ${conflict.endsAt}): one member holds one slot at a time. `
@@ -950,8 +989,12 @@ export async function bookAppointment(context, request) {
     }
 
     const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+    // Owner holds come only from the composed calendar-sync handle — a
+    // request `busyBlocks` key is never read, so omitting or forging it
+    // changes nothing on the write path.
+    const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
     const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
-      [...held, ...busyBlocksFor(request, input.teamMemberId)]);
+      [...held, ...blocks]);
     if (conflict) {
       throw overlapRefusal(input.teamMemberId, conflict);
     }
@@ -1295,12 +1338,13 @@ export async function rescheduleAppointment(context, request) {
     }
     const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
     const others = held.filter((row) => row && row.id !== current.id);
+    const blocks = await ownerBlocksFor(context.calendarSync, current.teamMemberId, startsAt.iso, endsAt.iso);
     const conflict = findOverlap(
       { teamMemberId: current.teamMemberId, startMs: startsAt.ms, endMs: endsAt.ms },
-      [...others, ...busyBlocksFor(record, current.teamMemberId)],
+      [...others, ...blocks],
     );
     if (conflict) {
-      if (conflict.status === undefined) {
+      if (conflict.kind === OWNER_BLOCK_KIND) {
         throw new AppError(
           `Il membro "${current.teamMemberId}" ha un impegno del titolare in questa fascia oraria `
           + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
@@ -1493,10 +1537,19 @@ function projectTeamWeekRow(row) {
  * because there is no roster to scan — the same opaque identities bookings
  * already store.
  *
- * @param {{appointments: any}} storage
+ * Owner commitments with no guest (backlog:af190faf) arrive only through the
+ * composed `calendarSync` handle (`listOwnerBlocks`) — never through the
+ * filter — and read as «Occupato» beside the bookings, so the grid paints
+ * what the booking path refuses. The blocks are proven up front like on
+ * every other path: a malformed store entry fails the read closed (400),
+ * exactly like the booking and suggestion paths, so grid and booking agree.
+ * The `busy` list is required on every member group (version 3): an empty
+ * week reads `busy: []`, never an absent key.
+ *
+ * @param {{appointments: any, calendarSync?: any}} storage
  * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter
  */
-export async function readTeamWeek({ appointments }, filter) {
+export async function readTeamWeek({ appointments, calendarSync }, filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
   if (!Array.isArray(value.teamMemberIds) || value.teamMemberIds.length === 0) {
     throw new ValidationError('teamMemberIds names at least one team member: a week for nobody books nothing to show', { field: 'teamMemberIds' });
@@ -1537,12 +1590,7 @@ export async function readTeamWeek({ appointments }, filter) {
       || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
-    // Owner commitments with no guest (backlog:af190faf): the week shows
-    // them as «Occupato» beside the bookings, so the grid paints what the
-    // booking path refuses. The blocks are proven up front like on every
-    // other path — a malformed block fails the read closed (400), exactly
-    // like the booking and suggestion paths, so grid and booking agree.
-    const busy = busyBlocksFor(value, teamMemberId)
+    const busy = (await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
       .map((block) => projectBusyWeekRow(block))
       .filter((projected) => projected !== null)
       .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso)
@@ -1705,9 +1753,9 @@ function validateSuggestFilter(filter) {
  * too: a proposal must be bookable, so the past is never offered
  * (backlog:d1e4d90e).
  *
- * @param {{modules: any, moduleNames?: Record<string, string>}} storage
+ * @param {{modules: any, moduleNames?: Record<string, string>, calendarSync?: any}} storage
  */
-export async function suggestSlots({ modules, moduleNames }, filter) {
+export async function suggestSlots({ modules, moduleNames, calendarSync }, filter) {
   const names = { appointment: moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments({ modules }, names);
   const checked = validateSuggestFilter(filter);
@@ -1716,9 +1764,10 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
   for (const teamMemberId of checked.members) {
     const held = await appointments.listWhere({ teamMemberId });
     // Owner commitments with no guest (backlog:af190faf) hold like bookings:
-    // the same rows the booking path overlap-checks, so a suggestion never
-    // offers a slot the booking would refuse.
-    const heldWithBlocks = [...held, ...busyBlocksFor(filter, teamMemberId)];
+    // the same store rows the booking path overlap-checks, so a suggestion
+    // never offers a slot the booking would refuse. Server handle only —
+    // a filter `busyBlocks` key is never read.
+    const heldWithBlocks = [...held, ...(await ownerBlocksFor(calendarSync, teamMemberId, checked.fromIso, checked.toIso))];
     const slots = [];
     for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
       // A proposal must be fully ahead: a step already begun cannot be
@@ -1832,8 +1881,9 @@ export async function proposeBooking(context, request) {
   const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments(context, names);
   const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
   const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
-    [...held, ...busyBlocksFor(request, input.teamMemberId)]);
+    [...held, ...blocks]);
   if (conflict) {
     throw overlapRefusal(input.teamMemberId, conflict);
   }
@@ -2334,7 +2384,7 @@ function extractPhraseDraft(text, nowMs) {
  *
  * @param {Record<string, string>} [moduleNames]
  */
-export function createAppointmentScheduleCapability({ moduleNames } = {}) {
+export function createAppointmentScheduleCapability({ moduleNames, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
   return {
     name: 'appointment-schedule',
@@ -2342,8 +2392,9 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
     description:
       'Read one subject\'s appointments — every booking naming it, soonest slot first, cancelled rows included '
       + 'with their status — and the team week: every booking overlapping a window for each named member, '
-      + 'grouped per person. Read-only: frozen rows, no storage handle, no write path.',
-    /** @param {{modules: any}} context */
+      + 'grouped per person. Owner commitments with no guest read as «Occupato» from the composed calendar-sync '
+      + 'handle. Read-only: frozen rows, no storage handle, no write path.',
+    /** @param {{modules: any, calendarSync?: any}} context */
     create(context = {}) {
       const modules = context?.modules;
       if (!modules || typeof modules.get !== 'function') {
@@ -2352,12 +2403,16 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
         });
       }
       const service = resolveModule(modules, names.appointment)?.service;
+      // The owner-block feed is deployment-injected server state: the
+      // factory handle wins, a per-opener handle fills the gap, like the
+      // book capability below. The filter never carries blocks.
+      const blocks = calendarSync ?? context?.calendarSync ?? null;
       return Object.freeze({
         capabilityContract: 1,
         /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
         scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter */
-        teamWeekFor: (filter) => readTeamWeek({ appointments: service }, filter),
+        teamWeekFor: (filter) => readTeamWeek({ appointments: service, calendarSync: blocks }, filter),
       });
     },
   };
@@ -2469,7 +2524,8 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
- * @param {any} [calendarSync] a calendar-sync push handle `{pushAppointment}` (per opener; optional)
+ * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?}` (per opener; optional):
+ *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path
  */
 export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
@@ -2565,7 +2621,9 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         /** @param {unknown} request */
         bookAppointment: (request) => bookAppointment(scope, request),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, slotMinutes?: unknown}} filter */
-        suggestSlots: (filter) => suggestSlots({ modules: scope.modules, moduleNames: scope.moduleNames }, filter),
+        suggestSlots: (filter) => suggestSlots({
+          modules: scope.modules, moduleNames: scope.moduleNames, calendarSync: scope.calendarSync,
+        }, filter),
         /** @param {unknown} request */
         proposeBooking: (request) => proposeBooking(scope, request),
         /** @param {unknown} request */

@@ -135,8 +135,16 @@ export {
  *   channels?: { capabilities?: Array<any> },
  *   spacePermissions?: { capabilities?: Array<any> },
  *   llm?: { capabilities?: Array<any> },
+ *   calendarSync?: { pushAppointment?: Function, listOwnerBlocks?: Function },
  *   config?: Record<string, string>
  * }} [options]
+ *   `calendarSync` is the same handover for the owner-block feed
+ *   (backlog:af190faf): the deployment's handle whose `listOwnerBlocks`
+ *   answers the owner commitments with no guest for one member and window.
+ *   It is the ONLY source of owner holds on every path — team-week, suggest,
+ *   propose, confirm, link, reschedule — and no caller/request input carries
+ *   blocks. Absent, every path keeps main behaviour (no blocks); a wired
+ *   handle that cannot be read fails the call closed.
  *   `work` is the composed work package definition — the same object the
  *   composition lists beside this package. The appointments package takes the
  *   created `follow-up@1` capability object from it, so the reminder is always
@@ -171,11 +179,12 @@ export function createAppointmentsPackage(options = {}) {
   const flowFor = (runtime) => {
     let composed = composedByRuntime.get(runtime);
     if (!composed) {
-      const schedule = createAppointmentScheduleCapability({ moduleNames: options.config });
+      const schedule = createAppointmentScheduleCapability({ moduleNames: options.config, calendarSync: options.calendarSync });
       const book = createAppointmentBookCapability({
         moduleNames: options.config,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
+        calendarSync: options.calendarSync,
       });
       composed = {
         schedule: schedule.create({ modules: runtime.modules }),
@@ -208,9 +217,12 @@ export function createAppointmentsPackage(options = {}) {
     // propose/confirmBooking and the phrase-to-draft parse, attached
     // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
     // capabilities, records and the booking contract are untouched.
-    // 3: owner holds with no guest (backlog:af190faf): the optional
-    // busyBlocks input on team-week, suggest, propose and confirm, shown as
-    // Occupato and never offered as free. Additive: old callers unchanged.
+    // 3: owner holds with no guest (backlog:af190faf): owner commitments
+    // from the composed calendar-sync handle (`listOwnerBlocks`) hold on
+    // team-week, suggest, propose, confirm, link and reschedule — shown as
+    // Occupato (`busy`, required on every member group) and never offered
+    // as free. Server seam only: no caller/request input carries blocks, so
+    // nothing to forge and nothing to omit. Old callers unchanged.
     version: 3,
     label: 'Appointments',
     description:
@@ -256,12 +268,11 @@ export function createAppointmentsPackage(options = {}) {
         label: 'Read team week',
         appMethod: 'readAppointmentTeamWeek',
         description:
-          'The team week for the backoffice calendar (BO-F3-01): every appointment overlapping the window for each named team member, grouped per person. Returns an honest empty week when nothing is held.',
+          'The team week for the backoffice calendar (BO-F3-01): every appointment overlapping the window for each named team member, grouped per person, plus the owner commitments with no guest as «Occupato» (`busy`, required on every group, from the composed calendar-sync handle — never from the caller). Returns an honest empty week when nothing is held.',
         input: [
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
-          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest [{ teamMemberId, startsAt, endsAt, title? }] (backlog:af190faf): deployment-injected from its calendar-sync store; strictly validated (400), shown as Occupato.' },
         ],
         create(runtime) {
           return (input) => flowFor(runtime).schedule.teamWeekFor(input);
@@ -273,14 +284,13 @@ export function createAppointmentsPackage(options = {}) {
         label: 'Suggest appointment slots',
         appMethod: 'suggestAppointmentSlots',
         description:
-          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking overlaps. Read-only: no row is written, no slot invented. With nowIso named, a step already begun is cut too: a proposal must be bookable.',
+          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking or an owner commitment with no guest overlaps (owner holds from the composed calendar-sync handle — never from the caller). Read-only: no row is written, no slot invented. With nowIso named, a step already begun is cut too: a proposal must be bookable.',
         input: [
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
           { name: 'slotMinutes', type: 'integer', required: false, hint: 'Step granularity, one of 15 30 45 60 90 120 (default 30).' },
           { name: 'nowIso', type: 'string', required: false, hint: 'Reference instant, ISO: steps already begun are cut (backlog:d1e4d90e).' },
-          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest [{ teamMemberId, startsAt, endsAt, title? }] (backlog:af190faf): deployment-injected from its calendar-sync store; strictly validated (400), held steps never offered.' },
         ],
         create(runtime) {
           // Read-only: the suggest path never touches the actor, so the book
@@ -297,7 +307,6 @@ export function createAppointmentsPackage(options = {}) {
           'Plan one booking without writing (BO-F3-02): a confirm-required draft when the space switch is on, a space-ai-proposal when it is off.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
-          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest (backlog:af190faf), deployment-injected from its calendar-sync store; strictly validated (400), held slots refuse 409 generic.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).proposeBooking(input);
@@ -313,7 +322,6 @@ export function createAppointmentsPackage(options = {}) {
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The space the booking is gated on.' },
           { name: 'confirmed', type: 'json', required: true, hint: 'Must be true: nothing is created without it.' },
-          { name: 'busyBlocks', type: 'json', required: false, hint: 'Owner holds with no guest (backlog:af190faf), deployment-injected from its calendar-sync store; strictly validated (400), held slots refuse 409 generic.' },
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).confirmBooking(input);
