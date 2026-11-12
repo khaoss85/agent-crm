@@ -459,3 +459,29 @@ test('review #776: a booking answered after leaving the scheda keeps the next cu
   assert.ok(mount.textContent.includes('Altra Persona'), 'the next customer stays');
   assert.ok(!reads.some((path) => path.includes('/card/contact/c1')), 'the first customer is not read again');
 });
+
+test('backlog:0a980182918f: a refused booking logs the shared write line, once, never «Object»', async () => {
+  const refused = fakeClient({
+    confirm: () => {
+      throw Object.assign(new Error('Orario fuori dalle ore di lavoro'), {
+        status: 400, code: 'VALIDATION_FAILED', method: 'POST', path: APPOINTMENT_CONFIRM_PATH,
+      });
+    },
+  });
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const { panel } = await open({ client: refused });
+    await choose(panel);
+    chips(panel)[0].dispatch('click');
+    await panel.__submit();
+    await flush();
+  } finally {
+    console.error = original;
+  }
+  const lines = logged.map((args) => String(args[0]));
+  assert.equal(lines.length, 1, `one line per failure: ${lines.join(' | ')}`);
+  assert.equal(lines[0], `[bo] scrittura fallita POST ${APPOINTMENT_CONFIRM_PATH} · 400 VALIDATION_FAILED: Orario fuori dalle ore di lavoro`);
+  assert.ok(!lines.some((line) => line.includes('appuntamento non fissato')));
+});

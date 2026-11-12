@@ -1614,3 +1614,59 @@ test("Aggiungi con l'AI refuses a sentence without a price and sends nothing", a
   assert.ok(mount.textContent.includes('prezzo'), 'the refusal names the missing price');
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'nothing is sent');
 });
+
+// backlog:0bbd62834c5a (verifica 11/11): the AI field reads its sentence
+// whole, and a product with several offers names each price.
+test('0bbd62834c5a: the open AI voice takes the bar width; the sentence field is never capped at a narrow width', async () => {
+  const { readFileSync } = await import('node:fs');
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient() });
+  await view.renderTable({});
+  const aiButton = mount.findAll('button').find((node) => node.textContent.includes('Aggiungi con'));
+  const wrap = aiButton.parentNode;
+  assert.equal(wrap.getAttribute('data-open'), null, 'closed, it is one button in the bar');
+  aiButton.dispatch('click');
+  assert.equal(wrap.getAttribute('data-open'), 'true', 'open, the voice is marked for its wide layout');
+  const phrase = mount.findAll('input').find((node) => node.getAttribute('name') === 'ai-phrase');
+  assert.ok(phrase);
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const rule = /\.catalog-create-form input\[name="ai-phrase"\]\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rule && /max-width:\s*none/.test(rule[1]) && /width:\s*100%/.test(rule[1]),
+    'the sentence field is not held to the 220 px of the manual fields');
+  assert.match(css, /\.catalog-create-wrap\[data-open="true"\]\s*\{[^}]*display:\s*contents/, 'the open voice lays out in the bar itself');
+  assert.match(css, /\.catalog-create-wrap\[data-open="true"\] > \.catalog-create-form\s*\{[^}]*flex:\s*1 1 100%/, 'the field row grows to the bar width');
+});
+
+test('0bbd62834c5a: a product with several offers names each price; a single offer stays the bare price', async () => {
+  const comp = (cents, model) => ({
+    key: 'k', label: 'Prezzo', chargeType: 'one_time', pricingModel: model, interval: null, intervalCount: null,
+    unitAmountCents: model === 'per_unit' ? cents : null, flatAmountCents: model === 'flat_fee' ? cents : null, tiers: [],
+  });
+  const table = {
+    products: [
+      { productId: 'pt', sku: 'PT', name: 'Personal Training', category: 'pt', source: 'manual', active: true, version: 1, offers: [
+        { offerId: 'a', name: 'Pacchetto 10 PT', active: true, currency: 'EUR', quoteEligible: true, components: [comp(35000, 'flat_fee')] },
+        { offerId: 'b', name: 'PT singola', active: true, currency: 'EUR', quoteEligible: true, components: [comp(4000, 'per_unit')] },
+      ] },
+      { productId: 'pr', sku: 'PROVA', name: 'Lezione di prova', category: 'pt', source: 'manual', active: true, version: 1, offers: [
+        { offerId: 'c', name: 'Lezione di prova', active: true, currency: 'EUR', quoteEligible: true, components: [comp(1500, 'flat_fee')] },
+      ] },
+    ],
+    summary: { manual: 2, byProvider: {}, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+  const offerBoxes = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('catalog-offer'));
+  const named = offerBoxes.filter((node) => String(node.getAttribute('class')).includes('catalog-offer-named'));
+  assert.deepEqual(named.map((node) => node.textContent), ['Pacchetto 10 PT350 €', 'PT singola40 €'],
+    'each price of the product reads with its offer name');
+  const single = offerBoxes.find((node) => node.textContent.includes('15 €'));
+  assert.ok(!String(single.getAttribute('class')).includes('catalog-offer-named'), 'one offer keeps the bare price');
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const rule = /\.catalog-offer-named \.catalog-offer-name\s*\{([^}]*)\}/.exec(css);
+  assert.ok(rule && /position:\s*static/.test(rule[1]) && /clip:\s*auto/.test(rule[1]), 'the offer name is visible, not screen-reader only');
+});

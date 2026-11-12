@@ -21,7 +21,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
-import { humanReadError } from './admin-core.js';
+import { customerInitials, humanReadError } from './admin-core.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -124,11 +124,6 @@ const channelLabel = (system) => CHANNEL_LABELS[String(system ?? '').toLowerCase
  * neighbours of the current page, gaps collapsed to "…".
  * @param {number} pages @param {number} page
  */
-/** Two-letter initials for the row avatar, like the prototype. */
-function initialsOf(name) {
-  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
-  return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
-}
 
 export function pageNumbers(pages, page) {
   const nums = [];
@@ -144,7 +139,8 @@ export function pageNumbers(pages, page) {
  *   notify?: (message: string) => void, spaceId?: string | (() => (string | null | undefined)),
  *   onAskAi?: ((question: string) => void) | null,
  *   onManualAdd?: (() => void) | null, storage?: any, schedule?: any,
- *   searchDelayMs?: number, searchSchedule?: (fn: () => void, ms: number) => any}} deps
+ *   searchDelayMs?: number, searchSchedule?: (fn: () => void, ms: number) => any,
+ *   onTotal?: ((total: {count: number, exact: boolean}) => void) | null}} deps
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
@@ -280,7 +276,27 @@ export function createCustomerListView(deps) {
     }
     if (token !== renderToken) return;
     paint();
+    reportTotal();
     armRefresh(token);
+  }
+
+  /**
+   * The unfiltered list total is the Clienti badge (backlog:ff8bb60f417f):
+   * whenever the list reads it, the sidebar takes it, so the badge never
+   * stays behind a customer created anywhere — form, AI, import or another
+   * tab. A filtered page or a failed read says nothing.
+   */
+  function reportTotal() {
+    if (typeof deps.onTotal !== 'function' || !data || data.error) return;
+    const unfiltered = state.vista === 'tutti' && state.q === '' && state.canale === 'all'
+      && state.stato === 'all' && state.campo === '';
+    const total = Number(data.total);
+    if (!unfiltered || !Number.isInteger(total) || total < 0) return;
+    try {
+      deps.onTotal({ count: total, exact: data.totalIsExact !== false });
+    } catch {
+      // The badge stays as it was; the list is already painted.
+    }
   }
 
   /** True when the server names read state on the rows (`unreadCount`). */
@@ -977,7 +993,7 @@ export function createCustomerListView(deps) {
       card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
-      head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));
+      head.appendChild(el('span', 'bo-clienti-avatar', customerInitials(name)));
       const who = el('div', 'bo-clienti-who');
       const nameLink = link(
         `#/customer-card/${encodeURIComponent(row.resource)}/${encodeURIComponent(row.id)}`,

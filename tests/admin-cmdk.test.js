@@ -350,3 +350,17 @@ test('review #779: a space switch drops what the list read in the space left beh
   for (const handler of s.winListeners.keydown ?? []) handler({ key: 'k', metaKey: true, preventDefault() {} });
   assert.equal(s.options().length, 0, '⌘K does not bring back the other space’s customers');
 });
+
+test('backlog:0a980182918f: an offer row names its customer like the Pipeline card — the contact, else the company, never «Senza azienda»', async () => {
+  const { offerCommand } = await import('../apps/admin/public/admin-cmdk.js');
+  assert.equal(offerCommand({ id: 'o-1', name: 'Prova', companyName: 'Senza azienda', contactName: 'Giulia Bianchi' }).sub, 'Giulia Bianchi');
+  assert.equal(offerCommand({ id: 'o-2', name: 'Prova', companyName: 'Rossi Spa', contactName: 'Giulia Bianchi' }).sub, 'Giulia Bianchi');
+  assert.equal(offerCommand({ id: 'o-3', name: 'Prova', companyName: 'Rossi Spa' }).sub, 'Rossi Spa');
+  assert.equal(offerCommand({ id: 'o-4', name: 'Prova', companyName: 'Senza azienda' }).sub, '');
+  assert.equal(offerCommand({ id: 'o-5', name: 'Prova', companyName: ' senza  AZIENDA ' }).sub, '');
+  const s = shell({ customers: async () => [], offers: async () => [{ id: 'o-9', name: 'Pacchetto Giulia', companyName: 'Senza azienda', contactName: 'Giulia Bianchi' }] });
+  await s.type('Giulia');
+  const row = s.options().find((node) => node.getAttribute('data-kind') === 'offer');
+  assert.ok(row.textContent.includes('Giulia Bianchi'));
+  assert.ok(!s.list().textContent.includes('Senza azienda'));
+});

@@ -1105,3 +1105,34 @@ test('754918ad8da7 review giro 1: Cerca/Invio retries a failed read with the sam
   await flush();
   assert.equal(client.calls.length, 4);
 });
+
+/* ------------------------------------------------ backlog:ff8bb60f417f (punti 11-12) */
+
+test('ff8bb60f417f: one initials rule for list, scheda and creation — never «?»', async () => {
+  const { customerInitials } = await import('../apps/admin/public/admin-core.js');
+  assert.equal(customerInitials('Guido Presti'), 'GP');
+  assert.equal(customerInitials('UX Esplorativo 1111 B'), 'UB', 'first and last lettered word, like the scheda');
+  assert.equal(customerInitials('UX Esplorativo 1111'), 'UE', 'a last word without letters never reads «?»');
+  assert.equal(customerInitials('anna'), 'A');
+  assert.equal(customerInitials('1111'), '·');
+  assert.equal(customerInitials(''), '·');
+  const row = { ...ROW_MARCO, name: 'UX Esplorativo 1111 B' };
+  const client = stubClient();
+  client.request = async () => ({ customerListContract: 1, items: [row], total: 1, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS });
+  const { mount } = await render(client);
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-clienti-avatar');
+  assert.equal(avatar.textContent, 'UB', 'the list reads what the scheda reads');
+  const card = readFileSync(new URL('../apps/admin/public/admin-customer-card.js', import.meta.url), 'utf8');
+  assert.match(card, /bo-scheda-avatar', customerInitials\(/, 'the scheda avatar uses the same helper');
+});
+
+test('ff8bb60f417f: the unfiltered list total feeds the sidebar badge, a filtered page never does', async () => {
+  const totals = [];
+  const client = stubClient();
+  const { mount } = await render(client, { onTotal: (total) => totals.push(total) });
+  assert.deepEqual(totals, [{ count: 2, exact: true }], 'the list total is the badge');
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  assert.equal(totals.length, 1, 'a filtered page never moves the badge');
+});
