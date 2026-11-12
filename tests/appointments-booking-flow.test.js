@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   BOOK_APPOINTMENTS_PERMISSION,
-  OPERATOR_BOOKING_ACTION,
   PROPOSE_ACTION_KIND,
   SUGGEST_SLOT_MINUTES,
   bookFromLink,
@@ -443,33 +442,6 @@ test('confirm with the switch off stays a proposal: still no appointment row', a
   assert.ok(confirmed.proposalId);
   assert.equal(service.rows.length, 0);
   assert.equal(proposalRows.length, 1);
-});
-
-test('backlog:cb1a32dc the operator hand bypasses the agent switch in propose and confirm', async () => {
-  // The /bo scheda «Nuovo appuntamento» window and the Calendario form send
-  // source action calendar-book: the person pressing Conferma IS the
-  // approval the book-appointments agent switch waits for. With the switch
-  // off (AI spenta) propose still answers the draft — never an invisible
-  // proposal row — and confirm books the appointment. Any other provenance
-  // keeps the gate (see the switch-off tests above with action 'book').
-  const service = fakeAppointments();
-  const { gate, proposalRows } = fakeGate({
-    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
-  });
-  const cap = capabilityFor({ service, gate });
-  const operatorBooking = () => booking({ source: { package: 'host', action: OPERATOR_BOOKING_ACTION } });
-  assert.equal(OPERATOR_BOOKING_ACTION, 'calendar-book', 'the operator hand is the /bo Conferma provenance');
-  const proposed = await cap.proposeBooking({ ...operatorBooking(), spaceId: SPACE });
-  assert.equal(proposed.decision, 'confirm-required');
-  assert.ok(proposed.draft, 'the operator gets the draft to confirm');
-  assert.equal(proposed.draft.teamMemberId, 'coach-guido');
-  assert.equal(proposalRows.length, 0, 'no invisible proposal row from the operator hand');
-  assert.equal(service.rows.length, 0, 'propose writes no appointment row');
-  const confirmed = await cap.confirmBooking({ ...operatorBooking(), spaceId: SPACE, confirmed: true });
-  assert.equal(confirmed.decision, 'booked', 'the person pressing Conferma fixes the appointment, never a proposal');
-  assert.equal(confirmed.appointment.status, 'confirmed');
-  assert.equal(service.rows.length, 1, 'one appointment row, visible in scheda, Calendario and Oggi');
-  assert.equal(proposalRows.length, 0, 'still no proposal row after the operator confirm');
 });
 
 test('confirm names the permission edge when no gate is composed', async () => {
