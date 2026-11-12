@@ -1246,3 +1246,48 @@ test('a contract-2 graph hands over the real provider definitions and proposes',
     },
   );
 });
+
+test('the package capabilities carry the composed calendarSync: the registry seam refuses the held slot (backlog:af190faf)', async () => {
+  const service = fakeAppointments();
+  const { modules: gateModules } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: true }],
+  });
+  const combined = {
+    get: (name) => {
+      if (name === 'appointment') return { service };
+      return gateModules.get(name);
+    },
+  };
+  const composed = createAppointmentsPackageV2({
+    spacePermissions: createSpacePermissionsDomain(),
+    llm: createLlmPackage(),
+    calendarSync: storeWith(HELD),
+  });
+  const book = composed.capabilities.find((entry) => entry?.name === 'appointment-book');
+  const schedule = composed.capabilities.find((entry) => entry?.name === 'appointment-schedule');
+  assert.ok(book, 'the package exports appointment-book');
+  assert.ok(schedule, 'the package exports appointment-schedule');
+  // The write seam: proposing over the owner hold refuses exactly like the
+  // operation path, instead of booking a double over the held slot.
+  const cap = await book.create({ modules: combined, actor: ACTOR, now: () => NOW, consumer: 'host' });
+  await assert.rejects(
+    cap.proposeBooking({ ...booking(), spaceId: SPACE }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(error.status, 409);
+      assert.doesNotMatch(error.message, /test accordo/, 'a booker probing slots never reads the owner title');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
+  // The read seam: the team week shows the hold as Occupato.
+  const read = await schedule.create({ modules: combined });
+  const week = await read.teamWeekFor({
+    teamMemberIds: ['coach-guido'],
+    from: '2026-10-20T16:00:00.000Z',
+    to: '2026-10-20T19:00:00.000Z',
+  });
+  assert.deepEqual(week.members[0].busy, [{
+    startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', title: 'test accordo',
+  }]);
+});

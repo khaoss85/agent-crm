@@ -251,8 +251,9 @@ export function createAppointmentsPackage(options = {}) {
         templateSendProvider: offeredTemplateSend,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
+        calendarSync: options.calendarSync,
       }),
-      createAppointmentScheduleCapability({ moduleNames: options.config }),
+      createAppointmentScheduleCapability({ moduleNames: options.config, calendarSync: options.calendarSync }),
     ],
     actions: [],
 
