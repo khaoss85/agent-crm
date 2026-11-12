@@ -1327,6 +1327,25 @@ async function readModulePage(client, module, filters = {}) {
 }
 
 /**
+ * Connections of one space, for the channel invite (backlog:803d127c4458).
+ * The read carries `filter.spaceId`, so an active connection in space A
+ * never hides the invite to connect the channel in space B. One row past
+ * the page, like the Agenti read (review #661 P3): `capped` carries the
+ * evidence that something was left out, so exactly OGGI_READ_LIMIT rows
+ * is not capped.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} space
+ * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
+ */
+async function readSpaceConnections(client, space) {
+  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
+  query.set('filter.spaceId', space);
+  const answer = await client.request(`/api/modules/channel-connection/records?${query.toString()}`);
+  const items = Array.isArray(answer?.items) ? answer.items : [];
+  return { rows: items.slice(0, OGGI_READ_LIMIT), capped: items.length > OGGI_READ_LIMIT };
+}
+
+/**
  * The customer name of every shown «Da rispondere» row (production 07/11:
  * the channel syncs store no subject label, so every row read «Cliente»).
  * One read-only profile per shown subject — at most the inbox limit —
@@ -1391,11 +1410,16 @@ export async function readAppointmentNames(client, appointments, next, now) {
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Date} [now]
  */
-export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null } = {}) {
+export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null, spaceId = null } = {}) {
+  // Backlog 803d127c4458: the channel invite belongs to one space. The id
+  // arrives as an option so the read below can scope itself; an empty or
+  // missing id is no space, never a default one.
+  const space = typeof spaceId === 'string' && spaceId.trim() !== '' ? spaceId.trim() : null;
   const outcome = {
     workAvailable: false,
     appointmentsAvailable: false,
     channelsAvailable: false,
+    channelsPartial: false,
     interactionsAvailable: false,
     tasks: [],
     appointments: [],
@@ -1441,10 +1465,19 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   );
   const skip = Promise.resolve(undefined);
   const interactions = domains.interactions != null;
-  const [tasks, appointments, connections, profile, messages, conversations, replies] = await Promise.all([
+  // Backlog 803d127c4458: without a space id there is nothing to scope
+  // the connections read to, so it is skipped and the section renders its
+  // honest line — never another space's rows as this space's invite.
+  const connectionsRead = domains.channels != null && space !== null
+    ? readSpaceConnections(client, space).then(
+      (paged) => paged,
+      (error) => { noteReadFailure('channel-connection', error); return null; },
+    )
+    : skip;
+  const [tasks, appointments, connectionsPage, profile, messages, conversations, replies] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
-    domains.channels != null ? page('channel-connection', 'channel-connection') : skip,
+    connectionsRead,
     profileRead,
     // The «Da rispondere» inbox: the latest messages and their conversations.
     // Messages are the inbox; conversations only lend the name and the closed
@@ -1470,9 +1503,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.appointments = appointments;
     outcome.appointmentsAvailable = true;
   }
-  if (Array.isArray(connections)) {
-    outcome.connections = connections;
+  if (connectionsPage != null) {
+    outcome.connections = connectionsPage.rows;
     outcome.channelsAvailable = true;
+    outcome.channelsPartial = connectionsPage.capped === true;
   }
   // Google Calendar and Gmail connect per person through the pilot's Google
   // consent, not through channel-connection rows: the same GET /api/profile
@@ -1746,6 +1780,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
+ *     channelsPartial?: boolean,
  *     profile?: unknown,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
@@ -2157,20 +2192,30 @@ export function renderOggi({
         leads: missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== ''),
         aside: null,
       };
-    if (invite.leads.length > 0) {
+    // Backlog 803d127c4458: past the page the strip says so — a silent cut
+    // would undercount «x di 9» and could drop the very channel to invite.
+    // The note renders even with no leads left, so a capped read never
+    // passes for a complete one.
+    const partialChannels = home.channelsPartial === true && Array.isArray(home.connections);
+    if (invite.leads.length > 0 || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
-      const anchor = el(doc, 'a', 'bo-oggi-invite', '');
-      anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
-      const aside = invite.aside !== null ? ` (${invite.aside})` : '';
-      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
-      anchor.setAttribute('href', '#/connettori');
-      anchor.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      section.appendChild(anchor);
+      if (invite.leads.length > 0) {
+        const anchor = el(doc, 'a', 'bo-oggi-invite', '');
+        anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
+        const aside = invite.aside !== null ? ` (${invite.aside})` : '';
+        anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
+        anchor.setAttribute('href', '#/connettori');
+        anchor.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate('#/connettori');
+        });
+        section.appendChild(anchor);
+      }
+      if (partialChannels) {
+        section.appendChild(el(doc, 'p', 'bo-muted', `Mostro i primi ${home.connections.length} collegamenti (elenco parziale).`));
+      }
       page.appendChild(section);
     }
   }
@@ -2245,6 +2290,21 @@ export function createOggiView(deps) {
   const setTimer = typeof deps.setTimer === 'function' ? deps.setTimer : (fn, ms) => setTimeout(fn, ms);
   const clearTimer = typeof deps.clearTimer === 'function' ? deps.clearTimer : (id) => clearTimeout(id);
   const { client: bound } = bindAdminMutations(deps.client, deps);
+  /**
+   * The live space id for the space-scoped reads (backlog:803d127c4458):
+   * the shell hands it over like it does to every other space-scoped
+   * view, read late so the read follows the space switcher. A throwing
+   * accessor is a missing space, never a crash.
+   */
+  const readSpace = () => {
+    try {
+      const live = typeof deps.spaceId === 'function' ? deps.spaceId() : null;
+      if (typeof live === 'string' && live.trim() !== '') return live.trim();
+    } catch {
+      // A throwing accessor is a missing space, never a crash.
+    }
+    return null;
+  };
   /**
    * Guard against a stale async response overwriting a newer view
    * (backlog:607f33ee): the home paints into the shell's shared mount, so
@@ -2400,6 +2460,7 @@ export function createOggiView(deps) {
         inbox,
         missing,
         connections: last.connections,
+        channelsPartial: last.channelsPartial === true,
         profile: last.profile ?? null,
         availability: {
           work: last.workAvailable,
@@ -2580,7 +2641,7 @@ export function createOggiView(deps) {
     const token = ++renderToken;
     let data;
     try {
-      data = await loadOggiData(bound, lastMeta.now);
+      data = await loadOggiData(bound, lastMeta.now, { spaceId: readSpace() });
     } catch {
       data = null;
     }
@@ -2624,6 +2685,7 @@ export function createOggiView(deps) {
       const current = round;
       if (current.load === null) {
         current.load = Promise.resolve().then(() => loadOggiData(bound, now, {
+          spaceId: readSpace(),
           // Backlog 2a075e2d9250: agenda and Da rispondere are in — paint
           // the day now, the names and the call recap fill in after.
           onEssentials: (partial) => {

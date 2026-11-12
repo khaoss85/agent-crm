@@ -1343,6 +1343,9 @@ async function route() {
         // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
         // the Calendario through the shared shell storage.
         storage: shellStorage,
+        // backlog:803d127c4458: the live space, so the connections read is
+        // scoped to it like every other space-scoped view.
+        spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
       });
     }
     await oggiView.render({
