@@ -40,6 +40,8 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
+import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
@@ -160,14 +162,17 @@ export function formatSpaceStat({ channels = null, members = null, customers = n
  * suspended connection is not "collegato". No `connectors` array means the
  * package is not composed here, never zero.
  * @param {unknown} answer
+ * @param {unknown} [profile] the /api/profile answer: only for the space it describes
  */
-export function countSpaceChannels(answer) {
+export function countSpaceChannels(answer, profile = null) {
   const entries = answer !== null && typeof answer === 'object'
     ? /** @type {{connectors?: unknown}} */ (answer).connectors
     : null;
   if (!Array.isArray(entries)) return null;
-  return entries.filter((entry) => entry !== null && typeof entry === 'object'
-    && /** @type {{status?: unknown}} */ (entry).status === 'active').length;
+  // The shared count (backlog:e381c48581fa): linked channels, not active
+  // rows — two accounts on one channel are one channel — with the profile
+  // links merged, like «2 di 9» on Oggi and Stato sync (review #782 P1).
+  return channelConnectionCount(mergeProfileConnections(entries, profile)).connected;
 }
 
 /**
@@ -582,8 +587,9 @@ export function createSpaziAccessiView(deps) {
    * missing enhancement, never a page error, so it stays silent.
    * @param {string} spaceId
    * @param {number|null} memberCount
+   * @param {unknown} [profile] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCount) {
+  async function loadSpaceStat(spaceId, memberCount, profile = null) {
     if (memberCount === null) return null;
     try {
       const [channelsSettled, customersSettled] = await Promise.allSettled([
@@ -607,7 +613,7 @@ export function createSpaziAccessiView(deps) {
       if (customersSettled.status === 'rejected') throw customersSettled.reason;
       const customersAnswer = customersSettled.value;
       return formatSpaceStat({
-        channels: countSpaceChannels(channelsAnswer),
+        channels: countSpaceChannels(channelsAnswer, profile),
         members: memberCount,
         customers: countSpaceCustomers(customersAnswer),
       });
@@ -707,8 +713,12 @@ export function createSpaziAccessiView(deps) {
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
         && /** @type {{id?: unknown}} */ (entry).id !== '')
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    // The profile describes the session's own space: its links count on
+    // that card only, never on another space's (review #782 P1).
+    const profile = ids.length > 0 ? await readProfile(client) : null;
+    const current = readActiveSpace().trim();
     await Promise.all(ids.map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCount);
+      const stat = await loadSpaceStat(id, memberCount, id === current ? profile : null);
       if (stat !== null) state.stats.set(id, stat);
     }));
   }
@@ -1133,8 +1143,20 @@ export function createSpaziAccessiView(deps) {
         cls: 'bo-spazi-toggle',
         attrs: { type: 'button', role: 'switch', 'aria-checked': entry.enabled ? 'true' : 'false', 'aria-label': entry.label },
       });
-      toggle.setAttribute('data-on', entry.enabled ? 'true' : 'false');
-      toggle.disabled = state.busy || (master === false && entry.master !== true);
+      // backlog:1cfc68175ab7: with the space AI off the five decide
+      // nothing, so none of them reads on (green): each shows off and «in
+      // pausa», and keeps its own value for when the AI is back on.
+      const paused = master === false && entry.master !== true;
+      if (paused) {
+        toggle.setAttribute('aria-checked', 'false');
+        toggle.setAttribute('data-paused', 'true');
+        texts.appendChild(el(doc, 'div', {
+          text: entry.enabled ? 'In pausa: riparte acceso quando riaccendi l\u2019AI.' : 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.',
+          cls: 'bo-spazi-paused',
+        }));
+      }
+      toggle.setAttribute('data-on', entry.enabled && !paused ? 'true' : 'false');
+      toggle.disabled = state.busy || paused;
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.switchRefusal = null;

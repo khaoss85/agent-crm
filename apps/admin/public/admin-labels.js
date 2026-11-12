@@ -116,6 +116,165 @@ export function readableName(value) {
 const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
 
 /**
+ * Browser twin of the Gmail automated-sender tables (packages/channels
+ * gmail.js, backlog:1a4d9b30): the bundle cannot import a package, so
+ * tests/admin-automated-sender.test.js holds both to the same verdicts.
+ */
+const AUTOMATED_SENDER_LOCALS = Object.freeze([
+  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
+  'notify', 'notification', 'notifications',
+  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
+  'renewals', 'support', 'onboarding',
+  'mailer-daemon', 'postmaster',
+]);
+const AUTOMATED_SENDING_SUBDOMAINS = Object.freeze(['mail', 'notify', 'em', 'news', 'bounce']);
+const AUTOMATED_NOTIFICATION_DOMAINS = Object.freeze([
+  'amazonses.com', 'sendgrid.net', 'mandrillapp.com', 'mailchimp.com', 'list-manage.com',
+  'campaign-archive.com', 'constantcontact.com', 'mailgun.org', 'hubspotemail.net', 'mktomail.com', 'cmail20.com',
+]);
+
+/**
+ * Twin of customer-data `isTechnicalLocalPart` (display-name.js): a local
+ * part that names a mailbox, not a person — the whole local a machine
+ * word, a no-reply word among its pieces (`comments-noreply`), or a
+ * generated id.
+ * @param {string} local lower-case local part, `+` tag stripped
+ */
+function technicalLocal(local) {
+  if (/^(?:no[._-]?reply|do[._-]?not[._-]?reply|mailer[._-]?daemon|postmaster|bounces?|notifications?|notify|alerts?)$/.test(local)) {
+    return true;
+  }
+  if (NO_REPLY_PIECE.test(local)) return true;
+  return local.split(/[._-]+/).some(machineToken);
+}
+
+/** A no-reply piece of a longer local part (`comments-noreply`, `drive-shares-dm-noreply`). */
+const NO_REPLY_PIECE = /(?:^|[._-])(?:no[._-]?reply|do[._-]?not[._-]?reply)(?:[._-]|$)/;
+
+/** Twin of customer-data `isMachineToken`. @param {string} token */
+function machineToken(token) {
+  if (token.length >= 24) return true;
+  if (token.length < 10 || !/\d/.test(token) || !/\p{L}/u.test(token)) return false;
+  if (/^\d/.test(token)) return true;
+  return (token.match(/(?:\p{L}(?=\d)|\d(?=\p{L}))/gu) ?? []).length >= 3;
+}
+
+/**
+ * The Italian mailboxes of the automated roles (backlog:bab63e32acdb,
+ * production 11/11: a PayPal receipt from `assistenza@paypal.it`). Oggi
+ * only: the Gmail sync keeps storing these messages (receipts carry their
+ * subject and attachments), they just never wait for a reply.
+ */
+const ITALIAN_ROLE_LOCALS = Object.freeze(['notifiche', 'avvisi', 'fatturazione', 'fatture', 'ordini', 'ricevute']);
+
+/**
+ * Payment providers whose service mailboxes send receipts (team-lead
+ * decision 11/11: `assistenza@paypal.it`, `service@paypal.com`): a domain
+ * label naming one, with a service local part, is a receipt — never a
+ * person waiting. Kept to the receipt locals: elsewhere `assistenza@` can
+ * be a person.
+ */
+const PAYMENT_PROVIDERS = Object.freeze(['paypal', 'stripe', 'satispay', 'klarna', 'scalapay', 'sumup', 'nexi']);
+const RECEIPT_LOCALS = Object.freeze(['assistenza', 'service', 'servizio-clienti', 'payments', 'pagamenti', 'receipts']);
+
+/** The certified-mail wording a PEC copy or receipt carries in its subject or body. */
+const PEC_WORDS = /posta elettronica certificata|^posta certificata:|^(?:accettazione|avvenuta consegna|consegna|anomalia messaggio):/i;
+
+
+/** A PEC mailbox: a `pec` label in the domain (`pec.libero.it`, `pec.aruba.it`) or a PEC-only provider. */
+const PEC_PROVIDERS = Object.freeze(['legalmail.it', 'postacert.it', 'postecert.it', 'arubapec.it']);
+
+/** Words of a website contact form in a subject or the opening of a body. */
+const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission|modulo di contatto|richiesta di contatto|nuovo contatto dal sito|messaggio dal sito)\b/i;
+
+/**
+ * A lower-case address out of a handle («Ada <ada@x.it>» reads `ada@x.it`), null when none.
+ * @param {unknown} handle
+ */
+function addressOf(handle) {
+  if (typeof handle !== 'string') return null;
+  const text = handle.trim().toLowerCase();
+  const inside = text.match(/<([^<>\s]+@[^<>\s]+)>/);
+  const address = inside ? inside[1] : text;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address) ? address : null;
+}
+
+/**
+ * Whether one inbound message is a notification, not a person waiting for a
+ * reply (backlog:bab63e32acdb, production 11/11, Presti › Da rispondere).
+ * A general rule, never a list of names:
+ * - a website contact form is a real person writing: never a notification,
+ *   whatever mailbox the form sends from (the form channel, or contact-form
+ *   words in the subject or the opening of the body);
+ * - an automated sender (`isAutomatedSender`: no-reply, notifications,
+ *   receipts and billing mailboxes, a «Noreply» display name) or the
+ *   Italian mailbox of the same roles (`notifiche@`, `ricevute@`…);
+ * - a payment receipt: a service mailbox (`assistenza@`, `service@`) of a
+ *   payment provider (`paypal.*`, `stripe.*`…);
+ * - a certified-mail (PEC) message: a PEC mailbox (`pec.*` domains,
+ *   `posta-certificata@`) or the PEC wording in subject or body;
+ * - the owner writing to themselves: a sender among the space's own
+ *   addresses (`ownAddresses`, the linked mailboxes of the profile).
+ * Only e-mail is classified: a WhatsApp or Instagram message is a person.
+ * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown } | null | undefined} message
+ * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown> }} [context]
+ */
+export function isNotificationMessage(message, { ownAddresses = [], labels = [] } = {}) {
+  if (!message || typeof message !== 'object') return false;
+  const channel = String(message.channel ?? '').toLowerCase();
+  if (channel === 'website-form' || channel === 'web' || channel === 'site-form') return false;
+  const opening = typeof message.body === 'string' ? message.body.slice(0, 300) : '';
+  const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
+  if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
+  if (channel !== 'email') return false;
+  if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
+  const address = addressOf(message.remoteHandle);
+  if (address === null) return false;
+  const local = address.slice(0, address.lastIndexOf('@')).split('+')[0] ?? '';
+  if (ITALIAN_ROLE_LOCALS.some((role) => local === role || ['-', '_', '.'].some((sep) => local.startsWith(`${role}${sep}`)))) return true;
+  const domain = address.slice(address.lastIndexOf('@') + 1);
+  const domainLabels = domain.split('.');
+  if (RECEIPT_LOCALS.includes(local) && domainLabels.some((label) => PAYMENT_PROVIDERS.includes(label))) return true;
+  if (PEC_WORDS.test(subject) || PEC_WORDS.test(opening.trim())) return true;
+  if (domainLabels.includes('pec') || PEC_PROVIDERS.includes(domain) || address.startsWith('posta-certificata@')) return true;
+  for (const own of ownAddresses) {
+    if (addressOf(own) === address) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a message comes from a machine, not a person (backlog:bab63e32acdb,
+ * production 11/11: Oggi › Da rispondere offered «Rispondi» on PayPal
+ * receipts, Google Docs comments and PEC notices). The repo's sender rules
+ * only, never a new list: the Gmail automated-sender rule (local parts,
+ * sending subdomains, bulk platforms), the customer-data technical local
+ * part, and a display name carrying a no-reply marker («UniCredit S.p.A.
+ * Noreply»). An unreadable handle and an unmarked name are a person.
+ * @param {unknown} handle the sender address (`remoteHandle`)
+ * @param {...unknown} labels stored display names (subject snapshots)
+ */
+export function isAutomatedSender(handle, ...labels) {
+  for (const label of labels) {
+    if (typeof label !== 'string') continue;
+    const words = label.trim().split(/\s+/).map((word) => word.replace(/^[([<"']+|[)\]>"',;:]+$/g, ''));
+    if (words.some((word) => NO_REPLY_WORD.test(word))) return true;
+  }
+  // «Name <addr>» and «<addr>» read like addressOf (review Muse #792).
+  const address = addressOf(handle) ?? '';
+  const at = address.lastIndexOf('@');
+  if (at <= 0 || at === address.length - 1) return false;
+  const local = address.slice(0, at).split('+')[0] ?? '';
+  if (AUTOMATED_SENDER_LOCALS.includes(local)) return true;
+  if (AUTOMATED_SENDER_LOCALS.some((stem) => ['-', '_', '.'].some((sep) => local.startsWith(`${stem}${sep}`)))) return true;
+  if (technicalLocal(local)) return true;
+  const domain = address.slice(at + 1);
+  const labelsOfDomain = domain.split('.');
+  if (labelsOfDomain.length >= 2 && AUTOMATED_SENDING_SUBDOMAINS.includes(labelsOfDomain[0] ?? '')) return true;
+  return AUTOMATED_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+}
+
+/**
  * Display name from a read-only customer profile
  * (`GET /api/customer-data/profile/:resource/:id`): the contact's full name,
  * else the company name. The email is deliberately not a «nome», and an
@@ -478,6 +637,42 @@ export function offerStageLabel(pipelines, offer) {
     }
   }
   return offerStateLabel(offer.stage);
+}
+
+/**
+ * Backlog 169cd4bc988c: who one offer (opportunity row) is for, and where
+ * their scheda lives — the contact first, else the company. The reserved
+ * «Senza azienda» a contact without Azienda sits under, and any stored
+ * placeholder company (`Unknown (…)`), name nobody: the same rule as the
+ * scheda's shownCompanyName, so no screen reads «Per Senza azienda». Null
+ * when the offer names no one.
+ * @param {any} offer
+ * @returns {{ name: string, href: string | null } | null}
+ */
+export function offerCustomer(offer) {
+  const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+  const contactName = text(offer?.contactName);
+  const contactId = text(offer?.contactId);
+  if (contactName !== null) {
+    return { name: contactName, href: contactId !== null ? `#/customer-card/contact/${encodeURIComponent(contactId)}` : null };
+  }
+  const company = text(offer?.companyName);
+  const companyId = text(offer?.companyId);
+  const reserved = company !== null && company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+  if (company === null || reserved || readableName(company.replace(/\([^)]*\)/g, ' ')) === null) return null;
+  return { name: company, href: companyId !== null ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null };
+}
+
+/**
+ * Backlog 169cd4bc988c: a state word as a heading or a list shows it —
+ * «Proposta», never the bare «proposta» — the first letter upper-cased,
+ * the rest untouched. Null stays null.
+ * @param {string | null | undefined} text
+ * @returns {string | null}
+ */
+export function upperFirst(text) {
+  if (typeof text !== 'string' || text === '') return text ?? null;
+  return text.charAt(0).toLocaleUpperCase('it-IT') + text.slice(1);
 }
 
 /**

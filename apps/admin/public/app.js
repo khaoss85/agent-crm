@@ -410,23 +410,17 @@ function toggleBusy(element, busy) {
   element.disabled = busy;
 }
 
-let toastTimer;
+/** The shell toast and its clock (backlog:2f72000d4a4d), built on first use. */
+let toaster = null;
 /**
  * @param {string} message @param {boolean} [error]
- * @param {{ action?: { label: string, run: () => void } }} [options] one action
- *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); the toast
- *   then stays a little longer so the button can be reached.
+ * @param {{ action?: { label: string, run: () => void }, duration?: number }} [options] one action
+ *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); a toast
+ *   with an action stays at least 10 s, and never hides under the pointer.
  */
 function toast(message, error = false, options = {}) {
-  clearTimeout(toastTimer);
-  const hide = () => elements.toast.classList.add('hidden');
-  paintToast(document, elements.toast, message, {
-    error,
-    action: options?.action ?? null,
-    onDone: () => { clearTimeout(toastTimer); hide(); },
-  });
-  elements.toast.classList.remove('hidden');
-  toastTimer = setTimeout(hide, options?.action ? 6000 : 3200);
+  if (toaster === null) toaster = createToastController(document, elements.toast);
+  toaster.show(message, error, options ?? {});
 }
 
 function escapeHtml(value) {
@@ -450,6 +444,7 @@ import {
   ACTIVE_SPACE_KEY,
   buildShellNav,
   createShellView,
+  keepSettingsTabs,
   loadClientCount,
   loadFixCount,
   readSpaces,
@@ -483,7 +478,7 @@ import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
-import { paintToast } from './admin-ui.js';
+import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
@@ -552,6 +547,7 @@ const offerDetail = createOfferDetail({
   mount: mountGate.owned('offer-detail'),
   client: moduleClient,
   submissions,
+  toast,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -640,10 +636,13 @@ const customerCardView = createCustomerCardView({
 // itself never writes. The import stays a separate tool on #/import-clienti.
 const clientiListView = createCustomerListView({
   doc: document,
-  mount: mountGate.owned('customer-data'),
+  // backlog:ff8bb60f417f: the list stays under the Nuovo cliente window.
+  mount: mountGate.owned(['customer-data', 'customer-new']),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // The unfiltered total is the sidebar badge: it never lags the list.
+  onTotal: ({ count, exact }) => { shellView?.update({ clientCount: count, clientCountExact: exact }); },
   // BO-F1-05: the space the calls read stays space-explicit, and the AI
   // filter entry opens the BO-F0-04 assistant on the Clienti screen (its
   // dry-run answers the key notice when no LLM backend is present).
@@ -661,7 +660,12 @@ const clientiListView = createCustomerListView({
 // governed import-apply operation as the tool, then lands on the scheda.
 const customerFormView = createCustomerFormView({
   doc: document,
-  mount: mountGate.owned('customer-new'),
+  // backlog:ff8bb60f417f: a window over the list, like the scheda's panels.
+  // It lives in the shared screen mount beside the list frame (the list
+  // repaints only inside its own frame), so the session-loss keep/restore,
+  // which reads moduleView, keeps its text too (review #791 giro 1). The
+  // router closes it on every other route (invalidate).
+  mount: moduleView,
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -978,6 +982,9 @@ let oggiView = null;
 let sequenzeView = null;
 /** Navigation sequence: a render that settles after a newer navigation is stale. */
 let navSeq = 0;
+/** The last routed view, so the Clienti list survives its Nuovo cliente window. @type {string | null} */
+let lastRoutedView = null;
+const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 /** The Agenti screen (backlog:33782ba68747), created once per session. */
 let agentiView = null;
 let shellFixCount = null;
@@ -1200,11 +1207,17 @@ async function route() {
   }
   const hash = window.location.hash || '#/';
   const navToken = ++navSeq;
+  // backlog:ff8bb60f417f: opening or closing the Nuovo cliente window keeps
+  // the list under it as it was — no reload, no loading frame.
+  const previousView = lastRoutedView;
+  lastRoutedView = targetForHash(hash).view;
+  const keepClienti = CLIENTI_PAIR.has(lastRoutedView) && CLIENTI_PAIR.has(previousView ?? '');
   if (targetForHash(hash).view === 'settings') {
     // The panel paints synchronously on the real mount: no view handle
     // may paint over it.
     mountGate.activate(null);
     clientiListView.invalidate();
+    customerFormView.invalidate();
     customerCardView.invalidate();
     // backlog:607f33ee: same shared-mount race as below — a late async
     // view must not repaint the settings panel just opened.
@@ -1243,13 +1256,21 @@ async function route() {
   const routedView = target.view === 'invalid' || target.view === 'componenti' ? null : target.view;
   mountGate.activate(routedView);
   const screenLabel = shellScreenFor(target)?.label;
-  const loadingLine = routedView !== null && (routedView !== 'dashboard' || MOUNTED)
+  const loadingLine = routedView !== null && !keepClienti && (routedView !== 'dashboard' || MOUNTED)
     ? paintScreenLoading({ doc: document, mount: moduleView, label: screenLabel })
     : null;
+  // backlog:1cfc68175ab7: a settings tab keeps the tab row while it loads.
+  keepSettingsTabs(document, {
+    mount: moduleView,
+    loading: loadingLine,
+    view: routedView,
+    fixCount: shellFixCount,
+    navigate: (next) => { window.location.hash = next; },
+  });
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
-  if (target.view !== 'customer-data') clientiListView.invalidate();
+  if (!CLIENTI_PAIR.has(target.view)) clientiListView.invalidate();
   // backlog:273de560: the form paints straight into the shared mount, so a
   // save still in flight must die when the operator leaves the form —
   // otherwise its late response clears the screen just opened.
@@ -1281,6 +1302,9 @@ async function route() {
         mount: mountGate.owned('dashboard'),
         client: moduleClient,
         navigate: (next) => { window.location.hash = next; },
+        // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
+        // the Calendario through the shared shell storage.
+        storage: shellStorage,
       });
     }
     await oggiView.render({
@@ -1324,9 +1348,15 @@ async function route() {
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId);
     else if (target.view === 'spine') await spineView.render();
-    else if (target.view === 'customer-data') await clientiListView.render();
+    else if (target.view === 'customer-data') {
+      if (!keepClienti) await clientiListView.render();
+    }
     else if (target.view === 'customer-import') await customerDataView.render();
-    else if (target.view === 'customer-new') await customerFormView.render();
+    else if (target.view === 'customer-new') {
+      const list = keepClienti ? null : clientiListView.render();
+      await customerFormView.render();
+      if (list) await list;
+    }
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel, target.binding ?? null);
     else if (target.view === 'sync') await syncView.render();

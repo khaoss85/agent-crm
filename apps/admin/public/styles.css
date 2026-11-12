@@ -326,8 +326,11 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-toolbar input[type="search"], .pipeline-toolbar input[type="text"] { flex: 0 1 240px; }
 .pipeline-toolbar .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .pipeline-toolbar .pipeline-summary { margin: 0 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
-.pipeline-board { gap: 14px; }
-.pipeline-column { min-width: 200px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
+/* backlog:930b3bc9ba24: a 1280 le cinque colonne stanno nella pagina
+   (prima 5×200 px + spazi = 1056 su 952 e la colonna Perso tagliata):
+   colonne a parti uguali, minimo 168 px; sotto quel minimo la board scorre. */
+.pipeline-board { gap: 12px; }
+.pipeline-column { flex: 1 1 0; min-width: 168px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
 .pipeline-column-header h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
@@ -384,6 +387,24 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+/* backlog 169cd4bc988c: the offer page is never a dead end — the customer
+ * opens their scheda, «Cambia stato» sits beside Modifica as a small menu
+ * card, «Crea preventivo» heads the quotes. */
+.bo-offer-customer { color: inherit; text-decoration: underline; text-decoration-color: var(--line-dashed); text-underline-offset: 3px; }
+.bo-offer-customer:hover { text-decoration-color: var(--ink); }
+.bo-offer .bo-offer-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 16px; }
+.bo-offer .bo-offer-actions .offer-edit { margin-top: 0; }
+.bo-offer-stage-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+/* In the flow under its button: the sheet clips (its accent stripe needs overflow hidden). */
+.bo-offer-stage-voices { min-width: 200px; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.bo-offer-stage-voices.hidden { display: none; }
+.bo-offer-stage-voices .bo-offer-stage-voice { justify-content: flex-start; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font-size: 13.5px; font-weight: 600; text-align: left; }
+.bo-offer-stage-voices .bo-offer-stage-voice:hover, .bo-offer-stage-voices .bo-offer-stage-voice:focus-visible { background: var(--surface-soft); }
+.bo-offer .offer-quotes-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+.bo-offer .offer-quotes-head h3 { margin: 0; }
+.bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
+.bo-offer .offer-quote-create-line:empty { display: none; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -889,6 +910,11 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-invite { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; border: 1px dashed var(--line-dashed); font-size: 14px; font-weight: 400; color: var(--muted); text-decoration: none; }
 .bo-oggi-invite:hover { border-color: var(--ink); color: var(--ink); }
 .bo-oggi-invite strong { flex: none; white-space: nowrap; }
+.bo-oggi-skeleton .bo-oggi-row { min-height: 74px; }
+.bo-oggi-skeleton .bo-oggi-mono { background: var(--line-soft); }
+.bo-oggi-title .ui-skeleton { height: 16px; }
+.bo-oggi-notifications-toggle { align-self: flex-start; }
+.bo-oggi-notifications .bo-oggi-row { padding: 10px 18px; }
 
 @media (max-width: 700px) {
   .bo-oggi-btns { width: 100%; }
@@ -1157,6 +1183,11 @@ select.bo-spazi-input { flex: none; }
   border-radius: 50%; background: var(--paper); transition: left .2s;
 }
 .bo-spazi-toggle[data-on="true"] .bo-spazi-knob { left: 21px; }
+/* backlog:1cfc68175ab7: with the space AI off the five read paused, never green. */
+.bo-spazi-toggle[data-paused="true"] { background: var(--line); opacity: .6; cursor: not-allowed; }
+.bo-spazi-paused { font-size: 12px; color: var(--muted); }
+/* backlog:e381c48581fa: the connector detail's buttons sit in one row. */
+.bo-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 /* Supervisor design pass: Spazi e accessi like prototype 08. */
 .bo-spazi-title { margin: 0; font-size: clamp(34px, 4.4vw, 46px); line-height: 1; letter-spacing: -.03em; }
 .bo-spazi-lede { max-width: 640px; margin: 12px 0 0; font-size: 16px; line-height: 1.5; }
@@ -1323,6 +1354,7 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-tool { display: inline-flex; align-items: center; gap: 6px; }
 .bo-clienti-tool .ui-icon { width: 18px; height: 18px; }
 .bo-clienti-toolcount { font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.bo-clienti-toolword { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .bo-clienti-toolbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; display: inline-grid; place-items: center; background: var(--accent); color: var(--paper); font-size: 11px; font-weight: 700; }
 .bo-clienti-menubutton.ui-btn:has(.bo-clienti-tool) { min-width: 40px; justify-content: center; }
 .bo-clienti-menu { position: absolute; right: 0; z-index: 15; margin-top: 8px; width: 290px; max-width: min(78vw, 320px); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 6px; box-shadow: var(--shadow); }
@@ -1331,6 +1363,10 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-item.ui-chip { display: block; width: 100%; text-align: left; font-size: 14px; border: 0; background: transparent; color: var(--ink); padding: 7px 10px; border-radius: 8px; }
 .bo-clienti-item.ui-chip:hover { background: var(--surface-soft); }
 .bo-clienti-item.active { font-weight: 700; }
+/* backlog:754918ad8da7: the active order or filter carries a ✓ in a fixed slot, like the Pipeline voices. */
+.bo-clienti-check { display: inline-block; width: 1.25em; color: var(--accent); font-weight: 700; }
+/* A reload keeps the rows on screen, only quieter, so the bar never jumps. */
+.bo-clienti-body[aria-busy="true"] { opacity: .55; transition: opacity .12s; pointer-events: none; }
 .bo-clienti-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .bo-clienti-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; border-radius: 99px; padding: 5px 8px 5px 10px; background: var(--line-soft); }
 .bo-clienti-chipx.ui-chip { border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 0 2px; }
@@ -1344,6 +1380,8 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--line-soft); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
 .bo-clienti-who { min-width: 0; display: flex; flex-direction: column; }
 .bo-clienti-who a { font-size: 15px; font-weight: 700; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* backlog:930b3bc9ba24: a 1280 il nome non si taglia («UX Esplorativo 111…»): va a capo, due righe al massimo. */
+.bo-clienti-who a { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.25; }
 .bo-clienti-sub { font-size: 12px; color: var(--muted); }
 .bo-clienti-fact { margin: 0; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bo-clienti-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1407,6 +1445,11 @@ select.bo-spazi-input { flex: none; }
 .cal-wrap .actions .ui-btn-cta { padding: 0 14px 0 16px; }
 .cal-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
 .cal-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* backlog:930b3bc9ba24: fra 701 e 1400 px la colonna di sinistra si stringe
+   e la settimana prende lo spazio (a 1280 la griglia era 634 su 952). */
+@media (min-width: 701px) and (max-width: 1400px) {
+  .cal-layout { grid-template-columns: 252px minmax(0, 1fr); gap: 14px; }
+}
 .cal-main { min-width: 0; position: relative; }
 .cal-wrap .panel { box-shadow: none; border-radius: 16px; border-color: var(--line-soft); padding: 18px; }
 .cal-wrap .panel > h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0; }
@@ -1447,6 +1490,8 @@ select.bo-spazi-input { flex: none; }
 .cal-day-compact { display: none; }
 .cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
+.cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
@@ -1847,11 +1892,20 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-create-form { display: grid; gap: 6px; }
 .catalog-create-label { font-size: 12px; color: var(--muted); }
 .catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
+/* backlog:0bbd62834c5a: the open AI voice takes the bar's width, the sentence field reads its placeholder whole. */
+/* The button stays in the bar's row; the field opens on its own row below, sentence and «Proponi» side by side. */
+.catalog-create-wrap[data-open="true"] { display: contents; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form { flex: 1 1 100%; max-width: 640px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form > :not(input):not(button) { grid-column: 1 / -1; }
+.catalog-create-form input[name="ai-phrase"] { max-width: none; width: 100%; box-sizing: border-box; }
 .catalog-readonly { margin: 4px 0 0; font-size: 11.5px; color: var(--data-ink); }
 .catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
 .catalog-offer { padding: 0; margin: 0; }
 .catalog-offer + .catalog-offer { margin-top: 6px; }
 .catalog-offer-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+/* backlog:0bbd62834c5a: several offers name each price, the name muted before the amount. */
+.catalog-offer-named { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.catalog-offer-named .catalog-offer-name { position: static; width: auto; height: auto; overflow: visible; clip: auto; margin: 0; font-size: 13px; font-weight: 500; color: var(--muted); }
 .catalog-price { margin: 0; font-size: 14px; font-weight: 600; }
 .catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
 .catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 6px; display: grid; gap: 8px; }
@@ -1918,6 +1972,7 @@ button.catalog-remove:hover { color: var(--danger); background: var(--surface-so
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-create-wrap[data-open="true"] > .catalog-create-form { grid-template-columns: minmax(0, 1fr); }
   .catalog-row { overflow-wrap: anywhere; }
 }
 
@@ -2002,6 +2057,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-empty strong { font-size: 14px; }
 .ui-empty span { font-size: 13px; color: var(--muted); line-height: 1.45; }
 .ui-loading { padding: 24px 0; font-size: 13px; color: var(--muted); }
+.ui-skeleton { display: inline-block; max-width: 100%; height: .9em; border-radius: 6px; background: var(--line-soft); vertical-align: middle; }
+.ui-skeleton-block { display: block; }
+@media (prefers-reduced-motion: no-preference) {
+  .ui-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
+  @keyframes ui-skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+}
 .ui-section { margin: 34px 0 0; }
 .ui-section-title { margin: 0 0 16px; font-size: 22px; letter-spacing: -.024em; }
 .ui-icon { display: inline-flex; width: 16px; height: 16px; flex-shrink: 0; vertical-align: -3px; }
@@ -2271,6 +2332,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-campo-add-cancel:hover { color: var(--ink); }
 .bo-campo-add > small.field-error:empty { display: none; }
 .bo-cliente-nuovo-actions { display: flex; gap: 8px; margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--line-faint); }
+/* backlog:ff8bb60f417f: Nuovo cliente in the scheda's window frame (bo-scheda-composer), not a page card. */
+.bo-cliente-panel .bo-cliente-nuovo { max-width: none; margin: 0; padding: 14px 0 18px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.bo-cliente-panel .bo-cliente-nuovo-actions { position: sticky; bottom: 0; background: var(--surface); padding-bottom: 4px; }
+.bo-cliente-nuovo-discard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line-soft); }
+.bo-cliente-nuovo-discard > p { flex: 1 1 100%; margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.bo-cliente-nuovo-discard.hidden, .bo-cliente-nuovo-actions.hidden { display: none; }
 @media (max-width: 640px) {
   .bo-cliente-nuovo { padding: 20px 16px; border-radius: 16px; margin-top: 0; }
   .bo-cliente-nuovo-grid, .bo-cliente-nuovo-custom { grid-template-columns: 1fr; }
@@ -2547,7 +2614,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-offer-field:focus-within { border-bottom-color: var(--ink); }
 .bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
 .bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
-.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+/* backlog 0c9a27bb9ac0: a placeholder reads as a hint, never as a typed value. */
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); opacity: .5; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
 .bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }
@@ -2575,5 +2643,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 /* Backlog 1e939a362c7c: «N offerte di altre pipeline» reads as a link and unfolds the offers. */
 .pipeline-switch .link-button { padding: 0; border: none; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
-.pipeline-off-list { margin: 6px 0 0; padding-left: 18px; }
-.pipeline-off-list li { margin: 2px 0; }
+/* backlog 169cd4bc988c: the offers of other pipelines in the /bo dress —
+ * ink names that open the offer, muted customer and stato, no browser blue. */
+.pipeline-off-list { margin: 8px 0 0; padding: 6px; list-style: none; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; }
+.pipeline-off-list li { margin: 0; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+.pipeline-off-list li:hover { background: var(--surface-soft); }
+.pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
+.pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
+.pipeline-off-list .pipeline-off-meta { color: var(--muted); }

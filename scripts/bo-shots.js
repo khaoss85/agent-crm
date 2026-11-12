@@ -1216,7 +1216,13 @@ const client = {
       return { spaceId: 'spazio-1', overrides: [] };
     }
     if (path.indexOf('/api/connectors') === 0) {
-      return { connectors: [{ status: 'active' }, { status: 'active' }, { status: 'revoked' }] };
+      // Real rows name their channel: the space card counts linked channels
+      // with the shared count (backlog:e381c48581fa), two here.
+      return { connectors: [
+        { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
+        { channel: 'email', connectionKey: 'mail-1', status: 'active' },
+        { channel: 'instagram', connectionKey: 'ig-1', status: 'revoked' },
+      ] };
     }
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
@@ -1276,7 +1282,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
   unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
-    .filter((node) => node.textContent.includes('Non disponibile')).length,
+    .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
     case 'componenti': return `
@@ -1709,7 +1715,7 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 active connectors,
+      // C7: both cards paint the real statistic (2 linked channels,
       // 2 rendered members, exact total 3). A card that cannot count paints
       // no row, so the gate requires both rows here.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
@@ -1735,8 +1741,8 @@ export function assertProbe(name, probe) {
       if (probe.openers !== n) {
         throw new Error(`connettori: the probe lists ${String(probe.openers)} row openers, expected ${n}`);
       }
-      // A channel with no adapter in the composition reads «Non disponibile
-      // qui» and offers no Collega (Telegram in the demo data). Every other
+      // A channel with no adapter and no link reads «Non ancora disponibile»
+      // (the shared channel state, backlog:e381c48581fa) and offers no Collega (Telegram in the demo data). Every other
       // row offers one.
       const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
       if (probe.flows !== connectable) {

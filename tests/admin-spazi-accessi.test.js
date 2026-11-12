@@ -296,6 +296,37 @@ test('with the master AI switch off the screen says spenta and locks the five (b
   }
 });
 
+// backlog:1cfc68175ab7 (giro UX 11/11, punto 34): with the AI off the five
+// stayed green (aria-checked=true, disabled). They decide nothing until the
+// AI is back on: grey and «in pausa», never on.
+test('1cfc68175ab7: with the space AI off the five read paused, never green', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  const five = toggles.filter((node) => node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label);
+  assert.equal(five.length, 5);
+  for (const node of five) {
+    assert.equal(node.getAttribute('data-on'), 'false', `${node.getAttribute('aria-label')} is not green`);
+    assert.equal(node.getAttribute('aria-checked'), 'false', `${node.getAttribute('aria-label')} is not announced on`);
+    assert.equal(node.getAttribute('data-paused'), 'true');
+    assert.equal(node.disabled, true);
+  }
+  const rendered = text(mount);
+  assert.match(rendered, /In pausa/, 'each switch says it is paused');
+  // Back on: the five show their own values again, nothing paused.
+  const { mount: onMount, view: onView } = view({ client: stubClient({}) });
+  await onView.render();
+  await flush();
+  const onToggles = onMount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.ok(onToggles.some((node) => node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label && node.getAttribute('data-on') === 'true'),
+    'with the AI on a switch that is on reads green');
+  assert.equal(onToggles.filter((node) => node.getAttribute('data-paused') === 'true').length, 0);
+  assert.doesNotMatch(text(onMount), /In pausa/);
+});
+
 test('a refused team read renders as a refusal, not an empty team', async () => {
   const denied = Object.assign(new Error('forbidden'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
   const { mount, view: v } = view({ client: stubClient({ fail: { members: denied } }) });
@@ -617,11 +648,18 @@ test('formatSpaceStat speaks the prototype pattern with real counts, null when u
   assert.equal(formatSpaceStat({ channels: -1, members: 2, customers: 3 }), null);
 });
 
-test('countSpaceChannels counts active connections, countSpaceCustomers needs an exact total', () => {
+test('countSpaceChannels counts linked channels, countSpaceCustomers needs an exact total', () => {
   assert.equal(countSpaceChannels({ connectors: [
-    { connectionKey: 'a', status: 'active' },
-    { connectionKey: 'b', status: 'suspended' },
-    { connectionKey: 'c', status: 'active' },
+    { connectionKey: 'a', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'b', channel: 'instagram', status: 'suspended' },
+    { connectionKey: 'c', channel: 'calendar', status: 'active' },
+  ] }), 2);
+  // backlog:e381c48581fa: the shared count — two accounts on one channel
+  // are one channel, like «2 di 9» on Oggi and Stato sync.
+  assert.equal(countSpaceChannels({ connectors: [
+    { connectionKey: 'a', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'b', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'c', channel: 'google-calendar', status: 'active' },
   ] }), 2);
   assert.equal(countSpaceChannels({ connectors: [] }), 0);
   assert.equal(countSpaceChannels({}), null);
@@ -642,8 +680,8 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
       members,
       connectorsBySpace: {
         [SPACE]: [
-          { connectionKey: 'wa', status: 'active' },
-          { connectionKey: 'ig', status: 'active' },
+          { connectionKey: 'wa', channel: 'whatsapp', status: 'active' },
+          { connectionKey: 'ig', channel: 'instagram', status: 'active' },
         ],
       },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
@@ -652,6 +690,37 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
   await v.render();
   await flush();
   assert.match(text(mount), /2 canali · 2 persone · 3 clienti/);
+});
+
+// Review #782 P1: the raw GET /api/connectors carries no profile link; the
+// Google and Meta links live in GET /api/profile. The active space card
+// counts them like Oggi's «x di 9»; another space's card never borrows them.
+test('e381c48581fa: the active space card counts the profile links, another space does not', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const base = stubClient({
+    members,
+    connectorsBySpace: { [SPACE]: [], altro: [] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true }, altro: { total: 3, totalIsExact: true } },
+  });
+  const profile = { connections: { available: true, items: [
+    { connector: 'calendar', status: 'connected', account: 'dan@presti.it' },
+    { connector: 'gmail', status: 'connected', account: 'dan@presti.it' },
+  ] } };
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') return profile;
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({
+    client,
+    spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }, { id: 'altro', name: 'Altro', initials: 'AL' }],
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /2 canali · 1 persona · 3 clienti/, 'the active space counts Calendar and Gmail');
+  assert.match(rendered, /0 canali · 1 persona · 3 clienti/, 'another space never borrows the profile links');
 });
 
 test('an unreadable count omits the statistic, never an invented row', async () => {
@@ -692,7 +761,7 @@ test('an inexact customer total omits the statistic instead of a floor', async (
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: false } },
     }),
   });
@@ -713,7 +782,7 @@ test('the statistic counts rendered team rows, not raw membership items', async 
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
     }),
   });
@@ -730,7 +799,7 @@ test('the card statistic qualifies the organization-wide numbers', async () => {
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
     }),
   });

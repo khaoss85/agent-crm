@@ -63,6 +63,27 @@ parallel_cap() {
   esac
 }
 
+# The busy rule (backlog:3d560518f3e2): the touched-tests phase writes only
+# a CANDIDATE (`$CI_TOUCHED_BUSY_FILE.candidate`) when it timed out on a full
+# machine with no failed file. After every lane has ended, the aggregation
+# below promotes it to the record the workflow retries on
+# (scripts/ci-fast-busy-confirm.sh) only when the touched lane is the one
+# failure. Killed before that, the gate leaves no record. Only the parallel
+# gate offers the retry, so sequential mode drops the variable.
+busy_record="${CI_TOUCHED_BUSY_FILE:-}"
+busy_candidate=''
+if [ -n "$busy_record" ]; then
+  busy_candidate="$busy_record.candidate"
+  rm -f "$busy_record" "$busy_candidate"
+fi
+if [ "$(parallel_cap)" -le 1 ] || [ -z "$busy_record" ]; then
+  unset CI_TOUCHED_BUSY_FILE
+  busy_record=''
+  busy_candidate=''
+else
+  export CI_TOUCHED_BUSY_FILE="$busy_candidate"
+fi
+
 # Parallel mode: start one lane (one log, one exit code, one name in the
 # failure list) once fewer than the cap are running.
 launch() {
@@ -184,6 +205,10 @@ if [ "$(parallel_cap)" -gt 1 ]; then
   for i in "${!phases[@]}"; do cat "$logs_dir/$i.log"; done
   rm -rf "$logs_dir"
   if [ "${#failed[@]}" -gt 0 ]; then
+    if [ -n "$busy_record" ] && bash scripts/ci-fast-busy-confirm.sh "$busy_candidate" "$busy_record" "${failed[@]}"; then
+      echo "::warning::ci-fast: the touched tests timed out on a full machine ($(tr -d '\n' < "$busy_record")): busy, not red; every other phase passed in $((SECONDS - started))s, the step retries the touched tests once"
+      exit "$first_code"
+    fi
     echo "::error::ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
     exit "$first_code"
   fi

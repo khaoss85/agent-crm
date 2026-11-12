@@ -2755,7 +2755,9 @@ test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
   assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without any link stays off');
-  assert.ok(panel.textContent.includes('non collegato'), 'the off channel says it is not linked');
+  // backlog:bd9ae1482194: nothing linked in the space — one line, no
+  // per-channel list.
+  assert.ok(panel.textContent.includes('Collega un canale per scrivere a questo cliente'), 'the composer says what to do');
   const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
   assert.ok(link, 'the off channel links to Connettori');
   assert.equal(link.getAttribute('href'), '#/connettori');
@@ -3778,7 +3780,46 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   assert.ok(!panel.textContent.includes('canale scelto'), 'no sentence about a channel nobody can pick');
 });
 
-test('backlog:bd9ae1482194: a space with channels but no address for this customer says so, no Connettori line', async () => {
+// backlog:bd9ae1482194, seguito (verifica produzione pilota 6b886ee, spazio
+// 2f07eeb9 con 0 canali collegati): the composer opened on «Email (…),
+// WhatsApp (…): canale non collegato · Collega in Connettori» — the
+// customer has addresses, so the per-channel line won. The raw production
+// shape: readSyncState rows (pending, never active, no profile row merged)
+// and /api/profile on its own, with no Gmail linked.
+const RAW_UNLINKED_SPACE = {
+  spaceId: 'presti',
+  connectors: [
+    { connectionKey: 'wa-pending', channel: 'whatsapp', account: '', adapter: 'whatsapp-cloud', adapterVersion: '1', status: 'pending', importable: false, sync: null },
+    { connectionKey: 'gm-pending', channel: 'email', account: '', adapter: 'gmail', adapterVersion: '1', status: 'pending', importable: true, sync: null },
+  ],
+  connected: 0,
+  completed: 0,
+};
+const RAW_PROFILE_NO_GMAIL = {
+  member: { name: 'Daniele Pelleri', email: 'daniele.pelleri@gmail.com', role: 'owner' },
+  connections: { available: true, reason: null, items: [{ connector: 'calendar', status: 'connected', account: 'daniele.pelleri@gmail.com' }] },
+};
+
+test('backlog:bd9ae1482194: a space with 0 linked channels opens on «Collega un canale per scrivere a questo cliente» (raw production shape)', async () => {
+  for (const connectors of [RAW_UNLINKED_SPACE, { spaceId: 'presti', connectors: [], connected: 0, completed: 0 }]) {
+    const { panel } = await openComposerMount({ client: composerClient({ connectors, profile: RAW_PROFILE_NO_GMAIL }) });
+    const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+    assert.ok(off, 'the composer says what to do before any click');
+    assert.equal(off.textContent, 'Collega un canale per scrivere a questo cliente');
+    const go = off.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+    assert.equal(go?.getAttribute('href'), '#/connettori', 'the sentence links the Connettori screen');
+    assert.ok(!panel.textContent.includes('canale non collegato'), 'no per-channel line when the space has no channel at all');
+    assert.equal(composerSendButton(panel).getAttribute('disabled'), 'disabled', 'nothing to send on');
+    const { input, go: generate } = aiParts(panel);
+    input.value = 'scrivi tu';
+    generate.dispatch('click');
+    await flushComposer();
+    const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+    assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente', 'Genera says the same');
+  }
+});
+
+test('backlog:bd9ae1482194: a space with a channel the customer is not on keeps the per-channel line, and Genera links Connettori', async () => {
   const inner = draftClient({ body: 'x' });
   const client = {
     posts: inner.posts,
@@ -3790,14 +3831,16 @@ test('backlog:bd9ae1482194: a space with channels but no address for this custom
     },
   };
   const { panel } = await openComposerMount({ client });
+  const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+  assert.ok(off.textContent.includes('canale non collegato'), 'the space has a channel: the line names the customer channels to link');
   const { input, go } = aiParts(panel);
   input.value = 'scrivi tu';
   go.dispatch('click');
   await flushComposer();
   assert.equal(inner.drafts.length, 0, 'no draft request without a usable channel');
   const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
-  assert.equal(line.textContent, 'Questo cliente non ha un recapito sui canali collegati.');
-  assert.equal(line.findAll('a').length, 0, 'the space has a channel: no Connettori link in the line');
+  assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente');
+  assert.ok(!line.textContent.includes('canale scelto'));
 });
 
 // Dan 06/11: «ho aggiunto una nota ma non si vede e non si capisce dove;
@@ -5000,4 +5043,13 @@ test('review giro 1: moves without pipelines read generic lines, never a false e
     'real moves never read as no moves when the pipelines are unavailable');
   assert.ok(text.includes('Cambio di stato · da elena'),
     'the move reads the generic Italian line, like the detail');
+});
+
+test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda avatar, never «S?»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client: stubClient({ card: { ...CARD, name: 'Solo SpazioB 0711' } }) }).renderCard('contact', 'c1');
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.equal(avatar.textContent, 'SS');
+  assert.ok(!avatar.textContent.includes('?'));
 });
