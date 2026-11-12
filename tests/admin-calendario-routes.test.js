@@ -37,6 +37,14 @@ function stubApp(overrides = {}) {
       calls.push({ method: 'parseBookingPhrase', input, actor });
       return { draft: { teamMemberId: 'marco' }, dryRun: true, spaceId: input.spaceId };
     },
+    async rescheduleAppointmentBooking(input, actor) {
+      calls.push({ method: 'rescheduleAppointmentBooking', input, actor });
+      return { appointment: { ...input, id: 'b1', status: 'booked' }, moved: true, push: null, pushError: null };
+    },
+    async cancelAppointmentBooking(input, actor) {
+      calls.push({ method: 'cancelAppointmentBooking', input, actor });
+      return { appointment: { id: input.id, status: 'cancelled', cancelReason: input.reason }, cancelled: true, push: null, pushError: null };
+    },
     ...overrides,
   };
 }
@@ -126,6 +134,49 @@ test('propose and confirm ride the caller actor from the request', async () => {
   });
 });
 
+test('reschedule moves the named booking through the operation (backlog:3d0fbe7dc8d1)', async () => {
+  const app = stubApp();
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/appointments/reschedule`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-actor-id': 'op-1', 'x-actor-type': 'user' },
+      body: JSON.stringify({
+        id: 'b1',
+        startsAt: '2026-10-22T16:30:00.000Z',
+        endsAt: '2026-10-22T17:00:00.000Z',
+      }),
+    });
+    assert.equal(response.status, 200);
+    const call = app.calls.find((entry) => entry.method === 'rescheduleAppointmentBooking');
+    assert.ok(call, 'the reschedule operation runs');
+    assert.equal(call.actor.id, 'op-1');
+    assert.equal(call.input.id, 'b1');
+    assert.equal(call.input.startsAt, '2026-10-22T16:30:00.000Z');
+    const body = await response.json();
+    assert.equal(body.moved, true);
+    assert.equal(body.appointment.id, 'b1');
+  });
+});
+
+test('cancel cancels the named booking through the operation with the actor (backlog:5346ab531538)', async () => {
+  const app = stubApp();
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/appointments/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-actor-id': 'op-1', 'x-actor-type': 'user' },
+      body: JSON.stringify({ id: 'b1', reason: 'Annullato dal calendario' }),
+    });
+    assert.equal(response.status, 200);
+    const call = app.calls.find((entry) => entry.method === 'cancelAppointmentBooking');
+    assert.ok(call, 'the cancel operation runs');
+    assert.equal(call.actor.id, 'op-1');
+    assert.deepEqual(call.input, { id: 'b1', reason: 'Annullato dal calendario' });
+    const body = await response.json();
+    assert.equal(body.cancelled, true);
+    assert.equal(body.appointment.status, 'cancelled');
+  });
+});
+
 test('phrase drafts through the operation', async () => {
   const app = stubApp();
   await withServer(app, async (base) => {
@@ -147,6 +198,8 @@ test('without the package composed every calendar route answers 404', async () =
     proposeAppointmentBooking: undefined,
     confirmAppointmentBooking: undefined,
     parseBookingPhrase: undefined,
+    rescheduleAppointmentBooking: undefined,
+    cancelAppointmentBooking: undefined,
   });
   await withServer(app, async (base) => {
     const headers = { 'content-type': 'application/json' };
@@ -156,6 +209,8 @@ test('without the package composed every calendar route answers 404', async () =
       ['POST', '/api/appointments/propose', {}],
       ['POST', '/api/appointments/confirm', {}],
       ['POST', '/api/appointments/phrase', {}],
+      ['POST', '/api/appointments/reschedule', {}],
+      ['POST', '/api/appointments/cancel', {}],
     ]) {
       const response = await fetch(`${base}${path}`, {
         method, headers, body: body === null ? undefined : JSON.stringify(body),

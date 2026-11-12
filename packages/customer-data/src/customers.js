@@ -1,6 +1,8 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
+import { messagePreview } from '../../core/message-preview.js';
+import { isNotificationMessage } from '../../core/sender-kind.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
@@ -35,6 +37,25 @@ export const CUSTOMER_SCAN_LIMIT = 500;
 export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 
 /**
+ * Rows of the shared search ceiling reserved for companies
+ * (backlog:7d82fd84, review #678 giro-2 P3): contacts are scanned up to the
+ * ceiling minus this reserve, companies up to the reserve, so a contact
+ * scan that fills its budget never starves the company scan. Past either
+ * bound the answer stays complete:false.
+ */
+export const CUSTOMER_SEARCH_COMPANY_RESERVE = 1000;
+
+/**
+ * Rows of the bounded identity scan behind a phone search (backlog:7d82fd84):
+ * a digit-only query also scans the held identities for the digit
+ * substring, so a phone held beside a customer past the subject scans is
+ * still found. A fixed bound, never the whole table; past it the answer
+ * stays complete:false. A full number (7 or more digits) is also looked up
+ * by exact identity key, complete by construction.
+ */
+export const CUSTOMER_IDENTITY_SCAN_LIMIT = 1000;
+
+/**
  * Bound of the last-contact preview in a list row (prototype "04 Clienti":
  * the Ultimo contatto cell shows the channel mark plus a short message
  * excerpt, never the full body). Single-line: newlines collapse to spaces.
@@ -42,17 +63,22 @@ export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 export const LAST_CONTACT_PREVIEW_CHARS = 140;
 
 /**
- * Short single-line excerpt of the latest message for the list row. Calls
- * carry no text, so a latest call (or no activity) previews as null — the
- * view renders the channel and the date alone, never an invented excerpt.
+ * Short single-line excerpt of the latest message for the list row, read
+ * like a mail client (Dan 10/11): «Oggetto — estratto pulito» for an email
+ * with a stored subject, the cleaned excerpt otherwise — no URLs, HTML
+ * residue, hidden preheaders or service lines (core `messagePreview`). A
+ * body that cleans to nothing falls back to the subject. Calls carry no
+ * text, so a latest call (or no activity) previews as null — the view
+ * renders the channel and the date alone, never an invented excerpt.
  * @param {unknown} value the latest message body, if any
+ * @param {unknown} [subject] the latest message's mail subject, if any
  */
-export function previewLastContactText(value) {
-  if (typeof value !== 'string') return null;
-  const single = value.replace(/\s+/g, ' ').trim();
-  if (single === '') return null;
-  if (single.length <= LAST_CONTACT_PREVIEW_CHARS) return single;
-  return `${single.slice(0, LAST_CONTACT_PREVIEW_CHARS).trimEnd()}…`;
+export function previewLastContactText(value, subject = null) {
+  const preview = messagePreview(typeof value === 'string' ? value : null, {
+    subject: typeof subject === 'string' ? subject : null,
+    max: LAST_CONTACT_PREVIEW_CHARS,
+  });
+  return preview === '' ? null : preview;
 }
 
 /** Server page sizes from the approved prototype ("04 Clienti"). */
@@ -95,7 +121,57 @@ export const CUSTOMER_VIEWS = Object.freeze([
   // read state (no member, no watermark table) carry unreadCount null and
   // never match — the view reads empty, never everybody.
   { id: 'da-leggere', label: 'Da leggere', filters: Object.freeze({ daLeggere: true }) },
+  // «Da rispondere» (backlog:c2bf6b206d96, pilot MVP): customers with a
+  // conversation whose last message is a person's, never answered after —
+  // notifications (core/sender-kind.js) never wait. Newest waiting first.
+  { id: 'da-rispondere', label: 'Da rispondere', filters: Object.freeze({ daRispondere: true }) },
 ]);
+
+/**
+ * The conversations of one customer waiting for the team (backlog:c2bf6b206d96):
+ * one per thread (its conversation, else its channel), the thread waits
+ * when its latest message is inbound from a person — not a notification by
+ * the kernel sender rule — and the thread is not closed. Pure: the caller
+ * hands every message row of the customer it already read (exact reads, no
+ * display bound), so the count never stops at a page.
+ * @param {Array<any>} messages the customer's interaction-message rows
+ * @param {Array<any>} [conversations] the customer's conversation rows (closed state, labels)
+ * @returns {{ count: number, lastAt: string | null, text: string | null, subject: string | null, channel: string | null }}
+ */
+export function awaitingReplyFor(messages, conversations = []) {
+  const byConversation = new Map();
+  for (const row of Array.isArray(conversations) ? conversations : []) {
+    if (row?.id !== undefined && row?.id !== null) byConversation.set(String(row.id), row);
+  }
+  const latest = new Map();
+  for (const row of Array.isArray(messages) ? messages : []) {
+    if (!row || row.entry === 'call') continue;
+    const time = Date.parse(String(row.occurredAt ?? ''));
+    if (!Number.isFinite(time)) continue;
+    const thread = row.conversationId !== undefined && row.conversationId !== null && row.conversationId !== ''
+      ? `c:${row.conversationId}` : `ch:${String(row.channel ?? '')}`;
+    const seen = latest.get(thread);
+    if (!seen || time > seen.time) latest.set(thread, { time, row });
+  }
+  let count = 0;
+  let newest = null;
+  for (const { time, row } of latest.values()) {
+    if (row.direction !== 'inbound') continue;
+    const conversation = row.conversationId != null ? byConversation.get(String(row.conversationId)) ?? null : null;
+    if (conversation?.status === 'closed') continue;
+    const message = { ...row, remoteHandle: row.remoteHandle ?? conversation?.remoteHandle ?? null };
+    if (isNotificationMessage(message, { labels: [conversation?.subjectLabel] })) continue;
+    count += 1;
+    if (newest === null || time > newest.time) newest = { time, row };
+  }
+  return {
+    count,
+    lastAt: newest === null ? null : String(newest.row.occurredAt),
+    text: newest === null || typeof newest.row.body !== 'string' ? null : newest.row.body,
+    subject: newest === null || typeof newest.row.mailSubject !== 'string' ? null : newest.row.mailSubject,
+    channel: newest === null ? null : (newest.row.channel ?? null),
+  };
+}
 
 /** Sort orders from the approved prototype ("04 Clienti"). */
 export const CUSTOMER_SORTS = Object.freeze([
@@ -243,38 +319,116 @@ export function searchNeedle(q) {
 export const SEARCH_INFIX_MIN_CHARS = 4;
 
 /**
+ * Digits in a query name a phone number, not words (backlog:7d82fd84,
+ * review #678 giro-2 P3): the numeric words joined match as one substring
+ * of the digits of a held phone, so «333» finds «+39333123456» while «ada»
+ * still never matches inside «Canada». Fewer digits match nothing, so a
+ * one- or two-digit query does not match every phone on the page.
+ */
+export const PHONE_SEARCH_MIN_DIGITS = 3;
+
+/**
  * How a customer's searchable parts match the needle (backlog:d128847d21fc,
  * review #678): 0 when every needle word starts some word of the parts, 1
  * when every needle word matches but some only inside a word, -1 when one
  * does not match. A word of at least SEARCH_INFIX_MIN_CHARS letters may sit
  * inside a word («ovanni» finds «Giovanni», «xample» an «example» mailbox);
  * a shorter one only at the start, so «ada» finds «Ada Rossi» but not
- * «Canada». Case and accents never matter.
+ * «Canada». Case and accents never matter. Digits in the needle are also a
+ * phone search (backlog:7d82fd84): the numeric words joined match inside
+ * the digits of a held phone («333» finds «+39333123456»), ranked 1.
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (the held phone beside
+ *   the row), or nothing when the caller has no phone: the digit rule below
+ *   reads ONLY this value, never name/email/company digits, so «333» never
+ *   matches «user333@example.com» (review agent-crm#707: digit-substring
+ *   false positives).
  */
-export function searchRank(parts, needle) {
+export function searchRank(parts, needle, phone = '') {
   if (!Array.isArray(needle) || needle.length === 0) return 0;
-  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
-  let rank = 0;
-  for (const wanted of needle) {
-    if (words.some((word) => word.startsWith(wanted))) continue;
-    if (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))) {
-      rank = 1;
-      continue;
+  // Single digit path (review agent-crm#707 giro-2 P1): a needle of ONLY
+  // digits names a phone, never words — judged below against the digits
+  // of the HELD phone with the PHONE_SEARCH_MIN_DIGITS floor. The
+  // first-pass words also exclude the held phone value itself, so no
+  // digit word ever matches the phone by word start (one source of truth).
+  const phoneValue = typeof phone === 'string' ? phone : String(phone ?? '');
+  const textWords = parts
+    .filter((part) => typeof part === 'string' && part !== '' && part !== phoneValue)
+    .flatMap(searchWords);
+  const numeric = needle.filter((word) => /^[0-9]+$/.test(word));
+  const text = needle.filter((word) => !/^[0-9]+$/.test(word));
+  if (numeric.length === 0) {
+    let rank = 0;
+    for (const wanted of text) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      return -1;
+    }
+    return rank;
+  }
+  // A pure-digit needle names ONLY a phone (review agent-crm#707 giro-2
+  // P1): «39» must not match every Italian phone by word start, and «333»
+  // must not match «333 Studio» or «333@example.com» — digits read ONLY
+  // the held phone, with the floor. Mixed needles (text plus digits, like
+  // «verifica 07/11») still match their digit words by word start below.
+  if (text.length === 0) {
+    const digits = numeric.join('');
+    if (digits.length >= PHONE_SEARCH_MIN_DIGITS
+      && phoneDigitsOf(phoneValue).includes(digits)) {
+      return 1;
     }
     return -1;
   }
-  return rank;
+  // A mixed needle (text plus digits, like «verifica 07/11») first tries
+  // the word rules on every word, digits included, against the non-phone
+  // words — so date fragments still find the row by word start.
+  {
+    let rank = 0;
+    let failed = false;
+    for (const wanted of needle) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      failed = true;
+      break;
+    }
+    if (!failed) return rank;
+  }
+  // Otherwise the needle is also a phone search (backlog:7d82fd84): every
+  // non-numeric word must still match by the word rules above, and the
+  // joined digits must sit inside the digits of the HELD phone, so
+  // «Ada 333» finds Ada Rossi by her phone. Ranked like an infix match,
+  // never a word start. Below the digit floor or without a held phone
+  // holding the digits, it matches nothing.
+  const digits = numeric.join('');
+  const textOk = text.every((wanted) => textWords.some((word) => word.startsWith(wanted))
+    || (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))));
+  if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS
+    && phoneDigitsOf(phoneValue).includes(digits)) {
+    return 1;
+  }
+  return -1;
+}
+
+/** The digits of a value, for the phone-substring rule. @param {unknown} value */
+export function phoneDigitsOf(value) {
+  return String(value ?? '').replace(/[^0-9]/g, '');
 }
 
 /**
  * Whether a customer's searchable parts match the needle (see searchRank).
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (see searchRank)
  */
-export function matchesSearch(parts, needle) {
-  return searchRank(parts, needle) >= 0;
+export function matchesSearch(parts, needle, phone = '') {
+  return searchRank(parts, needle, phone) >= 0;
 }
 
 /** The searchable parts of a shaped list row: name, email, company, phone. @param {any} row */
@@ -333,12 +487,14 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
-    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle)) return false;
+    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle, row?.phone?.value)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     // «Da leggere»: only rows with unread inbound messages. A null
     // unreadCount (no member, no watermark table) never matches.
     if (viewExtra.daLeggere === true && !((row?.unreadCount ?? 0) > 0)) return false;
+    // «Da rispondere»: only rows with a conversation waiting for the team.
+    if (viewExtra.daRispondere === true && !((row?.awaitingReplyCount ?? 0) > 0)) return false;
     return true;
   });
   return Object.freeze(filtered);
@@ -365,6 +521,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     const time = Date.parse(String(row?.lastUnreadAt ?? ''));
     return Number.isFinite(time) ? time : -1;
   };
+  const lastAwaitingMs = (row) => {
+    const time = Date.parse(String(row?.lastAwaitingAt ?? ''));
+    return Number.isFinite(time) ? time : -1;
+  };
   const sorted = [...filtered];
   if (query.sort === 'name') sorted.sort(byName);
   else if (query.sort === 'value') sorted.sort((a, b) => (Number(b?.offerValueCents ?? 0) - Number(a?.offerValueCents ?? 0)) || byName(a, b));
@@ -377,6 +537,9 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     // contact: a customer whose latest event is an outbound reply still sorts
     // by the inbound message nobody read. Nulls (no unread) sort last.
     sorted.sort((a, b) => (lastUnreadMs(b) - lastUnreadMs(a)) || byName(a, b));
+  } else if (query.view?.id === 'da-rispondere') {
+    // «Da rispondere» recency is the newest message still waiting.
+    sorted.sort((a, b) => (lastAwaitingMs(b) - lastAwaitingMs(a)) || byName(a, b));
   } else {
     sorted.sort((a, b) => (lastContactMs(b) - lastContactMs(a)) || byName(a, b));
   }
@@ -384,7 +547,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
   // chosen order holds inside each group (Array#sort is stable).
   const textNeedle = searchNeedle(query.q ?? '');
   if (textNeedle.length > 0) {
-    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle)]));
+    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle, row?.phone?.value)]));
     sorted.sort((a, b) => rankOf.get(a) - rankOf.get(b));
   }
 
@@ -470,6 +633,9 @@ export function shapeCustomerRow(subject, reads = {}) {
   // with the core's one unread rule. Nulls when the caller passed no read
   // state (no member, no watermark table) — never an invented zero.
   const unread = reads.unreadBySubject?.get(key) ?? null;
+  // «Da rispondere» (backlog:c2bf6b206d96): conversations waiting for the
+  // team; null when the messages were not read here, never an invented zero.
+  const awaiting = reads.awaitingBySubject?.get(key) ?? null;
   const task = reads.taskBySubject?.get(key) ?? null;
   const budget = reads.budgetBySubject?.get(key)
     ?? { available: false, value: null, source: null, reason: 'nessun budget estratto dall\u2019AI per questo cliente' };
@@ -480,7 +646,11 @@ export function shapeCustomerRow(subject, reads = {}) {
     // The reserved «no company» behind a contact typed without Azienda
     // reads as no company (production 07/11), never as a company name.
     // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
-    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
+    // A company subject named by a placeholder (`Unknown (…)`) lists no
+    // company line either: the row keeps its id, never the placeholder
+    // (review #739 giro 3).
+    company: shownCompany && companyDisplayName(shownCompany) !== null
+      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
@@ -488,9 +658,13 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
-    lastContactText: previewLastContactText(activity?.text ?? null),
+    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
+    awaitingReplyCount: awaiting === null ? null : awaiting.count,
+    lastAwaitingAt: awaiting === null ? null : awaiting.lastAt,
+    awaitingChannel: awaiting === null ? null : awaiting.channel,
+    awaitingText: awaiting === null ? null : previewLastContactText(awaiting.text, awaiting.subject),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,

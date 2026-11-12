@@ -611,7 +611,7 @@ ${packageSource({ name: 'dialing' })}`,
 test('the canonical Lead→Won objective is answered with what exists and what is absent', async (t) => {
   // A real project with the official packages and one customer-authored one —
   // the situation an agent is actually in when it is handed an acquisition goal.
-  const { project } = await import('./helpers/contracts-project.js');
+  const { project } = await import('./helpers/contracts-project-cache.js');
   const root = project(t, { withDelivery: true, withCustomPackage: true });
   // The commercial helper stops at the catalog; the acquisition goal starts
   // before it, so the lead-intelligence records go in too.
@@ -685,7 +685,7 @@ test('the canonical Lead→Won objective is answered with what exists and what i
 });
 
 test('/api/schema and application boot are unchanged by AX1', async (t) => {
-  const { boot, project } = await import('./helpers/contracts-project.js');
+  const { boot, project } = await import('./helpers/contracts-project-cache.js');
   const root = project(t, { withDelivery: true });
   const context = await boot(root, join(root, 'data', 'schema-regression.sqlite'));
   t.after(() => context.close());

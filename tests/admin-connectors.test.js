@@ -301,14 +301,15 @@ test('a connected row shows Collegato with its account and no Collega', async ()
     'a pending row still offers Collega');
 });
 
-test('a channel with no composed adapter pills Non disponibile qui with no Collega', async () => {
+test('a channel with no composed adapter pills Non ancora disponibile with no Collega', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ schema: SCHEMA, sync: { connectors: [] } });
   await createConnectorsView({ doc, mount, client, navigate: () => {}, storage: storageWith('presti') }).render();
   const card = mount.findAll('section').find((node) => node.getAttribute('data-section') === 'canali');
   const row = card.querySelector('div[data-channel="instagram"]');
-  assert.ok(row.textContent.includes('Non disponibile qui'), 'no adapter reads as non-disponibile');
+  assert.ok(row.textContent.includes('Non ancora disponibile'), 'no adapter reads as non-disponibile');
+  assert.ok(!row.textContent.includes('Non disponibile qui'), 'the shared words, never the old jargon');
   assert.equal(row.findAll('button').filter((node) => node.textContent === 'Collega').length, 0,
     'nothing to connect with offers no Collega');
 });

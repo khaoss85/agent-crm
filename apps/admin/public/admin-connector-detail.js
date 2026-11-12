@@ -32,11 +32,12 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
+import { NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
+import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { grantExpiring, grantExpiryWording } from './admin-sync.js';
 
@@ -482,7 +483,7 @@ export function renewalSection({ label, connection, grantExpiresAt = null, nowMs
   });
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -533,6 +534,7 @@ export function createConnectorDetailView(deps) {
     loaded: false,
     loadError: null,
     /** @type {any} */ google: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
   };
 
   // The observer role watches without touching: the renewal write below
@@ -586,6 +588,9 @@ export function createConnectorDetailView(deps) {
       state.loadError = errorOf(error);
       return;
     }
+    // The profile links merge like the shared count (review #782 P1): the
+    // Email detail reuses the Google card's read, any other reads it once.
+    state.profile = state.google !== null ? await state.google.answer : await readProfile(deps.client);
     // The provider-stated grant expiries live only in the activity payload
     // (the same one the Stato sync yellow card reads): without them the
     // detail cannot offer a renewal, so they merge onto the rows below.
@@ -655,7 +660,7 @@ export function createConnectorDetailView(deps) {
       button.setAttribute('type', 'button');
       button.setAttribute('data-action', 'renew-grant');
       button.addEventListener('click', () => {
-        void renewGrant(channel, section, input, button);
+        void uiBusy(button, 'Registro…', () => renewGrant(channel, section, input, button));
       });
       panel.appendChild(button);
     }
@@ -733,6 +738,22 @@ export function createConnectorDetailView(deps) {
     box.appendChild(panel);
   }
 
+  /**
+   * A theme button that navigates (backlog:e381c48581fa): «Torna ai
+   * connettori» and its siblings wear the /bo button, never the browser's
+   * base link style.
+   * @param {string} label @param {string} route @param {string} [variant]
+   */
+  function routeButton(label, route, variant = 'secondary') {
+    const link = el(doc, 'a', `ui-btn ui-btn-${variant} ui-btn-small`, label);
+    link.setAttribute('href', route);
+    link.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate(route);
+    });
+    return link;
+  }
+
   function render(channel, preferredConnectionKey = null) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     const entry = catalogFor(channel);
@@ -741,13 +762,9 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(el(doc, 'h2', undefined, 'Connettore sconosciuto'));
       mount.appendChild(el(doc, 'p', 'empty',
         'Questo connettore non esiste nel catalogo: niente da mostrare, nessuna richiesta inviata.'));
-      const back = el(doc, 'a', undefined, 'Torna ai connettori');
-      back.setAttribute('href', '#/connettori');
-      back.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      mount.appendChild(back);
+      const row = el(doc, 'p', undefined);
+      row.appendChild(routeButton('Torna ai connettori', '#/connettori'));
+      mount.appendChild(row);
       return;
     }
     mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice · Connettori'));
@@ -767,16 +784,19 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(el(doc, 'p', 'empty', 'Scegli lo spazio per vedere il suo collegamento.'));
       return;
     }
-    // The list's own contract: without a composed adapter the connector is
-    // 'non-disponibile' with no connections, whatever stale rows exist. The
-    // detail mirrors it exactly instead of re-deriving its own answer.
+    // One state per channel (backlog:e381c48581fa): the list and every
+    // other screen read the shared `channelState`, and the detail mirrors
+    // it instead of re-deriving its own answer. A channel linked where this
+    // composition does not configure it (WhatsApp through Profilo's Meta
+    // link) reads «Collegato» with a plain note, never «Non disponibile».
     const mapped = connectorStatus({
       entry,
       adapters: matchAdapters(channel, state.adapters),
       connections: matchConnections(channel, state.entries),
+      profile: state.profile,
     });
-    const available = mapped.status !== 'non-disponibile';
-    const connections = available ? mapped.connections : [];
+    const shared = mapped.shared;
+    const connections = mapped.connections;
     // The Stato sync yellow card names its binding (backlog:3a3e6eaf): the
     // requested row wins over the first active one, so a renewal always
     // lands on the binding whose deadline the operator saw. Unknown keys
@@ -785,32 +805,27 @@ export function createConnectorDetailView(deps) {
       ? connections.find((row) => row !== null && typeof row === 'object'
         && row.connectionKey === preferredConnectionKey) ?? null
       : null;
-    const connection = available
-      ? (preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
-      : null;
-    const badge = !available
-      ? 'Non disponibile qui'
-      : connection !== null ? statusLabel(connection.status) : 'Da collegare';
+    const connection = preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null;
+    const configurable = shared.managedHere === true;
+    const badge = !configurable ? shared.text
+      : connection !== null ? statusLabel(connection.status) : shared.text;
+    const shownAccount = connection !== null && accountOf(connection) !== null ? accountOf(connection) : shared.account;
     mount.appendChild(el(doc, 'p', 'bo-muted',
-      connection !== null && accountOf(connection) !== null
-        ? `${entry.label} · ${accountOf(connection)} · ${badge}`
+      shownAccount !== null
+        ? `${entry.label} · ${shownAccount} · ${badge}`
         : `${entry.label} · ${badge}`));
-    if (!available) {
-      mount.appendChild(el(doc, 'p', 'empty',
-        'Nessun adattatore composto per questo canale: non si può collegare qui.'));
-      // No row, no roster, no row-dependent sections: a stale connection row
-      // must never surface an account, a key, or an outbox promise the list
-      // honestly hides and the wizard cannot create. Declared consumers stay:
-      // they need no row.
+    if (!configurable) {
+      // Nothing to configure here: the plain note, the declared consumers
+      // (they need no row) and the way back. No connection key, no
+      // roster, no outbox promise the composition cannot keep.
+      mount.appendChild(el(doc, 'p', 'empty', shared.note ?? NOT_AVAILABLE_NOTE));
       renderConsumers(mount, channel);
-      const back = el(doc, 'a', undefined, 'Torna ai connettori');
-      back.setAttribute('href', '#/connettori');
-      back.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      const row = el(doc, 'p', undefined);
-      row.appendChild(back);
+      const row = el(doc, 'p', 'bo-connector-actions');
+      if (typeof shared.manageRoute === 'string') row.appendChild(routeButton('Apri il Profilo', shared.manageRoute));
+      else if (shared.state === 'da-collegare' && typeof shared.connectRoute === 'string') {
+        row.appendChild(routeButton('Collega', shared.connectRoute, 'cta'));
+      }
+      row.appendChild(routeButton('Torna ai connettori', '#/connettori'));
       mount.appendChild(row);
       return;
     }
@@ -860,21 +875,9 @@ export function createConnectorDetailView(deps) {
     if (connection === null) {
       // Theme buttons, like the list's Collega (ui-btn-cta): never the
       // browser's base link style (backlog:a55e4c5336dd).
-      const go = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small', 'Collega in 3 passi');
-      go.setAttribute('href', '#/connettori');
-      go.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      row.appendChild(go);
+      row.appendChild(routeButton('Collega in 3 passi', '#/connettori', 'cta'));
     } else {
-      const open = el(doc, 'a', undefined, 'Apri il flusso di collegamento');
-      open.setAttribute('href', '#/connettori');
-      open.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      row.appendChild(open);
+      row.appendChild(routeButton('Apri il flusso di collegamento', '#/connettori'));
     }
     mount.appendChild(row);
   }

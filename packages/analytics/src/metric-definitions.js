@@ -21,6 +21,29 @@ export const METRIC_DEFINITIONS = Object.freeze({
     filterable: Object.freeze(['opportunity.stage', 'opportunity.type', 'opportunity.owner', 'opportunity.currency']),
     rowCap: 1000,
   }),
+  // Backlog 099c41c32355 (Reporting like the Pipeline board): the board
+  // shows the per-pipeline placement, so these two metrics group by the
+  // placement column (`pipeline_stage`) instead of the legacy core `stage`
+  // column — same rows the board lists, same phases the board names. The
+  // legacy metrics below stay for spaces with no composed pipeline.
+  pipeline_value_by_pipeline_stage: Object.freeze({
+    version: 1,
+    description: 'Open pipeline value by per-pipeline stage, summed in integer minor units and partitioned by currency.',
+    measure: Object.freeze({ kind: 'sum', field: 'opportunity.amountMinor' }),
+    groupBy: Object.freeze(['opportunity.pipelineStage']),
+    partitionBy: Object.freeze(['opportunity.currency']),
+    filterable: Object.freeze(['opportunity.pipelineStage', 'opportunity.pipelineKey', 'opportunity.type', 'opportunity.owner', 'opportunity.currency']),
+    rowCap: 1000,
+  }),
+  pipeline_close_schedule_by_pipeline: Object.freeze({
+    version: 1,
+    description: 'Pipeline value by owner, per-pipeline stage and expected close date, summed in integer minor units and partitioned by currency.',
+    measure: Object.freeze({ kind: 'sum', field: 'opportunity.amountMinor' }),
+    groupBy: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate']),
+    partitionBy: Object.freeze(['opportunity.currency']),
+    filterable: Object.freeze(['opportunity.pipelineStage', 'opportunity.pipelineKey', 'opportunity.owner', 'opportunity.type', 'opportunity.currency']),
+    rowCap: 1000,
+  }),
   // BO-F5-02 Reporting: the dashboard's period/persona recalculation reads
   // this metric and pipeline_value_by_stage through compileReport/runReport —
   // never ad-hoc storage queries. Groups are exact (owner, stage, ISO date):

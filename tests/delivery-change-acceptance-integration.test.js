@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project.js';
+import { DELIVERY_POLICY, activatedContract, boot, project } from './helpers/contracts-project-cache.js';
 import { inspectApplicationCommand } from '../packages/cli/src/app-inspect-command.js';
 import { solutionCommand } from '../packages/cli/src/solution-command.js';
 import { inspectionFingerprint, parseSolutionPlan, validateSolutionPlan } from '../packages/core/src/solution-plan.js';

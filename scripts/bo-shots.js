@@ -19,8 +19,11 @@
  * nothing is invented for the camera. The completion probe stays in the DOM
  * but hidden, so it can never leak into a PNG. The Chromium lookup mirrors
  * the `*-shots` tests (`CHROMIUM_BIN`, then the Playwright headless-shell
- * caches). Where no binary exists, or it cannot run here, the command exits
- * 0 with a skip message: shots are a publishing convenience, not a gate.
+ * caches). Sandbox-less Linux executors refuse Chromium's zygote bootstrap,
+ * so the runnable probe retries once with `--no-sandbox` and every render
+ * run reuses the winning flags. Where no binary exists, or none runs even
+ * without the sandbox, the command fails loudly (exit 1) instead of
+ * skipping in silence: missing PNGs must never look like a pass.
  *
  * The command never touches the network: the fixture server binds 127.0.0.1
  * and Chromium runs with background networking disabled. The default output
@@ -553,8 +556,15 @@ const DEMO_SPACES = [
 const DEMO_MEMBERS = [
   { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
   { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
-  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it', operatorAccountId: 'op-marco' },
+  // The calendar books Marco as `marco` (the week's teamMemberId): the same
+  // person key joins it to Marco Ferri, so the shots prove the per-person
+  // union, not only the fallback (design check #750).
+  { subject: 'marco', role: 'operator', status: 'active', operatorAccountId: 'op-marco' },
 ];
+
+// Sara as the calendar roster names her (the week books her as «sara»).
+const DEMO_SARA = { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara Conti', email: 'sara@studioaurora.it' };
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed
 // fake adapter and no connection yet, so all eight rows paint the
@@ -938,8 +948,13 @@ const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
 // backlog:913c61ec: a phrase with a time proposes that time only, so the shot
 // drafts a day without a time («giovedì») to paint two proposals and a ghost.
 const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', day: '2026-10-22', durationMinutes: 30, notes: 'taglio per Ada' };
+// The space roster (design check #750): the week books «marco» and «sara»;
+// the roster joins «marco» to Marco Ferri (google|1002) by person key and
+// names Sara, so Team and «Scegli una persona…» paint people, never ids.
+const MEMBERS = ${JSON.stringify([...DEMO_MEMBERS, DEMO_SARA])};
 const client = {
   async request(path) {
+    if (path === '/api/spine/memberships') return { items: MEMBERS };
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
     // Block titles read the catalog service names (backlog:5fbebe8559e9);
     // the demo has no customer profiles, so the row labels name them.
@@ -951,7 +966,9 @@ const client = {
     }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
-      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
+      // Marco holds two identities (marco, google|1002): the search asks for
+      // the whole person, both answer the same free slots.
+      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }, { teamMemberId: 'google|1002', slots: SLOTS }] };
     }
     throw new Error('unexpected ' + path);
   },
@@ -970,9 +987,7 @@ const view = createCalendarioView({
   now: () => new Date('2026-10-22T10:00:00Z'),
 });
 await view.render();
-byName('members').value = 'marco, sara';
-byName('members').dispatchEvent(new Event('input', { bubbles: true }));
-click('Mostra settimana');
+// The roster loads the whole team's week by itself: no typed filter.
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
@@ -1201,7 +1216,13 @@ const client = {
       return { spaceId: 'spazio-1', overrides: [] };
     }
     if (path.indexOf('/api/connectors') === 0) {
-      return { connectors: [{ status: 'active' }, { status: 'active' }, { status: 'revoked' }] };
+      // Real rows name their channel: the space card counts linked channels
+      // with the shared count (backlog:e381c48581fa), two here.
+      return { connectors: [
+        { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
+        { channel: 'email', connectionKey: 'mail-1', status: 'active' },
+        { channel: 'instagram', connectionKey: 'ig-1', status: 'revoked' },
+      ] };
     }
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
@@ -1261,7 +1282,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
   unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
-    .filter((node) => node.textContent.includes('Non disponibile')).length,
+    .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
     case 'componenti': return `
@@ -1449,6 +1470,37 @@ export function chromiumRuns(binary) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Sandbox-less Linux executors (this lane: unprivileged user namespaces
+ * disabled) refuse Chromium's zygote bootstrap, so a plain probe dies with
+ * "No usable sandbox" on a binary that paints fine without the sandbox.
+ * Probe once with a blank page, retrying once with `--no-sandbox`: only an
+ * exit-0 HTML dump counts as runnable. Returns the winning extra flags
+ * (`[]` when the sandbox works, `['--no-sandbox']` when only the retry
+ * paints) or `null` when nothing runs. Every render run reuses the winning
+ * flags, so the probe and the PNGs always launch Chromium the same way.
+ * (backlog:cd0ad69b)
+ * @param {string | null} binary
+ * @returns {Array<string> | null}
+ */
+export function chromiumFlags(binary) {
+  if (!binary) return null;
+  const probe = (extra) => {
+    try {
+      const out = spawnSync(binary, ['--headless', '--disable-gpu', '--dump-dom', ...extra, 'about:blank'], {
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      return out.status === 0 && String(out.stdout ?? '').includes('<html');
+    } catch {
+      return false;
+    }
+  };
+  if (probe([])) return [];
+  if (probe(['--no-sandbox'])) return ['--no-sandbox'];
+  return null;
 }
 
 /**
@@ -1663,7 +1715,7 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 active connectors,
+      // C7: both cards paint the real statistic (2 linked channels,
       // 2 rendered members, exact total 3). A card that cannot count paints
       // no row, so the gate requires both rows here.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
@@ -1689,8 +1741,8 @@ export function assertProbe(name, probe) {
       if (probe.openers !== n) {
         throw new Error(`connettori: the probe lists ${String(probe.openers)} row openers, expected ${n}`);
       }
-      // A channel with no adapter in the composition reads «Non disponibile
-      // qui» and offers no Collega (Telegram in the demo data). Every other
+      // A channel with no adapter and no link reads «Non ancora disponibile»
+      // (the shared channel state, backlog:e381c48581fa) and offers no Collega (Telegram in the demo data). Every other
       // row offers one.
       const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
       if (probe.flows !== connectable) {
@@ -1720,9 +1772,9 @@ export function assertProbe(name, probe) {
  * proof come from two Chromium runs over the same harness URL with the
  * same fixtures under a frozen virtual clock, so both runs paint the same
  * logical page state and the PNG is gated on the probe of that state.
- * @param {{ binary: string, port: number, screen: object, outDir: string }} options
+ * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
  */
-async function renderScreen({ binary, port, screen, outDir }) {
+async function renderScreen({ binary, flags, port, screen, outDir }) {
   const page = screen.name === 'login'
     ? `http://127.0.0.1:${port}/login.html`
     : `http://127.0.0.1:${port}/shot-${screen.name}.html`;
@@ -1738,6 +1790,7 @@ async function renderScreen({ binary, port, screen, outDir }) {
     const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
     const run = await runChromium(binary, [
       '--headless',
+      ...flags,
       `--screenshot=${file}`,
       `--window-size=${viewport.width},${viewport.height}`,
       '--virtual-time-budget=8000',
@@ -1749,7 +1802,7 @@ async function renderScreen({ binary, port, screen, outDir }) {
       throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
     }
     const dom = await runChromium(binary, [
-      '--headless', '--dump-dom',
+      '--headless', ...flags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
       '--virtual-time-budget=8000',
       '--disable-background-networking',
@@ -1826,8 +1879,10 @@ async function main() {
     return;
   }
   const binary = findChromium();
-  if (!chromiumRuns(binary)) {
-    console.log('Skipping bo:shots: no runnable Chromium found (set CHROMIUM_BIN to override).');
+  const flags = chromiumFlags(binary);
+  if (flags === null) {
+    console.error('bo:shots: no runnable Chromium found, even with --no-sandbox (set CHROMIUM_BIN to override).');
+    process.exitCode = 1;
     return;
   }
   const wanted = args.screen ?? null;
@@ -1845,7 +1900,7 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, port: address.port, screen, outDir });
+      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

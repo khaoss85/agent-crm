@@ -25,9 +25,10 @@
 import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import {
   channelConnectRoute,
+  channelState,
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
@@ -268,8 +269,18 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   if (!linked) {
     return { tone: 'fix', title: 'Nessun canale attivo', detail, count: total };
   }
-  if (total > 0 || waiting) {
+  // backlog:e381c48581fa: «Quasi tutto sincronizzato» (yellow) means
+  // something needs a hand — a fix card or a linked row reading Da
+  // sistemare. A linked row that only waits (its first event, an import
+  // under way) has nothing to fix: the hero names the wait in grey, so it
+  // never sits on «Niente da sistemare».
+  const broken = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'altro');
+  if (total > 0 || broken) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
+  }
+  if (waiting) {
+    const importing = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'importazione');
+    return { tone: 'wait', title: importing ? 'Importazione in corso' : 'In attesa del primo evento', detail, count: 0 };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }
@@ -496,9 +507,22 @@ export function withProfileConnections(activity, profile = null) {
  * screen, so it reads `non collegato` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function syncConnectRoute(channel, profile = null) {
-  return channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile });
+export function syncConnectRoute(channel, profile = null, adapters = null) {
+  const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
+  if (!Array.isArray(adapters)) return channelConnectRoute(channel, { guided, profile });
+  // backlog:e381c48581fa: with the schema's adapters read, the route is the
+  // shared `channelState` answer, the one Connettori shows: a channel no
+  // adapter serves and Profilo cannot connect offers no Collega here
+  // either (TikTok, Telefono, Form read «Non ancora disponibile» there).
+  const shared = channelState(channel, {
+    rows: [],
+    profile,
+    adapters: matchAdapters(channel, adapters),
+    guided,
+  });
+  return shared.state === 'da-collegare' ? shared.connectRoute : null;
 }
 
 /** Days before expiry that light the `Permesso in scadenza` pill and card. */
@@ -565,7 +589,7 @@ function channelPill(agg, nowMs, hasActive) {
  * @param {number} [nowMs]
  * @param {{ profile?: unknown }} [options] the /api/profile payload, for the Collega routes
  */
-export function syncChannelTable(activity, nowMs = Date.now(), { profile = null } = {}) {
+export function syncChannelTable(activity, nowMs = Date.now(), { profile = null, adapters = null } = {}) {
   const entries = entriesOf(activity);
   const byChannel = new Map();
   for (const entry of entries) {
@@ -630,7 +654,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued,
       detailRoute: catalogued ? `#/connettori/${fixed.id}` : '#/connettori',
-      connectRoute: syncConnectRoute(fixed.id, profile),
+      connectRoute: syncConnectRoute(fixed.id, profile, adapters),
     };
   });
   for (const [channel, list] of byChannel) {
@@ -651,7 +675,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued: extraCatalogued,
       detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
-      connectRoute: syncConnectRoute(channel, profile),
+      connectRoute: syncConnectRoute(channel, profile, adapters),
     });
   }
   return rows;
@@ -823,7 +847,7 @@ export function syncFeedItems(activity) {
   return items;
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -872,6 +896,7 @@ export function createSyncView(deps) {
   const state = {
     spaceId: readSpace(),
     channelsReady: false,
+    /** @type {Array<any> | null} the schema's composed channel adapters */ adapters: null,
     /** @type {any} */ activity: null,
     /** @type {any} */ profile: null,
     /** @type {Array<any>} */ candidates: [],
@@ -950,6 +975,9 @@ export function createSyncView(deps) {
     // channelsContract, and the screen used to answer «non composti» there
     // with Gmail and Calendar connected (production, 04/11).
     state.channelsReady = Boolean(meta);
+    // The composed adapters, read like Connettori reads them: the Collega
+    // of a row follows the same shared state (backlog:e381c48581fa).
+    state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     if (!state.channelsReady || activityRead === null) return;
     const activity = await activityRead;
     if (!current()) return;
@@ -1137,8 +1165,13 @@ export function createSyncView(deps) {
     // (`Da sistemare <n>`); the quiet banner is the prototype wording.
     if (total === 0 && state.candidatesError === null) {
       // Prototype: with nothing open the section hides and the quiet
-      // banner stands alone (C15).
-      box.appendChild(el(doc, 'p', 'bo-sync-note bo-sync-allclear', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
+      // banner stands alone (C15). A linked row reading Da sistemare with
+      // no card of its own still needs a look (backlog:e381c48581fa): the
+      // banner points to it instead of calling everything fine.
+      const broken = syncChannelTable(activity).some((row) => row.connected && row.pill !== null && row.pill.tone === 'altro');
+      box.appendChild(broken
+        ? el(doc, 'p', 'bo-sync-note', 'Un canale va controllato: guarda la tabella Canali qui sotto.')
+        : el(doc, 'p', 'bo-sync-note bo-sync-allclear', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
       return;
     }
     box.appendChild(el(doc, 'h3', undefined, total === 0 ? 'Da sistemare' : `Da sistemare ${total}`));
@@ -1159,7 +1192,7 @@ export function createSyncView(deps) {
         keep.setAttribute('data-action', 'dismiss-duplicate-candidate');
         keep.setAttribute('data-candidate-id', card.id);
         keep.addEventListener('click', () => {
-          void dismissCandidate(card.id, keep);
+          void uiBusy(keep, 'Salvo…', () => dismissCandidate(card.id, keep));
         });
         node.appendChild(keep);
       }
@@ -1179,7 +1212,7 @@ export function createSyncView(deps) {
         button.setAttribute('data-connection-key', item.action.connectionKey);
         if (state.syncing.has(item.action.connectionKey)) button.setAttribute('disabled', '');
         button.addEventListener('click', () => {
-          void syncNow(item.action.connectionKey, button);
+          void uiBusy(button, 'Sincronizzo…', () => syncNow(item.action.connectionKey, button));
         });
         card.appendChild(button);
       }
@@ -1203,7 +1236,7 @@ export function createSyncView(deps) {
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
   function renderTable(box, activity) {
-    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile });
+    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
     // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
     // channelConnectionCount over the same rows, profile links included.
     // A linked channel outside the fixed nine (SMS, Telegram) is a row of
@@ -1261,7 +1294,9 @@ export function createSyncView(deps) {
         // "Connettore sconosciuto" (P2 Codex su #415).
         const route = typeof row.connectRoute === 'string' ? row.connectRoute : null;
         if (!readOnly() && route !== null) {
-          const link = el(doc, 'a', 'bo-sync-fix-action', 'Collega');
+          // The green Collega of every other screen (backlog:e381c48581fa),
+          // never a dark grey that reads disabled.
+          const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-sync-collega', 'Collega');
           link.setAttribute('href', route);
           link.setAttribute('data-action', 'collega');
           link.setAttribute('data-channel', row.channel);
@@ -1340,6 +1375,9 @@ export function createSyncView(deps) {
   async function syncAll(keys) {
     if (state.syncingAll || keys.length === 0) return;
     state.syncingAll = true;
+    // Il lotto resta nello spazio di partenza: un cambio spazio a lotto in
+    // corso ri-legge lo stato solo nel load finale, mai nelle pull restanti.
+    const space = state.spaceId.trim();
     for (const key of keys) state.syncing.add(key);
     render();
     let failed = 0;
@@ -1347,7 +1385,7 @@ export function createSyncView(deps) {
       try {
         await client.request('/api/connectors/sync-now', {
           method: 'POST',
-          body: { spaceId: state.spaceId.trim(), connectionKey: key },
+          body: { spaceId: space, connectionKey: key },
         });
       } catch {
         failed += 1;
@@ -1360,7 +1398,12 @@ export function createSyncView(deps) {
     }
     state.syncingAll = false;
     state.syncing.clear();
-    if (failed === 0) toast('Sincronizzazione aggiornata.');
+    // Il lotto ha tirato nello spazio di partenza ma il load finale segue
+    // lo spazio cambiato a metà: un successo senza qualifica dipingerebbe
+    // come appena sincronizzati dati mai tirati — il toast lo dice.
+    const endSpace = state.spaceId.trim();
+    if (failed === 0 && endSpace === space) toast('Sincronizzazione aggiornata.');
+    else if (failed === 0) toast('Lotto finito nello spazio di partenza: lo schermo mostra il nuovo spazio.');
     else toast('Alcuni canali non si sono aggiornati: riprova con Sincronizza ora.', true);
     render();
   }
