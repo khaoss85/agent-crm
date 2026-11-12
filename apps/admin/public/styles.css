@@ -2257,8 +2257,13 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
 .bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
 .bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
-@media (max-width: 560px) {
+/* backlog:23f92c6a72ea: fino a 700 px (la Pipeline da telefono) il pannello
+   e' un foglio a tutta larghezza; prima, a 606 px, una finestra da 420 px
+   stava a meta' e copriva la prima colonna della kanban. */
+@media (max-width: 700px) {
   .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+}
+@media (max-width: 560px) {
   .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
 }
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
