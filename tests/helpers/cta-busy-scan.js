@@ -22,12 +22,16 @@
  * write runs (the wait is painted from state) cannot be seen this way: the
  * guard lists them by name, with the reason.
  *
- * It is a source scan, deliberately simple: a handler that writes through a
- * function of another module is not followed.
+ * It is a source scan, deliberately simple. Followed: `function f`,
+ * `const f = (…) =>` of the same file, and the callbacks that run with the
+ * press (.then/.catch/.finally, array walks, setTimeout, IIFE). Not
+ * followed: functions of another module, and object or class methods
+ * (`view.save()`, `drawer.moveView.start()`) — those buttons are listed by
+ * hand in the guard.
  */
 
 const WRITE = /method: ['"](POST|PATCH|PUT|DELETE)['"]|submissions\.submit\(/;
-const BUSY = /\buiBusy\(|\buiHold\(|\buiMarkBusy\(|'aria-busy'/;
+const BUSY = /\buiBusy\(|\buiHold\(|\buiMarkBusy\(|['"]aria-busy['"]/;
 const WRITE_DEPTH = 4;
 const BUSY_DEPTH = 2;
 
@@ -101,8 +105,49 @@ function expressionEnd(text, j) {
 }
 
 /**
- * The code that runs when `text` runs: nested listeners and nested
- * functions run later, if ever, so they are cut out.
+ * Start of the arrow whose `=>` is at `arrowAt`: its parameter list (or
+ * single name), with a leading `async`.
+ * @param {string} text @param {number} arrowAt
+ */
+function arrowStart(text, arrowAt) {
+  let k = arrowAt - 1;
+  while (k >= 0 && /\s/.test(text[k])) k -= 1;
+  if (text[k] === ')') {
+    let depth = 0;
+    for (; k >= 0; k -= 1) {
+      if (text[k] === ')') depth += 1;
+      else if (text[k] === '(') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+  } else {
+    while (k > 0 && /[\w$]/.test(text[k - 1])) k -= 1;
+  }
+  const before = text.slice(0, k);
+  const asyncWord = before.match(/\basync\s*$/);
+  return asyncWord ? k - asyncWord[0].length : k;
+}
+
+/**
+ * Review Muse #831 (P2): a callback that runs as part of the press — a
+ * promise continuation, an array walk, a timer, an IIFE — is the press's own
+ * code, so its body stays in. Only these shapes are kept; any other nested
+ * function (a handler handed to a builder, an assigned arrow) runs later,
+ * if ever.
+ * @param {string} text @param {number} start @param {number} end
+ */
+function runsWithThePress(text, start, end) {
+  const before = text.slice(Math.max(0, start - 60), start);
+  if (/(?:\.(?:then|catch|finally|forEach|map|flatMap|filter|reduce|some|every|find)|\b(?:setTimeout|queueMicrotask))\(\s*$/.test(before)) return true;
+  // (async () => { … })() — an IIFE.
+  return /\(\s*$/.test(before) && /^\s*\)\s*\(/.test(text.slice(end));
+}
+
+/**
+ * The code that runs when `text` runs: nested listeners run later, and so
+ * do nested functions — except the callbacks that run as part of the press
+ * (runsWithThePress), which stay in.
  * @param {string} text
  */
 export function immediateCode(text) {
@@ -113,21 +158,61 @@ export function immediateCode(text) {
   while ((match = marker.exec(text)) !== null) {
     if (match.index < from) continue;
     let cut;
+    let start = match.index;
     if (match[0].startsWith('.addEventListener')) {
       cut = closeOf(text, match.index + match[0].length - 1) + 1;
     } else if (match[0].startsWith('=>')) {
       const j = match.index + match[0].length;
       cut = text[j] === '{' ? closeOf(text, j) + 1 : expressionEnd(text, j);
+      start = arrowStart(text, match.index);
     } else {
       const params = closeOf(text, match.index + match[0].length - 1);
       const brace = text.indexOf('{', params);
       cut = brace < 0 ? text.length : closeOf(text, brace) + 1;
+      const asyncWord = text.slice(0, match.index).match(/\basync\s*$/);
+      if (asyncWord) start = match.index - asyncWord[0].length;
     }
-    out += text.slice(from, match.index);
+    if (!match[0].startsWith('.addEventListener') && runsWithThePress(text, start, cut)) continue;
+    if (start < from) start = from;
+    out += text.slice(from, start);
     from = cut;
     marker.lastIndex = cut;
   }
   return out + text.slice(from);
+}
+
+/**
+ * The source with comments blanked (review Muse #831, P3): a comment that
+ * mentions aria-busy or a POST never counts. Strings are kept.
+ * @param {string} src
+ */
+export function withoutComments(src) {
+  let out = '';
+  let k = 0;
+  while (k < src.length) {
+    const c = src[k];
+    if (c === "'" || c === '"' || c === '`') {
+      const end = closeOf(src, k);
+      out += src.slice(k, end + 1);
+      k = end + 1;
+      continue;
+    }
+    if (c === '/' && src[k + 1] === '/') {
+      const end = src.indexOf('\n', k);
+      k = end < 0 ? src.length : end;
+      continue;
+    }
+    if (c === '/' && src[k + 1] === '*') {
+      const end = src.indexOf('*/', k + 2);
+      const stop = end < 0 ? src.length : end + 2;
+      out += src.slice(k, stop).replace(/[^\n]/g, ' ');
+      k = stop;
+      continue;
+    }
+    out += c;
+    k += 1;
+  }
+  return out;
 }
 
 /**
@@ -192,9 +277,16 @@ function showsWait(text, bodies, depth, seen) {
 
 /** A handler's own code: the body after its arrow, or a call to the function it names. */
 function handlerCode(argument) {
-  const arrow = argument.match(/^\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*/);
+  const head = argument.match(/^\s*(?:async\s*)?/)?.[0] ?? '';
+  let afterParams = -1;
+  if (argument[head.length] === '(') afterParams = closeOf(argument, head.length) + 1;
+  else {
+    const name = argument.slice(head.length).match(/^\w+/);
+    if (name) afterParams = head.length + name[0].length;
+  }
+  const arrow = afterParams < 0 ? null : argument.slice(afterParams).match(/^\s*=>\s*/);
   if (arrow) {
-    const j = arrow[0].length;
+    const j = afterParams + arrow[0].length;
     return argument[j] === '{' ? argument.slice(j + 1, closeOf(argument, j)) : argument.slice(j);
   }
   const named = argument.trim().match(/^[\w.]*?(\w+)$/);
@@ -203,16 +295,17 @@ function handlerCode(argument) {
 
 /**
  * Every write button of one source file that shows no wait.
- * @param {string} src
+ * @param {string} raw
  * @returns {Array<{ line: number, button: string, chain: string[] }>}
  */
-export function writeButtonsWithoutWait(src) {
+export function writeButtonsWithoutWait(raw) {
+  const src = withoutComments(raw);
   const bodies = functionsOf(src);
   /** @type {Array<{ line: number, button: string, chain: string[] }>} */
   const found = [];
-  for (const match of src.matchAll(/([\w.$]+)\.addEventListener\(\s*'(?:click|submit)'\s*,/g)) {
+  for (const match of src.matchAll(/([\w.$]+)\.addEventListener\(\s*(['"])(?:click|submit)\2\s*,/g)) {
     const open = (match.index ?? 0) + match[1].length + '.addEventListener'.length;
-    const argument = src.slice(open + 1, closeOf(src, open)).replace(/^\s*'(?:click|submit)'\s*,/, '');
+    const argument = src.slice(open + 1, closeOf(src, open)).replace(/^\s*(['"])(?:click|submit)\1\s*,/, '');
     const code = handlerCode(argument);
     const chain = writeChain(code, bodies, WRITE_DEPTH, new Set());
     if (chain === null) continue;

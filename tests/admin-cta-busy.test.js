@@ -200,14 +200,15 @@ test('Crea campo reads «Creo…» while it posts and «Crea campo» after a ref
 const ADMIN_PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'admin', 'public');
 
 /**
- * Write buttons whose wait the scan cannot see, because the view rebuilds
- * the pressed button from its own state while the write runs (or shows it
- * through an indirection). Key `file#button` → how many such handlers the
+ * Write buttons the scan cannot judge, checked by hand: mostly views that
+ * rebuild the pressed button from their own state while the write runs (or
+ * show it through an object method), plus two Annulla whose only write is
+ * the background mark-read of the card they re-read. Key `file#button` → how many such handlers the
  * file has, and where the wait is painted. The counts are exact: a new
  * handler fails here, and one that moves to uiBusy/uiHold asks to shrink
  * the list.
  */
-const PAINTED_WAIT = new Map([
+const HAND_CHECKED = new Map([
   ['admin-agenti.js#once', [1, 'Affida reads «Invio…» from draft.busy at render']],
   ['admin-agenti.js#save', [1, 'Salva modifica reads «Salvo…» from decision.busy at render']],
   ['admin-agenti.js#confirm', [1, 'Conferma rifiuto reads «Rifiuto…» from decision.busy at render']],
@@ -219,6 +220,8 @@ const PAINTED_WAIT = new Map([
   ['admin-connectors.js#go', [3, 'Autorizza/Concludi/Collega read «Collego…»/«Concludo…» via uiMarkBusy from flow.busy']],
   ['admin-connectors.js#more', [1, 'Continua l’importazione reads «Importo…» via uiMarkBusy from flow.busy']],
   ['admin-customer-card.js#go', [1, 'Genera reads «Scrivo…» and is off inside generate()']],
+  ['admin-customer-card.js#cancel', [1, 'Annulla re-reads the card; its only write is the background mark-read (markRead), no CTA']],
+  ['admin-customer-card.js#form.cancel', [1, 'Annulla of + Aggiungi campo re-reads the card; only the background mark-read writes']],
   ['admin-offer-panel.js#go', [1, 'Compila reads «Compilo…» and is off inside fill()']],
   ['admin-personalizzazione.js#toggle', [1, 'Disattiva reads «Disattivo…» via uiMarkBusy (busyOn) at render']],
   ['admin-personalizzazione.js#add', [1, 'Attiva reads «Attivo…» via uiMarkBusy (busyOn) at render']],
@@ -280,6 +283,32 @@ test('scan: a wait shown by the handler or the function it calls covers it; defe
   assert.deepEqual(writeButtonsWithoutWait(deferred), []);
 });
 
+// Review Muse #831: the press's own continuations are followed; comments
+// never count; double quotes and parameters with parentheses are read.
+test('scan: a write in a .then, a forEach or an IIFE of the press is still the press', () => {
+  const continuation = `
+    save.addEventListener('click', () => { void Promise.resolve().then(async () => { await client.request('/x', { method: 'POST' }); }); });
+    each.addEventListener('click', () => { rows.forEach((row) => { void client.request('/r', { method: 'DELETE' }); }); });
+    iife.addEventListener('click', () => { (async () => { await client.request('/i', { method: 'PATCH' }); })(); });`;
+  assert.deepEqual(writeButtonsWithoutWait(continuation).map((row) => row.button), ['save', 'each', 'iife']);
+});
+
+test('scan: comments never cover, double quotes and parenthesised parameters are read', () => {
+  const commented = `
+    go.addEventListener('click', async () => {
+      // TODO: set 'aria-busy' here
+      await client.request('/x', { method: 'POST' });
+    });`;
+  assert.deepEqual(writeButtonsWithoutWait(commented).map((row) => row.button), ['go']);
+  const doubleQuoted = `
+    a.addEventListener("click", async () => { await client.request("/a", { method: "POST" }); });
+    b.addEventListener("click", async () => { b.setAttribute("aria-busy", "true"); await client.request("/b", { method: "POST" }); });`;
+  assert.deepEqual(writeButtonsWithoutWait(doubleQuoted).map((row) => row.button), ['a']);
+  const params = `
+    c.addEventListener('click', async (event = pick(1)) => { await client.request('/c', { method: 'PUT' }); });`;
+  assert.deepEqual(writeButtonsWithoutWait(params).map((row) => row.button), ['c']);
+});
+
 test('guard: every /bo write button shows its wait, or is named with where it is painted', () => {
   /** @type {Map<string, Array<string>>} */
   const found = new Map();
@@ -293,13 +322,13 @@ test('guard: every /bo write button shows its wait, or is named with where it is
   const unlisted = [];
   const wrongCount = [];
   for (const [key, rows] of found) {
-    const listed = PAINTED_WAIT.get(key);
+    const listed = HAND_CHECKED.get(key);
     if (!listed) unlisted.push(...rows);
     else if (listed[0] !== rows.length) wrongCount.push(`${key}: listed ${listed[0]}, found ${rows.length}`);
   }
-  const gone = [...PAINTED_WAIT.keys()].filter((key) => !found.has(key));
+  const gone = [...HAND_CHECKED.keys()].filter((key) => !found.has(key));
   assert.deepEqual(unlisted, [],
     'a write button goes through uiBusy(button, \'Salvo…\', …) or uiHold, so it shows it is working');
-  assert.deepEqual(wrongCount, [], 'PAINTED_WAIT counts are exact');
-  assert.deepEqual(gone, [], 'a button now covered by the helper leaves PAINTED_WAIT');
+  assert.deepEqual(wrongCount, [], 'HAND_CHECKED counts are exact');
+  assert.deepEqual(gone, [], 'a button now covered by the helper leaves HAND_CHECKED');
 });
