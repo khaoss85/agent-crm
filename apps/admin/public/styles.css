@@ -1571,6 +1571,15 @@ select.bo-spazi-input { flex: none; }
 .cal-pop-confirm .cal-move-field input { background: var(--surface); }
 .cal-pop-actions { display: flex; gap: 8px; }
 .cal-pop-confirm .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
+/* backlog:6e6750ff8163: «Nuovo appuntamento» lives only in this popover.
+ * Opened without a slot it sits at the top right of the grid; every field
+ * carries its label; a long form scrolls inside, never off screen. */
+.cal-form-pop[data-anchor="grid"] { top: 12px; right: 12px; }
+.cal-form-pop { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+.cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
+.cal-form .cal-field-wide { flex-basis: 100%; }
+.cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
@@ -1608,15 +1617,15 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
   /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
-   * «Fissa con una frase», the week, Team, the manual form, online
-   * booking — so the grid is not pushed under every rail card. The rail
-   * dissolves into the column and each card takes its place by order. */
+   * «Fissa con una frase», the week, Team, online booking — so the grid
+   * is not pushed under every rail card. The rail dissolves into the column
+   * and each card takes its place by order. The «Nuovo appuntamento» form
+   * is the bottom sheet popover (backlog:6e6750ff8163), never a card here. */
   .cal-layout { display: flex; flex-direction: column; gap: 14px; }
   .cal-layout > .cal-rail { display: contents; }
   .cal-rail > .cal-ai { order: 2; }
   .cal-layout > .cal-main { order: 3; }
   .cal-rail > .cal-team { order: 4; }
-  .cal-rail > .cal-manual { order: 5; }
   .cal-rail > .cal-booking { order: 6; }
   /* backlog:5fbebe8559e9: an empty day is one compact row (day, «Nessun
    * appuntamento», «+ Prenota») instead of a 540px empty timeline; a day
