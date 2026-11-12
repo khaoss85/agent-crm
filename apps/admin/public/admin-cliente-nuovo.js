@@ -2,7 +2,7 @@
 
 import { elFor, UI_BUSY_LOCKED, uiBusy, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
-import { customerImportReasonLabel } from './admin-core.js';
+import { customerImportReasonLabel, wakeWaitText } from './admin-core.js';
 import { isSessionLostCode } from './admin-session.js';
 import {
   addFieldForm,
@@ -961,7 +961,7 @@ export function createCustomerFormView(deps) {
             await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
           } catch (err) {
             if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
-            entry.setError(String(err?.message ?? 'Valore non valido.'));
+            entry.setError(wakeWaitText(err) ?? String(err?.message ?? 'Valore non valido.'));
             if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
           if (token !== renderToken) return;
@@ -1008,9 +1008,9 @@ export function createCustomerFormView(deps) {
         }
         const fieldName = error?.details?.field;
         if (typeof fieldName === 'string' && slots[fieldName]) {
-          setErrors({ [fieldName]: String(error?.message ?? 'Valore non valido.') });
+          setErrors({ [fieldName]: wakeWaitText(error) ?? String(error?.message ?? 'Valore non valido.') });
         } else {
-          setErrors({ general: 'Non si è potuto creare il cliente. Riprova più tardi.' });
+          setErrors({ general: wakeWaitText(error) ?? 'Non si è potuto creare il cliente. Riprova più tardi.' });
         }
       } finally {
         busy = false;
@@ -1069,7 +1069,7 @@ export function createCustomerFormView(deps) {
           renderPreview(preview, draft, ctx);
         } catch (err) {
           if (token !== renderToken) return;
-          error.textContent = String(err?.message ?? 'L\u2019AI non ha capito la frase: compila i campi a mano.');
+          error.textContent = wakeWaitText(err) ?? String(err?.message ?? 'L\u2019AI non ha capito la frase: compila i campi a mano.');
         } finally {
           working = false;
           go.disabled = false;
@@ -1155,7 +1155,7 @@ export function createCustomerFormView(deps) {
           ctx.notify(warning ?? 'Cliente creato.');
         } catch (err) {
           if (token !== renderToken) return;
-          error.textContent = String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
+          error.textContent = wakeWaitText(err) ?? String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
         } finally {
           working = false;
           confirm.disabled = false;

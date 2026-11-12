@@ -26,6 +26,7 @@ import {
   validateCustomerForm,
 } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { WAKE_WAIT_TEXT } from '../apps/admin/public/admin-core.js';
 
 /**
  * The "Nuovo cliente" form (backlog:273de560), against a stub server.
@@ -1262,6 +1263,31 @@ test('a generic failure keeps its own error and stores no draft', async () => {
   await flush();
   assert.match(rendered.mount.textContent, /Riprova più tardi/, 'a broken write keeps its own error');
   assert.equal(readNewCustomerDraft(store), null, 'only a lost session stores the draft');
+  clearNewCustomerDraft(store);
+});
+
+// Review khaoss85/agent-crm#673 giro 3 P2 (backlog:5a40c73e54aa): a create
+// that meets an explicit starting signal after the sleep shows the wait in
+// the general branch too, not just on a field — the operator waits instead
+// of retyping.
+test('a create refused by a starting signal names the wait in the general error (review #673 P2)', async () => {
+  const store = memoryStore();
+  const client = stubClient(() => Promise.reject(
+    Object.assign(new Error('Workspace starting'), { status: 503, code: 'WORKSPACE_STARTING' }),
+  ));
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda while the service wakes');
+  assert.ok(
+    rendered.mount.textContent.includes(WAKE_WAIT_TEXT),
+    'the general error names the wait, never the generic failure',
+  );
+  assert.equal(readNewCustomerDraft(store), null, 'a waking service is not a lost session: no draft');
   clearNewCustomerDraft(store);
 });
 
