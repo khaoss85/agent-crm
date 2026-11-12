@@ -31,11 +31,12 @@
 //   700px like every other backoffice screen.
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
-import { writePendingCalendarEvent } from './admin-prefill.js';
+import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -399,10 +400,15 @@ function channelCta(channel) {
   return OGGI_CHANNEL_CTA[String(channel ?? '').toLowerCase()] ?? null;
 }
 
+/**
+ * The row badge's initials: the one rule every screen reads
+ * (`customerInitials`, admin-core.js — first and last word, «UX Esplorativo
+ * 1111 B» → «UB»), so a customer reads the same in Oggi, Clienti and the
+ * scheda (backlog:bd5e84545021).
+ * @param {unknown} label
+ */
 function badgeInitials(label) {
-  const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
-  const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
-  return marks.join('') || '·';
+  return customerInitials(label);
 }
 
 function followupAction(task, now = new Date()) {
@@ -670,9 +676,12 @@ function countNoun(count, singular, plural) {
  * prepared work. AI stays out of it: without a configured key the llm
  * package is dry-run only, and a recap must never read as generated
  * insight — it is arithmetic over records.
- * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date }} input
+ * The conversations waiting in «Da rispondere» count too (production
+ * 11/11: «Niente in sospeso» over «Da rispondere: 32 in attesa»): the line
+ * names them, and «Niente in sospeso» is said only when nothing waits.
+ * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date() } = {}) {
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
@@ -683,14 +692,34 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
     : [];
   // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
   // the verb agrees with the count, and zero reads as a person says it.
+  const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
+  // review Muse #795: a count from a truncated scan is a floor, never a
+  // zero — «almeno N», or the honest «non riesco a contarli» at zero.
+  const floor = waitingExact === false || waiting === null;
+  // review Muse #795 giro 2: an inbox that could not be read is unknown,
+  // never zero (`waiting: null`).
+  const unreadable = waiting === null;
+  const waitingLine = (also) => {
+    if (unreadable) return 'Non riesco a leggere i messaggi da rispondere';
+    if (floor && unanswered === 0) return 'Non riesco a contare tutti i messaggi da rispondere: guardali in Clienti';
+    const least = floor ? 'almeno ' : '';
+    return unanswered === 1 && !floor
+      ? `Ti aspetta${also ? ' anche' : ''} 1 messaggio da rispondere`
+      : `Ti aspettano${also ? ' anche' : ''} ${least}${unanswered} ${unanswered === 1 ? 'messaggio' : 'messaggi'} da rispondere`;
+  };
   if (tasks.length === 0) {
+    if (unanswered > 0 || floor) {
+      if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
+      return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+    }
     if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
     return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
   const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : countNoun(today.length, 'appuntamento', 'appuntamenti');
   const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
-  return drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
+  const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
+  return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
 }
 
 /**
@@ -940,6 +969,57 @@ function messageChannelName(channel) {
 /** Italian channel names for the inbox rows. */
 const OGGI_CHANNEL_NAMES = Object.freeze({ whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Messenger', tiktok: 'TikTok', email: 'Email', phone: 'Telefono', voice: 'Telefono', sms: 'SMS', 'website-form': 'Form del sito', web: 'Form del sito', telegram: 'Telegram' });
 export const INBOX_LIMIT = 6;
+/** The Clienti view Oggi's «Da rispondere» reads and «Vedi tutte» opens (backlog:c2bf6b206d96). */
+export const REPLIES_VIEW = 'da-rispondere';
+/** The Clienti view the «N da leggere» line opens. */
+export const UNREAD_VIEW = 'da-leggere';
+
+/**
+ * «Da rispondere» from the server (backlog:c2bf6b206d96, production 11/11:
+ * Oggi said «Nessun messaggio aspetta una risposta» while Clienti counted
+ * unread customers, and read only the latest 100 messages): the Clienti
+ * view `da-rispondere` — customers whose last conversation message is a
+ * person's, never answered — with its total, its order and the names
+ * already clean. One row per customer, the shown ones capped at the inbox
+ * limit. The «Da leggere» count comes from the same answer's view pills.
+ * @param {any} answer GET /api/customer-data/customers?vista=da-rispondere
+ * @param {Date} [now]
+ * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null } | null}
+ */
+export function buildServerReplies(answer, now = new Date()) {
+  if (!answer || typeof answer !== 'object' || !Array.isArray(answer.items)) return null;
+  const rows = [];
+  for (const item of answer.items.slice(0, INBOX_LIMIT)) {
+    const resource = nonEmptyText(item?.subject?.resource ?? item?.resource);
+    const id = nonEmptyText(item?.subject?.id ?? item?.id);
+    if (!resource || !id) continue;
+    const channel = String(item?.awaitingChannel ?? item?.lastContactChannel ?? '').toLowerCase();
+    const name = nonEmptyText(item?.name) ?? 'Contatto senza nome';
+    const at = Date.parse(String(item?.lastAwaitingAt ?? ''));
+    rows.push({
+      id: `${resource}:${id}`,
+      at: Number.isFinite(at) ? at : 0,
+      channel,
+      subjectKey: `${resource}:${id}`,
+      namePending: false,
+      mono: channelTile(channel) ?? badgeInitials(name),
+      name,
+      preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
+      when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
+      href: cardHrefForSubject({ subjectOwner: 'host', subjectResource: resource, subjectId: id }),
+    });
+  }
+  const total = Number.isSafeInteger(answer.total) ? answer.total : rows.length;
+  const unreadPill = Array.isArray(answer.views) ? answer.views.find((view) => view?.id === UNREAD_VIEW) : null;
+  return {
+    available: true,
+    source: 'server',
+    total,
+    totalIsExact: answer.totalIsExact !== false,
+    rows,
+    unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
+  };
+}
 
 /**
  * How long a message has waited, in plain Italian.
@@ -1387,6 +1467,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     inboxNames: {},
     /** Customer names of the agenda and next-call subjects, by `resource:id`. */
     appointmentNames: {},
+    /** «Da rispondere» from the server view (buildServerReplies), null when unreadable. */
+    replies: null,
     /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
     members: [],
     next: null,
@@ -1424,7 +1506,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('channel-connection', error); return null; },
     )
     : skip;
-  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage] = await Promise.all([
+  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage, replies] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -1435,7 +1517,16 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // waiting. A failed read keeps the section honest (unavailable).
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
+    // backlog:c2bf6b206d96: «Da rispondere» from the Clienti view, one source
+    // for Oggi and Clienti; fail-soft to the messages read below.
+    domains['customer-data'] != null
+      ? client.request(`/api/customer-data/customers?vista=${REPLIES_VIEW}&sort=recent&page=1&pageSize=10`).then(
+        (answer) => buildServerReplies(answer, now),
+        (error) => { noteReadFailure('da-rispondere', error); return null; },
+      )
+      : skip,
   ]);
+  outcome.replies = replies ?? null;
   if (tasksPage != null) {
     outcome.tasks = tasksPage.rows;
     outcome.tasksPartial = tasksPage.capped === true;
@@ -1501,7 +1592,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     }
   })();
   const [inboxNames, appointmentNames, members] = await Promise.all([
-    outcome.inboxAvailable
+    outcome.inboxAvailable && outcome.replies === null
       ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile) })
       : Promise.resolve({}),
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
@@ -1849,8 +1940,20 @@ export function renderOggi({
   if (home.tasksPartial === true) {
     advisor.appendChild(el(doc, 'p', 'bo-muted', `L'elenco delle cose da fare è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
   }
-  if (allDone) {
+  // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
+  // day is done only when nothing waits in «Da rispondere» either.
+  const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
+  // review Muse #795: a floor from a truncated scan never reads «finito».
+  // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
+  const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
+  if (allDone && waitingReplies === 0 && !waitingFloor) {
     advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  } else if (allDone && waitingFloor) {
+    advisor.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
+  } else if (allDone) {
+    advisor.appendChild(el(doc, 'p', 'bo-muted', waitingReplies === 1
+      ? 'Nessun suggerimento aperto. Resta 1 messaggio da rispondere, qui sotto.'
+      : `Nessun suggerimento aperto. Restano ${waitingReplies} messaggi da rispondere, qui sotto.`));
   }
   if (home.availability?.work === false) {
     advisor.appendChild(el(doc, 'p', 'bo-muted', 'I follow-up non sono attivi in questo spazio: niente azioni da proporre.'));
@@ -1864,7 +1967,11 @@ export function renderOggi({
     const inboxHead = el(doc, 'div', 'bo-oggi-head');
     inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
     const waitingCount = Number(home.inbox.total ?? 0);
-    inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', waitingCount === 1 ? '1 in attesa' : `${waitingCount} in attesa`));
+    const countFloor = home.inbox.totalIsExact === false;
+    // An unreadable inbox shows no count: «0 in attesa» would read as measured.
+    if (home.inbox.available !== false) {
+      inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', `${countFloor ? 'almeno ' : ''}${waitingCount} in attesa`));
+    }
     inbox.appendChild(inboxHead);
     const inboxRows = Array.isArray(home.inbox.rows) ? home.inbox.rows : [];
     /** One inbox row; `reply` adds the «Rispondi» button (people only). */
@@ -1900,6 +2007,20 @@ export function renderOggi({
     };
     if (home.inbox.available === false) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'I messaggi non si sono potuti leggere. Riprova più tardi.'));
+    } else if (inboxRows.length === 0 && countFloor) {
+      // review Muse #795: an empty page of a truncated scan proves nothing.
+      const note = el(doc, 'p', 'bo-muted', 'Non riesco a contare tutti i messaggi da rispondere qui. ');
+      if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Guardali in Clienti →');
+        all.setAttribute('href', '#/customer-data');
+        all.setAttribute('data-action', 'inbox-all');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView(REPLIES_VIEW);
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'Nessun messaggio aspetta una risposta.'));
     } else {
@@ -1907,8 +2028,34 @@ export function renderOggi({
       for (const entry of inboxRows) list.appendChild(inboxRow(entry, true));
       inbox.appendChild(list);
       if (waitingCount > inboxRows.length) {
-        inbox.appendChild(el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} conversazioni più recenti su ${waitingCount}.`));
+        // Production 11/11: the other conversations were out of reach — no
+        // link, no inbox in the sidebar. «Vedi tutte» opens Clienti › Da
+        // rispondere, the same list this section is cut from.
+        const more = el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} più recenti su ${home.inbox.totalIsExact === false ? 'almeno ' : ''}${waitingCount}. `);
+        if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
+          const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutte →');
+          all.setAttribute('href', '#/customer-data');
+          all.setAttribute('data-action', 'inbox-all');
+          all.addEventListener('click', (event) => {
+            if (event && typeof event.preventDefault === 'function') event.preventDefault();
+            events.openClientiView(REPLIES_VIEW);
+          });
+          more.appendChild(all);
+        }
+        inbox.appendChild(more);
       }
+    }
+    // backlog:c2bf6b206d96: «Da leggere» stays its own count, named apart.
+    const unread = home.inbox.available === false ? null : home.inbox.unread;
+    if (Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
+      const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
+      line.setAttribute('href', '#/customer-data');
+      line.setAttribute('data-action', 'inbox-unread');
+      line.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        events.openClientiView(UNREAD_VIEW);
+      });
+      inbox.appendChild(line);
     }
     // Backlog 803d127c4458: past the messages page the count above
     // undercounts — the cut is disclosed, never silent.
@@ -2291,6 +2438,15 @@ export function createOggiView(deps) {
   /** «Notifiche automatiche» open or closed (backlog:bab63e32acdb): closed by default, kept across repaints. */
   let notificationsOpen = false;
   /**
+   * backlog:c2bf6b206d96: «Vedi tutte» and «N da leggere» open Clienti on
+   * that view, through the same one-time handoff as the calendar event.
+   * @param {string} view
+   */
+  function openClientiView(view) {
+    writePendingClientiView(deps.storage ?? null, view);
+    navigate('#/customer-data');
+  }
+  /**
    * backlog:bd5e84545021: an appointment with no scheda opens in the
    * Calendario — its week, the event selected — through the shared shell
    * storage, the same one-time handoff the scheda uses for its picks.
@@ -2330,6 +2486,28 @@ export function createOggiView(deps) {
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    const local = !last.inboxComposed
+      ? null
+      : last.inboxAvailable
+        ? {
+          available: true,
+          partial: last.inboxPartial === true,
+          ...buildInbox({
+            messages: last.inboxMessages,
+            conversations: last.inboxConversations,
+            names: last.inboxNames ?? {},
+            now: lastMeta.now,
+            pendingNames,
+            ownAddresses: ownMailboxes(last.profile),
+          }),
+        }
+        : { available: false, total: 0, rows: [] };
+    // backlog:c2bf6b206d96: the server view is «Da rispondere» when it
+    // answered — total, rows and names — and the messages read only lends
+    // the «Notifiche automatiche» group; without it, the messages read alone.
+    const inbox = last.replies != null
+      ? { ...last.replies, partial: last.inboxPartial === true, notifications: local?.available ? local.notifications : { total: 0, rows: [] } }
+      : local;
     renderOggi({
       doc,
       mount: target,
@@ -2339,18 +2517,14 @@ export function createOggiView(deps) {
       navigate,
       now: lastMeta.now,
       home: {
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
         actions,
         triage,
         capped,
         agenda,
         brief,
         briefPending: last.pending === true || last.briefPending === true,
-        inbox: !last.inboxComposed
-          ? null
-          : last.inboxAvailable
-            ? { available: true, partial: last.inboxPartial === true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames, ownAddresses: ownMailboxes(last.profile) }) }
-            : { available: false, total: 0, rows: [] },
+        inbox,
         missing,
         connections: last.connections,
         channelsPartial: last.channelsPartial === true,
@@ -2372,6 +2546,7 @@ export function createOggiView(deps) {
           onToggleNotifications: (open) => {
             notificationsOpen = open === true;
           },
+          openClientiView,
           onPostpone: (actionId) => {
             void postpone(actionId);
           },
