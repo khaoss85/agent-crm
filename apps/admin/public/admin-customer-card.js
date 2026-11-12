@@ -2,6 +2,7 @@
 
 import { elFor, uiBusy, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -414,6 +415,17 @@ export function failedSendReason(errorCode) {
  * Clienti, Pipeline and Reporting views): the «✦ Chiedi all'AI» voice opens
  * the panel with this customer in the context instead of navigating away.
  */
+/**
+ * The counted channel (admin-channels-count.js) of one identity system the
+ * scheda reads: phone numbers are the Telefono channel, web forms the Form
+ * sito, any mailbox is Email; the shared aliases cover the rest.
+ * @param {string} system
+ */
+function cardCountedChannel(system) {
+  const local = { phone: 'voice', tel: 'voice', mobile: 'voice', web: 'site-form', form: 'site-form', outlook: 'email' };
+  return Object.hasOwn(local, system) ? local[system] : countedChannel(system);
+}
+
 const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
 /** Identity systems whose handle is a phone number once display separators are stripped. */
@@ -855,6 +867,26 @@ export function createCustomerCardView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  // backlog:e381c48581fa: the space's channel state, read once per space
+  // (GET /api/connectors plus GET /api/profile, the same pair Connettori
+  // reads) and kept a minute, so «↔ sincronizzato» is claimed only for a
+  // channel `channelState` calls collegato. Never one of the scheda's own
+  // reads: the identities paint at once and the claim lands when known.
+  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown } | null> } | null} */
+  let spaceChannelsRead = null;
+  const readSpaceChannels = () => {
+    const spaceId = activeSpaceId();
+    if (spaceId === null) return Promise.resolve(null);
+    if (spaceChannelsRead !== null && spaceChannelsRead.spaceId === spaceId
+      && Date.now() - spaceChannelsRead.at < 60000) return spaceChannelsRead.promise;
+    const promise = Promise.all([
+      readProfile(client),
+      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`)
+        .then((sync) => (Array.isArray(sync?.connectors) ? sync.connectors : []), () => null),
+    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile }));
+    spaceChannelsRead = { spaceId, at: Date.now(), promise };
+    return promise;
+  };
   // Azioni rapide: the prototype's stroke icon above the label, drawn as a
   // real SVG element. A CSS data: mask is blocked by the host CSP
   // (default-src 'self'), so the icons of #627 never painted in production.
@@ -2333,6 +2365,8 @@ export function createCustomerCardView(deps) {
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
     const directions = observedDirections(timeline);
+    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    const syncLines = [];
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -2353,10 +2387,28 @@ export function createCustomerCardView(deps) {
       // names the partial list, the same honesty standard as the count.
       const seen = directions.get(system);
       const partial = merged.complete !== true ? ' (elenco parziale)' : '';
-      const sync = seen?.in && seen?.out ? '↔ sincronizzato'
+      // backlog:e381c48581fa: both directions seen prove traffic, not a
+      // sync. «↔ sincronizzato» needs the channel linked in the space (the
+      // shared `channelState`); until that is known the line says what was
+      // seen, and a channel known unlinked says so.
+      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
         : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
+      if (sync) {
+        const node = el('span', 'bo-scheda-identity-sync', sync);
+        line.appendChild(node);
+        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+      }
       box.appendChild(line);
+    }
+    if (syncLines.length > 0) {
+      void readSpaceChannels().then((space) => {
+        if (space === null) return;
+        for (const entry of syncLines) {
+          const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
+          if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
+          else if (!linked) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+        }
+      });
     }
     // Voce 785428ec3de0: a customer with no union reads nothing here — no
     // technical line, no lone «scheda principale» row. The union block shows

@@ -25,9 +25,10 @@
 import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import {
   channelConnectRoute,
+  channelState,
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
@@ -506,9 +507,22 @@ export function withProfileConnections(activity, profile = null) {
  * screen, so it reads `non collegato` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function syncConnectRoute(channel, profile = null) {
-  return channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile });
+export function syncConnectRoute(channel, profile = null, adapters = null) {
+  const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
+  if (!Array.isArray(adapters)) return channelConnectRoute(channel, { guided, profile });
+  // backlog:e381c48581fa: with the schema's adapters read, the route is the
+  // shared `channelState` answer, the one Connettori shows: a channel no
+  // adapter serves and Profilo cannot connect offers no Collega here
+  // either (TikTok, Telefono, Form read «Non ancora disponibile» there).
+  const shared = channelState(channel, {
+    rows: [],
+    profile,
+    adapters: matchAdapters(channel, adapters),
+    guided,
+  });
+  return shared.state === 'da-collegare' ? shared.connectRoute : null;
 }
 
 /** Days before expiry that light the `Permesso in scadenza` pill and card. */
@@ -575,7 +589,7 @@ function channelPill(agg, nowMs, hasActive) {
  * @param {number} [nowMs]
  * @param {{ profile?: unknown }} [options] the /api/profile payload, for the Collega routes
  */
-export function syncChannelTable(activity, nowMs = Date.now(), { profile = null } = {}) {
+export function syncChannelTable(activity, nowMs = Date.now(), { profile = null, adapters = null } = {}) {
   const entries = entriesOf(activity);
   const byChannel = new Map();
   for (const entry of entries) {
@@ -640,7 +654,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued,
       detailRoute: catalogued ? `#/connettori/${fixed.id}` : '#/connettori',
-      connectRoute: syncConnectRoute(fixed.id, profile),
+      connectRoute: syncConnectRoute(fixed.id, profile, adapters),
     };
   });
   for (const [channel, list] of byChannel) {
@@ -661,7 +675,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued: extraCatalogued,
       detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
-      connectRoute: syncConnectRoute(channel, profile),
+      connectRoute: syncConnectRoute(channel, profile, adapters),
     });
   }
   return rows;
@@ -882,6 +896,7 @@ export function createSyncView(deps) {
   const state = {
     spaceId: readSpace(),
     channelsReady: false,
+    /** @type {Array<any> | null} the schema's composed channel adapters */ adapters: null,
     /** @type {any} */ activity: null,
     /** @type {any} */ profile: null,
     /** @type {Array<any>} */ candidates: [],
@@ -960,6 +975,9 @@ export function createSyncView(deps) {
     // channelsContract, and the screen used to answer «non composti» there
     // with Gmail and Calendar connected (production, 04/11).
     state.channelsReady = Boolean(meta);
+    // The composed adapters, read like Connettori reads them: the Collega
+    // of a row follows the same shared state (backlog:e381c48581fa).
+    state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     if (!state.channelsReady || activityRead === null) return;
     const activity = await activityRead;
     if (!current()) return;
@@ -1218,7 +1236,7 @@ export function createSyncView(deps) {
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
   function renderTable(box, activity) {
-    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile });
+    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
     // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
     // channelConnectionCount over the same rows, profile links included.
     // A linked channel outside the fixed nine (SMS, Telegram) is a row of

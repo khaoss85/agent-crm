@@ -2874,6 +2874,13 @@ test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  // The identities read the space's channel state once on paint
+  // (backlog:e381c48581fa): release it first, so only the composer's
+  // own reads are counted below.
+  for (const release of profileReleases.splice(0)) release();
+  await flushComposer();
+  for (const release of connectorReleases.splice(0)) release();
+  await flushComposer();
   const write = mount.findAll('button')
     .find((node) => node.getAttribute('data-action') === 'compose-message');
   assert.ok(write, 'a Scrivi action exists');
@@ -4120,7 +4127,9 @@ test('59def6cb805d: each identity reads its sync line from the observed passages
   const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
     && node.getAttribute('data-channel'));
   const byChannel = Object.fromEntries(rows.map((node) => [node.getAttribute('data-channel'), node.textContent]));
-  assert.ok(byChannel.whatsapp.includes('↔ sincronizzato'), `received and sent on WhatsApp: ${byChannel.whatsapp}`);
+  // No space channel state here: both directions read as traffic, never a sync claim.
+  assert.ok(byChannel.whatsapp.includes('↔ in entrata e in uscita'), `received and sent on WhatsApp: ${byChannel.whatsapp}`);
+  assert.ok(!byChannel.whatsapp.includes('sincronizzato'), 'no sync claim without the channel state');
   assert.ok(byChannel.instagram.includes('← in entrata'), `only received on Instagram: ${byChannel.instagram}`);
   assert.ok(byChannel.phone.includes('→ in uscita'), `only an outgoing call: ${byChannel.phone}`);
 });
@@ -4137,10 +4146,49 @@ test('59def6cb805d review: on a truncated page a one-way sync line names itself 
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('instagram'), '← in entrata (elenco parziale)', 'one direction on a partial page is not exhaustive');
   assert.equal(syncOf('phone'), '→ in uscita (elenco parziale)');
-  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'both directions seen are proven even on a partial page');
+  assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'both directions seen are proven even on a partial page');
   assert.ok(mount.textContent.includes('(elenco parziale)'), 'the count line and the sync lines share one honesty standard');
   const complete = await renderCard(stubClient());
   assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
+});
+
+// backlog:e381c48581fa (verifica pilota 51ab9ca): on Ada Rossi's scheda
+// Instagram read «↔ sincronizzato» with Instagram not linked in the space.
+// The production shape: raw GET /api/connectors rows plus GET /api/profile.
+// «sincronizzato» only for a channel the shared channelState calls
+// collegato; an unlinked one says so.
+test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channel', async () => {
+  const both = { ...TIMELINE, entries: { ...TIMELINE.entries, items: [
+    ...TIMELINE.entries.items,
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'inbound' },
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'outbound' },
+  ] } };
+  const base = stubClient({ timeline: both });
+  const requests = [];
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      requests.push(path);
+      if (path.startsWith('/api/connectors')) return { connectors: [] };
+      if (path === '/api/profile') {
+        return { member: {}, connections: { available: true, reason: null, meta: { configured: true },
+          items: [{ connector: 'whatsapp', status: 'connected', account: '+390200000001' }] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = await renderCard(client, 'presti');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const syncOf = (channel) => mount.findAll('p')
+    .find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'WhatsApp is linked (Profilo): the sync is real');
+  assert.equal(syncOf('instagram'), '↔ in entrata e in uscita · canale non collegato', 'Instagram is not linked: no sync claim');
+  assert.equal(requests.filter((path) => path === '/api/profile').length, 1, 'one channel-state read per space');
+  // The same answer as the shared state the other screens read.
+  const { channelState } = await import('../apps/admin/public/admin-channels-count.js');
+  assert.equal(channelState('instagram', { rows: [], profile: null }).state === 'collegato', false);
 });
 
 test('59def6cb805d: observedDirections never assumes a direction nobody recorded (C10)', () => {
