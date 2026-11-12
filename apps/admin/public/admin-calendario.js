@@ -1247,6 +1247,8 @@ export function createCalendarioView(deps) {
     profiles: {},
     /** Catalog product names by lowercase listino key; undefined until read, an empty Map when unreadable. @type {Map<string, string> | null | undefined} */
     services: undefined,
+    /** Review #805: where the service menu came from — the server's own list ('served'), a served list that failed ('failed'), or the catalog rule ('fallback'). @type {'served' | 'failed' | 'fallback' | null} */
+    servicesMode: null,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -1500,46 +1502,92 @@ export function createCalendarioView(deps) {
    * the raw name and was refused). Resolves at once once the catalog is read.
    */
   function ensureServices() {
-    if (state.services instanceof Map) return Promise.resolve();
+    // Review #805 giro 4 P1: a failed served list is never cached (state
+    // holds no Map for it), so the next submit re-reads instead of
+    // short-circuiting on the failure until reload or space switch.
+    if (state.services instanceof Map && state.servicesMode !== 'failed') return Promise.resolve();
     if (servicesRead === null) {
       servicesRead = loadServices().finally(() => { servicesRead = null; });
     }
     return servicesRead;
   }
 
+  /**
+   * Review #805: with a served list the booking names one of its services;
+   * an empty service (the worker would pick a default) or a failed list
+   * books nothing.
+   * @param {unknown} serviceKey
+   */
+  function servicesBlockBooking(serviceKey) {
+    if (state.servicesMode === 'failed') return true;
+    if (state.servicesMode !== 'served') return false;
+    const key = typeof serviceKey === 'string' ? serviceKey : '';
+    return !(Array.isArray(state.catalogServices) && state.catalogServices.some((entry) => entry.key === key));
+  }
+
   /** Catalog product names for the block titles; fail-soft to the readable key. */
   async function loadServices() {
+    // Review #805 giro 2: the list belongs to the space it was asked in; a
+    // space switch while it loads reads its own (render resets the cache).
+    const askedSpace = readSpace();
     /** @type {Map<string, string>} */
     const names = new Map();
     /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
     let bookable = [];
+    // P1 11/11: the menu is the server's own bookable list when it serves
+    // one (the pilot), so a Conferma never sends a key the worker refuses.
+    // Review #805: a served list is the whole truth — its names alone map a
+    // typed service and title the week, and a served list that failed (or
+    // is empty) blocks the service field instead of reopening free text.
+    // The catalog is read only when no list is served (review #805 P3).
+    /** @type {'served' | 'failed' | 'fallback'} */
+    let mode = 'fallback';
     try {
-      const answer = await client.request('/api/catalog/products?limit=200');
-      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
-        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
-        const name = typeof product?.name === 'string' ? product.name.trim() : '';
-        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+      const read = await readBookingServicesDetailed(client);
+      bookable = [...read.services];
+      if (read.served) {
+        mode = read.failed ? 'failed' : 'served';
+        if (read.failed) {
+          console.warn(
+            'bo-calendario services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${askedSpace}`,
+          );
+        }
+      } else {
+        // The framework on its own: catalog product names title the week.
+        for (const product of Array.isArray(read.catalog?.products) ? read.catalog.products : []) {
+          const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+          const name = typeof product?.name === 'string' ? product.name.trim() : '';
+          if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+        }
       }
-      // The manual form's service menu (backlog:810ed0bf): the same
-      // singles rule the booking worker applies, read once with the names.
-      bookable = catalogBookingServices(answer);
+      for (const entry of bookable) names.set(entry.key, entry.name);
     } catch (error) {
-      // No catalog in this project (or a stale bundle): the readable key
-      // stays. Anything else is unexpected and logged without the message.
+      bookable = [];
+      // No served list and no catalog in this project (or a stale bundle):
+      // the readable key stays. Anything else is logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
           'bo-calendario catalog unreadable:',
           error instanceof Error ? error.name : (error?.code ?? 'unknown'),
-          `spaceId=${readSpace()}`,
+          `spaceId=${askedSpace}`,
         );
       }
     }
-    state.services = names;
+    if (readSpace() !== askedSpace) return;
+    // Review #805 giro 4 P1: a failed served list is not cached as an
+    // (empty) Map — state.services stays unset, so the next submit retries
+    // the read (see ensureServices) instead of blocking until reload.
+    state.services = mode === 'failed' ? undefined : names;
     state.catalogServices = bookable;
+    state.servicesMode = mode;
     // The service menu paints from this read: repaint once it settles while
     // the calendar is still mounted (same guard as the roster read).
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
+
 
   /**
    * The organization team behind the Team card (specs/calendario.md C10):
@@ -3710,6 +3758,13 @@ export function createCalendarioView(deps) {
     });
     state.confirmed = null;
     state.serviceError = '';
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.aiNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco.'
+        : 'Scegli il servizio dal listino nel modulo «Nuovo appuntamento», poi conferma.';
+      renderAll();
+      return;
+    }
     const presend = servicePresendError(claim.serviceKey);
     if (presend !== null) {
       // A typed service the server could never book (backlog:9a853f44,
@@ -3940,6 +3995,28 @@ export function createCalendarioView(deps) {
         form.appendChild(hint);
       }
     };
+    // Review #805: with a served list (or a served list that failed) the
+    // service is never free text — a typed name could mint a key the
+    // worker refuses. A failed or empty list blocks the field with why.
+    if (state.servicesMode === 'failed' || (state.servicesMode === 'served' && (bookable === null || bookable.length === 0))) {
+      const failed = state.servicesMode === 'failed';
+      const wrap = uiSelect(doc, {
+        name: 'serviceKey', value: '',
+        options: [{ value: '', label: failed ? 'Servizi non disponibili' : 'Nessun servizio prenotabile' }],
+      });
+      const select = wrap.querySelector('select') ?? wrap;
+      select.value = '';
+      select.setAttribute('disabled', 'disabled');
+      form.appendChild(wrap);
+      form.appendChild(el(doc, 'small', {
+        className: 'field-error',
+        attrs: { role: 'alert', 'data-role': 'services-blocked' },
+        text: failed
+          ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+          : 'Nessun servizio prenotabile nel listino: aggiungine uno in Catalogo.',
+      }));
+      return select;
+    }
     if (bookable === null || bookable.length === 0) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
@@ -3963,6 +4040,32 @@ export function createCalendarioView(deps) {
       ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
       ?? bookable.find((entry) => entry.key === mapped)
       ?? (wanted === '' ? bookable[0] : null);
+    if (match === null && state.servicesMode === 'served') {
+      // A kept or drafted service the served list does not hold: the menu
+      // asks for a choice, never a free-text key.
+      const wrap = uiSelect(doc, {
+        name: 'serviceKey', value: '',
+        options: [{ value: '', label: 'Scegli il servizio' }, ...bookable.map((entry) => ({
+          value: entry.key, label: `${entry.name} · ${formatPriceCents(entry.priceCents) ?? ''} €`,
+        }))],
+      });
+      const select = wrap.querySelector('select') ?? wrap;
+      select.value = '';
+      state.manual = { ...(state.manual ?? {}), serviceKey: '' };
+      const track = () => {
+        const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+        if (chosen !== null && priceInput) {
+          priceInput.value = formatPriceCents(chosen.priceCents) ?? '';
+          state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+        }
+      };
+      select.addEventListener('input', track);
+      select.addEventListener('change', track);
+      form.appendChild(wrap);
+      paintUnder(select);
+      return select;
+    }
     if (match === null) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       input.value = wanted;
@@ -4290,7 +4393,16 @@ export function createCalendarioView(deps) {
     state.serviceError = '';
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
-      state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      state.bookingNote = state.servicesMode === 'failed' && missing.includes('servizio')
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      renderAll();
+      return;
+    }
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.bookingNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : 'Scegli il servizio dal listino: questo servizio non c’è.';
       renderAll();
       return;
     }
@@ -4374,6 +4486,12 @@ export function createCalendarioView(deps) {
       state.customerError = null;
       state.customerPartial = false;
       state.customerPick = null;
+      // Review #805 giro 2: space B has its own bookable list — never
+      // book or block with space A's.
+      state.services = undefined;
+      state.catalogServices = undefined;
+      state.servicesMode = null;
+      servicesRead = null;
     }
     state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
@@ -4464,3 +4582,62 @@ export function suggestSlotsPath(searchIds, from, to, minutes) {
 
 /** The slot sizes `suggest-slots` accepts, in minutes. */
 export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
+
+/**
+ * P1 11/11: the services a booking can name, as the server that books
+ * them lists them. The pilot answers `GET /api/appointments/services` with
+ * the very list its worker resolves a Conferma against (the menu used to
+ * key services by product SKU, and every key was refused). Only when the
+ * server answers that it serves no such list — a 404 or 405, the
+ * framework on its own — the menu falls back to the catalog singles rule.
+ * Any other failure is thrown: guessing a list the server would refuse is
+ * the bug this ends.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options] a catalog answer already read, for the fallback
+ * @returns {Promise<ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>>}
+ */
+export async function readBookingServices(client, { catalog = undefined } = {}) {
+  const read = await readBookingServicesDetailed(client, { catalog });
+  if (read.failed) throw read.error;
+  return read.services;
+}
+
+/**
+ * Review #805: the same read, saying where the list came from. `served`
+ * is true when the server answers the list (its answer is the whole truth,
+ * even empty); `failed` when it serves one and the read failed — the
+ * caller blocks the booking then, never falls back to catalog keys.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options]
+ * @returns {Promise<{served: boolean, failed: boolean, error: any, catalog: any, services: ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>}>}
+ */
+export async function readBookingServicesDetailed(client, { catalog = undefined } = {}) {
+  let answer;
+  try {
+    answer = await client.request('/api/appointments/services');
+  } catch (error) {
+    // Review #805 giro 2: fallback only where the server answers that it
+    // serves no list — 404/405 or the framework's not-composed answer. Any
+    // other failure, a missing HTTP answer included (a timeout, a dropped
+    // connection), blocks like a 5xx: guessing catalog keys is the bug.
+    const status = typeof error?.status === 'number' ? error.status : null;
+    const notServed = status === 404 || status === 405 || (status !== null && isNotComposedFailure(error));
+    if (!notServed) {
+      return { served: true, failed: true, error, services: Object.freeze([]), catalog: undefined };
+    }
+    // The caller's own catalog read when it has one: never read it twice.
+    const read = catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200');
+    return { served: false, failed: false, error: null, services: catalogBookingServices(read), catalog: read };
+  }
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(answer?.services) ? answer.services : []) {
+    const key = typeof entry?.serviceKey === 'string' ? entry.serviceKey.trim() : '';
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    if (!CATALOG_SLUG_RE.test(key) || name === '' || seen.has(key)) continue;
+    if (!Number.isSafeInteger(entry.priceCents) || entry.priceCents < 0 || entry.currency !== 'EUR') continue;
+    seen.add(key);
+    out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
+  }
+  return { served: true, failed: false, error: null, services: Object.freeze(out), catalog: undefined };
+}

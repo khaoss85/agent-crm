@@ -1892,11 +1892,20 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-create-form { display: grid; gap: 6px; }
 .catalog-create-label { font-size: 12px; color: var(--muted); }
 .catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
+/* backlog:0bbd62834c5a: the open AI voice takes the bar's width, the sentence field reads its placeholder whole. */
+/* The button stays in the bar's row; the field opens on its own row below, sentence and «Proponi» side by side. */
+.catalog-create-wrap[data-open="true"] { display: contents; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form { flex: 1 1 100%; max-width: 640px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form > :not(input):not(button) { grid-column: 1 / -1; }
+.catalog-create-form input[name="ai-phrase"] { max-width: none; width: 100%; box-sizing: border-box; }
 .catalog-readonly { margin: 4px 0 0; font-size: 11.5px; color: var(--data-ink); }
 .catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
 .catalog-offer { padding: 0; margin: 0; }
 .catalog-offer + .catalog-offer { margin-top: 6px; }
 .catalog-offer-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+/* backlog:0bbd62834c5a: several offers name each price, the name muted before the amount. */
+.catalog-offer-named { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.catalog-offer-named .catalog-offer-name { position: static; width: auto; height: auto; overflow: visible; clip: auto; margin: 0; font-size: 13px; font-weight: 500; color: var(--muted); }
 .catalog-price { margin: 0; font-size: 14px; font-weight: 600; }
 .catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
 .catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 6px; display: grid; gap: 8px; }
@@ -1963,6 +1972,7 @@ button.catalog-remove:hover { color: var(--danger); background: var(--surface-so
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-create-wrap[data-open="true"] > .catalog-create-form { grid-template-columns: minmax(0, 1fr); }
   .catalog-row { overflow-wrap: anywhere; }
 }
 
@@ -2322,6 +2332,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-campo-add-cancel:hover { color: var(--ink); }
 .bo-campo-add > small.field-error:empty { display: none; }
 .bo-cliente-nuovo-actions { display: flex; gap: 8px; margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--line-faint); }
+/* backlog:ff8bb60f417f: Nuovo cliente in the scheda's window frame (bo-scheda-composer), not a page card. */
+.bo-cliente-panel .bo-cliente-nuovo { max-width: none; margin: 0; padding: 14px 0 18px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.bo-cliente-panel .bo-cliente-nuovo-actions { position: sticky; bottom: 0; background: var(--surface); padding-bottom: 4px; }
+.bo-cliente-nuovo-discard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line-soft); }
+.bo-cliente-nuovo-discard > p { flex: 1 1 100%; margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.bo-cliente-nuovo-discard.hidden, .bo-cliente-nuovo-actions.hidden { display: none; }
 @media (max-width: 640px) {
   .bo-cliente-nuovo { padding: 20px 16px; border-radius: 16px; margin-top: 0; }
   .bo-cliente-nuovo-grid, .bo-cliente-nuovo-custom { grid-template-columns: 1fr; }

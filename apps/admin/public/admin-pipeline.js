@@ -120,8 +120,9 @@ export function customerOf(record) {
   if (contact !== '') return contact;
   const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
   // «Senza azienda» is the scheda's placeholder company, not a customer —
-  // in any case or spacing (review #789).
-  const placeholder = company.toLocaleLowerCase('it').replace(/\s+/g, ' ') === 'senza azienda';
+  // in any case or spacing, the same normalization as the scheda's
+  // shownCompanyName (NFC, collapsed spaces, lower case; review #789, #799).
+  const placeholder = company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
   return company !== '' && !placeholder ? company : null;
 }
 
@@ -169,6 +170,8 @@ const CREATED_OPTIONS = [
 
 /** How long a stage move may stay in flight before the card says it is not confirmed yet. */
 export const MOVE_PENDING_MS = 15000;
+/** backlog:2f72000d4a4d: how long the «Annulla» toast stays at least (the shell pauses it under the pointer). */
+export const UNDO_TOAST_MS = 10000;
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -375,6 +378,22 @@ export function createPipelineBoard(deps) {
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
     for (const view of moveViewsOf(id)) view.start();
+    // backlog:2f72000d4a4d: the toast comes at once, with the card already
+    // in its new place — not after the write (4 s on the pilot) — and keeps
+    // «Annulla» (backlog:7b2203e69826) for at least 10 s. Only between
+    // working stages: a won or lost offer never reopens (TERMINAL_STAGE).
+    const working = (key) => {
+      const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+      return type === 'open' || type === 'renewal';
+    };
+    const undoable = undo && working(fromStage) && working(toStage);
+    /** @type {(outcome: any) => void} */
+    let settle = () => {};
+    const outcomeOf = new Promise((resolve) => { settle = resolve; });
+    toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+      action: { label: 'Annulla', run: () => { void undoMove(pipeline, id, fromStage, toStage, outcomeOf); } },
+      duration: UNDO_TOAST_MS,
+    } : undefined);
     let settled = false;
     void wait(MOVE_PENDING_MS).then(() => {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
@@ -383,25 +402,8 @@ export function createPipelineBoard(deps) {
       await postMove(pipeline, id, fromStage, toStage, reason);
       settled = true;
       moveLocks.delete(id);
-      // backlog:7b2203e69826: «Annulla» in the toast, like Trello — only
-      // between working stages: a won or lost offer never reopens (the
-      // server refuses TERMINAL_STAGE), so a closing move offers none.
-      const working = (key) => {
-        const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
-        return type === 'open' || type === 'renewal';
-      };
-      const undoable = undo && working(fromStage) && working(toStage);
-      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
-        action: {
-          label: 'Annulla',
-          run: () => {
-            void runMove(pipeline, id, toStage, fromStage, undefined, {
-              undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
-            });
-          },
-        },
-      } : undefined);
       await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      settle({ moved: true });
       return { moved: true };
     } catch (error) {
       settled = true;
@@ -412,24 +414,65 @@ export function createPipelineBoard(deps) {
         // queue a duplicate or meet a stale-stage refusal.
         console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
         moveLocks.set(id, 'queued');
-        for (const view of moveViewsOf(id)) view.unconfirmed();
+        const views = moveViewsOf(id);
+        for (const view of views) view.unconfirmed();
+        // A card no view shows (filtered out) still says where it stands.
+        if (!views.length) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+        settle({ pending: true });
         return { pending: true };
       }
       moveLocks.delete(id);
       const message = moveFailureText(error);
       for (const view of moveViewsOf(id)) view.fail(message);
+      // The toast that said «Spostata» is replaced by the truth.
+      toast(message, true);
+      settle({ failed: true, message });
       return { failed: true, message };
     }
+  }
+
+  /**
+   * «Annulla» (review Muse #799, P2): the reverse move, never fire-and-forget.
+   * It waits for the first move to land (a click while it is still being
+   * written undoes it as soon as it lands), then every outcome says so — a
+   * failure, a queued undo or a busy card toasts even when no card shows it
+   * (a filter hides it).
+   */
+  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
+    toast(`Riporto in ${stageLabel(pipeline, fromStage)}…`);
+    const first = await outcomeOf;
+    if (first?.pending) {
+      // Review Muse #809: a move the server still holds cannot be undone yet
+      // — never a silent drop of the undo: say so, the board re-read
+      // (Riprova) tells where the card is.
+      toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
+      return;
+    }
+    if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
+    const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
+      undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+    });
+    if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+    // Review Muse #809: a queued undo is announced whether or not its card is on screen.
+    if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
   async function postMove(pipeline, recordId, fromStage, toStage, reason) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
-    await client.request(
-      `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`,
-      { method: 'POST', body: JSON.stringify(input) },
-    );
+    const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
+    try {
+      await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+    } catch (error) {
+      // The failure log names the request (backlog:2f72000d4a4d) even when
+      // the client did not stamp it.
+      if (error !== null && typeof error === 'object' && Object.isExtensible(error)) {
+        if (typeof error.method !== 'string') error.method = 'POST';
+        if (typeof error.path !== 'string') error.path = path;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -489,7 +532,7 @@ export function createPipelineBoard(deps) {
       const outcome = await controls.move(toStage);
       if ((outcome?.failed || outcome?.busy) && card && home && typeof home.parent.insertBefore === 'function') {
         home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
-        if (outcome.failed) toast(outcome.message, true);
+        // runMove's own toast already named the failure.
       }
       return;
     }
@@ -1328,14 +1371,30 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
+  /**
+   * backlog:2f72000d4a4d: the shared /bo write-failure line — «[bo] scrittura
+   * fallita POST <percorso> · <stato> <codice>: messaggio» — the format of
+   * admin-core's reportFailure, which #808 exports as logWriteFailure. Until
+   * that lands on main the board writes the same line here; then this
+   * becomes a call to logWriteFailure.
+   */
+  function logMoveFailure(record, code, message) {
+    if (typeof console === 'undefined' || typeof console.error !== 'function') return;
+    const method = typeof record.method === 'string' ? record.method.toUpperCase() : 'POST';
+    const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
+    const status = typeof record.status === 'number' ? record.status : null;
+    const outcome = [status === null ? '' : String(status), code || 'UNKNOWN'].filter((part) => part !== '').join(' ');
+    const request = path !== null ? ` ${method} ${path}` : '';
+    console.error(`[bo] scrittura fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
+      { code: code || 'UNKNOWN', status, message, method, path });
+  }
+
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    if (typeof console !== 'undefined' && typeof console.error === 'function') {
-      console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
-    }
+    logMoveFailure(record, code, message);
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
@@ -1663,12 +1722,10 @@ export function createPipelineBoard(deps) {
 
   /** The customer's name as the scheda shows it: the contact, else the company. */
   function customerName(record) {
-    const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
-    if (contact !== '') return contact;
-    const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
-    // «Senza azienda» is the scheda's placeholder company, not a customer.
-    return company !== '' && company !== 'Senza azienda' ? company : null;
+    // One rule with the Lista (review Muse #799): customerOf.
+    return customerOf(record);
   }
+
 
   /**
    * Apri on a card: the offer panel over the board. Opening never
@@ -1807,12 +1864,27 @@ export function createPipelineBoard(deps) {
     const selectId = `drawer-move-${record.id}`;
     box.appendChild(el(doc, 'label', { text: 'Cambia fase', attrs: { for: selectId } }));
     const row = el(doc, 'div', { class: 'bo-pipeline-offer-move-row' });
+    // backlog:2f72000d4a4d: the menu starts on the offer's own stage (marked
+    // «attuale»), never on the first stage of the pipeline; Sposta waits
+    // until another stage is chosen.
     const select = el(doc, 'select', { attrs: { id: selectId } });
     for (const target of pipeline.stages) {
-      if (target.key === stage.key) continue;
-      select.appendChild(el(doc, 'option', { text: target.label ?? target.key, attrs: { value: target.key } }));
+      const current = target.key === stage.key;
+      const option = el(doc, 'option', {
+        text: current ? `${target.label ?? target.key} (attuale)` : (target.label ?? target.key),
+        attrs: { value: target.key },
+      });
+      if (current) option.setAttribute('selected', 'selected');
+      select.appendChild(option);
     }
+    select.value = stage.key;
     const go = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button', 'data-action': 'drawer-move' } });
+    const syncGo = () => {
+      if (moveLocks.has(String(record.id))) return;
+      go.disabled = select.value === stage.key;
+    };
+    select.addEventListener('change', syncGo);
+    syncGo();
     row.appendChild(select);
     row.appendChild(go);
     box.appendChild(row);
@@ -1836,7 +1908,7 @@ export function createPipelineBoard(deps) {
       node.setAttribute('class', text ? base : `${base} hidden`);
     };
     const lockControls = (on) => {
-      go.disabled = on;
+      go.disabled = on || select.value === stage.key;
       go.setAttribute('aria-busy', on ? 'true' : 'false');
       confirmPanel.yes.disabled = on;
     };
@@ -1875,6 +1947,7 @@ export function createPipelineBoard(deps) {
     go.addEventListener('click', () => {
       if (moveLocks.has(id)) return;
       const toStage = select.value;
+      if (toStage === stage.key) return; // the current stage is where it is
       const target = pipeline.stages.find((candidate) => candidate.key === toStage);
       if (!target) return;
       if (stageNeedsConfirm(target)) {

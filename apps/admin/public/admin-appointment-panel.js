@@ -5,17 +5,17 @@
 // The window asks for the service (the listino singles the booking worker
 // accepts), the duration, the team person, then shows that person's free
 // slots and books one with Conferma. Every step is the Calendario's own:
-// `catalogBookingServices` for the menu, `personRows` for the team,
+// `readBookingServices` for the menu (the server's own bookable list), `personRows` for the team,
 // `suggest-slots` read through `personFreeSlots`/`filterPhraseProposals`/
 // `rankPhraseProposals`, and the claim built by `bookingClaim` and sent to
 // `/api/appointments/confirm` like the Calendario's Conferma. No AI is
 // involved: the window works the same with the AI switched off.
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError, humanWriteError, isNotComposedFailure } from './admin-core.js';
+import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
-  BOOKING_MINUTES, bookingClaim, calendarRefusalText, catalogBookingServices, filterPhraseProposals,
-  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, servicePresendError, slotInGrid, slotLabel,
+  BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
+  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
   suggestSlotsPath,
 } from './admin-calendario.js';
 import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
@@ -140,10 +140,12 @@ export function openAppointmentPanel(deps) {
   const say = (node, text) => { node.textContent = text; };
 
   // ---- Listino ---------------------------------------------------------
-  client.request('/api/catalog/products?limit=200').then(
-    (answer) => {
+  // P1 11/11: the server's own bookable list (the one the worker books
+  // from), the catalog singles rule only where the server serves none.
+  readBookingServices(client).then(
+    (list) => {
       if (gone()) return;
-      services = catalogBookingServices(answer);
+      services = list;
       fillServices();
     },
     (error) => {
@@ -337,15 +339,10 @@ export function openAppointmentPanel(deps) {
         : 'Registrato come proposta: lo spazio non fissa in automatico.');
       if (typeof deps.onBooked === 'function') deps.onBooked(answer);
     } catch (error) {
-      // Like the offer window: the cause is logged (code, status, space —
-      // never the customer), and a closed window still says it as a toast.
-      if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[bo] appuntamento non fissato', {
-          code: error?.code ?? null,
-          status: typeof error?.status === 'number' ? error.status : null,
-          spaceId: deps.spaceId ?? null,
-        });
-      }
+      // The cause is logged once, in the shared write line
+      // (backlog:0a980182918f: never «[bo] appuntamento non fissato
+      // Object»), and a closed window still says it as a toast.
+      logWriteFailure(error, { context: { spaceId: deps.spaceId ?? null } });
       if (gone()) {
         toast('Appuntamento non fissato: riapri «Nuovo appuntamento» e riprova.', true);
         return;
@@ -361,6 +358,8 @@ export function openAppointmentPanel(deps) {
         say(errors.service, calendarRefusalText(error) ?? 'Scegli un servizio dal listino.');
       } else {
         say(generalError, humanWriteError(error, {
+          // Already logged above: one line per failure.
+          log: () => {},
           failed: 'Appuntamento non fissato. Riprova tra poco: non verrà fissato due volte.',
           notComposed: 'Il calendario non è attivo in questo spazio.',
         }));

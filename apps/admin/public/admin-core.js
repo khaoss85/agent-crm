@@ -606,6 +606,22 @@ export function formatAmount(minorUnits, currency) {
   return `${sign}${number} ${unit}`.trim();
 }
 
+/**
+ * The customer's initials, one rule for every avatar (backlog:ff8bb60f417f:
+ * the list read «UE», the scheda «UB», the scheda right after creation
+ * «U?» for the same customer). First letter of the first and of the last
+ * word that holds a letter — «Guido Presti» → «GP», «UX Esplorativo 1111 B»
+ * → «UB» — never a «?»: a name with no letter at all reads «·».
+ * @param {unknown} name
+ */
+export function customerInitials(name) {
+  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
+  if (words.length === 0) return '·';
+  const letter = (word) => word.match(/\p{L}/u)?.[0] ?? '';
+  const last = words.length > 1 ? letter(words[words.length - 1]) : '';
+  return `${letter(words[0])}${last}`.toUpperCase();
+}
+
 const ROME_DAY = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Europe/Rome' });
 
 /**
@@ -703,12 +719,24 @@ export function tagRequestFailure(error, method, path) {
  * @param {'lettura' | 'scrittura'} fallback what the caller expected
  * @param {{ code: string, status: number | null, message: string, method: string | null, path: string | null, report: (message: string, cause: unknown) => void }} failure
  */
-function reportFailure(fallback, { code, status, message, method, path, report }) {
+function reportFailure(fallback, { code, status, message, method, path, report }, context = {}) {
   const kind = method === null ? fallback : (WRITE_METHODS.has(method) ? 'scrittura' : 'lettura');
   const request = method !== null && path !== null ? ` ${method} ${path}` : '';
   const outcome = [status === null ? '' : String(status), code].filter((part) => part !== '').join(' ');
   report(`[bo] ${kind} fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
-    { code, status, message, method, path });
+    { ...context, code, status, message, method, path });
+}
+
+/**
+ * The shared console line for a failed write (backlog:0a980182918f), for
+ * the screens that pick their own sentence instead of humanWriteError's:
+ * «[bo] scrittura fallita POST <percorso> · <stato> <codice>: messaggio».
+ * @param {unknown} error the rejection from `client.request`
+ * `context` adds ids to the logged object (a space id), never record bodies.
+ * @param {{ log?: ((message: string, cause: unknown) => void) | null, context?: Record<string, unknown> }} [options]
+ */
+export function logWriteFailure(error, { log = null, context = {} } = {}) {
+  reportFailure('scrittura', normalizeFailure(error, log), context);
 }
 
 export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
