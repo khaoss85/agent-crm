@@ -989,7 +989,10 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   const text = mount.textContent;
   assertCustomerItalian(text, 'bare card');
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
-  assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
+  // Voce 2f2d22f2: «Offerta» also names a quick-action tile now — the block
+  // is the offer section (its h4), not the whole text.
+  assert.equal(mount.findAll('h4').filter((node) => node.textContent === 'Offerta').length, 0,
+    'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
   // Voce ebde30a307f2: moduli order/commercial-contract/subscription non
   // composti → nessuna riga (né hedge né «nessuna attività»).
@@ -1044,7 +1047,8 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
   assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
   assert.ok(!text.includes('Nessuna offerta firmata'), '2f2d22f2: the old confirmed-none line is gone');
-  assert.ok(!text.includes('Offerta'), '2f2d22f2: a readable-but-empty commercial page hides the offer card');
+  assert.equal(mount.findAll('h4').filter((node) => node.textContent === 'Offerta').length, 0,
+    '2f2d22f2: a readable-but-empty commercial page hides the offer card');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
 });
 
@@ -2958,9 +2962,9 @@ test('e9b4fc2f: the composer names its honest limit and shows the text refusal',
   );
 });
 
-// Voce c2793930850a: the four quick actions are equal tiles — Chiama,
-// Scrivi, Nuova offerta and Nuovo appuntamento all carry the tile class, so
-// the 2x2 grid never shows a bare overflowing button. The note field, its
+// Voce c2793930850a: the quick actions are equal tiles — Chiama, WhatsApp,
+// Email, Appuntamento, Offerta and Chiedi all'AI all carry the tile class,
+// so the grid never shows a bare overflowing button. The note field, its
 // button and the help sentence live in the note form block inside the card,
 // and the ✦ union note keeps its class (its card-text size is CSS).
 test('c2793930850a: quick actions are equal tiles, the note form holds field, button and help', async () => {
@@ -2971,7 +2975,7 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
     const tile = byAction(action);
     assert.ok(tile, `the ${action} quick action exists`);
     assert.ok(String(tile.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile'),
-      `${action} is a tile like the other three`);
+      `${action} is a tile like the others`);
   }
   const form = mount.findAll('div')
     .find((node) => node.getAttribute('class') === 'bo-scheda-note-form');
@@ -3023,6 +3027,31 @@ test("d525f4aa48b2: Dettagli shows «✦ Chiedi all'AI» beside Modifica and ope
     draft: 'Cliente Guido Presti (contact/c1)',
     customer: { resource: 'contact', id: 'c1' },
   }]);
+});
+
+// Voce 2f2d22f2: the prototype's sixth quick action opens the same AI bar
+// as the Dettagli voice, with the customer already in the context; without
+// a panel it points at the ⌘K bar like the Dettagli voice does.
+test("2f2d22f2: the «✦ Chiedi all'AI» quick action opens the AI bar with the customer in context", async () => {
+  const seen = [];
+  const mount = await renderCard(stubClient());
+  const quick = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'quick-ask-ai');
+  assert.ok(quick, 'the sixth quick action exists');
+  assert.equal(quick.textContent, "✦ Chiedi all'AI");
+  const doc = createFakeDocument();
+  const mount2 = createMount();
+  await createCustomerCardView({
+    doc,
+    mount: mount2,
+    client: stubClient(),
+    onAskAi: (screenId, draft, customer) => seen.push({ screenId, draft, customer }),
+  }).renderCard('contact', 'c1');
+  mount2.findAll('button').find((node) => node.getAttribute('data-action') === 'quick-ask-ai').dispatch('click', {});
+  assert.deepEqual(seen, [{
+    screenId: 'scheda-cliente',
+    draft: 'Cliente Guido Presti (contact/c1)',
+    customer: { resource: 'contact', id: 'c1' },
+  }], 'the quick tile carries the same context as the Dettagli voice');
 });
 
 test("d525f4aa48b2: company schede get «✦ Chiedi all'AI» even without Modifica, and the fallback toasts the ⌘K hint", async () => {
@@ -4116,10 +4145,13 @@ test('Azioni rapide: every tile carries its stroke icon as an SVG element, and t
   for (const node of tiles) {
     const icon = node.findAll('svg')[0];
     assert.ok(icon, `${node.textContent} has an icon`);
-    assert.match(String(icon.getAttribute('class')), /ui-icon ui-icon-(telefono|telefono-piu|messaggio|offerta|appuntamento)/);
+    assert.match(String(icon.getAttribute('class')), /ui-icon ui-icon-(telefono|telefono-piu|messaggio|offerta|appuntamento|ai)/);
     assert.equal(icon.getAttribute('aria-hidden'), 'true', 'decorative: the label names the action');
   }
-  assert.ok(tiles.some((node) => node.textContent === 'Scrivi'), 'the label is still the whole text');
+  // Voce 2f2d22f2: the six prototype labels, each tile carrying its whole text.
+  for (const label of ['Chiama', 'WhatsApp', 'Email', 'Appuntamento', 'Offerta', "✦ Chiedi all'AI"]) {
+    assert.ok(tiles.some((node) => node.textContent === label), `the ${label} tile keeps its whole text`);
+  }
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(!/url\(["']?data:/.test(css), 'no data: url in the stylesheet — the host CSP would block it');
 });
