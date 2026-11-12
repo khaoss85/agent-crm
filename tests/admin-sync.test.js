@@ -410,6 +410,74 @@ test('the hero pull updates every syncable connection with one toast', async () 
   assert.equal(rebuilt.getAttribute('disabled'), null);
 });
 
+test('a lot started in one space finishes in that space after a mid-lot switch', async () => {
+  // backlog:0e848a46e53a: il lotto cattura lo spazio alla partenza — un
+  // cambio spazio a lotto in corso non sposta le pull restanti (con le chiavi
+  // dello spazio vecchio) nello spazio nuovo.
+  let space = 'prova';
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  const calls = [];
+  let pulls = 0;
+  const switching = {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, options });
+      if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
+        if (path === '/api/connectors/sync-now') {
+          pulls += 1;
+          if (pulls === 1) await firstGate;
+          return { pulled: 1 };
+        }
+        throw new Error(`unexpected mutation ${path}`);
+      }
+      if (path === '/api/schema') return schemaOk;
+      if (path.startsWith('/api/connectors/activity')) {
+        return activityOf({
+          connections: [
+            entryOf(),
+            entryOf({ connectionKey: 'ig-1', channel: 'instagram', account: 'palestra.esempio' }),
+          ],
+        });
+      }
+      if (path === '/api/profile') throw new Error('profile not served');
+      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: [] };
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createSyncView({
+    doc,
+    mount,
+    client: switching,
+    storage: { getItem: () => space, setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: () => {},
+  });
+  await view.render();
+  await flush();
+  const hero = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  hero.dispatch('click');
+  await flush(3);
+  assert.equal(calls.filter((call) => call.path === '/api/connectors/sync-now').length, 1);
+  // L'operatore cambia spazio a lotto in corso: l'host ri-renderizza, come onPickSpace.
+  space = 'nuova';
+  await view.render();
+  await flush();
+  releaseFirst();
+  await flush(15);
+  const lotto = calls.filter((call) => call.path === '/api/connectors/sync-now');
+  assert.equal(lotto.length, 2);
+  for (const pull of lotto) {
+    assert.equal(JSON.parse(pull.options.body).spaceId, 'prova');
+  }
+  // A lotto finito la vista segue lo spazio nuovo.
+  const reads = calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.ok(reads[reads.length - 1].path.includes('spaceId=nuova'));
+});
+
 test('hostile server text stays text, never markup', async () => {
   const hostile = '<script>alert(1)</script>';
   const { mount, view } = renderView({
