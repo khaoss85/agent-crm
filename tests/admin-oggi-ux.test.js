@@ -835,3 +835,35 @@ test('bab63e32acdb: the verification rows — «Namecheap Support» and «Ahrefs
   assert.deepEqual(inbox.rows.map((row) => row.id), ['c1'], 'only the person waits');
   assert.deepEqual(inbox.notifications.rows.map((row) => row.name), ['Ahrefs Site Audit', 'Namecheap Support']);
 });
+
+test('review #821 P2: a slow «Da rispondere» view never holds the agenda names or the actions back', async () => {
+  const viewRead = deferred();
+  const base = slowNamesClient();
+  base.names.resolve();
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {}, 'customer-data': {} } };
+      if (path.startsWith('/api/customer-data/customers?')) {
+        await viewRead.promise;
+        return repliesAnswer(3);
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: NOW }).then(() => { rendered = true; });
+  await flush();
+  assert.equal(rendered, false, 'the view is still reading');
+  assert.ok(mount.querySelector('section[data-oggi-section="agenda"]').textContent.includes('Fio Neri'), 'the agenda is named');
+  const actions = mount.findAll('button').filter((node) => node.getAttribute('data-triage') !== null);
+  assert.ok(actions.length > 0 && actions.every((node) => node.disabled === false), 'the actions are live');
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').querySelector('span[data-skeleton="true"]'), 'only «Da rispondere» waits');
+  viewRead.resolve();
+  await flush();
+  assert.equal(rendered, true);
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('3 in attesa'));
+});

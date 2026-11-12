@@ -52,3 +52,34 @@ test('bab63e32acdb: the server view no longer counts them as waiting, unless the
   assert.equal(awaitingReplyFor(answered).count, 1, 'a correspondent the team wrote to keeps waiting');
 });
 
+
+// Review Muse #821 (giro 1, testa bcbc99f).
+test('review #821 P1: a person who writes the word is never a footer — only a short, impersonal piece at the end of the body', () => {
+  const ask = (body) => isNotificationMessage({ channel: 'email', remoteHandle: 'lia.marroni@gmail.com', body }, { weWrote: false });
+  assert.equal(ask('Please help me unsubscribe from this charge'), false, 'first person');
+  assert.equal(ask('Buongiorno, vorrei disiscrivermi dal corso del martedì e passare al giovedì. Grazie, Lia'), false);
+  assert.equal(ask(`Ho letto la vostra newsletter dove c'era scritto unsubscribe in fondo, ma volevo chiedervi il listino. ${'Grazie ancora. '.repeat(40)}`), false,
+    'the word far from the end is not a footer');
+  assert.equal(ask('Ciao! Avete posto giovedì? Unsubscribe me from nothing, I just want to book'), false);
+  assert.equal(ask('New crawl: 400 internal URLs were analyzed. Health Score 87. Unsubscribe from this project'), true, 'the real footer');
+});
+
+test('review #821 P2: «never written to» is per sender, never per customer — one answered thread does not vouch for a newsletter', () => {
+  const row = (over) => ({ subjectResource: 'contact', subjectId: 'c1', channel: 'email', ...over });
+  const messages = [
+    row({ conversationId: 'a', direction: 'inbound', remoteHandle: 'lia.marroni@gmail.com', body: 'Ciao', occurredAt: '2026-11-10T09:00:00.000Z' }),
+    row({ conversationId: 'a', direction: 'outbound', remoteHandle: 'lia.marroni@gmail.com', body: 'Certo!', occurredAt: '2026-11-10T10:00:00.000Z' }),
+    row({ conversationId: 'b', direction: 'inbound', remoteHandle: 'news@palestra-amica.it', body: 'Le novità di novembre. Unsubscribe', occurredAt: '2026-11-11T09:00:00.000Z' }),
+  ];
+  assert.equal(awaitingReplyFor(messages).count, 0, 'thread A was answered, thread B is a newsletter from a stranger');
+  // Writing to the address anywhere makes it a correspondent.
+  const answeredElsewhere = [...messages, row({ conversationId: 'z', direction: 'outbound', remoteHandle: 'news@palestra-amica.it', body: 'Grazie', occurredAt: '2026-11-09T09:00:00.000Z' })];
+  assert.equal(awaitingReplyFor(answeredElsewhere).count, 1, 'a sender the team wrote to keeps waiting');
+});
+
+test('review #821 P2: mail from the space’s own mailboxes never waits in the server view', () => {
+  const own = { subjectResource: 'contact', subjectId: 'c1', channel: 'email', direction: 'inbound', conversationId: 'x',
+    remoteHandle: 'Studio <op@studio-esempio.it>', body: 'Copia del preventivo', occurredAt: '2026-11-12T09:00:00.000Z' };
+  assert.equal(awaitingReplyFor([own]).count, 1, 'without the mailbox list it is a person');
+  assert.equal(awaitingReplyFor([own], [], { ownAddresses: ['op@studio-esempio.it'] }).count, 0);
+});

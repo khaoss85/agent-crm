@@ -35,7 +35,7 @@ import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
-import { labelFromEmail, senderAddress } from './admin-sender-kind.js';
+import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
@@ -1095,14 +1095,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
   const waiting = [];
   const automated = [];
   // Who the team ever wrote to, among the messages read (backlog:bab63e32acdb):
-  // mass-mail footers count only for a sender nobody answered.
-  const wroteTo = new Set();
-  for (const message of messages) {
-    if (message?.direction !== 'outbound') continue;
-    const key = inboxSubjectKey(message);
-    if (key) wroteTo.add(key);
-    if (nonEmptyText(message?.conversationId)) wroteTo.add(`conversation:${message.conversationId}`);
-  }
+  // mass-mail footers count only for a sender nobody answered — per sender,
+  // the server view's rule (review Muse #821).
+  const correspondents = teamCorrespondents(messages);
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -1121,7 +1116,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     }, {
       ownAddresses,
       labels: [conversation?.subjectLabel],
-      weWrote: (subjectKey !== null && wroteTo.has(subjectKey)) || wroteTo.has(`conversation:${conversationId}`),
+      weWrote: teamWroteTo(correspondents, { ...message, remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle) }),
     });
     const handle = nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
@@ -1168,7 +1163,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
  * @param {unknown} profile
  * @returns {Array<string>}
  */
-export function ownMailboxes(profile) {
+export function ownMailboxes(profile, connections = []) {
   const out = [];
   const add = (value) => {
     if (typeof value === 'string' && value.includes('@') && !out.includes(value.trim().toLowerCase())) out.push(value.trim().toLowerCase());
@@ -1176,6 +1171,11 @@ export function ownMailboxes(profile) {
   const items = /** @type {any} */ (profile)?.connections?.items;
   if (Array.isArray(items)) for (const item of items) add(item?.account);
   add(/** @type {any} */ (profile)?.member?.email);
+  // The email connections' accounts too: the server view reads the same
+  // (review Muse #821), so Oggi and Clienti agree on what is the team's own.
+  for (const row of Array.isArray(connections) ? connections : []) {
+    if (row?.channel === 'email') add(row?.account);
+  }
   return out;
 }
 
@@ -1433,6 +1433,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     replies: null,
     /** The server view is still reading: its section and the recap wait in grey. */
     repliesPending: false,
+    /** The names of «Da rispondere» are still reading (server view or profiles). */
+    inboxNamesPending: false,
     /** Organization team (`GET /api/spine/memberships` items): names the agenda's «chi» line. */
     members: [],
     next: null,
@@ -1544,16 +1546,21 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       outcome.briefCalls = [];
     }
   })();
-  const [inboxNames, appointmentNames, members] = await Promise.all([
-    // The server view brings clean names; only without it are the names of
-    // the messages read read from the profiles.
-    repliesRead.then((replies) => {
-      outcome.replies = replies;
-      outcome.repliesPending = false;
-      return outcome.inboxAvailable && replies === null
-        ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile) })
-        : {};
-    }),
+  // The server view brings clean names; only without it are the names of the
+  // messages read read from the profiles. Its own branch (review Muse #821):
+  // a slow view never holds the agenda names or the actions back.
+  outcome.inboxNamesPending = true;
+  let repliesSettled = false;
+  const repliesBranch = repliesRead.then(async (replies) => {
+    outcome.replies = replies;
+    outcome.repliesPending = false;
+    outcome.inboxNames = outcome.inboxAvailable && replies === null
+      ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
+      : {};
+    outcome.inboxNamesPending = false;
+    repliesSettled = true;
+  });
+  const [appointmentNames, members] = await Promise.all([
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
     // The roster names the member holding each slot: read only when a slot
     // names one, fail-soft (the line then falls back to the notes cue).
@@ -1564,18 +1571,22 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       )
       : Promise.resolve([]),
   ]);
-  outcome.inboxNames = inboxNames;
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
-  // the call recap may still be reading.
-  if (typeof onNames === 'function') {
+  // the call recap and «Da rispondere» may still be reading.
+  const named = () => {
+    if (typeof onNames !== 'function') return;
     try {
       onNames({ ...outcome, pending: false, briefPending: true });
     } catch (error) {
       noteReadFailure('paint', error);
     }
-  }
+  };
+  named();
+  const answeredLate = !repliesSettled;
+  await repliesBranch;
+  if (answeredLate) named();
   await briefRead;
   return outcome;
 }
@@ -2438,8 +2449,8 @@ export function createOggiView(deps) {
             conversations: last.inboxConversations,
             names: last.inboxNames ?? {},
             now: lastMeta.now,
-            pendingNames,
-            ownAddresses: ownMailboxes(last.profile),
+            pendingNames: pendingNames || last.inboxNamesPending === true,
+            ownAddresses: ownMailboxes(last.profile, last.connections),
           }),
         }
         : { available: false, total: 0, rows: [] };

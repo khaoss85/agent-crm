@@ -95,6 +95,63 @@ const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission
  */
 const BULK_FOOTER_WORDS = /\b(?:unsubscribe|view (?:it )?in (?:your )?browser|manage (?:your )?(?:email )?preferences|annulla (?:l[\x27\u2019])?iscrizione|disiscriviti|cancella (?:la tua |l[\x27\u2019])?iscrizione|visualizza (?:nel|sul|in) (?:tuo )?browser|gestisci le preferenze)\b/i;
 
+/** How far from the end of a body a mass-mail footer is looked for. */
+const FOOTER_REGION = 400;
+
+/** Pieces of a footer: lines, sentences, separators and the long blank runs of preheader padding. */
+const FOOTER_PIECES = /[\n\r.!?|\u2022\u00b7]+|[\s\u2007\u00a0\u200b]{3,}/;
+
+/** A person asking, not a template footer (review Muse #821: «Please help me unsubscribe from this charge»). */
+const FIRST_PERSON = /\b(?:me|my|mine|please|help|can you|could you|i am|i want|i need|i would|vorrei|voglio|mi|mio|mia|miei|per favore|aiut\w*|potete|potreste|puoi|può)\b/i;
+
+/**
+ * Whether a body ends like mass mail (review Muse #821, P1): a short piece
+ * near its end that is a footer link («Unsubscribe from this project»,
+ * «View in browser», «Disiscriviti»), never a person's sentence that only
+ * contains the word. Short pieces only, the end of the body only, and a
+ * piece in the first person is a person asking.
+ * @param {unknown} body
+ */
+export function hasBulkFooter(body) {
+  if (typeof body !== 'string' || body === '') return false;
+  return body.slice(-FOOTER_REGION).split(FOOTER_PIECES).some((piece) => {
+    const text = piece.trim();
+    return text !== '' && text.length <= 60 && BULK_FOOTER_WORDS.test(text) && !FIRST_PERSON.test(text);
+  });
+}
+
+/**
+ * Who the team ever wrote to among some messages: their conversations and
+ * the addresses outbound messages went to (review Muse #821: per sender,
+ * never per customer — one answered thread must not vouch for another
+ * sender's newsletter).
+ * @param {Iterable<any>} messages
+ * @returns {{ conversations: Set<string>, addresses: Set<string> }}
+ */
+export function teamCorrespondents(messages) {
+  const conversations = new Set();
+  const addresses = new Set();
+  for (const row of messages ?? []) {
+    if (row?.direction !== 'outbound' || row?.entry === 'call') continue;
+    if (row.conversationId !== undefined && row.conversationId !== null && row.conversationId !== '') conversations.add(String(row.conversationId));
+    const address = senderAddress(row.remoteHandle);
+    if (address !== null) addresses.add(address);
+  }
+  return { conversations, addresses };
+}
+
+/**
+ * Whether the team ever wrote to the sender of one inbound message: in its
+ * conversation, or to its address anywhere.
+ * @param {{ conversations: Set<string>, addresses: Set<string> }} correspondents
+ * @param {any} message
+ */
+export function teamWroteTo(correspondents, message) {
+  if (message?.conversationId != null && correspondents.conversations.has(String(message.conversationId))) return true;
+  const address = senderAddress(message?.remoteHandle);
+  return address !== null && correspondents.addresses.has(address);
+}
+
 /** Wrapping punctuation around a word of a display name. */
 const WRAPPING = /^[([<\x22\x27]+|[)\]>\x22\x27,;:]+$/g;
 
@@ -208,7 +265,7 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [],
   const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
   if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
   if (channel !== 'email') return false;
-  if (weWrote === false && typeof message.body === 'string' && BULK_FOOTER_WORDS.test(message.body)) return true;
+  if (weWrote === false && hasBulkFooter(message.body)) return true;
   if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
   const address = senderAddress(message.remoteHandle);
   if (address === null) return false;

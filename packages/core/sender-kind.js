@@ -18,6 +18,7 @@ export {
   RECEIPT_LOCALS,
   SECOND_LEVEL_SUFFIXES,
   SENDING_SUBDOMAINS,
+  hasBulkFooter,
   isAutomatedAddress,
   isAutomatedSender,
   isNotificationMessage,
@@ -25,4 +26,6 @@ export {
   labelFromEmail,
   registrableDomain,
   senderAddress,
+  teamCorrespondents,
+  teamWroteTo,
 } from './src/sender-kind.js';

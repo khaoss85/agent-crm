@@ -166,3 +166,17 @@ test('c2bf6b206d96 (pin #543): a space with no customer answers da-rispondere 20
   assert.equal(page.totalIsExact, true);
   assert.equal(page.views.find((view) => view.id === 'da-rispondere').count, 0, 'an exact zero, with its pill');
 });
+
+test('review #821 P2: the view reads the space’s own mailboxes from its email connections', async () => {
+  const modules = fakeModules({
+    ...SCENE,
+    messages: [...SCENE.messages, msg({ subjectId: 'c4', conversationId: 'mail:own', channel: 'email', remoteHandle: 'op@palestra-esempio.it', occurredAt: at(9), body: 'Copia' })],
+  });
+  const withConnections = { get: (name) => (name === 'channel-connection'
+    ? { service: { listWhere: async (filters) => [{ channel: 'email', account: 'op@palestra-esempio.it', status: 'active' }].filter((row) => !filters.channel || row.channel === filters.channel) } }
+    : modules.get(name)) };
+  const page = await listCustomerRecords({ modules: withConnections, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.ok(!page.items.some((item) => item.name === 'Lia Marroni'), 'the copy from the own mailbox does not make Lia wait');
+  const without = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.ok(without.items.some((item) => item.name === 'Lia Marroni'), 'without the connection it would');
+});

@@ -970,6 +970,21 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
   // closed state and label; an unreadable conversation module reads none.
   const conversations = await batched('conversation');
+  // The space's own mailboxes (review Muse #821): the accounts of its email
+  // connections, read straight at the record module like the reads above.
+  // Mail from them is the team's own, never a customer waiting.
+  const ownAddresses = await (async () => {
+    const service = optional(modules, 'channel-connection');
+    if (!service) return [];
+    try {
+      const rows = typeof service.listWhere === 'function'
+        ? await service.listWhere({ channel: 'email' })
+        : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
+      return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
+    } catch {
+      return [];
+    }
+  })();
   // «Da leggere» (backlog:9e003582): one member's read watermarks over
   // every conversation, read once for the whole page. The member is always
   // the request actor — the query names no member — and without one (or
@@ -1216,7 +1231,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // «Da rispondere»: from the same message rows, no new query. Unreadable
     // messages shape nulls, never «nobody waits».
     const myAwaiting = repliesReadable
-      ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine))
+      ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine), { ownAddresses })
       : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
