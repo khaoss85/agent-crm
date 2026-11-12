@@ -904,6 +904,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       { subjectResource: 'company', subjectId: [...refs.companyIds] },
       ...extraShapes,
     ].filter((shape) => Array.isArray(shape.subjectId) ? shape.subjectId.length > 0 : true);
+    // No customer in the scan: no row can belong to one, so the exact
+    // answer is the empty one (pin #543, 12/11: an empty space fell through
+    // to the bounded page below, read as partial, and da-rispondere refused
+    // with a 409 the /bo counted as a failed read).
+    if (shapes.length === 0) return { rows: [], readable: true, complete: true };
     if (typeof service.listWhere === 'function') {
       const byId = new Map();
       let exact = false;

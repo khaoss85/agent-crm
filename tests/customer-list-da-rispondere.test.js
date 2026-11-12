@@ -150,3 +150,19 @@ test('review #795 P2: a partial or failing conversation read refuses the view an
   const none = { modules: fakeModules(SCENE), core: {}, names: { identity: 'external-identity' } };
   assert.equal((await listCustomerRecords(none, { vista: 'da-rispondere' })).total, 2);
 });
+
+// Pin of the pilot #543 (12/11): the «visita completa al /bo» opens Oggi on a
+// space with no customer yet. The scan held no subject, every read fell
+// through to the bounded page, read as partial, and da-rispondere answered
+// 409 — the /bo counted a failed read. No customer, no row can belong to
+// one: the exact answer is the empty one.
+test('c2bf6b206d96 (pin #543): a space with no customer answers da-rispondere 200, empty and exact — never 409', async () => {
+  const pageOf = (rows) => ({ listWhere: async () => rows, list: async () => rows });
+  const strangers = [msg({ subjectId: 'nobody', conversationId: 'wa:x' })];
+  const modules = fakeModules({ contacts: [], companies: [], messages: [] });
+  const empty = { get: (name) => (name === 'interaction-message' || name === 'conversation' ? { service: pageOf(name === 'interaction-message' ? strangers : []) } : modules.get(name)) };
+  const page = await listCustomerRecords({ modules: empty, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.equal(page.total, 0);
+  assert.equal(page.totalIsExact, true);
+  assert.equal(page.views.find((view) => view.id === 'da-rispondere').count, 0, 'an exact zero, with its pill');
+});
