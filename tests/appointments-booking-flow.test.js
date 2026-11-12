@@ -300,28 +300,46 @@ test('propose fails fast on a held slot, before reading the switch', async () =>
   );
 });
 
+/** A composed calendar-sync handle answering fixed owner blocks, like the deployment store. */
+const storeWith = (blocks) => ({
+  async listOwnerBlocks() {
+    return blocks;
+  },
+});
+const failingStore = () => ({
+  async listOwnerBlocks() {
+    const error = new Error('sync store down');
+    error.code = 'SYNC_STORE_DOWN';
+    throw error;
+  },
+});
+const HELD = [{
+  teamMemberId: 'coach-guido',
+  startsAt: '2026-10-20T17:00:00.000Z',
+  endsAt: '2026-10-20T18:00:00.000Z',
+  title: 'test accordo',
+}];
+const suggestWindow = {
+  teamMemberIds: ['coach-guido'],
+  from: '2026-10-20T16:00:00.000Z',
+  to: '2026-10-20T19:00:00.000Z',
+  slotMinutes: 60,
+};
+const suggestWith = (service, calendarSync) => suggestSlots(
+  { modules: modulesFor(service), calendarSync }, suggestWindow,
+);
+
 test('an owner block with no guest closes its slot: no suggestion, no proposal (backlog:af190faf)', async () => {
   const service = fakeAppointments();
-  const busyBlocks = [{
-    teamMemberId: 'coach-guido',
-    startsAt: '2026-10-20T17:00:00.000Z',
-    endsAt: '2026-10-20T18:00:00.000Z',
-    title: 'test accordo',
-  }];
-  const week = await suggestSlots({ modules: modulesFor(service) }, {
-    teamMemberIds: ['coach-guido'],
-    from: '2026-10-20T16:00:00.000Z',
-    to: '2026-10-20T19:00:00.000Z',
-    slotMinutes: 60,
-    busyBlocks,
-  });
+  const calendarSync = storeWith(HELD);
+  const week = await suggestWith(service, calendarSync);
   assert.deepEqual(
     week.members[0].slots.map((slot) => slot.startsAt),
     ['2026-10-20T16:00:00.000Z', '2026-10-20T18:00:00.000Z'],
   );
-  const cap = capabilityFor({ service, gate: allowGate() });
+  const cap = capabilityFor({ service, gate: allowGate(), calendarSync });
   await assert.rejects(
-    cap.proposeBooking({ ...booking(), spaceId: SPACE, busyBlocks }),
+    cap.proposeBooking({ ...booking(), spaceId: SPACE }),
     (error) => {
       assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
       assert.equal(error.status, 409);
@@ -334,55 +352,136 @@ test('an owner block with no guest closes its slot: no suggestion, no proposal (
   assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
 });
 
-test('a malformed owner block fails every path closed with the same 400 (backlog:af190faf)', async () => {
+test('omitting or forging the request blocks changes nothing: the store decides (backlog:af190faf)', async () => {
+  for (const extra of [{}, { busyBlocks: [] }, { busyBlocks: HELD }, { busyBlocks: 'forged' }]) {
+    const service = fakeAppointments();
+    const calendarSync = storeWith(HELD);
+    const cap = capabilityFor({ service, gate: allowGate(), calendarSync });
+    await assert.rejects(
+      cap.proposeBooking({ ...booking(), spaceId: SPACE, ...extra }),
+      (error) => error.code === 'APPOINTMENTS_OVERLAP',
+      `held slot refused with request ${JSON.stringify(extra)}`,
+    );
+    assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
+  }
+  const open = fakeAppointments();
+  const openCap = capabilityFor({ service: open, gate: allowGate(), calendarSync: storeWith([]) });
+  const proposed = await openCap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'confirm-required', 'a forged empty store holds nothing back');
+});
+
+test('a malformed store block fails every path closed with the same 400 (backlog:af190faf)', async () => {
   const bad = [
     [null],
     [{ startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' }],
     [{ teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T18:00:00.000Z' }],
     [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T18:00:00.000Z', endsAt: '2026-10-20T17:00:00.000Z' }],
     [{ teamMemberId: 123, startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', status: 'cancelled' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', id: 'x-1' }],
   ];
-  for (const busyBlocks of bad) {
+  for (const blocks of bad) {
     const service = fakeAppointments();
-    const cap = capabilityFor({ service, gate: allowGate() });
+    const calendarSync = storeWith(blocks);
+    const cap = capabilityFor({ service, gate: allowGate(), calendarSync });
     await assert.rejects(
-      cap.proposeBooking({ ...booking(), spaceId: SPACE, busyBlocks }),
+      cap.proposeBooking({ ...booking(), spaceId: SPACE }),
       (error) => {
         assert.equal(error.code, 'VALIDATION_ERROR');
         assert.equal(error.status, 400);
         assert.equal(error.details?.field, 'busyBlocks');
         return true;
       },
-      `propose rejects ${JSON.stringify(busyBlocks)}`,
+      `propose rejects ${JSON.stringify(blocks)}`,
     );
     await assert.rejects(
-      suggestSlots({ modules: modulesFor(service) }, {
-        teamMemberIds: ['coach-guido'],
-        from: '2026-10-20T16:00:00.000Z',
-        to: '2026-10-20T19:00:00.000Z',
-        slotMinutes: 60,
-        busyBlocks,
-      }),
+      suggestWith(service, calendarSync),
       (error) => error.code === 'VALIDATION_ERROR' && error.details?.field === 'busyBlocks',
-      `suggest rejects ${JSON.stringify(busyBlocks)}`,
+      `suggest rejects ${JSON.stringify(blocks)}`,
     );
     assert.equal(service.rows.length, 0, 'no appointment row for a refused block');
   }
 });
 
+test('a silent store fails every write closed, never booked over unknown state (backlog:af190faf)', async () => {
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: allowGate(), calendarSync: failingStore() });
+  await assert.rejects(
+    cap.proposeBooking({ ...booking(), spaceId: SPACE }),
+    (error) => error.code === 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE' && error.status === 503,
+  );
+  await assert.rejects(
+    suggestWith(service, failingStore()),
+    (error) => error.code === 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE' && error.status === 503,
+  );
+  assert.equal(service.rows.length, 0, 'no appointment row when the store is silent');
+});
+
+test('a padded store identity still holds its member on every write path (backlog:af190faf)', async () => {
+  const service = fakeAppointments();
+  const calendarSync = storeWith([{
+    teamMemberId: ' coach-guido ',
+    startsAt: '2026-10-20T17:00:00.000Z',
+    endsAt: '2026-10-20T18:00:00.000Z',
+  }]);
+  const week = await suggestWith(service, calendarSync);
+  assert.deepEqual(
+    week.members[0].slots.map((slot) => slot.startsAt),
+    ['2026-10-20T16:00:00.000Z', '2026-10-20T18:00:00.000Z'],
+  );
+  const cap = capabilityFor({ service, gate: allowGate(), calendarSync });
+  await assert.rejects(
+    cap.proposeBooking({ ...booking(), spaceId: SPACE }),
+    (error) => error.code === 'APPOINTMENTS_OVERLAP',
+  );
+});
+
+test('confirm, link and reschedule read the same store: a held slot refuses on every write (backlog:af190faf)', async () => {
+  const calendarSync = storeWith(HELD);
+  const heldAt = { startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' };
+  const bookCap = () => capabilityFor({ service: fakeAppointments(), gate: allowGate(), calendarSync });
+  await assert.rejects(
+    bookCap().confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.doesNotMatch(error.message, /test accordo/);
+      return true;
+    },
+    'confirm over a held slot refuses without the owner title',
+  );
+  await assert.rejects(
+    bookCap().bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN, ...heldAt }),
+    (error) => error.code === 'APPOINTMENTS_OVERLAP',
+    'link booking over a held slot refuses',
+  );
+  const seeded = fakeAppointments([{
+    sourceKey: 'gym:move:1',
+    subjectResource: 'contact',
+    subjectId: 'c-presti',
+    teamMemberId: 'coach-guido',
+    startsAt: '2026-10-20T16:00:00.000Z',
+    endsAt: '2026-10-20T17:00:00.000Z',
+    status: 'booked',
+  }]);
+  const moveCap = capabilityFor({ service: seeded, gate: allowGate(), calendarSync });
+  await assert.rejects(
+    moveCap.rescheduleAppointment({ sourceKey: 'gym:move:1', ...heldAt }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.doesNotMatch(error.message, /test accordo/);
+      return true;
+    },
+    'reschedule into a held slot refuses without the owner title',
+  );
+});
+
 test('a block of another member never closes this member’s slot', async () => {
   const service = fakeAppointments();
-  const week = await suggestSlots({ modules: modulesFor(service) }, {
-    teamMemberIds: ['coach-guido'],
-    from: '2026-10-20T16:00:00.000Z',
-    to: '2026-10-20T19:00:00.000Z',
-    slotMinutes: 60,
-    busyBlocks: [{
-      teamMemberId: 'coach-maria',
-      startsAt: '2026-10-20T17:00:00.000Z',
-      endsAt: '2026-10-20T18:00:00.000Z',
-    }],
-  });
+  const week = await suggestWith(service, storeWith([{
+    teamMemberId: 'coach-maria',
+    startsAt: '2026-10-20T17:00:00.000Z',
+    endsAt: '2026-10-20T18:00:00.000Z',
+  }]));
   assert.deepEqual(
     week.members[0].slots.map((slot) => slot.startsAt),
     ['2026-10-20T16:00:00.000Z', '2026-10-20T17:00:00.000Z', '2026-10-20T18:00:00.000Z'],

@@ -168,54 +168,43 @@ test('phrase drafts through the operation', async () => {
   });
 });
 
-test('team-week and suggest-slots forward the owner busy blocks (backlog:af190faf)', async () => {
+test('team-week and suggest-slots never take owner blocks from the query (backlog:af190faf)', async () => {
   const app = stubApp();
-  const blocks = [{ teamMemberId: 'marco', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' }];
-  const param = encodeURIComponent(JSON.stringify(blocks));
+  const forged = encodeURIComponent(JSON.stringify([
+    { teamMemberId: 'marco', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', title: 'terapia privata' },
+  ]));
   await withServer(app, async (base) => {
     const week = await fetch(
-      `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z&busyBlocks=${param}`,
+      `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z&busyBlocks=${forged}`,
     );
     assert.equal(week.status, 200);
-    assert.deepEqual(app.calls.find((call) => call.method === 'readAppointmentTeamWeek').input.busyBlocks, blocks);
+    assert.ok(!('busyBlocks' in app.calls.find((call) => call.method === 'readAppointmentTeamWeek').input));
     const suggest = await fetch(
-      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2026-10-22T00:00:00.000Z&to=2026-10-23T00:00:00.000Z&busyBlocks=${param}`,
+      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2026-10-22T00:00:00.000Z&to=2026-10-23T00:00:00.000Z&busyBlocks=${forged}`,
     );
     assert.equal(suggest.status, 200);
-    assert.deepEqual(app.calls.find((call) => call.method === 'suggestAppointmentSlots').input.busyBlocks, blocks);
-  });
-});
-
-test('team-week without busyBlocks omits them, a malformed value fails closed (backlog:af190faf)', async () => {
-  const app = stubApp();
-  await withServer(app, async (base) => {
-    const plain = await fetch(
-      `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z`,
-    );
-    assert.equal(plain.status, 200);
-    assert.ok(!('busyBlocks' in app.calls.find((call) => call.method === 'readAppointmentTeamWeek').input));
+    assert.ok(!('busyBlocks' in app.calls.find((call) => call.method === 'suggestAppointmentSlots').input));
     const broken = await fetch(
       `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z&busyBlocks=not-json`,
     );
-    assert.equal(broken.status, 400);
-    const scalar = await fetch(
-      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2026-10-22T00:00:00.000Z&to=2026-10-23T00:00:00.000Z&busyBlocks=${encodeURIComponent('{"a":1}')}`,
-    );
-    assert.equal(scalar.status, 400);
+    assert.equal(broken.status, 200, 'a forged query value is ignored, never parsed');
   });
 });
 
-test('the real team-week path shows an injected owner block as Occupato (backlog:af190faf)', async () => {
+test('the real team-week path shows a store owner block as Occupato (backlog:af190faf)', async () => {
+  const blocks = [{ teamMemberId: 'marco', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', title: 'test accordo' }];
   const app = stubApp({
     async readAppointmentTeamWeek(input) {
       const { readTeamWeek } = await import('../packages/appointments/src/appointments.js');
-      return readTeamWeek({ appointments: { listWhere: async () => [] } }, input);
+      return readTeamWeek({
+        appointments: { listWhere: async () => [] },
+        calendarSync: { async listOwnerBlocks() { return blocks; } },
+      }, input);
     },
   });
-  const blocks = [{ teamMemberId: 'marco', startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z', title: 'test accordo' }];
   await withServer(app, async (base) => {
     const response = await fetch(
-      `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z&busyBlocks=${encodeURIComponent(JSON.stringify(blocks))}`,
+      `${base}/api/appointments/team-week?teamMemberIds=marco&from=2026-10-19T00:00:00.000Z&to=2026-10-26T00:00:00.000Z`,
     );
     assert.equal(response.status, 200);
     const week = await response.json();
@@ -225,17 +214,20 @@ test('the real team-week path shows an injected owner block as Occupato (backlog
   });
 });
 
-test('the real suggest path never offers a step an injected owner block holds (backlog:af190faf)', async () => {
+test('the real suggest path never offers a step the store holds (backlog:af190faf)', async () => {
+  const blocks = [{ teamMemberId: 'marco', startsAt: '2099-10-20T17:00:00.000Z', endsAt: '2099-10-20T18:00:00.000Z' }];
   const app = stubApp({
     async suggestAppointmentSlots(input) {
       const { suggestSlots } = await import('../packages/appointments/src/appointments.js');
-      return suggestSlots({ modules: { get: () => ({ service: { listWhere: async () => [] } }) } }, input);
+      return suggestSlots({
+        modules: { get: () => ({ service: { listWhere: async () => [] } }) },
+        calendarSync: { async listOwnerBlocks() { return blocks; } },
+      }, input);
     },
   });
-  const blocks = [{ teamMemberId: 'marco', startsAt: '2099-10-20T17:00:00.000Z', endsAt: '2099-10-20T18:00:00.000Z' }];
   await withServer(app, async (base) => {
     const response = await fetch(
-      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2099-10-20T16:00:00.000Z&to=2099-10-20T19:00:00.000Z&slotMinutes=60&busyBlocks=${encodeURIComponent(JSON.stringify(blocks))}`,
+      `${base}/api/appointments/suggest-slots?teamMemberIds=marco&from=2099-10-20T16:00:00.000Z&to=2099-10-20T19:00:00.000Z&slotMinutes=60`,
     );
     assert.equal(response.status, 200);
     const suggested = await response.json();

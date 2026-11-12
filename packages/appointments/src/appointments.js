@@ -428,8 +428,8 @@ export function validateAppointmentRequest(request) {
  * no private titles in the URL. The deployment that wires the handle (its
  * own calendar-sync store) gets enforcement; a composition without the
  * handle keeps main behaviour (no blocks). A wired store that cannot be
- * read fails the call closed: the error propagates, never an empty block
- * list over unknown state.
+ * read fails the call closed (503 `APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE`,
+ * cause kept): never an empty block list over unknown state.
  *
  * Every block is proven up front, on every path (week read, suggestion,
  * proposal, booking): exactly `{ teamMemberId, startsAt, endsAt, title? }` —
@@ -449,7 +449,21 @@ export function validateAppointmentRequest(request) {
  */
 async function ownerBlocksFor(calendarSync, teamMemberId, fromIso, toIso) {
   if (!calendarSync || typeof calendarSync.listOwnerBlocks !== 'function') return [];
-  const found = await calendarSync.listOwnerBlocks({ teamMemberId, from: fromIso, to: toIso });
+  let found;
+  try {
+    found = await calendarSync.listOwnerBlocks({ teamMemberId, from: fromIso, to: toIso });
+  } catch (error) {
+    throw new AppError(
+      'The owner-hold store did not answer: the slot is refused instead of booked over unknown state.',
+      { code: 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE', status: 503, cause: error },
+    );
+  }
+  if (found === undefined || found === null) {
+    throw new AppError(
+      'The owner-hold store answered nothing: the slot is refused instead of booked over unknown state.',
+      { code: 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE', status: 503 },
+    );
+  }
   return proveOwnerBlocks(found).filter((block) => block.teamMemberId === teamMemberId);
 }
 
