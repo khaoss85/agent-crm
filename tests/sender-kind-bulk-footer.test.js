@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isNotificationMessage } from '../packages/core/sender-kind.js';
+import { isNotificationMessage, teamCorrespondents } from '../packages/core/sender-kind.js';
 import { awaitingReplyFor } from '../packages/customer-data/src/customers.js';
 
 /**
@@ -82,4 +82,27 @@ test('review #821 P2: mail from the space’s own mailboxes never waits in the s
     remoteHandle: 'Studio <op@studio-esempio.it>', body: 'Copia del preventivo', occurredAt: '2026-11-12T09:00:00.000Z' };
   assert.equal(awaitingReplyFor([own]).count, 1, 'without the mailbox list it is a person');
   assert.equal(awaitingReplyFor([own], [], { ownAddresses: ['op@studio-esempio.it'] }).count, 0);
+});
+
+// Review Muse #821 (giro 2, testa c644531).
+test('review #821 giro 2 P1: a body cut at the 2000-character fence is read whole, and the preheader link at the top counts', () => {
+  const stranger = (body) => isNotificationMessage({ channel: 'email', remoteHandle: 'news@palestra-amica.it', body }, { weWrote: false });
+  const filler = 'Le novità del mese: nuovi corsi, nuovi orari e tante offerte per te e per i tuoi amici. ';
+  const cut = (head, tail) => `${head}${filler.repeat(40)}`.slice(0, 2000 - tail.length) + tail;
+  assert.equal(stranger(cut('', '')), false, 'no footer kept: nothing to say');
+  assert.equal(stranger(cut('Novembre in palestra. Unsubscribe from this list. ', '')), true, 'a footer kept anywhere in a cut body');
+  assert.equal(stranger(`View in browser\n${filler.repeat(5)}Ciao!`), true, 'the preheader link at the top of a whole body');
+  assert.equal(stranger(cut('Ciao, vorrei sapere come fare per unsubscribe dalla lista dei corsi del martedì. ', '')), false,
+    'a person asking, even in a cut body');
+});
+
+test('review #821 giro 2 P1: «never written to» spans the whole scan, like Oggi — a sender answered for one customer is a correspondent for all', () => {
+  const row = (over) => ({ channel: 'email', subjectResource: 'contact', ...over });
+  const scan = [
+    row({ subjectId: 'a', conversationId: 'z', direction: 'outbound', remoteHandle: 'news@palestra-amica.it', body: 'Grazie', occurredAt: '2026-11-09T09:00:00.000Z' }),
+    row({ subjectId: 'b', conversationId: 'b1', direction: 'inbound', remoteHandle: 'news@palestra-amica.it', body: 'Le novità. Unsubscribe', occurredAt: '2026-11-11T09:00:00.000Z' }),
+  ];
+  const customerB = scan.filter((message) => message.subjectId === 'b');
+  assert.equal(awaitingReplyFor(customerB).count, 0, 'seen alone, B’s newsletter is from a stranger');
+  assert.equal(awaitingReplyFor(customerB, [], { correspondents: teamCorrespondents(scan) }).count, 1, 'over the scan, the team wrote to that sender');
 });

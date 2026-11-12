@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { teamCorrespondents } from '../../core/sender-kind.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
@@ -981,10 +982,17 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         ? await service.listWhere({ channel: 'email' })
         : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
       return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
-    } catch {
+    } catch (error) {
+      // Degraded, never silent (review Muse #821): the cause, never data.
+      console.error(
+        `[accordo] customer own mailboxes unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+      );
       return [];
     }
   })();
+  // Who the team ever wrote to, over every message of the scan (review
+  // Muse #821 giro 2): one scope for every row, like Oggi over its read.
+  const correspondents = teamCorrespondents(messages.rows);
   // «Da leggere» (backlog:9e003582): one member's read watermarks over
   // every conversation, read once for the whole page. The member is always
   // the request actor — the query names no member — and without one (or
@@ -1231,7 +1239,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // «Da rispondere»: from the same message rows, no new query. Unreadable
     // messages shape nulls, never «nobody waits».
     const myAwaiting = repliesReadable
-      ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine), { ownAddresses })
+      ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine), { ownAddresses, correspondents })
       : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only

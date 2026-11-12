@@ -136,10 +136,13 @@ export const CUSTOMER_VIEWS = Object.freeze([
  * display bound), so the count never stops at a page.
  * @param {Array<any>} messages the customer's interaction-message rows
  * @param {Array<any>} [conversations] the customer's conversation rows (closed state, labels)
- * @param {{ ownAddresses?: Iterable<unknown> }} [context] the space's own mailboxes: mail from them never waits
+ * @param {{ ownAddresses?: Iterable<unknown>, correspondents?: { conversations: Set<string>, addresses: Set<string> } }} [context]
+ *   the space's own mailboxes (mail from them never waits) and who the team
+ *   ever wrote to across the scan (`teamCorrespondents`; this customer's
+ *   messages when absent)
  * @returns {{ count: number, lastAt: string | null, text: string | null, subject: string | null, channel: string | null }}
  */
-export function awaitingReplyFor(messages, conversations = [], { ownAddresses = [] } = {}) {
+export function awaitingReplyFor(messages, conversations = [], { ownAddresses = [], correspondents: scanned = null } = {}) {
   const byConversation = new Map();
   for (const row of Array.isArray(conversations) ? conversations : []) {
     if (row?.id !== undefined && row?.id !== null) byConversation.set(String(row.id), row);
@@ -156,7 +159,7 @@ export function awaitingReplyFor(messages, conversations = [], { ownAddresses = 
   }
   // Mass-mail footers count only for a sender the team never wrote to
   // (backlog:bab63e32acdb) — per sender, never per customer (review Muse #821).
-  const correspondents = teamCorrespondents(Array.isArray(messages) ? messages : []);
+  const correspondents = scanned ?? teamCorrespondents(Array.isArray(messages) ? messages : []);
   let count = 0;
   let newest = null;
   for (const { time, row } of latest.values()) {
