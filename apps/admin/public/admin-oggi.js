@@ -1232,18 +1232,24 @@ function noteReadFailure(scope, error) {
 }
 
 /**
+ * One bounded page of a module, with the evidence when the page is not the
+ * whole list (backlog:803d127c4458): one row past OGGI_READ_LIMIT, so
+ * exactly the limit is a complete read, never a silent cut. Callers render
+ * the `capped` note for every day list they show — Oggi never cuts a list
+ * in silence.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} module
  * @param {Record<string, string>} [filters]
+ * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
  */
 async function readModulePage(client, module, filters = {}) {
-  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT) });
+  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
   for (const [field, value] of Object.entries(filters)) {
     if (value !== undefined && value !== null) query.set(`filter.${field}`, String(value));
   }
   const answer = await client.request(`/api/modules/${module}/records?${query.toString()}`);
-  if (!Array.isArray(answer?.items)) return [];
-  return answer.items;
+  const items = Array.isArray(answer?.items) ? answer.items : [];
+  return { rows: items.slice(0, OGGI_READ_LIMIT), capped: items.length > OGGI_READ_LIMIT };
 }
 
 /**
@@ -1253,16 +1259,39 @@ async function readModulePage(client, module, filters = {}) {
  * the page, like the Agenti read (review #661 P3): `capped` carries the
  * evidence that something was left out, so exactly OGGI_READ_LIMIT rows
  * is not capped.
+ * Rows stored before spaces existed carry no spaceId and the server can
+ * only match equality, so a second unfiltered page is read and only the
+ * rows without spaceId are kept: they count for the active space, like on
+ * main. Other spaces' rows from that page are dropped, never rendered.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} space
  * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
  */
 async function readSpaceConnections(client, space) {
-  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
-  query.set('filter.spaceId', space);
-  const answer = await client.request(`/api/modules/channel-connection/records?${query.toString()}`);
-  const items = Array.isArray(answer?.items) ? answer.items : [];
-  return { rows: items.slice(0, OGGI_READ_LIMIT), capped: items.length > OGGI_READ_LIMIT };
+  const scopedQuery = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
+  scopedQuery.set('filter.spaceId', space);
+  const scopedAnswer = await client.request(`/api/modules/channel-connection/records?${scopedQuery.toString()}`);
+  const scopedItems = Array.isArray(scopedAnswer?.items) ? scopedAnswer.items : [];
+  let legacyItems = [];
+  let legacyPageFull = false;
+  try {
+    const legacyQuery = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
+    const legacyAnswer = await client.request(`/api/modules/channel-connection/records?${legacyQuery.toString()}`);
+    const legacyPage = Array.isArray(legacyAnswer?.items) ? legacyAnswer.items : [];
+    legacyPageFull = legacyPage.length > OGGI_READ_LIMIT;
+    legacyItems = legacyPage.filter((row) => row != null
+      && (row.spaceId === undefined || row.spaceId === null || String(row.spaceId).trim() === ''));
+  } catch (error) {
+    // A refused legacy page never hides the scoped rows: the strip may
+    // undercount old connections, but the cap note already discloses a
+    // partial read and the failure is named on the console.
+    noteReadFailure('channel-connection-legacy', error);
+  }
+  const merged = [...scopedItems, ...legacyItems];
+  return {
+    rows: merged.slice(0, OGGI_READ_LIMIT),
+    capped: scopedItems.length > OGGI_READ_LIMIT || legacyPageFull || merged.length > OGGI_READ_LIMIT,
+  };
 }
 
 /**
@@ -1340,6 +1369,9 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     appointmentsAvailable: false,
     channelsAvailable: false,
     channelsPartial: false,
+    tasksPartial: false,
+    appointmentsPartial: false,
+    inboxPartial: false,
     interactionsAvailable: false,
     tasks: [],
     appointments: [],
@@ -1376,9 +1408,9 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // The profile read started already: nothing waits on it.
     return outcome;
   }
-  /** One fail-soft module read: the rows, or null after naming the failure. */
+  /** One fail-soft module read: the page ({ rows, capped }), or null after naming the failure. */
   const page = (scope, module, filters) => readModulePage(client, module, filters).then(
-    (rows) => rows,
+    (paged) => paged,
     (error) => { noteReadFailure(scope, error); return null; },
   );
   const skip = Promise.resolve(undefined);
@@ -1392,7 +1424,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('channel-connection', error); return null; },
     )
     : skip;
-  const [tasks, appointments, connectionsPage, profile, messages, conversations] = await Promise.all([
+  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -1404,12 +1436,14 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
   ]);
-  if (Array.isArray(tasks)) {
-    outcome.tasks = tasks;
+  if (tasksPage != null) {
+    outcome.tasks = tasksPage.rows;
+    outcome.tasksPartial = tasksPage.capped === true;
     outcome.workAvailable = true;
   }
-  if (Array.isArray(appointments)) {
-    outcome.appointments = appointments;
+  if (appointmentsPage != null) {
+    outcome.appointments = appointmentsPage.rows;
+    outcome.appointmentsPartial = appointmentsPage.capped === true;
     outcome.appointmentsAvailable = true;
   }
   if (connectionsPage != null) {
@@ -1424,11 +1458,15 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.profile = profile ?? null;
   if (interactions) {
     outcome.inboxComposed = true;
-    if (Array.isArray(messages)) {
-      outcome.inboxMessages = messages;
+    if (messagesPage != null) {
+      outcome.inboxMessages = messagesPage.rows;
+      outcome.inboxPartial = messagesPage.capped === true;
       outcome.inboxAvailable = true;
     }
-    if (Array.isArray(conversations)) outcome.inboxConversations = conversations;
+    // A capped conversation page only drops some profile names (they read
+    // fail-soft per subject, with the handle as fallback), never a waiting
+    // row: only the messages page can hide a row, so only it sets the flag.
+    if (conversationsPage != null) outcome.inboxConversations = conversationsPage.rows;
   }
   outcome.next = upcomingAppointment(outcome.appointments, now);
   // The essentials are in (agenda, Da rispondere, advisor, channels): the
@@ -1449,12 +1487,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const briefRead = (async () => {
     if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
     try {
-      const [briefMessages, calls] = await Promise.all([
+      const [briefMessagesPage, briefCallsPage] = await Promise.all([
         readModulePage(client, 'interaction-message', subject),
         readModulePage(client, 'interaction-call', subject),
       ]);
-      outcome.briefMessages = briefMessages;
-      outcome.briefCalls = calls;
+      outcome.briefMessages = briefMessagesPage.rows;
+      outcome.briefCalls = briefCallsPage.rows;
       outcome.interactionsAvailable = true;
     } catch (error) {
       noteReadFailure('interactions', error);
@@ -1690,6 +1728,8 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
  *     channelsPartial?: boolean,
+ *     tasksPartial?: boolean,
+ *     appointmentsPartial?: boolean,
  *     profile?: unknown,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
@@ -1697,7 +1737,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     disabled?: boolean,
  *     namesPending?: boolean,
  *     notificationsOpen?: boolean,
- *     inbox?: { available?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
+ *     inbox?: { available?: boolean, partial?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
  *     pressed?: { id: unknown, kind: string } | null,
  *   },
  * }} options
@@ -1803,6 +1843,12 @@ export function renderOggi({
       advisor.appendChild(el(doc, 'p', 'bo-muted', `Mostro le prime ${actions.length} azioni.`));
     }
   }
+  // Backlog 803d127c4458: the follow-up source itself can pass the page —
+  // the advisor cards are capped apart, so the source cut needs its own
+  // note, never a silent cut of scadenze.
+  if (home.tasksPartial === true) {
+    advisor.appendChild(el(doc, 'p', 'bo-muted', `L'elenco delle cose da fare è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+  }
   if (allDone) {
     advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   }
@@ -1863,6 +1909,11 @@ export function renderOggi({
       if (waitingCount > inboxRows.length) {
         inbox.appendChild(el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} conversazioni più recenti su ${waitingCount}.`));
       }
+    }
+    // Backlog 803d127c4458: past the messages page the count above
+    // undercounts — the cut is disclosed, never silent.
+    if (home.inbox.partial === true) {
+      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
     }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
@@ -1947,6 +1998,11 @@ export function renderOggi({
     }
     agenda.appendChild(list);
   }
+  // Backlog 803d127c4458: past the page the agenda may miss scadenze —
+  // the cut is disclosed, never silent.
+  if (home.appointmentsPartial === true) {
+    agenda.appendChild(el(doc, 'p', 'bo-muted', `L'elenco degli appuntamenti è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+  }
   if (home.availability?.appointments !== false) {
     const toCalendar = el(doc, 'a', 'bo-oggi-more', 'Apri il calendario →');
     toCalendar.setAttribute('href', '#/calendario');
@@ -2028,8 +2084,18 @@ export function renderOggi({
   // ---- Missing channels ----
   const missing = Array.isArray(home.missing) ? home.missing : [];
   if (home.availability?.channels === false) {
+    // Backlog 803d127c4458: even when the channels do not read (no space
+    // yet, refused read, package not composed), the operator keeps the way
+    // to connect one — the strip never strands them without a link.
     const note = el(doc, 'section', 'bo-oggi-section');
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
+    const anchor = el(doc, 'a', 'bo-oggi-invite', 'Collega un canale →');
+    anchor.setAttribute('href', '#/connettori');
+    anchor.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/connettori');
+    });
+    note.appendChild(anchor);
     page.appendChild(note);
   } else {
     // The prototype strip (9c7d1477a8d4, production 08/11 after #687):
@@ -2283,11 +2349,13 @@ export function createOggiView(deps) {
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
-            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames, ownAddresses: ownMailboxes(last.profile) }) }
+            ? { available: true, partial: last.inboxPartial === true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames, ownAddresses: ownMailboxes(last.profile) }) }
             : { available: false, total: 0, rows: [] },
         missing,
         connections: last.connections,
         channelsPartial: last.channelsPartial === true,
+        tasksPartial: last.tasksPartial === true,
+        appointmentsPartial: last.appointmentsPartial === true,
         profile: last.profile ?? null,
         availability: {
           work: last.workAvailable,

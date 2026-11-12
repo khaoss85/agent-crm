@@ -1035,6 +1035,174 @@ test('Oggi view scopes the connections read to the live space (backlog:803d127c4
   assert.ok(mount.textContent.includes('Collega WhatsApp'), "space A's WhatsApp still invites in space B");
 });
 
+test('Oggi counts legacy connections without spaceId in the active space (backlog:803d127c4458)', async () => {
+  const rows = [
+    { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' },
+    { channel: 'email', status: 'active' },
+  ];
+  const seen = [];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) {
+        if (path.includes('filter.spaceId=')) {
+          return { items: rows.filter((row) => path.includes(`filter.spaceId=${row.spaceId}`)) };
+        }
+        return { items: rows };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(
+    seen.filter((path) => path.startsWith('/api/modules/channel-connection/records')).length,
+    2,
+    'the scoped read plus the legacy page',
+  );
+  assert.equal(data.channelsAvailable, true, 'the scoped read counts as available');
+  assert.equal(data.channelsPartial, false, 'two rows are no cap');
+  const missing = missingLeadChannels(data.connections, data.profile);
+  assert.ok(!missing.some((entry) => entry.channel === 'email'), 'a legacy Email row counts, like on main');
+  assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), "space A's WhatsApp still invites in space B");
+});
+
+test('Oggi with unreadable channels still links Connettori (backlog:803d127c4458)', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      availability: { work: true, appointments: true, channels: false },
+    },
+  });
+  assert.ok(mount.textContent.includes('I canali non sono attivi in questo spazio.'), 'the honest line stays');
+  assert.ok(mount.textContent.includes('Collega un canale'), 'the way to connect one stays');
+  const anchor = mount.findAll('a').find((node) => node.textContent.includes('Collega un canale'));
+  assert.ok(anchor, 'the link renders');
+  assert.equal(anchor.getAttribute('href'), '#/connettori', 'the link lands on Connettori');
+});
+
+test('Oggi says partial past 100 follow-up and appointments, never cuts silently (backlog:803d127c4458)', async () => {
+  const over = (base, prefix) => Array.from(
+    { length: OGGI_READ_LIMIT + 1 },
+    (_, index) => ({ ...base, id: `${prefix}-${index}` }),
+  );
+  const clientFor = (tasks, appointments) => ({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/work-task/records')) return { items: tasks };
+      if (path.startsWith('/api/modules/appointment/records')) return { items: appointments };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  });
+  const capped = await loadOggiData(
+    clientFor(over(TASK_OPEN, 'task'), over(APPT_TODAY, 'appt')),
+    OGGI_NOW,
+  );
+  assert.equal(capped.tasks.length, OGGI_READ_LIMIT, 'the page stays bounded');
+  assert.equal(capped.tasksPartial, true, 'one follow-up past the page is partial');
+  assert.equal(capped.appointmentsPartial, true, 'one appointment past the page is partial');
+  const full = await loadOggiData(
+    clientFor(over(TASK_OPEN, 'task').slice(0, OGGI_READ_LIMIT), over(APPT_TODAY, 'appt').slice(0, OGGI_READ_LIMIT)),
+    OGGI_NOW,
+  );
+  assert.equal(full.tasksPartial, false, 'exactly the page is not partial');
+  assert.equal(full.appointmentsPartial, false, 'exactly the page is not partial');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x',
+      actions: buildAdvisorActions({ tasks: capped.tasks, appointments: capped.appointments, now: OGGI_NOW }).actions,
+      triage: {},
+      capped: false,
+      agenda: buildTodayAgenda(capped.appointments, OGGI_NOW),
+      brief: null,
+      missing: [],
+      connections: [],
+      tasksPartial: capped.tasksPartial,
+      appointmentsPartial: capped.appointmentsPartial,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(
+    mount.textContent.includes(`L'elenco delle cose da fare è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the follow-up cut is disclosed',
+  );
+  assert.ok(
+    mount.textContent.includes(`L'elenco degli appuntamenti è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the agenda cut is disclosed',
+  );
+});
+
+test('Oggi says partial past 100 inbox messages (backlog:803d127c4458)', async () => {
+  const messages = Array.from(
+    { length: OGGI_READ_LIMIT + 1 },
+    (_, index) => ({
+      ...MESSAGE_IN,
+      id: `msg-${index}`,
+      conversationId: `c-${index}`,
+      direction: 'inbound',
+      subjectId: 'lead-1',
+      subjectResource: 'lead',
+    }),
+  );
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW);
+  assert.equal(data.inboxMessages.length, OGGI_READ_LIMIT, 'the page stays bounded');
+  assert.equal(data.inboxPartial, true, 'one message past the page is partial');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      inbox: { available: true, partial: data.inboxPartial, total: 0, rows: [] },
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(
+    mount.textContent.includes(`L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the inbox cut is disclosed',
+  );
+});
+
 test('no technical resource-id label reaches the Oggi screen', () => {
   const unlabeledTask = {
     id: 'task-nolabel', status: 'open', title: 'Richiama per il preventivo',
