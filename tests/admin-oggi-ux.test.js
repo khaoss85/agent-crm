@@ -732,3 +732,30 @@ test('bd5e84545021: Oggi’s badges read the one initials rule of Clienti and th
   const server = buildServerReplies({ items: [{ subject: { resource: 'contact', id: 'u1' }, name, awaitingChannel: 'telegram' }], total: 1 }, NOW);
   assert.equal(server.rows[0].mono, 'UB', 'the server view row');
 });
+
+// Review Muse #795 (giro 2, testa 68fb9ec): an unreadable inbox is unknown, never zero.
+test('review #795 P1: an inbox that could not be read never reads as «Niente in sospeso», «Hai finito» or «0 in attesa»', async () => {
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) throw Object.assign(new Error('down'), { status: 409 });
+      if (path.startsWith('/api/modules/interaction-message/records')) throw Object.assign(new Error('down'), { status: 500 });
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: NOW });
+  const text = mount.textContent;
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', '0 in attesa']) {
+    assert.ok(!text.includes(claim), `no measured zero over an unreadable inbox: ${claim}`);
+  }
+  assert.ok(text.includes('I messaggi non si sono potuti leggere'), 'the section says so');
+  assert.ok(mount.querySelector('.bo-oggi-recap').textContent.includes('Non riesco a leggere i messaggi da rispondere'), mount.querySelector('.bo-oggi-recap').textContent);
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: null }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Non riesco a leggere i messaggi da rispondere.');
+});

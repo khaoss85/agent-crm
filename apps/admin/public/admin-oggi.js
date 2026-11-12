@@ -695,8 +695,12 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
-  const floor = waitingExact === false;
+  const floor = waitingExact === false || waiting === null;
+  // review Muse #795 giro 2: an inbox that could not be read is unknown,
+  // never zero (`waiting: null`).
+  const unreadable = waiting === null;
   const waitingLine = (also) => {
+    if (unreadable) return 'Non riesco a leggere i messaggi da rispondere';
     if (floor && unanswered === 0) return 'Non riesco a contare tutti i messaggi da rispondere: guardali in Clienti';
     const least = floor ? 'almeno ' : '';
     return unanswered === 1 && !floor
@@ -1859,7 +1863,8 @@ export function renderOggi({
   // day is done only when nothing waits in «Da rispondere» either.
   const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
   // review Muse #795: a floor from a truncated scan never reads «finito».
-  const waitingFloor = home.inbox != null && home.inbox.available !== false && home.inbox.totalIsExact === false;
+  // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
+  const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
   if (allDone && waitingReplies === 0 && !waitingFloor) {
     advisor.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   } else if (allDone && waitingFloor) {
@@ -1882,7 +1887,10 @@ export function renderOggi({
     inboxHead.appendChild(el(doc, 'h3', undefined, 'Da rispondere'));
     const waitingCount = Number(home.inbox.total ?? 0);
     const countFloor = home.inbox.totalIsExact === false;
-    inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', `${countFloor ? 'almeno ' : ''}${waitingCount} in attesa`));
+    // An unreadable inbox shows no count: «0 in attesa» would read as measured.
+    if (home.inbox.available !== false) {
+      inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', `${countFloor ? 'almeno ' : ''}${waitingCount} in attesa`));
+    }
     inbox.appendChild(inboxHead);
     const inboxRows = Array.isArray(home.inbox.rows) ? home.inbox.rows : [];
     /** One inbox row; `reply` adds the «Rispondi» button (people only). */
@@ -2382,7 +2390,7 @@ export function createOggiView(deps) {
       navigate,
       now: lastMeta.now,
       home: {
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
         actions,
         triage,
         capped,
