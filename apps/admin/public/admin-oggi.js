@@ -1094,6 +1094,15 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
   }
   const waiting = [];
   const automated = [];
+  // Who the team ever wrote to, among the messages read (backlog:bab63e32acdb):
+  // mass-mail footers count only for a sender nobody answered.
+  const wroteTo = new Set();
+  for (const message of messages) {
+    if (message?.direction !== 'outbound') continue;
+    const key = inboxSubjectKey(message);
+    if (key) wroteTo.add(key);
+    if (nonEmptyText(message?.conversationId)) wroteTo.add(`conversation:${message.conversationId}`);
+  }
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -1109,7 +1118,11 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       ...message,
       channel,
       remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle),
-    }, { ownAddresses, labels: [conversation?.subjectLabel] });
+    }, {
+      ownAddresses,
+      labels: [conversation?.subjectLabel],
+      weWrote: (subjectKey !== null && wroteTo.has(subjectKey)) || wroteTo.has(`conversation:${conversationId}`),
+    });
     const handle = nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)

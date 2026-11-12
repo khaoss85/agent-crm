@@ -85,6 +85,16 @@ const NO_REPLY_PIECE = /(?:^|[._-])(?:no[._-]?reply|do[._-]?not[._-]?reply)(?:[.
 /** Words of a website contact form in a subject or the opening of a body. */
 const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission|modulo di contatto|richiesta di contatto|nuovo contatto dal sito|messaggio dal sito)\b/i;
 
+/**
+ * The footer words of mass mail (verification 12/11 on the pilot: a SaaS
+ * newsletter «View in browser» and a crawl report «Unsubscribe from this
+ * project», from mailboxes like `pesupport@` and `sa@` no address rule can
+ * name without hurting real people). A defence for the messages stored
+ * before the import kept the header signal: it counts only for a sender the
+ * team never wrote to.
+ */
+const BULK_FOOTER_WORDS = /\b(?:unsubscribe|view (?:it )?in (?:your )?browser|manage (?:your )?(?:email )?preferences|annulla (?:l[\x27\u2019])?iscrizione|disiscriviti|cancella (?:la tua |l[\x27\u2019])?iscrizione|visualizza (?:nel|sul|in) (?:tuo )?browser|gestisci le preferenze)\b/i;
+
 /** Wrapping punctuation around a word of a display name. */
 const WRAPPING = /^[([<\x22\x27]+|[)\]>\x22\x27,;:]+$/g;
 
@@ -182,11 +192,15 @@ export function isAutomatedSender(handle, ...labels) {
  *   payment provider (`paypal.*`, `stripe.*`…);
  * - a certified-mail (PEC) message: a PEC mailbox (`pec.*` domains,
  *   `posta-certificata@`) or the PEC wording in subject or body;
- * - the owner writing to themselves: a sender among `ownAddresses`.
- * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown } | null | undefined} message
- * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown> }} [context]
+ * - the owner writing to themselves: a sender among `ownAddresses`;
+ * - mass mail: the import's header signal first (`mailBulk`: List-Unsubscribe,
+ *   List-Id, Precedence, Auto-Submitted); for messages stored without it,
+ *   the footer words of mass mail («Unsubscribe», «View in browser») from a
+ *   sender the team never wrote to (`weWrote: false`).
+ * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown, mailBulk?: unknown } | null | undefined} message
+ * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown>, weWrote?: boolean }} [context]
  */
-export function isNotificationMessage(message, { ownAddresses = [], labels = [] } = {}) {
+export function isNotificationMessage(message, { ownAddresses = [], labels = [], weWrote = true } = {}) {
   if (!message || typeof message !== 'object') return false;
   const channel = String(message.channel ?? '').toLowerCase();
   if (channel === 'website-form' || channel === 'web' || channel === 'site-form') return false;
@@ -194,6 +208,8 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [] 
   const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
   if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
   if (channel !== 'email') return false;
+  if (message.mailBulk === true) return true;
+  if (weWrote === false && typeof message.body === 'string' && BULK_FOOTER_WORDS.test(message.body)) return true;
   if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
   const address = senderAddress(message.remoteHandle);
   if (address === null) return false;

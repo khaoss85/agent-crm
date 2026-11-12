@@ -153,6 +153,9 @@ export function awaitingReplyFor(messages, conversations = []) {
     const seen = latest.get(thread);
     if (!seen || time > seen.time) latest.set(thread, { time, row });
   }
+  // Mass-mail footers count only for a sender the team never wrote to
+  // (backlog:bab63e32acdb): one outbound message makes it a correspondent.
+  const weWrote = (Array.isArray(messages) ? messages : []).some((row) => row?.direction === 'outbound' && row?.entry !== 'call');
   let count = 0;
   let newest = null;
   for (const { time, row } of latest.values()) {
@@ -160,7 +163,7 @@ export function awaitingReplyFor(messages, conversations = []) {
     const conversation = row.conversationId != null ? byConversation.get(String(row.conversationId)) ?? null : null;
     if (conversation?.status === 'closed') continue;
     const message = { ...row, remoteHandle: row.remoteHandle ?? conversation?.remoteHandle ?? null };
-    if (isNotificationMessage(message, { labels: [conversation?.subjectLabel] })) continue;
+    if (isNotificationMessage(message, { labels: [conversation?.subjectLabel], weWrote })) continue;
     count += 1;
     if (newest === null || time > newest.time) newest = { time, row };
   }

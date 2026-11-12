@@ -818,3 +818,20 @@ test('bab63e32acdb: a slow «Da rispondere» view never holds the day back, and 
   assert.ok(mount.querySelector('[data-oggi-recap="true"]').textContent.includes('Ti aspettano anche 24 messaggi da rispondere'), mount.querySelector('[data-oggi-recap="true"]').textContent);
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
 });
+
+test('bab63e32acdb: the verification rows — «Namecheap Support» and «Ahrefs Site Audit» go to Notifiche with their names', () => {
+  const conversations = [
+    { id: 'n1', status: 'open', subjectLabel: 'Namecheap Support', remoteHandle: null, ...host, subjectId: 'nc' },
+    { id: 'a1', status: 'open', subjectLabel: 'Ahrefs Site Audit', remoteHandle: null, ...host, subjectId: 'ah' },
+  ];
+  const messages = [
+    { id: 'm-n', conversationId: 'n1', direction: 'inbound', channel: 'email', remoteHandle: 'pesupport@namecheap.com', mailSubject: null,
+      body: `Download the new Private Email mobile app${' '.repeat(30)} View in browser`, occurredAt: '2026-10-19T05:00:00.000Z', ...host, subjectId: 'nc' },
+    { id: 'm-a', conversationId: 'a1', direction: 'inbound', channel: 'email', remoteHandle: 'sa@ahrefs.com', mailSubject: null,
+      body: 'New crawl: 400 internal URLs were analyzed. Health Score 87. Unsubscribe from this project', occurredAt: '2026-10-19T06:00:00.000Z', ...host, subjectId: 'ah' },
+    PERSON_MSG,
+  ];
+  const inbox = buildInbox({ messages, conversations, now: NOW });
+  assert.deepEqual(inbox.rows.map((row) => row.id), ['c1'], 'only the person waits');
+  assert.deepEqual(inbox.notifications.rows.map((row) => row.name), ['Ahrefs Site Audit', 'Namecheap Support']);
+});

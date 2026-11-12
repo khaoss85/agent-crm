@@ -898,12 +898,20 @@ export function validateMessageRequest(request) {
   // subject or mail attachments is a confused writer, refused here rather
   // than stored where no card looks.
   const mailExtrasPresent = value.mailSubject !== undefined && value.mailSubject !== null && value.mailSubject !== ''
-    || value.mailAttachments !== undefined && value.mailAttachments !== null;
+    || value.mailAttachments !== undefined && value.mailAttachments !== null
+    || value.mailBulk === true;
   if (channel !== 'email' && mailExtrasPresent) {
-    throw new ValidationError('mailSubject and mailAttachments are email-only', { field: 'mailSubject' });
+    throw new ValidationError('mailSubject, mailAttachments and mailBulk are email-only', { field: 'mailSubject' });
   }
   const mailSubject = channel === 'email' ? validateMailSubject(value.mailSubject) : null;
   const mailAttachmentsJson = channel === 'email' ? validateMailAttachments(value.mailAttachments) : null;
+  // backlog:bab63e32acdb: the mass-mail signal of the headers the import
+  // read (List-Unsubscribe, List-Id, Precedence, Auto-Submitted), kept as one
+  // flag — never the headers themselves. Absent reads unknown (null).
+  if (value.mailBulk !== undefined && value.mailBulk !== null && typeof value.mailBulk !== 'boolean') {
+    throw new ValidationError('mailBulk must be a boolean', { field: 'mailBulk' });
+  }
+  const mailBulk = channel === 'email' && typeof value.mailBulk === 'boolean' ? value.mailBulk : null;
   const bodyAbsent = value.body === undefined || value.body === null
     || (typeof value.body === 'string' && value.body.replace(/\r\n/g, '\n').trim() === '');
   // A wrong-typed body is still refused (fail-closed): only an absent or
@@ -921,6 +929,7 @@ export function validateMessageRequest(request) {
     attachment,
     mailSubject,
     mailAttachmentsJson,
+    mailBulk,
     teamAuthorId,
     remoteHandle: optionalSafeText(value.remoteHandle, 'remoteHandle', MAX_HANDLE),
     subject: validateSubject(value.subject),
@@ -957,6 +966,7 @@ export async function logMessage(context, request) {
     attachmentPreview: input.attachment?.preview ?? null,
     mailSubject: input.mailSubject,
     mailAttachmentsJson: input.mailAttachmentsJson,
+    mailBulk: input.mailBulk,
     teamAuthorId: input.teamAuthorId,
     remoteHandle: input.remoteHandle,
     subjectResource: input.subject.resource,
