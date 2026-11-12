@@ -1210,36 +1210,74 @@ export function googleNineChannels(profile) {
 }
 
 /**
+ * Backlog:3805161965cd: a `profile:` handle (any case) is a pilot key,
+ * never a route — the same rule the composer enforces, so the two screens
+ * never disagree on Email.
+ * @param {unknown} value
+ */
+const isInviteProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+
+/**
+ * Backlog:3805161965cd: whether one row is a stand-in for the
+ * space-profile Gmail rather than a real channel connection. The server
+ * refuses the send with 409 CHANNEL_CONNECTION_NOT_ACTIVE without a real
+ * connection, so these rows never vote Email on Oggi.
+ * @param {unknown} row
+ */
+const isInviteSyntheticEmailRow = (row) => row != null && typeof row === 'object'
+  && String(row.channel ?? '').toLowerCase() === 'email'
+  && (row.source === 'profile' || isInviteProfileKey(row.connectionKey));
+
+/**
+ * Backlog:3805161965cd: the rows Oggi votes on — the profile links merged
+ * in, except the profile Gmail stand-in for Email. A real active Email row
+ * still votes Email; Calendar and the other profile votes still count, so
+ * Stato sync keeps painting them from the shared merge untouched.
+ * @param {Array<Record<string, any>>} [connections]
+ * @param {unknown} [profile] the /api/profile payload, null when unreadable
+ */
+function mergeInviteConnections(connections = [], profile = null) {
+  return mergeProfileConnections(connections, profile).filter((row) => !isInviteSyntheticEmailRow(row));
+}
+
+/**
  * Distinct connected channels among the nine: active rows only, one vote
  * per channel, capped at the nine. A channel outside the nine never moves
- * this count. The profile links from GET /api/profile vote too (Gmail for
- * Email, Calendar for Calendar, the Meta links for their channels): without
- * them Oggi reads «0 di 9 collegati» while Gmail and Calendar are connected.
- * The screen strip prints the shared `channelConnectionCount` instead, which
- * also counts a linked channel outside the nine.
+ * this count. The profile links from GET /api/profile vote too (Calendar,
+ * the Meta links for their channels): without them Oggi reads «0 di 9
+ * collegati» while Calendar is connected. Gmail never votes Email here —
+ * without its own channel connection the send fails with 409, like in the
+ * composer. The screen strip prints the shared `channelConnectionCount`
+ * instead, which also counts a linked channel outside the nine.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function countConnectedNine(connections = [], profile = null) {
-  const { connectedChannels } = channelConnectionCount(mergeProfileConnections(connections, profile));
+  const { connectedChannels } = channelConnectionCount(mergeInviteConnections(connections, profile));
   return connectedChannels.filter((channel) => OGGI_NINE_CHANNELS.includes(channel)).length;
 }
 
 /**
  * Lead channels with no active connection, in catalog order with catalog
  * labels. `calendar` and `stripe` are not lead channels and stay out of the
- * invite: connecting them loses no lead. A connected Gmail removes Email
- * from the invite, like an active Email row does.
+ * invite: connecting them loses no lead. A connected Gmail never removes
+ * Email from the invite (backlog:3805161965cd): only a real active Email
+ * row does, because the send needs its own channel connection (409
+ * otherwise), like in the composer.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function missingLeadChannels(connections = [], profile = null) {
   const active = new Set(
     (Array.isArray(connections) ? connections : [])
-      .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
+      .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string'
+        && !isInviteSyntheticEmailRow(row))
       .map((row) => row.channel),
   );
-  for (const channel of googleNineChannels(profile)) active.add(channel);
+  for (const channel of googleNineChannels(profile)) {
+    if (channel === 'email') continue;
+    active.add(channel);
+  }
   return CONNECTOR_CATALOG
     .filter((entry) => entry != null && !active.has(entry.channel))
     .map((entry) => Object.freeze({ channel: entry.channel, label: entry.label }));
@@ -1255,7 +1293,9 @@ export function missingLeadChannels(connections = [], profile = null) {
  * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null }}
  */
 export function buildChannelInvite({ connections = [], profile = null } = {}) {
-  const count = channelConnectionCount(mergeProfileConnections(connections, profile));
+  // Backlog:3805161965cd: the profile Gmail stand-in never counts as a
+  // connected Email here — the strip must invite what the composer requires.
+  const count = channelConnectionCount(mergeInviteConnections(connections, profile));
   const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
   const leads = [];
   const fromProfile = [];
