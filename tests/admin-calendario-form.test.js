@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
+import { createCalendarioView, customerHint } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -49,7 +49,7 @@ function notFound() {
   return error;
 }
 
-function stubClient({ catalog = CATALOG } = {}) {
+function stubClient({ catalog = CATALOG, customers = [] } = {}) {
   return {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
@@ -59,7 +59,7 @@ function stubClient({ catalog = CATALOG } = {}) {
       // The framework on its own serves no bookable list (#805): the menu
       // falls back to the catalog singles.
       if (path === '/api/appointments/services') throw Object.assign(notFound(), { status: 404 });
-      if (path.startsWith('/api/customer-data/customers')) return { items: [], complete: true };
+      if (path.startsWith('/api/customer-data/customers')) return { items: customers, complete: true };
       if (path.startsWith('/api/customer-data/')) throw notFound();
       if (path.startsWith('/api/appointments/team-week')) return WEEK;
       throw new Error(`unexpected path ${path}`);
@@ -227,4 +227,42 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   openManual(mount);
   assert.equal(byName(mount, 'start').value, '', 'the old slot never comes back');
   assert.equal(byName(mount, 'date').value, '');
+});
+
+// backlog:3582d91635cb: homonyms in the customer suggestions read apart.
+test('form: two customers with the same name show a partial email or phone, a single one shows none', async () => {
+  const customers = [
+    { resource: 'contact', id: 'c1', name: 'Ada Rossi', email: 'ada.rossi@example.com', phone: null, company: null },
+    { resource: 'contact', id: 'c2', name: 'Ada Rossi', email: null, phone: { value: '+393331234567', system: 'whatsapp' }, company: null },
+    { resource: 'contact', id: 'c3', name: 'Bea Neri', email: 'bea@example.com', phone: null, company: null },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'Ad';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  const labels = results.findAll('button').map((node) => node.textContent);
+  assert.ok(labels.includes('Ada Rossi · ad…@example.com'), labels.join(' | '));
+  assert.ok(labels.includes('Ada Rossi · tel. …4567'), labels.join(' | '));
+  assert.ok(labels.includes('Bea Neri'), 'a name nobody shares carries no hint');
+  assert.ok(!labels.some((text) => text.includes('ada.rossi@') || text.includes('3331234567')), 'never the whole address or number');
+  // The pick still books the customer by id, with the bare name.
+  results.findAll('button').find((node) => node.textContent.endsWith('tel. …4567')).dispatch('click');
+  assert.ok(mount.findAll('p').some((node) => node.textContent === 'Cliente: Ada Rossi'), 'the pick names the customer');
+});
+
+test('form: customerHint prefers a partial email, then the phone, then the company', () => {
+  assert.equal(customerHint({ email: 'ada@example.com' }), 'ad…@example.com');
+  assert.equal(customerHint({ email: 'a@example.com' }), 'a…@example.com');
+  assert.equal(customerHint({ email: null, phone: { value: '+39 333 123 4567' } }), 'tel. …4567');
+  assert.equal(customerHint({ email: '', phone: null, company: { name: 'Palestra Uno' } }), 'Palestra Uno');
+  assert.equal(customerHint({ email: 'rotta@', phone: { value: '12' } }), null);
 });

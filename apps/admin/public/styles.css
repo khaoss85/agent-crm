@@ -1599,6 +1599,8 @@ select.bo-spazi-input { flex: none; }
  * carries its label; a long form scrolls inside, never off screen. */
 .cal-form-pop[data-anchor="grid"] { top: 12px; right: 12px; }
 .cal-form-pop { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+/* backlog:3582d91635cb: the homonym hint beside a suggested customer. */
+.cal-customer-hint { font-weight: 400; color: var(--muted); }
 .cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
 .cal-form .cal-field-wide { flex-basis: 100%; }
 .cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
