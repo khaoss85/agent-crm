@@ -128,6 +128,35 @@ const WEEK = {
           sourceKey: 'calendario:sara:1:c2',
           subject: { resource: 'contact', id: 'c2', owner: 'host', ownerPackage: null, label: 'Bo' },
         },
+        // backlog:7587307d5215 (pilota 11/11): a two-hour booking, 11:00–13:00
+        // Rome on Monday, with a long title; it was drawn 11:25–12:35.
+        {
+          id: 'a3',
+          status: 'booked',
+          startsAt: '2026-10-19T09:00:00.000Z',
+          endsAt: '2026-10-19T11:00:00.000Z',
+          serviceKey: 'piega',
+          teamMemberId: 'sara',
+          priceCents: 3000,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:sara:2:c3',
+          subject: { resource: 'contact', id: 'c3', owner: 'host', ownerPackage: null, label: 'Cliente con un nome molto lungo da andare a capo' },
+        },
+        // A short block with a long title: its content must never stretch the hour.
+        {
+          id: 'a4',
+          status: 'booked',
+          startsAt: '2026-10-20T07:00:00.000Z',
+          endsAt: '2026-10-20T07:15:00.000Z',
+          serviceKey: 'piega',
+          teamMemberId: 'sara',
+          priceCents: 3000,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:sara:3:c4',
+          subject: { resource: 'contact', id: 'c4', owner: 'host', ownerPackage: null, label: 'Un altro cliente col nome lunghissimo' },
+        },
       ],
     },
   ],
@@ -196,6 +225,29 @@ await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 // No Conferma click here: booking belongs to the operator, and the demo
 // client answers no confirm endpoint — the PNG proves rows and ghosts.
+// backlog:7587307d5215: the grid geometry in a real browser — every day
+// column the same height, each hour 60 px, and the 11:00–13:00 block covers
+// exactly 11:00 to 13:00 against the column.
+const gridProbe = (() => {
+  const cols = [...document.querySelectorAll('.cal-day')].filter((node) => node.getBoundingClientRect().height > 0);
+  const block = document.querySelector('[data-event-id="a3"]');
+  const short = document.querySelector('[data-event-id="a4"]');
+  if (cols.length === 0 || !block) return null;
+  const col = block.closest('.cal-day').getBoundingClientRect();
+  const box = block.getBoundingClientRect();
+  const label = [...document.querySelectorAll('.cal-hour')].find((node) => node.textContent === '11:00');
+  const labelBox = label ? label.getBoundingClientRect() : null;
+  return {
+    heights: cols.map((node) => Math.round(node.getBoundingClientRect().height)),
+    hourPx: Math.round(col.height / 9),
+    blockTop: Math.round(box.top - col.top),
+    blockBottom: Math.round(box.bottom - col.top),
+    shortHeight: short ? Math.round(short.getBoundingClientRect().height) : null,
+    // The block keeps its member tint, never the button's white surface.
+    tinted: [...document.querySelectorAll('.cal-event')].every((node) => getComputedStyle(node).backgroundColor !== getComputedStyle(node.closest('.cal-day')).backgroundColor && getComputedStyle(node).backgroundColor !== 'rgb(255, 253, 247)'),
+    labelMid: labelBox && labelBox.height > 0 ? Math.round(labelBox.top + labelBox.height / 2 - col.top) : null,
+  };
+})();
 // backlog:c2f21b5debdd: the customer search in the form — the magnifier
 // never covers the text and the placeholder reads whole.
 const customerProbe = (() => {
@@ -216,6 +268,7 @@ const customerProbe = (() => {
   };
 })();
 const probe = {
+  grid: gridProbe,
   customer: customerProbe,
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
@@ -398,6 +451,15 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
   assert.equal(probe.compact.length, 0, 'desktop keeps every empty day as its timeline');
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the desktop render lists the week events');
+  // backlog:7587307d5215: fixed hours, exact blocks.
+  assert.ok(probe.grid, 'the grid paints');
+  assert.equal(new Set(probe.grid.heights).size, 1, `every day column has the same height: ${probe.grid.heights}`);
+  assert.equal(probe.grid.hourPx, 60, 'an hour is 60 px');
+  assert.ok(Math.abs(probe.grid.blockTop - 120) <= 2, `the 11:00 block starts at 11:00: ${JSON.stringify(probe.grid)}`);
+  assert.ok(Math.abs(probe.grid.blockBottom - 240) <= 2, `the 13:00 end ends at 13:00: ${JSON.stringify(probe.grid)}`);
+  assert.ok(probe.grid.shortHeight !== null && probe.grid.shortHeight >= 12 && probe.grid.shortHeight <= 16, `a quarter-hour block stays a quarter hour: ${JSON.stringify(probe.grid)}`);
+  assert.equal(probe.grid.tinted, true, 'every block keeps its member tint, so a short one never vanishes');
+  assert.ok(probe.grid.labelMid === null || Math.abs(probe.grid.labelMid - 120) <= 3, `the 11:00 label sits on the 11:00 line: ${JSON.stringify(probe.grid)}`);
   assert.ok(probe.customer, 'the customer search paints in the form');
   assert.ok(probe.customer.iconRight <= probe.customer.textLeft, `the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.customer.placeholderWidth <= probe.customer.room, `the placeholder reads whole: ${JSON.stringify(probe.customer)}`);
@@ -442,9 +504,10 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.equal(probe.form.inRail, false, 'never in the rail');
   assert.equal(probe.form.forms, 1, 'one form only');
   assert.ok(probe.form.left >= 0 && probe.form.right <= 390 && probe.form.bottom <= 844 && probe.form.top >= 0, `the sheet stays on screen: ${JSON.stringify(probe.form)}`);
-  // The fixture week holds events on Thu and Fri only: Mon–Wed are compact
-  // rows, never 540px empty timelines.
-  assert.equal(probe.compact.length, 3, `three empty days paint compact rows (${probe.compact})`);
+  // The fixture week holds events on Mon, Tue, Thu and Fri (the Monday and
+  // Tuesday ones prove the grid geometry, backlog:7587307d5215): Wednesday
+  // alone is a compact row, never a 540px empty timeline.
+  assert.equal(probe.compact.length, 1, `the empty day paints a compact row (${probe.compact})`);
   assert.ok(probe.compact.every((height) => height < 80), `a compact row stays short (${probe.compact})`);
   console.log(`calendario phone PNG: ${out} (${shot.width}x${shot.height}, ${shot.bytes} bytes)`);
 });

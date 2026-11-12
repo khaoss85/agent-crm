@@ -26,7 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -238,13 +238,23 @@ export function displayKeys(weekKeys) {
   return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
 }
 
-/** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
+/**
+ * Grid geometry, 09:00 (inclusive) to 18:00. backlog:7587307d5215: the day
+ * columns are drawn in quarter-hour rows of a FIXED height (CSS), so every
+ * hour is the same height in every column and a block covers exactly its
+ * time — rows that grew with their content drew 11:00–13:00 between about
+ * 11:25 and 12:35. A plain click still picks half an hour.
+ */
 export const GRID_START_MINUTES = 9 * 60;
 /** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
 const WEEK_PROFILE_READS = 40;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
-export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
+/** One drawn row, and the step a drag, a stretch or a pick snaps to. */
+export const GRID_ROW_MINUTES = 15;
+export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_ROW_MINUTES;
+/** The page grid keeps half-hour rows for the hour labels beside the columns. */
+const GRID_HALF_HOURS = (GRID_END_MINUTES - GRID_START_MINUTES) / 30;
 
 /** Column header `<ddd> <n>` ("lun 19"), null when unparsable. */
 export function dayHead(key) {
@@ -514,9 +524,9 @@ export function gridRowsFor(startsAt, endsAt) {
     return { row: 1, span: 1 };
   }
   const clampedStart = Math.min(Math.max(startMin, GRID_START_MINUTES), GRID_END_MINUTES);
-  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_SLOT_MINUTES), GRID_END_MINUTES);
-  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES), GRID_ROWS - 1) + 1;
-  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_SLOT_MINUTES)) / GRID_SLOT_MINUTES));
+  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_ROW_MINUTES), GRID_END_MINUTES);
+  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_ROW_MINUTES), GRID_ROWS - 1) + 1;
+  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_ROW_MINUTES)) / GRID_ROW_MINUTES));
   return { row, span: Math.min(span, GRID_ROWS - row + 1) };
 }
 
@@ -1336,6 +1346,10 @@ export function createCalendarioView(deps) {
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
     moveBusy: false,
+    /** backlog:7587307d5215 — the roster read in flight: Team shows its skeleton, never «nessuna persona». */
+    membersLoading: false,
+    /** backlog:7587307d5215 — the first week read in flight: the grid shows its skeleton. */
+    weekLoading: false,
     /** The «Modifica o sposta» form shows in the event popover (Dan 11/11). */
     moveOpen: false,
     /** backlog:5346ab531538 — the popover asks «Annullare l'appuntamento?». */
@@ -1507,6 +1521,10 @@ export function createCalendarioView(deps) {
       state.weekError = 'Settimana non valida.';
       return;
     }
+    // backlog:7587307d5215: the first read paints the skeleton at once,
+    // never an empty week that reads as «no appointments».
+    state.weekLoading = true;
+    if (!state.week && mount.querySelector('.cal-wrap') !== null) renderAll();
     try {
       // One row per person, every identity of each listed person: the roster
       // may name sibling subjects after the filter was set (or the filter
@@ -1562,6 +1580,7 @@ export function createCalendarioView(deps) {
         });
       }
     }
+    state.weekLoading = false;
     // Same mount guard as the roster and profile reads below: a late week
     // answer never paints over another screen sharing the mount
     // (backlog:607f33ee).
@@ -1734,9 +1753,11 @@ export function createCalendarioView(deps) {
 
   async function loadMembers() {
     const token = ++memberToken;
+    state.membersLoading = true;
     try {
       const answer = await client.request('/api/spine/memberships');
       if (token !== memberToken) return;
+      state.membersLoading = false;
       state.members = Array.isArray(answer?.items) ? answer.items : [];
       // The roster is the team: with nobody named yet, list the whole
       // space and load its week at once — no typing (backlog:0533362e8efe).
@@ -1753,6 +1774,7 @@ export function createCalendarioView(deps) {
       }
     } catch (error) {
       if (token !== memberToken) return;
+      state.membersLoading = false;
       // Fail-soft UI, but a failure nobody can diagnose blocks review
       // (AGENTS.md): record the sanitized cause with the active space —
       // never the message or personal data, like the profile read below.
@@ -2173,6 +2195,18 @@ export function createCalendarioView(deps) {
     if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
     const rows = personRows(named, state.hiddenMembers, state.members);
+    if (rows.length === 0 && state.membersLoading) {
+      // backlog:7587307d5215: the roster is on its way — placeholders, one
+      // status line, never the empty state.
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico il team…' }));
+      for (const width of ['70%', '55%', '62%']) {
+        const line = el(doc, 'div', { className: 'cal-team-skeleton', attrs: { 'data-role': 'team-skeleton' } });
+        line.appendChild(uiSkeleton(doc, { width, block: true }));
+        panel.appendChild(line);
+      }
+      return panel;
+    }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
@@ -2291,12 +2325,22 @@ export function createCalendarioView(deps) {
     return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   }
 
-  /** The half-hour row under a pointer, as Rome minutes clamped to the grid body. */
+  /** The quarter-hour row under a pointer, as Rome minutes clamped to the grid body. */
   function minuteAt(col, event) {
     const rect = typeof col.getBoundingClientRect === 'function' ? col.getBoundingClientRect() : null;
     if (!rect || !(rect.height > 0)) return null;
     const fraction = Math.min(Math.max((Number(event.clientY) - rect.top) / rect.height, 0), 0.9999);
-    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_SLOT_MINUTES;
+    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_ROW_MINUTES;
+  }
+
+  /** The rows a span of Rome minutes covers, as a grid-row value. */
+  function rowsOf(start, end) {
+    return `${(start - GRID_START_MINUTES) / GRID_ROW_MINUTES + 1} / span ${Math.max(1, (end - start) / GRID_ROW_MINUTES)}`;
+  }
+
+  /** A pick spans at least half an hour from its first row (a plain click). */
+  function pickEnd(anchor, current) {
+    return Math.min(Math.max(Math.max(anchor, current) + GRID_ROW_MINUTES, Math.min(anchor, current) + GRID_SLOT_MINUTES), GRID_END_MINUTES);
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2375,8 +2419,8 @@ export function createCalendarioView(deps) {
     const paint = () => {
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
-      drag.node.setAttribute('style', `grid-row: ${(start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(end - start) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`);
+      const end = pickEnd(drag.anchor, drag.current);
+      drag.node.setAttribute('style', `grid-row: ${rowsOf(start, end)}; grid-column: 1 / -1`);
       drag.node.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
     };
     col.addEventListener('pointerdown', (event) => {
@@ -2464,7 +2508,7 @@ export function createCalendarioView(deps) {
       }
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
+      const end = pickEnd(drag.anchor, drag.current);
       drag = null;
       openSlot(key, start, end);
     });
@@ -2544,20 +2588,24 @@ export function createCalendarioView(deps) {
   function retargetEventDrag(dayKey, minute, col) {
     const drag = eventDrag;
     if (!drag) return;
-    const durationMin = Math.max(GRID_SLOT_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
     if (drag.mode === 'resize') {
       // The stretch stays on the origin day (review #757): sideways motion
       // into another column is ignored, so preview and commit agree.
       if (dayKey !== drag.dayKey) return;
-      const end = Math.min(Math.max(minute + GRID_SLOT_MINUTES, drag.startMin + GRID_SLOT_MINUTES), GRID_END_MINUTES);
+      // backlog:7587307d5215: the bottom edge snaps to the quarter hour.
+      const end = Math.min(Math.max(minute + GRID_ROW_MINUTES, drag.startMin + GRID_ROW_MINUTES), GRID_END_MINUTES);
       if (end === drag.targetEnd) return;
       drag.targetDay = drag.dayKey;
       drag.targetStart = drag.startMin;
       drag.targetEnd = end;
     } else {
       const latest = GRID_END_MINUTES - durationMin;
+      // backlog:7587307d5215: the moved start snaps to the quarter hour,
+      // whatever minute the booking started on; the duration stays whole.
+      const snapped = Math.round((minute - (drag.grabOffset ?? 0)) / GRID_ROW_MINUTES) * GRID_ROW_MINUTES;
       const start = Math.min(
-        Math.max(minute - (drag.grabOffset ?? 0), GRID_START_MINUTES),
+        Math.max(snapped, GRID_START_MINUTES),
         Math.max(GRID_START_MINUTES, latest),
       );
       if (start === drag.targetStart && dayKey === drag.targetDay) return;
@@ -2571,7 +2619,7 @@ export function createCalendarioView(deps) {
       className: 'cal-pick is-dragging cal-drag-ghost',
       attrs: {
         'aria-hidden': 'true',
-        style: `grid-row: ${(drag.targetStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(drag.targetEnd - drag.targetStart) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`,
+        style: `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; grid-column: 1 / -1`,
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
@@ -2690,7 +2738,10 @@ export function createCalendarioView(deps) {
       }
       const day = romeDayKey(row.startsAt);
       state.moveOpen = false;
-      outcome = { text: `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      // backlog:7587307d5215: the day and the date, like a person says it —
+      // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
+      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
@@ -2746,6 +2797,9 @@ export function createCalendarioView(deps) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
       return panel;
     }
+    // backlog:7587307d5215: while the first week (or the roster that names
+    // it) is read, the grid shows a skeleton — never an empty week.
+    const loadingWeek = !state.week && (state.weekLoading || state.membersLoading);
     if (!state.week) {
       // backlog:29bb3f2c0d64: with nobody to show (a space with no people
       // yet, or no names while the roster is unread) the week still paints
@@ -2760,9 +2814,13 @@ export function createCalendarioView(deps) {
         : (roster.length === 0
           ? 'Nello spazio non c’è ancora nessuna persona: la settimana resta vuota finché il titolare non invita il team.'
           : '');
-      if (line !== '') panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
+      if (line !== '' && !loadingWeek) panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
     }
-    const grid = el(doc, 'div', { className: 'cal-grid' });
+    if (loadingWeek) {
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico la settimana…' }));
+    }
+    const grid = el(doc, 'div', { className: loadingWeek ? 'cal-grid is-loading' : 'cal-grid' });
     grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
     for (let hour = GRID_START_MINUTES / 60; hour <= GRID_END_MINUTES / 60; hour += 1) {
       const label = el(doc, 'div', {
@@ -2811,7 +2869,7 @@ export function createCalendarioView(deps) {
       grid.appendChild(head);
       const col = el(doc, 'div', {
         className: empty ? 'cal-day is-empty' : 'cal-day',
-        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
+        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_HALF_HOURS}` },
       });
       // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
       // never paints over a booking or over another ghost.
@@ -2820,6 +2878,16 @@ export function createCalendarioView(deps) {
       col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
         col.appendChild(renderEvent(row, lanes.get(row) ?? { lane: 0, lanes: 1 }));
+      }
+      if (loadingWeek) {
+        // backlog:7587307d5215: two grey placeholder blocks per day while the
+        // week is read, at fixed rows, carrying no text.
+        for (const [start, span] of [[5 + dayIndex * 2, 4], [17 + dayIndex, 6]]) {
+          col.appendChild(el(doc, 'div', {
+            className: 'cal-skeleton',
+            attrs: { 'aria-hidden': 'true', 'data-skeleton': 'true', style: `grid-row: ${start} / span ${span}; grid-column: 1 / -1` },
+          }));
+        }
       }
       // BO-F6-11 fetta 3 (specs/calendario.md C5): the "✦ Proposta" ghosts.
       // One dashed ghost per searched slot on its Rome day, clickable to
@@ -2849,7 +2917,7 @@ export function createCalendarioView(deps) {
           className: 'cal-pick',
           attrs: {
             'data-role': 'slot-pick',
-            style: `grid-row: ${(state.selection.start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${Math.max(1, (state.selection.end - state.selection.start) / GRID_SLOT_MINUTES)}; grid-column: 1 / -1`,
+            style: `grid-row: ${rowsOf(state.selection.start, state.selection.end)}; grid-column: 1 / -1`,
           },
           text: `${minutesLabel(state.selection.start)}–${minutesLabel(state.selection.end)}`,
         }));
@@ -4943,6 +5011,9 @@ export function createCalendarioView(deps) {
       state.customerPick = freshPick;
       state.manualOpen = true;
     }
+    // backlog:7587307d5215: the roster read starts with this paint, so the
+    // first frame shows the loading skeletons, never «nessuna persona».
+    if (state.members === null) state.membersLoading = true;
     renderAll();
     // The roster arrives beside the week and becomes the team once it
     // lands (auto-fill plus week load inside loadMembers); its failure is

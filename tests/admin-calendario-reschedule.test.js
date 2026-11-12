@@ -578,7 +578,7 @@ test('a332dcd0: a successful drag opens no popover either and confirms in a toas
   assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 0);
   assert.equal(toasts.length, 1);
   assert.equal(toasts[0].error, false);
-  assert.match(toasts[0].message, /^Spostato a Giovedì 15:00–16:00\.$/);
+  assert.match(toasts[0].message, /^Spostato a giovedì 22 ottobre, 15:00–16:00\.$/);
 });
 
 test('a332dcd0: a move still queued on the shared /bo stays where it was dropped and the week is read again', async () => {
@@ -679,4 +679,82 @@ test('a332dcd0 (review #811): a queued reread waits for a move in flight, never 
   await settle(15);
   assert.ok(toasts.some((toast) => toast.message.startsWith('Spostato a') && !toast.error), JSON.stringify(toasts));
   assert.equal(weekReads(), readsBefore + 1, 'one week read, after the second move');
+});
+
+// backlog:7587307d5215: the drag and the bottom edge snap to the quarter hour.
+test('7587307d: a move and a stretch snap to the quarter hour', async () => {
+  const moved = await openPointerWeek();
+  // 540 px from 09:00: 15 px a quarter. Grab 14:30 on the 14:00–15:00 block,
+  // let go at 14:50 (the 14:45 quarter): the block starts at 14:15.
+  moved.col.dispatch('pointerdown', { target: eventButton(moved.mount, 'a9'), button: 0, clientY: 330 });
+  moved.col.dispatch('pointermove', { clientY: 350 });
+  moved.col.dispatch('pointerup', {});
+  await settle(15);
+  const move = moved.client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  const moveBody = typeof move.body === 'string' ? JSON.parse(move.body) : move.body;
+  assert.equal(moveBody.startsAt, '2026-10-22T12:15:00.000Z', 'starts on the 14:15 quarter (Rome)');
+  assert.equal(moveBody.endsAt, '2026-10-22T13:15:00.000Z', 'the hour stays an hour');
+
+  const stretched = await openPointerWeek();
+  const { handle } = resizeHandleOf(stretched.mount);
+  // The bottom edge dragged to 15:10 lands on the 15:15 line.
+  stretched.col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  stretched.col.dispatch('pointermove', { clientY: 370 });
+  stretched.col.dispatch('pointerup', {});
+  await settle(15);
+  const stretch = stretched.client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  const stretchBody = typeof stretch.body === 'string' ? JSON.parse(stretch.body) : stretch.body;
+  assert.equal(stretchBody.startsAt, '2026-10-22T12:00:00.000Z', 'the start stays');
+  assert.equal(stretchBody.endsAt, '2026-10-22T13:15:00.000Z', 'the end snaps to 15:15 (Rome)');
+});
+
+// backlog:7587307d5215: while the roster and the week load, Team and the
+// grid show placeholders — never «nessuna persona» nor an empty week.
+test('7587307d: loading shows skeletons, never the empty states', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseRoster = () => {};
+  let releaseWeek = () => {};
+  const week = DRAG_WEEK();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships') {
+        await new Promise((resolve) => { releaseRoster = resolve; });
+        return { items: [{ subject: 'marco', displayName: 'Marco', email: 'marco@example.com' }] };
+      }
+      if (path.startsWith('/api/appointments/team-week')) {
+        await new Promise((resolve) => { releaseWeek = resolve; });
+        return week;
+      }
+      if (path === '/api/profile') return { member: null, connections: { available: false, reason: 'PROFILE_NOT_COMPOSED', items: [] } };
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
+      const missing = Object.assign(new Error('not composed'), { code: 'NOT_FOUND', status: 404 });
+      throw missing;
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  void view.render();
+  await settle(3);
+  const team = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-team'));
+  const week_ = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-week'));
+  const skeletons = (root) => root.findAll('div').filter((node) => node.getAttribute('data-role') === 'team-skeleton').length;
+  // Roster in flight: skeleton rows, no empty sentence.
+  assert.ok(skeletons(team()) > 0, 'Team shows placeholder rows');
+  assert.equal(team().getAttribute('aria-busy'), 'true');
+  assert.ok(!/Nomina le persone|nessuna persona/.test(team().textContent), team().textContent);
+  assert.ok(week_().findAll('div').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the grid shows placeholder blocks');
+  assert.ok(!/Scegli le persone/.test(week_().textContent), 'no empty-week sentence while the team loads');
+  // Roster in, week in flight: the grid still shows its skeleton.
+  releaseRoster();
+  await settle(5);
+  assert.equal(skeletons(team()), 0, 'the team rows replace the placeholders');
+  assert.ok(team().textContent.includes('Marco'));
+  assert.ok((week_().findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('cal-grid'))?.getAttribute('class') ?? '').includes('is-loading'), 'the grid is still loading');
+  assert.equal(week_().getAttribute('aria-busy'), 'true');
+  // Week in: no placeholder left, the blocks paint.
+  releaseWeek();
+  await settle(10);
+  assert.ok(!week_().findAll('div').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no placeholder after the week lands');
+  assert.equal(week_().getAttribute('aria-busy'), null);
+  assert.ok(eventButton(mount, 'a9'), 'the booking paints');
 });

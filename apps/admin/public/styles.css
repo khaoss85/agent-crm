@@ -1480,16 +1480,19 @@ select.bo-spazi-input { flex: none; }
 .cal-manual .cal-form input { flex-basis: 100%; }
 .cal-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .cal-filter input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
-.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); margin-top: 14px; }
+.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); grid-template-rows: auto repeat(18, 30px); margin-top: 14px; }
 .cal-corner { grid-column: 1; grid-row: 1; }
 .cal-hour { grid-column: 1; font-family: var(--mono); font-size: 10px; color: var(--dim); text-align: right; padding-right: 8px; align-self: start; transform: translateY(-50%); }
 .cal-day-head { grid-row: 1; margin: 0 0 8px; font-size: 12px; color: var(--muted); text-align: center; }
 .cal-day-head .cal-today { display: inline-block; background: var(--ink); color: var(--paper); border-radius: 999px; min-width: 44px; padding: 2px 8px; font-weight: 700; }
-.cal-day { position: relative; display: grid; grid-template-rows: repeat(18, minmax(30px, auto)); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
+/* backlog:7587307d5215: fixed quarter-hour rows (60px an hour) — a row that
+ * grew with its content made hours uneven across columns, so a block no
+ * longer covered its own time. Content clips inside its block instead. */
+.cal-day { position: relative; display: grid; grid-template-rows: repeat(36, 15px); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
 .cal-day:last-child { border-right: 1px solid var(--line); }
 /* backlog:5fbebe8559e9: the compact empty-day row exists only on the phone stack. */
 .cal-day-compact { display: none; }
-.cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
+.cal-grid .cal-event { display: block; width: 100%; min-height: 0; box-sizing: border-box; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
 .cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
@@ -1499,8 +1502,23 @@ select.bo-spazi-input { flex: none; }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }
 .cal-m3 { background: var(--pending-soft); color: var(--ink); }
 .cal-m4 { background: var(--surface-soft); color: var(--ink); }
+/* backlog:7587307d5215: a booking block is a button, and the later
+ * `.ui-btn-secondary` surface painted every block white — a quarter-hour
+ * block vanished into the grid. The block keeps its member tint. */
+.cal-grid .cal-event.cal-m0 { background: var(--data-soft); }
+.cal-grid .cal-event.cal-m1 { background: var(--human-soft); }
+.cal-grid .cal-event.cal-m2 { background: var(--accent-soft); }
+.cal-grid .cal-event.cal-m3 { background: var(--pending-soft); }
+.cal-grid .cal-event.cal-m4 { background: var(--surface-soft); }
 .cal-grid .cal-event.cal-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .cal-grid .cal-event.cal-cancelled { opacity: .55; }
+/* backlog:7587307d5215: the week and the team while they load — grey
+ * placeholders that pulse (the ui-skeleton rhythm), never an empty week. */
+.cal-skeleton { margin: 2px 4px; border-radius: 8px; background: var(--line-soft); }
+.cal-team-skeleton { padding: 8px 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .cal-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
+}
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
@@ -1522,7 +1540,10 @@ select.bo-spazi-input { flex: none; }
  * selection, on desktop or on the 390 px phone. The «Sposta» form in the
  * detail card is the same move as named fields. */
 .cal-grid .cal-event.is-movable { cursor: grab; touch-action: none; user-select: none; }
-.cal-resize { display: block; height: 10px; margin: 3px -6px -4px; border-radius: 4px; cursor: ns-resize; touch-action: none;
+/* backlog:7587307d5215: the stretch handle sits on the block's real bottom
+ * edge, whatever the block's height, never in the middle of a long block. */
+.cal-grid .cal-event.is-movable { position: relative; }
+.cal-resize { position: absolute; left: 0; right: 0; bottom: 0; display: block; height: 8px; margin: 0; border-radius: 0 0 8px 8px; cursor: ns-resize; touch-action: none;
   background: linear-gradient(to bottom, transparent 4px, rgba(0, 0, 0, .28) 4px, rgba(0, 0, 0, .28) 6px, transparent 6px); }
 .cal-move { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cal-move-title { font-size: 13px; margin: 0 0 8px; }
@@ -1635,7 +1656,8 @@ select.bo-spazi-input { flex: none; }
   .cal-grid .cal-day-compact { display: flex; align-items: center; gap: 10px; grid-column: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
   .cal-day-compact-name { font-weight: 700; text-transform: capitalize; }
   .cal-day-compact > span:not(.cal-day-compact-name) { color: var(--muted); flex: 1; min-width: 0; }
-  .cal-grid .cal-day { grid-template-rows: repeat(18, minmax(22px, auto)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
+  .cal-grid { grid-template-rows: none; }
+  .cal-grid .cal-day { grid-template-rows: repeat(36, 11px); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
 }
 
 /*
