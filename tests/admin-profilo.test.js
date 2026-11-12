@@ -179,3 +179,70 @@ test('a connected Meta account never stands in for the person email', async () =
   ] } }, { name: 'Dan', email: 'google|123', role: 'owner' });
   assert.deepEqual(byClass(mount, 'span', 'bo-profilo-email'), [], 'no email shown from a Meta account');
 });
+
+// backlog:1cfc68175ab7 (VERIFIER_BACK 2026-11-12: the name was a static h2,
+// no write existed): the profile name is editable in place through
+// PATCH /api/profile, via the submission controller.
+test('backlog:1cfc68175ab7 the profile name is editable: Modifica opens a form, Salva PATCHes and repaints', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let storedName = 'Elena Rinaldi';
+  const calls = [];
+  const raw = {
+    async request(path, options = {}) {
+      calls.push({ path, method: String(options.method ?? 'GET').toUpperCase(), body: options.body });
+      if (path === '/api/profile' && String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        const parsed = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        storedName = parsed.name;
+        return { member: { name: storedName }, connections: { available: true, reason: null, items: [] } };
+      }
+      assert.equal(path, '/api/profile');
+      return { member: { name: storedName, email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      return raw.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({ doc, mount, client, member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }) });
+  await view.render();
+  const edit = mount.findAll('button').find((node) => node.textContent === 'Modifica');
+  assert.ok(edit, 'a Modifica button sits beside the static name');
+  edit.dispatch('click');
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name');
+  assert.ok(input, 'the edit form offers a Nome field');
+  input.value = 'Elena Presti';
+  mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
+  await flush(20);
+  const patch = calls.find((call) => call.method === 'PATCH');
+  assert.ok(patch, 'Salva sends a write, never only a re-read');
+  assert.equal(patch.path, '/api/profile');
+  const sent = typeof patch.body === 'string' ? JSON.parse(patch.body) : patch.body;
+  assert.deepEqual(sent, { name: 'Elena Presti' });
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti');
+});
+
+test('backlog:1cfc68175ab7 an empty name never leaves the browser', async () => {
+  const calls = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({ doc, mount,
+    member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }),
+    client: { request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, method: String(options.method ?? 'GET').toUpperCase() });
+      return { member: { name: 'Elena Rinaldi' }, connections: { available: true, reason: null, items: [] } };
+    } },
+  });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name');
+  input.value = '   ';
+  mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
+  assert.ok(!calls.some((call) => call.method !== 'GET'), 'no write on an empty name');
+  assert.match(mount.textContent, /Scrivi un nome prima di salvare/);
+});
