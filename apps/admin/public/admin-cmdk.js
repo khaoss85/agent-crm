@@ -1,6 +1,7 @@
 // @ts-check
 
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { customerOf } from './admin-pipeline.js';
 
 // backlog:be99004b06e4 — ⌘K finds before it asks. Typing in the top bar
 // lists the matching /bo pages, customers and offers at once, from local
@@ -79,7 +80,9 @@ export function offerCommand(item) {
   return {
     kind: 'offer',
     label: cleanLabel(item.name) || 'Offerta senza nome',
-    sub: cleanLabel(item.companyName) || cleanLabel(item.contactName),
+    // backlog:0a980182918f: the customer as the Pipeline card names it —
+    // the contact, else the company, never the «Senza azienda» placeholder.
+    sub: cleanLabel(customerOf(item) ?? ''),
     href: `#/offerte/${encodeURIComponent(item.id)}`,
   };
 }
@@ -123,7 +126,9 @@ export function buildCommandRows({ query, pages = [], customers = null, offers =
       .map((item) => {
         const row = offerCommand(item);
         if (row === null) return null;
-        const rank = Math.max(matchRank(item.name, folded), matchRank(item.companyName, folded), matchRank(item.contactName, folded));
+        const rank = Math.max(matchRank(item.name, folded), matchRank(item.contactName, folded),
+          // The real company only: «senza» never matches every offer.
+          matchRank(customerOf({ companyName: item.companyName }), folded));
         return rank > 0 ? { row, rank } : null;
       })
       .filter((entry) => entry !== null)
