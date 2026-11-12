@@ -161,6 +161,55 @@ test('review #654 giro 4: an explicit «Senza azienda» never reuses another cus
   assert.notEqual(receipt.subject?.id, anna.companyId);
 });
 
+test('a real company named «Senza azienda» reads as a company everywhere (backlog:ac65e448fcb4)', async (t) => {
+  const { app } = scene(t);
+  // Created through the company path it is real: the flag stays down.
+  const real = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
+  assert.equal(real.placeholder, false);
+  const stored = await app.services.companies.get(real.id);
+  assert.equal(isNoCompany(stored), false, 'the stored row is not a placeholder');
+  // A contact filed under it names the company in the list …
+  const contact = await app.services.contacts.create({
+    companyId: real.id, firstName: 'Vera', lastName: 'Azienda', email: 'vera@senzazienda.invalid',
+  }, { actor: OPERATOR });
+  const list = await app.listCustomers({});
+  assert.equal(list.items.find((item) => item.id === contact.id)?.company?.name, 'Senza azienda');
+  // … in the profile and in the card …
+  const profile = await app.readCustomerProfile({ resource: 'contact', id: contact.id });
+  assert.equal(profile.identity.company?.name, 'Senza azienda');
+  const card = shapeCustomerCard(profile, { resource: 'contact', id: contact.id });
+  assert.equal(card.company?.name, 'Senza azienda');
+  assert.equal(shownCompanyName({ company: { name: 'Senza azienda', placeholder: false } }), 'Senza azienda');
+  // … and two real same-named companies still pair as duplicate suspects.
+  const twin = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
+  await app.proposeDataCleanup({ actor: { type: 'agent', id: 'pulizia-test' } });
+  const candidates = await app.modules.get('duplicate-candidate').service.list({ limit: 500 });
+  assert.ok(
+    candidates.some((row) => row.leftResource === 'company' && row.rightResource === 'company'
+      && JSON.stringify(row).includes(real.id) && JSON.stringify(row).includes(twin.id)),
+    'real same-named companies still pair as duplicates',
+  );
+});
+
+test('sender resolution never matches a placeholder company by name (backlog:ac65e448fcb4)', async (t) => {
+  const { app } = scene(t);
+  // The placeholder carries the explicit domain as evidence (review #654),
+  // so a sender naming that exact company and domain is the sharp case: the
+  // core adapters must hide the placeholder (the portable copy mirrors them).
+  const imported = await applyOne(app, { firstName: 'Mario', email: 'mario@acme.example', domain: 'acme.example' }, 'crm-export');
+  const contact = await app.services.contacts.get(imported.receipts[0].subject.id);
+  const placeholder = await app.services.companies.get(contact.companyId);
+  assert.equal(placeholder.placeholder, true);
+  assert.equal(placeholder.domain, 'acme.example');
+  const answer = await app.resolveChannelSender({
+    channel: 'whatsapp', handle: '+393330000099',
+    companyName: 'Senza azienda', domain: 'acme.example', actor: OPERATOR,
+  });
+  assert.equal(answer.rule, 'none', 'no company rule fires on a placeholder');
+  assert.deepEqual(answer.candidates, [], 'the placeholder is never a resolution candidate');
+  assert.equal(answer.contact, null, 'no contact is created from a placeholder match');
+});
+
 test('GET /api/companies hides placeholders: the «Nuova offerta» list and the Aziende surfaces pick real companies only (backlog:ece81578305d)', async (t) => {
   const app = createAccordoApp({ dbPath: ':memory:' });
   const server = createHttpServer(app);
