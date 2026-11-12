@@ -4683,7 +4683,25 @@ test('a block with a server-attached customer label reads service · customer wi
 
 test('c2f21b5d: a service option reads its price as Italian money', () => {
   assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1,00 €');
-  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1080,00 €');
+  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Pacchetto', priceCents: 123456789 }), 'Pacchetto · 1.234.567,89 €');
+  assert.equal(serviceOptionLabel({ name: 'Dollari', priceCents: 100, currency: 'USD' }), 'Dollari', 'never a currency the menu does not book');
+  assert.equal(serviceOptionLabel({ name: 'Strano', priceCents: 100, currency: 'XYZ!' }), 'Strano', 'an unknown code never throws');
   assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0,00 €');
   assert.equal(serviceOptionLabel({ name: 'Senza prezzo', priceCents: 1.5 }), 'Senza prezzo');
+});
+
+test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian thousands dot', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'pacchetto', name: 'Pacchetto annuale', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 108000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 9; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
+  assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
 });

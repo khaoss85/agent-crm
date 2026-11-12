@@ -761,17 +761,30 @@ export function catalogBookingServices(payload) {
 
 /**
  * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
- * the name and the price as Italian money («Lezione di prova · 1,00 €»),
- * never the dotted «1.00 €» the price field keeps for typing. A price that
- * is not whole cents reads as the name alone.
+ * the name and the price as Italian money («Lezione di prova · 1,00 €»,
+ * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. A price that is not whole cents, or not in euros, reads as the
+ * name alone.
  * @param {{name: string, priceCents: number, currency?: string}} entry
  */
 export function serviceOptionLabel(entry) {
   const cents = entry?.priceCents;
-  if (!Number.isSafeInteger(cents) || cents < 0) return String(entry?.name ?? '');
-  const money = new Intl.NumberFormat('it-IT', { style: 'currency', currency: entry?.currency === undefined ? 'EUR' : String(entry.currency) })
-    .format(cents / 100).replace(/\u00a0/g, ' ');
-  return `${entry.name} · ${money}`;
+  const currency = entry?.currency === undefined ? 'EUR' : entry.currency;
+  // The menu books euros only (catalogBookingServices keeps EUR singles):
+  // any other or unknown currency reads as the name alone, never a throw.
+  if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
+  return `${entry.name} · ${italianEuros(cents)}`;
+}
+
+/**
+ * Italian money with the grouping pinned (review #813): «1.080,00 €», the
+ * same thousands dot as the rest of the /bo, never left to the runtime's
+ * locale data.
+ * @param {number} cents
+ */
+function italianEuros(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
 }
 
 /**
