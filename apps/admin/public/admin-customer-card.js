@@ -9,7 +9,7 @@ import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, o
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
-import { cleanMessageBody, cleanPreviewText, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
+import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -570,7 +570,6 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
-const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
 /** What a passage reads when neither its text nor its subject says anything. */
 export const PASSAGE_NO_TEXT = '(nessun testo)';
 
@@ -634,15 +633,10 @@ export function collapseDuplicatePassages(entries) {
  * @param {string} value
  */
 export function readableText(value) {
-  return String(value ?? '')
-    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
-      if (name[0] === '#') {
-        const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
-        return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
-      }
-      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
-    })
-    .replace(/[\u034f\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
+  // The shared decoder (Dan 12/11): «&zwnj;», «&lrm;» and the other
+  // padding entities decode, then every format character goes.
+  return decodeHtmlEntities(String(value ?? ''))
+    .replace(/[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\u00ad]/g, '')
     .replace(/[ \t\u00a0]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

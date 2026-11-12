@@ -70,12 +70,18 @@ const ATTRIBUTE_NAMES = '(?:id|class|style|width|height|align|valign|bgcolor|bac
 const ATTRIBUTE = ATTRIBUTE_NAMES + '\\s*=\\s*(?:\\x22[^\\x22]*(?:\\x22|$)|\\x27[^\\x27]*(?:\\x27|$))';
 const ATTRIBUTE_RESIDUE_RE = new RegExp('(^|[\\s>])' + ATTRIBUTE + '(?:\\s+' + ATTRIBUTE + ')*\\s*\\/?>?', 'gi');
 /** Any sign of markup: a tag, a cut tag or attribute residue. */
-const MARKUP_HINT_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
+const MARKUP_HINT_RE = new RegExp('<![a-zA-Z]|<\\?xml|<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
 
 const NAMED_ENTITIES = Object.freeze({
   amp: '&', lt: '<', gt: '>', quot: '\u0022', apos: '\u0027', nbsp: ' ',
   laquo: '«', raquo: '»', hellip: '…', ndash: '–', mdash: '—', euro: '€',
   rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c', copy: '©', reg: '®', trade: '™',
+  // Format and spacing entities newsletters pad their preheaders with
+  // (Dan 12/11: «&zwnj;» read as text in Clienti and Oggi).
+  zwnj: '\u200c', zwj: '\u200d', lrm: '\u200e', rlm: '\u200f', shy: '\u00ad',
+  ensp: ' ', emsp: ' ', thinsp: ' ', hairsp: ' ', numsp: ' ', puncsp: ' ', zwsp: '\u200b',
+  middot: '·', bull: '•', pound: '£', yen: '¥', cent: '¢', sect: '§', deg: '°', times: '×', iacute: 'í',
+  agrave: 'à', egrave: 'è', eacute: 'é', igrave: 'ì', ograve: 'ò', ugrave: 'ù', oacute: 'ó', uacute: 'ú', aacute: 'á',
 });
 
 /** `<…url…>`, `[…url…]`, `(…url…)` and bare URLs, `mailto:` included. */
@@ -134,18 +140,26 @@ function dropServicePhrases(text) {
 
 /**
  * An amount that names its currency twice, symbol and code: «4,99 € EUR»,
- * «€4.99 EUR», «$5 USD» read as «4,99 €», «€4.99», «$5» (Dan 10/11).
+ * «€4.99 EUR», «$5 USD», «EUR 4,99 €» read as «4,99 €», «€4.99», «$5»,
+ * «4,99 €» (Dan 10/11). Any space counts, NBSP and narrow NBSP included
+ * (Dan 12/11: «4,99&nbsp;€&nbsp;EUR» stored as NBSP characters).
  */
 const CURRENCY_CODES = Object.freeze({ '€': 'EUR', '$': 'USD', '£': 'GBP' });
-const DOUBLE_CURRENCY_RE = /(?:([€$£])[ \t]?(\d[\d.,]*)|(\d[\d.,]*)[ \t]?([€$£]))[ \t]+(EUR|USD|GBP)\b/g;
+const DOUBLE_CURRENCY_RE = /(?:([€$£])\s?(\d[\d.,]*)|(\d[\d.,]*)\s?([€$£]))\s+(EUR|USD|GBP)\b/g;
+const LEADING_CODE_RE = /\b(EUR|USD|GBP)\s+((?:[€$£])\s?\d[\d.,]*|\d[\d.,]*\s?(?:[€$£]))/g;
 
 /** @param {string} text */
 function dropDoubleCurrency(text) {
-  return text.replace(DOUBLE_CURRENCY_RE, (whole, before, amountAfter, amountBefore, after, code) => {
-    const symbol = before ?? after;
-    if (CURRENCY_CODES[/** @type {keyof typeof CURRENCY_CODES} */ (symbol)] !== code) return whole;
-    return before !== undefined ? `${before}${amountAfter}` : `${amountBefore} ${after}`;
-  });
+  return text
+    .replace(DOUBLE_CURRENCY_RE, (whole, before, amountAfter, amountBefore, after, code) => {
+      const symbol = before ?? after;
+      if (CURRENCY_CODES[/** @type {keyof typeof CURRENCY_CODES} */ (symbol)] !== code) return whole;
+      return before !== undefined ? `${before}${amountAfter}` : `${amountBefore} ${after}`;
+    })
+    .replace(LEADING_CODE_RE, (whole, code, amount) => {
+      const symbol = /[€$£]/.exec(amount)?.[0];
+      return symbol !== undefined && CURRENCY_CODES[/** @type {keyof typeof CURRENCY_CODES} */ (symbol)] === code ? amount : whole;
+    });
 }
 
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
@@ -168,6 +182,11 @@ export function htmlToText(html) {
   if (html === null || html === undefined) return '';
   return String(html)
     .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+    // Declarations and processing instructions (Dan 12/11: «<!DOCTYPE html>»
+    // read as text): `<!DOCTYPE …>`, `<![CDATA[…]]>`, `<?xml …?>`.
+    .replace(/<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g, '')
+    .replace(/<![a-zA-Z][^>]*>?/g, '')
+    .replace(/<\?[a-zA-Z][\s\S]*?(?:\?>|$)/g, '')
     .replace(/<(script|style|head|title|template)\b[\s\S]*?<\/\1\s*>/gi, '')
     .replace(HIDDEN_ELEMENT_RE, '')
     .replace(BREAK_RE, '\n')
@@ -198,6 +217,16 @@ export function hasMarkup(value) {
 export function cleanMessageBody(value) {
   if (typeof value !== 'string') return '';
   return hasMarkup(value) ? htmlToText(value).trim() : value;
+}
+
+/** @param {string} text */
+/**
+ * HTML entities to text, named (the table above) and numeric. Text stays
+ * text: nothing decoded here is ever parsed as markup by the caller.
+ * @param {string} text
+ */
+export function decodeHtmlEntities(text) {
+  return decodeEntities(String(text ?? ''));
 }
 
 /** @param {string} text */
