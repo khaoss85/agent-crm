@@ -872,18 +872,32 @@ export function createCustomerCardView(deps) {
   // reads) and kept a minute, so «↔ sincronizzato» is claimed only for a
   // channel `channelState` calls collegato. Never one of the scheda's own
   // reads: the identities paint at once and the claim lands when known.
-  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown } | null> } | null} */
+  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean } | null> } | null} */
   let spaceChannelsRead = null;
   const readSpaceChannels = () => {
     const spaceId = activeSpaceId();
     if (spaceId === null) return Promise.resolve(null);
     if (spaceChannelsRead !== null && spaceChannelsRead.spaceId === spaceId
       && Date.now() - spaceChannelsRead.at < 60000) return spaceChannelsRead.promise;
+    // A failed read is logged with its safe fields (name/code/status and
+    // the space, never a message) and kept only as «unknown» (review #819
+    // P2): an unread state never downgrades a line, it only claims nothing.
+    const warn = (what, error) => {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn(`bo-scheda ${what} unreadable:`,
+          error instanceof Error ? error.name : 'unknown',
+          typeof error?.code === 'string' ? error.code : '',
+          Number.isFinite(error?.status) ? error.status : '', `spaceId=${spaceId}`);
+      }
+    };
     const promise = Promise.all([
-      readProfile(client),
+      readProfile(client, (_label, status) => warn('profile', { code: 'PROFILE_UNREADABLE', status })),
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`)
-        .then((sync) => (Array.isArray(sync?.connectors) ? sync.connectors : []), () => null),
-    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile }));
+        .then((sync) => (Array.isArray(sync?.connectors) ? sync.connectors : []), (error) => {
+          warn('channels', error);
+          return null;
+        }),
+    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile, profileRead: profile !== null }));
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
@@ -2406,7 +2420,10 @@ export function createCustomerCardView(deps) {
         for (const entry of syncLines) {
           const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
           if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
-          else if (!linked) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+          // «non collegato» only when known (review #819 P2): with the
+          // profile unread a Profilo link cannot be ruled out, so the line
+          // keeps the traffic it saw and claims nothing more.
+          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
         }
       });
     }

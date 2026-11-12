@@ -4191,6 +4191,65 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
   assert.equal(channelState('instagram', { rows: [], profile: null }).state === 'collegato', false);
 });
 
+// Review #819 P2: an unread profile is unknown, never «non collegato» — a
+// Profilo link cannot be ruled out — and a failed channel-state read leaves
+// a diagnosable warning (name/code, status, space; never a message) and
+// claims nothing.
+test('e381c48581fa review: an unread profile never says «non collegato», failures are logged', async () => {
+  const both = { ...TIMELINE, entries: { ...TIMELINE.entries, items: [
+    ...TIMELINE.entries.items,
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'inbound' },
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'outbound' },
+  ] } };
+  const base = stubClient({ timeline: both });
+  const requests = [];
+  let connectorsDown = false;
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      requests.push(path);
+      if (path === '/api/profile') throw Object.assign(new Error('unavailable'), { status: 503 });
+      if (path.startsWith('/api/connectors')) {
+        if (connectorsDown) throw Object.assign(new Error('boom'), { code: 'CHANNELS_DOWN', status: 500 });
+        return { connectors: [] };
+      }
+      return base.request(path, options);
+    },
+  };
+  const warned = [];
+  const original = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti' });
+    await view.renderCard('contact', 'c1');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    const syncOf = (channel) => mount.findAll('p')
+      .find((node) => node.getAttribute('data-channel') === channel)
+      ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+    assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'profile unread: no sync claim, no «non collegato»');
+    assert.equal(syncOf('instagram'), '↔ in entrata e in uscita');
+    assert.ok(warned.some((line) => line.includes('bo-scheda profile unreadable') && line.includes('spaceId=presti')),
+      'the failed profile read is diagnosable');
+    // A channels outage is logged with its code and the space, and the
+    // lines stay on the traffic they saw.
+    connectorsDown = true;
+    const other = createMount();
+    await createCustomerCardView({ doc, mount: other, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(!other.textContent.includes('canale non collegato'), 'an outage claims nothing');
+    assert.ok(!other.textContent.includes('sincronizzato'), 'an outage claims nothing');
+    const channelWarn = warned.find((line) => line.includes('bo-scheda channels unreadable'));
+    assert.ok(channelWarn, 'the failed connectors read is logged');
+    assert.ok(channelWarn.includes('CHANNELS_DOWN') && channelWarn.includes('500'), 'with its code and status');
+    assert.ok(channelWarn.includes('spaceId=presti'));
+    assert.ok(!warned.some((line) => line.includes('boom')), 'never the message');
+  } finally {
+    console.warn = original;
+  }
+});
+
 test('59def6cb805d: observedDirections never assumes a direction nobody recorded (C10)', () => {
   const seen = observedDirections({ entries: { items: [
     { channel: 'WhatsApp', direction: 'inbound' },
