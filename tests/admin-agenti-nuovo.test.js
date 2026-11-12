@@ -119,6 +119,8 @@ test('checkNewAgent: ogni campo mancante si spiega in italiano; il nome perde la
   assert.match(checkNewAgent({ name: 'A', role: 'r', instructions: 'i', cap: '0' }).error ?? '', /più di 0/);
   assert.equal(checkNewAgent({ name: 'riaggàncio', role: 'r', instructions: 'i' }, [RIAGGANCIO]).error, AGENT_NAME_TAKEN_NOTE, 'un altro agente risponde già a quel @nome');
   assert.match(checkNewAgent({ name: 'x'.repeat(121), role: 'r', instructions: 'i' }).error ?? '', /troppo lungo/);
+  assert.equal(checkNewAgent({ name: 'A', role: 'r', instructions: 'Ogni mattina:\nprepara gli auguri.\r\n\nAspetta il mio ok.' }).body?.instructions,
+    'Ogni mattina: prepara gli auguri. Aspetta il mio ok.', 'gli a capo della textarea diventano spazi: create-agent vuole una riga');
 });
 
 test('«Nuovo agente» apre il pannello sul nome; Esc e Annulla lo chiudono e il fuoco torna al pulsante', async () => {

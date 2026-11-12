@@ -652,7 +652,9 @@ export function checkNewAgent(form, agents = []) {
   const line = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
   const name = line(form?.name).replace(/^@+\s*/, '');
   const role = line(form?.role);
-  const instructions = String(form?.instructions ?? '').trim();
+  // create-agent keeps instructions on one line: the lines of the textarea
+  // join with a space, never a 400 for an Enter the operator typed.
+  const instructions = line(form?.instructions);
   if (name === '') return { error: 'Dagli un nome: è quello che scrivi dopo la @.' };
   if (name.length > NEW_AGENT_LIMITS.name) return { error: `Il nome è troppo lungo: al massimo ${NEW_AGENT_LIMITS.name} caratteri.` };
   if (role === '') return { error: 'Scrivi in poche parole di cosa si occupa.' };
