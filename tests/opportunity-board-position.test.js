@@ -4,7 +4,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
 import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 import { buildMoveStageAction } from '../packages/core/src/pipeline-actions.js';
-import { BOARD_GAP, boardPlan } from '../packages/modules/opportunity/src/opportunity-service.js';
+import { BOARD_GAP, boardPlan, OpportunityService } from '../packages/modules/opportunity/src/opportunity-service.js';
 
 /**
  * backlog:67a3116f4f65 — the card's place inside its pipeline column.
@@ -243,4 +243,49 @@ test('67a3116f4f65: boardPlan writes one row when there is room, the column when
     boardPlan([{ id: 'u', position: 0 }, { id: 'a', position: 1024 }], 2),
     { position: 3072, writes: [{ id: 'u', position: 1024 }, { id: 'a', position: 2048 }] },
   );
+});
+
+test('review Muse #785: on async storage (PostgreSQL) the card and its column are read inside the transaction that writes the placement', async () => {
+  // A PostgreSQL-shaped handle: async reads and writes, one transaction.
+  const rows = new Map([
+    ['a', { id: 'a', company_id: 'co', contact_id: null, name: 'A', type: 'new_business', value_cents: 1, currency: 'EUR', stage: 'qualification', owner: 'o', pipeline_key: 'accordo-sales', pipeline_stage: 'prova', board_position: 1024, created_at: 't', updated_at: 't' }],
+    ['b', { id: 'b', company_id: 'co', contact_id: null, name: 'B', type: 'new_business', value_cents: 1, currency: 'EUR', stage: 'qualification', owner: 'o', pipeline_key: 'accordo-sales', pipeline_stage: 'prova', board_position: 2048, created_at: 't', updated_at: 't' }],
+  ]);
+  const log = [];
+  let inTx = false;
+  const match = (row, where = []) => where.every((clause) => row[clause.column] === clause.value);
+  const storage = {
+    activeTransaction: () => inTx,
+    async maybeOne(statement) {
+      if (Array.isArray(statement.columns)) log.push({ read: 'card', inside: inTx });
+      return [...rows.values()].find((row) => match(row, statement.where)) ?? null;
+    },
+    async many(statement) {
+      if (Array.isArray(statement.columns) && statement.columns.includes('board_position')) log.push({ read: 'column', inside: inTx });
+      return [...rows.values()].filter((row) => match(row, statement.where))
+        .sort((x, y) => x.board_position - y.board_position);
+    },
+    async execute(statement) {
+      log.push({ write: true, inside: inTx });
+      for (const row of rows.values()) {
+        if (!match(row, statement.where)) continue;
+        for (const { column, value } of statement.values) row[column] = value;
+      }
+    },
+    async transaction(fn) { inTx = true; try { return await fn(storage); } finally { inTx = false; } },
+    async savepoint(_name, fn) { return fn(storage); },
+  };
+  const service = new OpportunityService({
+    database: { storage },
+    audit: { record: async () => { log.push({ audit: true, inside: inTx }); } },
+    events: { emit: async () => {} },
+    companies: { get: async () => ({ name: 'Co' }) },
+    contacts: { get: async () => null },
+  });
+  const placed = await service.positionOnBoard('b', { first: true }, { actor });
+  assert.equal(placed.boardPosition, 512, 'B goes first, before A at 1024');
+  const planReads = log.filter((entry) => entry.read);
+  assert.deepEqual(planReads.map((entry) => entry.read), ['card', 'column'], 'the plan reads the card, then its column');
+  assert.ok(planReads.every((entry) => entry.inside), `every plan read is inside the transaction (${JSON.stringify(log)})`);
+  assert.ok(log.filter((entry) => entry.write || entry.audit).every((entry) => entry.inside), 'and so are the writes and the audit');
 });

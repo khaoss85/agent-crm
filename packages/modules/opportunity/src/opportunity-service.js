@@ -472,77 +472,99 @@ export class OpportunityService {
     if (afterId === id) {
       throw new ValidationError('A card cannot be placed after itself', { field: 'afterId' });
     }
-    const current = await Promise.resolve(this.get(id));
-    if (typeof current.pipelineKey !== 'string' || current.pipelineKey === ''
-      || typeof current.pipelineStage !== 'string' || current.pipelineStage === '') {
-      throw new AppError('This opportunity is not on a pipeline board', {
-        code: 'NO_PIPELINE', status: 409, details: { pipelineKey: current.pipelineKey, pipelineStage: current.pipelineStage },
-      });
-    }
-    const column = await Promise.resolve(storageMany(this.database, {
-      kind: 'select', table: 'opportunities', columns: ['id', 'board_position'],
-      where: [
-        { column: 'pipeline_key', op: 'eq', value: current.pipelineKey },
-        { column: 'pipeline_stage', op: 'eq', value: current.pipelineStage },
-      ],
-      orderBy: BOARD_ORDER.map((entry) => ({ ...entry })),
-    }, (row) => ({ id: String(row.id), position: Number(row.board_position ?? 0) })));
-    const others = column.filter((entry) => entry.id !== id);
-    let index = 0;
-    if (afterId !== null) {
-      const at = others.findIndex((entry) => entry.id === afterId);
-      if (at < 0) {
-        throw new AppError('The card to place after is no longer in this column; re-read the board', {
-          code: 'STALE_POSITION', status: 409,
-          details: { afterId, pipelineKey: current.pipelineKey, pipelineStage: current.pipelineStage },
-        });
-      }
-      index = at + 1;
-    }
-    const plan = boardPlan(others, index);
-    const neighbours = plan.writes.filter((entry) => entry.id !== id);
-    const changes = {
-      boardPosition: plan.position,
-      ...(afterId !== null ? { afterId } : { first: true }),
-      ...(neighbours.length ? { renumbered: neighbours.length } : {}),
-    };
-    const ownWrite = {
-      kind: 'update', table: 'opportunities',
-      values: [{ column: 'board_position', value: plan.position }, { column: 'updated_at', value: nowIso() }],
+    // Review Muse #785 (P2): the card, its column and the plan are read
+    // inside the same atomic unit that writes them — the SQLite savepoint
+    // (one synchronous callback, nothing interleaves) or the PostgreSQL
+    // transaction (SERIALIZABLE when it opens one: two placements reading
+    // the same column cannot both commit a plan made on the same snapshot).
+    const cardRead = {
+      kind: 'select', table: 'opportunities', columns: ['id', 'pipeline_key', 'pipeline_stage'],
       where: [{ column: 'id', op: 'eq', value: id }],
     };
-    const neighbourWrites = neighbours.map((entry) => ({
-      kind: 'update', table: 'opportunities',
-      values: [{ column: 'board_position', value: entry.position }],
-      where: [{ column: 'id', op: 'eq', value: entry.id }],
-    }));
-    const auditEntry = {
-      actor: context.actor,
-      action: 'opportunity.updated',
-      entityType: 'opportunity',
-      entityId: id,
-      data: changes,
+    const columnRead = (current) => ({
+      kind: 'select', table: 'opportunities', columns: ['id', 'board_position'],
+      where: [
+        { column: 'pipeline_key', op: 'eq', value: current.pipeline_key },
+        { column: 'pipeline_stage', op: 'eq', value: current.pipeline_stage },
+      ],
+      orderBy: BOARD_ORDER.map((entry) => ({ ...entry })),
+    });
+    /** The writes and the audit entry for one placement, from rows read in the unit. */
+    const planFrom = (current, columnRows) => {
+      if (!current) throw new NotFoundError('Opportunity', id);
+      if (typeof current.pipeline_key !== 'string' || current.pipeline_key === ''
+        || typeof current.pipeline_stage !== 'string' || current.pipeline_stage === '') {
+        throw new AppError('This opportunity is not on a pipeline board', {
+          code: 'NO_PIPELINE', status: 409,
+          details: { pipelineKey: current.pipeline_key ?? null, pipelineStage: current.pipeline_stage ?? null },
+        });
+      }
+      const others = columnRows
+        .map((row) => ({ id: String(row.id), position: Number(row.board_position ?? 0) }))
+        .filter((entry) => entry.id !== id);
+      let index = 0;
+      if (afterId !== null) {
+        const at = others.findIndex((entry) => entry.id === afterId);
+        if (at < 0) {
+          throw new AppError('The card to place after is no longer in this column; re-read the board', {
+            code: 'STALE_POSITION', status: 409,
+            details: { afterId, pipelineKey: current.pipeline_key, pipelineStage: current.pipeline_stage },
+          });
+        }
+        index = at + 1;
+      }
+      const plan = boardPlan(others, index);
+      const neighbours = plan.writes.filter((entry) => entry.id !== id);
+      return {
+        writes: [
+          ...neighbours.map((entry) => ({
+            kind: 'update', table: 'opportunities',
+            values: [{ column: 'board_position', value: entry.position }],
+            where: [{ column: 'id', op: 'eq', value: entry.id }],
+          })),
+          {
+            kind: 'update', table: 'opportunities',
+            values: [{ column: 'board_position', value: plan.position }, { column: 'updated_at', value: nowIso() }],
+            where: [{ column: 'id', op: 'eq', value: id }],
+          },
+        ],
+        entry: {
+          actor: context.actor,
+          action: 'opportunity.updated',
+          entityType: 'opportunity',
+          entityId: id,
+          data: {
+            boardPosition: plan.position,
+            ...(afterId !== null ? { afterId } : { first: true }),
+            ...(neighbours.length ? { renumbered: neighbours.length } : {}),
+          },
+        },
+      };
     };
     let updated;
     if (isSyncStorage(this.database)) {
-      updated = this.database.storage.sync.savepoint('opportunity_board_position', () => {
-        for (const write of neighbourWrites) this.database.storage.sync.execute(write);
-        this.database.storage.sync.execute(ownWrite);
+      const sync = this.database.storage.sync;
+      updated = sync.savepoint('opportunity_board_position', () => {
+        const current = sync.maybeOne(cardRead);
+        const { writes, entry } = planFrom(current, current ? sync.many(columnRead(current)) : []);
+        for (const write of writes) sync.execute(write);
         const next = this.get(id);
-        this.audit.record(auditEntry);
+        this.audit.record(entry);
         return next;
       });
     } else {
       await storageMutate(this.database, 'opportunity_board_position', async (tx) => {
-        for (const write of neighbourWrites) await tx.execute(write);
-        await tx.execute(ownWrite);
-        await this.audit.record(auditEntry, tx);
+        const current = await tx.maybeOne(cardRead);
+        const { writes, entry } = planFrom(current, current ? await tx.many(columnRead(current)) : []);
+        for (const write of writes) await tx.execute(write);
+        await this.audit.record(entry, tx);
       });
       updated = await this.get(id);
     }
     await this.events.emit('opportunity.updated', updated);
     return updated;
   }
+
 
   /**
    * Internal state mutation. Call from a named workflow, not directly from API/MCP.
