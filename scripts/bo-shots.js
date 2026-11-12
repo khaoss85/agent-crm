@@ -906,15 +906,39 @@ await view.render();
 // control, so the shot proves all three steps (drop zone, column match,
 // table check) instead of the empty first step.
 const input = document.querySelector('#view-module input[name="file"]');
+const CSV = 'nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n';
 const transfer = new DataTransfer();
-transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+transfer.items.add(new File([CSV], 'clienti.csv', { type: 'text/csv' }));
 input.files = transfer.files;
+// The demo file's bytes are already here: hand them over without a Blob
+// read. Chromium's virtual clock waits for network fetches, not for Blob
+// I/O, so on a loaded runner the read used to land after the budget and
+// the shot ended with no import-ready (bo:shots import, PR #828 and #833).
+// The view still reads the file through its own file.arrayBuffer() call.
+const bytes = new TextEncoder().encode(CSV);
+Object.defineProperty(input.files[0], 'arrayBuffer', { value: () => Promise.resolve(bytes.buffer.slice(0)) });
 input.dispatchEvent(new Event('change', { bubbles: true }));
-const deadline = Date.now() + 15000;
-while (!document.querySelector('#view-module select[name="mapping-0"]')) {
-  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
+// The mapping step paints once the view's own promise chain settles: wait
+// for that paint, never for a wall-clock deadline that spends the budget.
+await new Promise((resolve, reject) => {
+  const mount = document.getElementById('view-module');
+  const ready = () => mount.querySelector('select[name="mapping-0"]') !== null;
+  if (ready()) { resolve(); return; }
+  const watch = new MutationObserver(() => {
+    if (!ready()) return;
+    watch.disconnect();
+    resolve();
+  });
+  watch.observe(mount, { childList: true, subtree: true });
+  // A refused file paints its own error line instead of the mapping: say
+  // so, never wait for a step that will not come.
+  const refused = mount.querySelector('.customer-data-error');
+  if (refused !== null) {
+    new MutationObserver(() => {
+      if (refused.textContent.trim() !== '') reject(new Error('the import tool refused the demo file: ' + refused.textContent));
+    }).observe(refused, { childList: true, characterData: true, subtree: true });
+  }
+});
 const painted = document.getElementById('view-module');
 document.getElementById('probe').textContent = JSON.stringify({
   back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
@@ -1368,6 +1392,7 @@ export function harnessHtml(name, publicDir) {
     + `<div id="bodiag" hidden></div>`
     + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
+
 
 /**
  * Serves the public /bo assets and the harness pages on 127.0.0.1 only.
