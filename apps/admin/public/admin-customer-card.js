@@ -579,19 +579,20 @@ export function passagePreview(item) {
 /**
  * The whole passage behind «Mostra tutto»: the full body as written, losing
  * only markup residue (always clean); '' for a body that is only a stand-in
- * («Please view this email in an HTML-capable email client»).
+ * («Please view this email in an HTML-capable email client»). A body that is
+ * only a link keeps it here: the line shows the host, «Mostra tutto» the URL.
  * @param {{ body?: unknown }} item
  */
 export function passageFullText(item) {
   const body = typeof item?.body === 'string' ? item.body : '';
-  if (body === '' || isPlaceholderBody(body)) return '';
+  if (body === '' || (isPlaceholderBody(body) && !/(?:https?:\/\/|www\.)\S/i.test(body))) return '';
   return readableText(cleanMessageBody(body));
 }
 
 /**
  * One passage per real message (Dan 10/11): the same mail synced several
  * times — same channel, direction, sender, subject, text and minute — reads
- * once in the cronologia. Notes and calls are never folded; the first copy
+ * once in the cronologia. Notes, calls and attachments are never folded; the first copy
  * in the list wins.
  * @param {Array<any>} entries
  */
@@ -599,7 +600,9 @@ export function collapseDuplicatePassages(entries) {
   const seen = new Set();
   const out = [];
   for (const item of Array.isArray(entries) ? entries : []) {
-    if (item?.entry !== 'message') { out.push(item); continue; }
+    // An attachment is its own passage: two photos in one minute are two.
+    const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
+    if (item?.entry !== 'message' || hasAttachment) { out.push(item); continue; }
     const at = Date.parse(String(item?.occurredAt ?? ''));
     const minute = Number.isFinite(at) ? Math.floor(at / 60000) : null;
     const key = minute === null ? null : JSON.stringify([

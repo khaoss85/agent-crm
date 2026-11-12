@@ -106,3 +106,19 @@ test('4. the same mail synced three times reads once in the cronologia', () => {
   assert.deepEqual(shown, ['m1', 'm4', 'm5', 'n1', 'n2'],
     'one copy per minute; another minute, another text and notes stay');
 });
+
+test('Muse giro 2 P2: a link-only message keeps its URL behind «Mostra tutto» and never folds into another link', () => {
+  const a = { entry: 'message', id: 'w1', channel: 'whatsapp', direction: 'inbound', remoteHandle: '+390000000000', subject: null, body: 'https://example.com/quote/123', occurredAt: '2026-11-10T08:00:05.000Z' };
+  const b = { ...a, id: 'w2', body: 'https://example.com/quote/456', occurredAt: '2026-11-10T08:00:40.000Z' };
+  assert.equal(card.passagePreview(a), 'example.com');
+  assert.equal(card.passageFullText(a), 'https://example.com/quote/123', 'the full URL stays reachable');
+  assert.deepEqual(card.collapseDuplicatePassages([a, b]).map((item) => item.id), ['w1', 'w2'], 'two links are two passages');
+});
+
+test('Muse giro 2 P2: two attachments in the same minute are two passages', () => {
+  const photo = (id, ref) => ({
+    entry: 'message', id, channel: 'whatsapp', direction: 'inbound', remoteHandle: '+390000000000', subject: null, body: null,
+    occurredAt: '2026-11-10T08:00:05.000Z', attachment: { kind: 'image', ref, name: `${ref}.jpg` },
+  });
+  assert.deepEqual(card.collapseDuplicatePassages([photo('p1', 'a'), photo('p2', 'b')]).map((item) => item.id), ['p1', 'p2']);
+});
