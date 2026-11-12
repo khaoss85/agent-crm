@@ -469,6 +469,52 @@ test('with no upcoming booking the scheda says none is booked', async () => {
   assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
 });
 
+// backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
+// stays in the scheda's cronologia as one readable row, with its reason.
+test('a cancelled appointment reads in the cronologia as «Appuntamento annullato», with the reason', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2026-11-10T09:00:00.000Z', endsAt: '2026-11-10T09:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-09T15:00:00.000Z',
+          },
+          {
+            id: 'b1', status: 'cancelled', startsAt: '2026-11-12T09:00:00.000Z', endsAt: '2026-11-12T09:30:00.000Z',
+            serviceKey: 'pt-single', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+            cancelReason: null, decidedAt: null,
+          },
+        ],
+      },
+    },
+  }));
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(rows.length, 2, 'one cronologia row per cancelled appointment');
+  const first = rows.find((node) => node.textContent.includes('Lezione prova'));
+  assert.ok(first, 'the service reads as words');
+  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione prova · 10 nov 10:00'), first.textContent);
+  assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
+  const second = rows.find((node) => node.textContent.includes('Pt single'));
+  assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
+  const text = mount.textContent;
+  assert.ok(!text.includes('coach-guido'), 'never the member id');
+  assert.ok(!text.includes('cancelled'), 'never the raw status');
+  assert.ok(!text.includes('appointment-cancelled'), 'never the row key');
+  // A channel filter shows that channel only: the cancellation has none.
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+  assert.equal(
+    mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled')).length,
+    0,
+    'a channel filter hides the cancellation row',
+  );
+});
+
 test('the channel filter narrows the timeline to one channel', async () => {
   const client = stubClient();
   const doc = createFakeDocument();

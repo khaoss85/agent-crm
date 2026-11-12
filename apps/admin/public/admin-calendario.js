@@ -870,9 +870,46 @@ export function calendarRefusalText(error) {
 }
 
 /**
+ * The Italian sentence for a refused cancellation (backlog:5346ab531538),
+ * or null when the shared write-error text says it better.
+ * @param {any} error
+ */
+export function cancelRefusalText(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (code === 'APPOINTMENTS_INVALID_STATE') {
+    return 'Questo appuntamento è già chiuso (svolto o cliente non presentato): non si può più annullare.';
+  }
+  if (code === 'VALIDATION_ERROR' || error?.status === 400) {
+    return 'Il motivo è troppo lungo o contiene caratteri non validi: accorcialo e riprova.';
+  }
+  return null;
+}
+
+/**
+ * The reason sent with a cancellation (backlog:5346ab531538): the
+ * operator's own words when given, else the plain origin of the cancel.
+ * One line, at most 300 characters, like the lifecycle requires.
+ * @param {unknown} typed
+ */
+export function cancelReasonFrom(typed) {
+  const text = String(typed ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return text === '' ? 'Annullato dal calendario' : text.slice(0, 300);
+}
+
+/**
+ * backlog:5346ab531538 — a cancelled booking: it leaves the calendar grid
+ * (like Google Calendar) and stays in the customer's history.
+ * @param {any} row
+ */
+export function isCancelledRow(row) {
+  return String(row?.status ?? '') === 'cancelled';
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
- * new booking, like everywhere else (backlog:3d0fbe7dc8d1).
+ * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
+ * are the ones «Annulla appuntamento» offers to cancel.
  * @param {any} row
  */
 export function isMovableAppointment(row) {
@@ -1131,6 +1168,12 @@ export function createCalendarioView(deps) {
   /** Guards the phrase search and its read-back: a newer search or a route away stops the old one. */
   let phraseSeq = 0;
   let renderToken = 0;
+  /**
+   * Bumps only when the operator leaves the Calendario (invalidate), never
+   * on a week reload: a write in flight survives «Mostra settimana» and
+   * still lands its outcome (review #781).
+   */
+  let viewToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
   /**
@@ -1154,6 +1197,7 @@ export function createCalendarioView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    viewToken += 1;
     phraseSeq += 1;
     // The search in flight is dropped with the route (review #664): the
     // card comes back idle, never wedged on «Sto cercando…».
@@ -1166,6 +1210,14 @@ export function createCalendarioView(deps) {
     // The popover closer never repaints a screen the operator left.
     if (openEventPop === eventPopHandle) openEventPop = null;
     trackRetainedDraft();
+  }
+
+  /** Folds the popover's own steps (move form, cancel question) back. */
+  function resetPopSteps() {
+    state.moveOpen = false;
+    state.cancelAsk = false;
+    state.cancelNote = '';
+    state.cancelReason = '';
   }
 
   /** This view's popover handle, registered while its popover is painted. */
@@ -1187,7 +1239,7 @@ export function createCalendarioView(deps) {
     if (state.selectedId === null) return;
     const id = state.selectedId;
     state.selectedId = null;
-    state.moveOpen = false;
+    resetPopSteps();
     state.moveNote = '';
     if (mount.querySelector('.cal-wrap') === null) return;
     // A light dismissal, never a full repaint (review #773): the click that
@@ -1283,6 +1335,14 @@ export function createCalendarioView(deps) {
     moveBusy: false,
     /** The «Modifica o sposta» form shows in the event popover (Dan 11/11). */
     moveOpen: false,
+    /** backlog:5346ab531538 — the popover asks «Annullare l'appuntamento?». */
+    cancelAsk: false,
+    /** True while the cancellation write is in flight. */
+    cancelBusy: false,
+    /** The cancellation refusal, in Italian, beside the question. */
+    cancelNote: '',
+    /** The optional reason the operator typed, kept across repaints. */
+    cancelReason: '',
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -1724,7 +1784,7 @@ export function createCalendarioView(deps) {
     if (state.selectedId === null || !state.week) return null;
     for (const group of state.week?.members ?? []) {
       for (const row of group?.appointments ?? []) {
-        if (row && String(row.id ?? '') === state.selectedId) {
+        if (row && String(row.id ?? '') === state.selectedId && !isCancelledRow(row)) {
           return { ...row, teamMemberId: group.teamMemberId };
         }
       }
@@ -1829,7 +1889,7 @@ export function createCalendarioView(deps) {
     const selected = selectedRow();
     if (!selected) {
       state.selectedId = null;
-      state.moveOpen = false;
+      resetPopSteps();
     }
     rail.appendChild(renderAi());
     rail.appendChild(renderTeam());
@@ -2064,6 +2124,9 @@ export function createCalendarioView(deps) {
       // reselecting shows them again with no reload.
       if (hidden.has(group?.teamMemberId)) continue;
       for (const row of group?.appointments ?? []) {
+        // backlog:5346ab531538: a cancelled booking leaves the grid, like
+        // Google Calendar; the customer's history still lists it.
+        if (isCancelledRow(row)) continue;
         const key = romeDayKey(row.startsAt);
         if (key !== null && byDay.has(key)) byDay.get(key).push({ ...row, teamMemberId: group.teamMemberId });
       }
@@ -2558,8 +2621,9 @@ export function createCalendarioView(deps) {
     }
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
     if (!fromDrag) {
-      // The «Sposta» form: its popover stays on this booking.
-      if (state.selectedId !== id) state.moveOpen = false;
+      // The «Sposta» form: its popover stays on this booking, folded
+      // (move form and cancel question) when the booking changed.
+      if (state.selectedId !== id) resetPopSteps();
       state.selectedId = id !== '' ? id : null;
     }
     if (before.startsAt === startsAt && before.endsAt === endsAt) {
@@ -2678,6 +2742,7 @@ export function createCalendarioView(deps) {
     const heldDays = new Set();
     for (const group of state.week?.members ?? []) {
       for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
         const day = romeDayKey(row?.startsAt);
         if (day !== null) heldDays.add(day);
       }
@@ -2891,7 +2956,7 @@ export function createCalendarioView(deps) {
       }
       state.selectedId = state.selectedId === id ? null : id;
       state.moveNote = '';
-      state.moveOpen = false;
+      resetPopSteps();
       // One popover at a time: an event opens over a slot pick, not beside it.
       state.selection = null;
       renderAll();
@@ -2984,9 +3049,9 @@ export function createCalendarioView(deps) {
    * actions — «Modifica o sposta» for a held booking, and × — then the title
    * with the event's colour square, the day · time row with the full month,
    * the customer as a link to the scheda, the team person with avatar and
-   * name, the note and the origin. There is no «Annulla appuntamento»: the
-   * appointments package exposes no cancel write over HTTP, so the popover
-   * shows only the actions that exist.
+   * name, the note and the origin. «Annulla appuntamento»
+   * (backlog:5346ab531538) asks inside the popover — never the browser's
+   * confirm() — and cancels through POST /api/appointments/cancel.
    *
    * Kept from the rail card (BO-F6-11 fetta 5, specs/calendario.md C7, C8):
    * the customer name resolves through the read-only profile (the row label
@@ -3023,13 +3088,41 @@ export function createCalendarioView(deps) {
         },
       });
       edit.appendChild(uiIcon(doc, 'matita'));
+      // Review #790 (Muse P2): while a cancellation is in flight the move
+      // form stays shut, so the cancellation's outcome always has its place.
+      if (state.cancelBusy) edit.setAttribute('disabled', 'true');
       edit.addEventListener('click', () => {
+        if (state.cancelBusy) return;
         state.moveOpen = !state.moveOpen;
+        state.cancelAsk = false;
         renderAll();
         const first = state.moveOpen ? paintedPop?.querySelector?.('input[name="move-date"]') : paintedPop;
         if (first && typeof first.focus === 'function') first.focus();
       });
       tools.appendChild(edit);
+      const cancel = el(doc, 'button', {
+        className: 'icon-button cal-pop-tool',
+        attrs: {
+          type: 'button',
+          'data-action': 'event-cancel',
+          'aria-label': 'Annulla appuntamento',
+          title: 'Annulla appuntamento',
+          'aria-expanded': state.cancelAsk ? 'true' : 'false',
+        },
+      });
+      cancel.appendChild(uiIcon(doc, 'cestino'));
+      if (state.cancelBusy) cancel.setAttribute('disabled', 'true');
+      cancel.addEventListener('click', () => {
+        if (state.cancelBusy) return;
+        state.cancelAsk = !state.cancelAsk;
+        state.cancelNote = '';
+        state.moveOpen = false;
+        renderAll();
+        // The safe answer takes the focus: Enter never cancels by accident.
+        const target = state.cancelAsk ? paintedPop?.querySelector?.('button[data-action="cancel-no"]') : paintedPop;
+        if (target && typeof target.focus === 'function') target.focus();
+      });
+      tools.appendChild(cancel);
     }
     const close = el(doc, 'button', {
       className: 'icon-button cal-pop-tool',
@@ -3056,6 +3149,7 @@ export function createCalendarioView(deps) {
     if (state.moveNote !== '') {
       pop.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'move-note', 'aria-live': 'polite' }, text: state.moveNote }));
     }
+    if (state.cancelAsk && isMovableAppointment(row)) pop.appendChild(renderCancelAsk(row));
     if (state.moveOpen && isMovableAppointment(row)) pop.appendChild(renderMoveForm(row));
     const linked = subjectKeyOf(row);
     if (linked && !(linked.key in state.profiles)) {
@@ -3135,6 +3229,139 @@ export function createCalendarioView(deps) {
       }));
     }
     return pop;
+  }
+
+  /**
+   * backlog:5346ab531538 — «Annullare l'appuntamento?» inside the popover,
+   * never the browser's confirm(). «No» takes the focus (Enter never cancels
+   * by accident); the optional reason rides the cancellation, else «Annullato
+   * dal calendario». An event imported from Google Calendar says plainly
+   * that the event stays on Google: the backoffice cancel names no calendar
+   * and nothing in this application runs the two-way sync that would carry
+   * the cancellation there (calendar-sync's push/sync operations are not
+   * wired to any route or job), so «cancellalo anche lì» is the truth.
+   * @param {any} row
+   */
+  function renderCancelAsk(row) {
+    const box = el(doc, 'div', {
+      className: 'cal-pop-confirm',
+      attrs: { 'data-role': 'cancel-confirm', role: 'group', 'aria-labelledby': 'cal-cancel-question' },
+    });
+    box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
+    if (originOf(row) === 'google') {
+      box.appendChild(el(doc, 'p', {
+        className: 'cal-pop-hint',
+        attrs: { 'data-role': 'cancel-google' },
+        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
+      }));
+    }
+    const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
+    const reason = el(doc, 'input', { attrs: { name: 'cancel-reason', type: 'text', autocomplete: 'off', maxlength: '300' } });
+    reason.value = state.cancelReason;
+    if (state.cancelBusy) reason.setAttribute('disabled', 'true');
+    reason.addEventListener('input', () => { state.cancelReason = String(reason.value ?? ''); });
+    field.appendChild(reason);
+    box.appendChild(field);
+    if (state.cancelNote !== '') {
+      box.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'cancel-note', 'aria-live': 'polite' }, text: state.cancelNote }));
+    }
+    const actions = el(doc, 'div', { className: 'cal-pop-actions' });
+    const yes = uiButton(doc, {
+      variant: 'danger',
+      small: true,
+      label: state.cancelBusy ? 'Annullamento in corso…' : 'Sì, annulla',
+      attrs: { type: 'button', 'data-action': 'cancel-yes' },
+    });
+    const no = uiButton(doc, { variant: 'secondary', small: true, label: 'No', attrs: { type: 'button', 'data-action': 'cancel-no' } });
+    if (state.cancelBusy) {
+      yes.setAttribute('disabled', 'true');
+      yes.setAttribute('aria-busy', 'true');
+      no.setAttribute('disabled', 'true');
+    } else {
+      yes.addEventListener('click', () => { void submitCancel(row); });
+      no.addEventListener('click', () => {
+        state.cancelAsk = false;
+        state.cancelNote = '';
+        renderAll();
+        const back = paintedPop?.querySelector?.('button[data-action="event-cancel"]');
+        if (back && typeof back.focus === 'function') back.focus();
+      });
+    }
+    actions.appendChild(yes);
+    actions.appendChild(no);
+    box.appendChild(actions);
+    return box;
+  }
+
+  /**
+   * Cancels the booking through POST /api/appointments/cancel
+   * (backlog:5346ab531538). On success the row reads cancelled at once — it
+   * leaves the grid and the popover closes — and the week reloads; a refusal
+   * stays in the popover in Italian and the booking stays where it was.
+   * @param {any} row
+   */
+  async function submitCancel(row) {
+    if (state.cancelBusy) return;
+    // The view generation, not the render token: a week reload during the
+    // request is no route away (review #781).
+    const token = viewToken;
+    const id = String(row?.id ?? '');
+    state.cancelBusy = true;
+    state.cancelNote = '';
+    renderAll();
+    let ok = false;
+    let failure = '';
+    try {
+      const reason = cancelReasonFrom(state.cancelReason);
+      const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
+      await client.request('/api/appointments/cancel', { method: 'POST', body });
+      for (const group of state.week?.members ?? []) {
+        for (const stored of group?.appointments ?? []) {
+          if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
+        }
+      }
+      ok = true;
+    } catch (error) {
+      failure = cancelRefusalText(error)
+        ?? humanWriteError(error, {
+          failed: 'Non sono riuscito ad annullare l’appuntamento: è ancora in calendario. Riprova.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
+    } finally {
+      state.cancelBusy = false;
+    }
+    // A route away during the request: the late answer never repaints the
+    // next screen nor reloads a week nobody looks at.
+    if (token !== viewToken) return;
+    // The operator may have closed the popover or opened another event
+    // meanwhile: the outcome then speaks through the toast, never inside
+    // another event's popover.
+    const stillOpen = state.selectedId === id;
+    if (ok) {
+      if (stillOpen) {
+        state.selectedId = null;
+        resetPopSteps();
+        state.moveNote = '';
+      }
+      renderAll();
+      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      const members = parseMemberFilter(state.memberFilter);
+      if (members.length > 0) void loadWeek(members);
+      return;
+    }
+    if (!stillOpen) {
+      if (typeof deps.toast === 'function') deps.toast(failure, true);
+      renderAll();
+      return;
+    }
+    // The refusal always paints in the question it answers (review #790):
+    // the question comes back open even if something folded it meanwhile.
+    state.cancelAsk = true;
+    state.moveOpen = false;
+    state.cancelNote = failure;
+    renderAll();
+    const retry = paintedPop?.querySelector?.('button[data-action="cancel-yes"]');
+    if (retry && typeof retry.focus === 'function') retry.focus();
   }
 
   /**

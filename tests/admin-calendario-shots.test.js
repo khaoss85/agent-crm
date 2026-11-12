@@ -253,6 +253,16 @@ probe.pop = popRect === null ? null : {
   focused: document.activeElement === popNode,
   innerHeight: window.innerHeight,
 };
+// backlog:5346ab531538: the cancel question opens inside the popover and
+// the popover still fits on screen with it.
+document.querySelector('[data-action="event-cancel"]').click();
+await new Promise((r) => setTimeout(r, 50));
+const askNode = document.querySelector('[data-role="cancel-confirm"]');
+const askPop = document.querySelector('[data-role="event-detail"]').getBoundingClientRect();
+probe.ask = askNode === null ? null : {
+  focusedNo: document.activeElement === document.querySelector('[data-action="cancel-no"]'),
+  popBottom: Math.round(askPop.bottom), popRight: Math.round(askPop.right), innerHeight: window.innerHeight, innerWidth: window.innerWidth,
+};
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
 `;
@@ -388,6 +398,9 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.pop.right <= probe.pop.anchorLeft, `the popover sits left of the event: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.left >= 0 && probe.pop.right <= 1280, `never off screen sideways: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `never off screen vertically: ${JSON.stringify(probe.pop)}`);
+  assert.ok(probe.ask, 'the cancel question opens in the popover');
+  assert.equal(probe.ask.focusedNo, true, '«No» takes the focus');
+  assert.ok(probe.ask.popBottom <= probe.ask.innerHeight && probe.ask.popRight <= probe.ask.innerWidth, `the popover with the question stays on screen: ${JSON.stringify(probe.ask)}`);
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
   assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');

@@ -84,7 +84,9 @@ const WEEK = {
         },
         {
           id: 'a2',
-          status: 'cancelled',
+          // A closed booking that still paints (backlog:5346ab531538: a
+          // cancelled one leaves the grid, a done one stays).
+          status: 'done',
           startsAt: '2026-10-23T09:00:00.000Z',
           endsAt: '2026-10-23T09:30:00.000Z',
           serviceKey: 'barba',
@@ -328,9 +330,10 @@ test('week renders five day columns with real Rome-time events', async () => {
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
   assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
-  // Cancelled rows stay listed with their status, in Italian (C14).
-  assert.ok(texts(mount, 'span').includes('annullato'));
-  assert.ok(!texts(mount, 'span').includes('cancelled'), 'C14: never the raw English status');
+  // Closed rows stay listed with their status, in Italian (C14); a
+  // cancelled booking leaves the grid (backlog:5346ab531538).
+  assert.ok(texts(mount, 'span').includes('svolto'));
+  assert.ok(!texts(mount, 'span').includes('done'), 'C14: never the raw English status');
   // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
   // Selecting the block opens the popover, and the customer links the scheda.

@@ -144,6 +144,16 @@ const dateParts = (value) => {
   }).format(new Date(ms));
 };
 
+/** «10 nov»: the short Rome day, no year (backlog:5346ab531538). */
+const shortDayParts = (value) => {
+  const ms = Date.parse(String(value ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Intl.DateTimeFormat('it-IT', {
+    day: 'numeric', month: 'short',
+    timeZone: 'Europe/Rome',
+  }).format(new Date(ms)).replace(/\./g, '');
+};
+
 const dayParts = (value) => {
   const ms = Date.parse(String(value ?? ''));
   if (!Number.isFinite(ms)) return null;
@@ -2745,7 +2755,13 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
-    const entries = collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : []);
+    // backlog:5346ab531538: a cancelled appointment reads in the cronologia
+    // as its own row, under «Tutti» only (it has no channel), at the moment
+    // it was cancelled — the slot left the calendar grid, not the history.
+    const entries = [
+      ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : []),
+      ...cancelledAppointmentEntries(timeline),
+    ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
     // there, one chip per writer («da dan», «dal team»).
@@ -2884,6 +2900,18 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        if (item?.entry === 'appointment-cancelled') {
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note bo-scheda-entry-cancelled');
+          const mark = el('span', 'bo-scheda-chan bo-tile-cancelled', '×');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-note-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head', item.title));
+          if (item.reason) paper.appendChild(el('p', 'bo-scheda-note-body', `Motivo: ${item.reason}`));
+          row.appendChild(paper);
+          list.appendChild(row);
+          continue;
+        }
         if (item?.entry === 'note') {
           // Voce 714433c2: the operator note. No channel badge and no sync
           // line — it is a statement about the customer, not a passage.
@@ -3545,6 +3573,30 @@ export function createCustomerCardView(deps) {
       ? `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${hours}`
       : (endTime && endTime !== startTime ? `${start} – ${dateTimeParts(next?.endsAt)}` : start);
     box.appendChild(el('p', 'bo-scheda-appt', when));
+  }
+
+  /**
+   * backlog:5346ab531538 — the cancelled appointments of the customer as
+   * cronologia rows: «Appuntamento annullato · Lezione prova · 10 nov
+   * 10:00», at the instant of the cancellation (the slot's start when the
+   * row records none), with the reason the operator gave. Never an id.
+   * @param {any} timeline
+   */
+  function cancelledAppointmentEntries(timeline) {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    return items
+      .filter((item) => String(item?.status ?? '') === 'cancelled')
+      .map((item) => {
+        const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
+        const reason = typeof item?.cancelReason === 'string' ? readableText(item.cancelReason) : '';
+        return {
+          id: `appointment-cancelled:${String(item?.id ?? '')}`,
+          entry: 'appointment-cancelled',
+          occurredAt: typeof item?.decidedAt === 'string' && item.decidedAt !== '' ? item.decidedAt : item?.startsAt,
+          title: ['Appuntamento annullato', serviceTitle(item?.serviceKey), slot].filter(Boolean).join(' · '),
+          reason: reason !== '' ? reason : null,
+        };
+      });
   }
 
   /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
