@@ -11,7 +11,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,17 +98,24 @@ test('the retry waits for the load to drop, then retries once and its result is 
   const dir = mkdtempSync(join(tmpdir(), 'ci-busy-'));
   try {
     setup(dir, 40);
-    // The load drops 2 s into the wait.
-    const drop = spawn('bash', ['-c', `sleep 2; echo '10.00 30.00 30.00 1/100 1' > ${JSON.stringify(join(dir, 'loadavg'))}`]);
-    const dropped = new Promise((resolve) => drop.on('close', resolve));
+    // No timing race: the load drops (atomically: write then rename) only
+    // once the script has logged that it is waiting on the high load.
     const child = spawn('bash', [retryScript], {
       cwd: repoRoot,
-      env: { ...process.env, CI_TOUCHED_BUSY_FILE: join(dir, 'busy.json'), CI_LOADAVG_FILE: join(dir, 'loadavg'), CI_BUSY_POLL_SEC: '1', CI_BUSY_WAIT_SEC: '30', CI_BUSY_RETRY_CMD: 'echo RETRY-RAN; exit 0' },
+      env: { ...process.env, CI_TOUCHED_BUSY_FILE: join(dir, 'busy.json'), CI_LOADAVG_FILE: join(dir, 'loadavg'), CI_BUSY_POLL_SEC: '1', CI_BUSY_WAIT_SEC: '60', CI_BUSY_RETRY_CMD: 'echo RETRY-RAN; exit 0' },
     });
+    const closed = new Promise((resolve) => child.on('close', resolve));
     let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    const code = await new Promise((resolve) => child.on('close', resolve));
-    await dropped;
+    let dropped = false;
+    child.stdout.on('data', (chunk) => {
+      out += chunk;
+      if (!dropped && /load1 40 > 24 after 0s, waiting/.test(out)) {
+        dropped = true;
+        writeFileSync(join(dir, 'loadavg.next'), '10.00 30.00 30.00 1/100 1\n');
+        renameSync(join(dir, 'loadavg.next'), join(dir, 'loadavg'));
+      }
+    });
+    const code = await closed;
     assert.equal(code, 0, out);
     assert.match(out, /load1 40 > 24 after 0s, waiting/);
     assert.match(out, /load1 10\.00 <= 24 after \d+s: retrying the touched tests once/);
