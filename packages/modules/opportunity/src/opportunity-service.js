@@ -345,7 +345,11 @@ export class OpportunityService {
     if (!patch || typeof patch !== 'object') {
       throw new ValidationError('an opportunity update needs at least one field', { field: 'patch' });
     }
-    const editable = ['valueCents', 'expectedCloseDate', 'owner'];
+    // backlog:619b477c0464: contactId too — an offer filed under the company
+    // only can be tied to the person it is for, so the scheda of that
+    // contact reads the same offer the Pipeline shows. In-process only: the
+    // HTTP PATCH keeps its three fields.
+    const editable = ['valueCents', 'expectedCloseDate', 'owner', 'contactId'];
     const unknown = Object.keys(patch).filter((key) => !editable.includes(key));
     if (unknown.length > 0) {
       throw new ValidationError(`Opportunity update refuses unknown fields: ${unknown.join(', ')}`, { field: unknown[0] });
@@ -368,8 +372,18 @@ export class OpportunityService {
       next.owner = requiredString(patch.owner, 'owner');
       values.push({ column: 'owner', value: next.owner });
     }
+    if (patch.contactId !== undefined) {
+      const contactId = requiredString(patch.contactId, 'contactId');
+      const contact = await Promise.resolve(this.contacts.get(contactId));
+      // The same rule as create: the person belongs to the offer's company.
+      if (contact.companyId !== current.companyId) {
+        throw new ValidationError('contactId must belong to the opportunity company', { contactId, companyId: current.companyId });
+      }
+      next.contactId = contactId;
+      values.push({ column: 'contact_id', value: contactId });
+    }
     if (values.length === 0) {
-      throw new ValidationError('an opportunity update needs at least one of valueCents, expectedCloseDate, owner', { field: 'patch' });
+      throw new ValidationError('an opportunity update needs at least one of valueCents, expectedCloseDate, owner, contactId', { field: 'patch' });
     }
     next.updatedAt = nowIso();
     values.push({ column: 'updated_at', value: next.updatedAt });
