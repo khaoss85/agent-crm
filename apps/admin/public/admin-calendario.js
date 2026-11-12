@@ -4336,6 +4336,8 @@ export function createCalendarioView(deps) {
       if (shown !== '') select.value = shown;
       const track = () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
+        // Review #818 (P2): a person the operator chose is their own work.
+        state.manualTyped.add('teamMemberId');
       };
       select.addEventListener('input', track);
       select.addEventListener('change', track);
@@ -4458,6 +4460,8 @@ export function createCalendarioView(deps) {
     const track = () => {
       const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
       state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      // Review #818 (P2): a service the operator chose is their own work.
+      state.manualTyped.add('serviceKey');
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };

@@ -5066,3 +5066,27 @@ test('verifica 12/11: prefilled form values are nobody\'s unsaved text, typed on
   assert.equal(hasUnsavedWork(emptyPage), true, 'what the operator typed is');
   resetVersionWatchState();
 });
+
+// Review #818 (P2): a choice made with a menu is the operator's work too.
+test('review #818: a service or a person chosen in the menus counts as unsaved work', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: 'piega', name: 'Piega', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 2000 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog, memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }] }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the defaults are not unsaved work');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  service.value = 'piega';
+  service.dispatch('change');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'a chosen service is');
+  resetVersionWatchState();
+});

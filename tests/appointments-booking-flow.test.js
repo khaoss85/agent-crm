@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { ANONYMOUS_ACTOR } from '../packages/core/index.js';
 import assert from 'node:assert/strict';
 
 import {
@@ -460,6 +461,34 @@ test('P1 12/11: a person confirming with the switch off books the appointment', 
   assert.equal(service.rows.length, 1, 'the appointment exists');
   assert.equal(service.rows[0].status, 'confirmed');
   assert.equal(proposalRows.length, 0, 'no invisible proposal');
+});
+
+// Review #818 (P0): the framework's anonymous actor is typed `user` too —
+// it is never a person who approves. With the switch off it stays gated:
+// a proposal, never a booking.
+test('review #818: the anonymous actor never books past the switch', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate, actor: ANONYMOUS_ACTOR });
+  const confirmed = await cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
+  assert.equal(confirmed.decision, 'proposal', 'anonymous is gated like an agent');
+  assert.equal(service.rows.length, 0, 'no appointment');
+  const proposed = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'proposal');
+  assert.equal(proposalRows.length, 1, 'one proposal, replayed');
+});
+
+test('review #818: a verified person books, an identified user id is what makes the difference', async () => {
+  const service = fakeAppointments();
+  const { gate } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const person = capabilityFor({ service, gate, actor: { type: 'user', id: 'google|104938793743317800292' } });
+  const confirmed = await person.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
+  assert.equal(confirmed.decision, 'booked');
+  assert.equal(service.rows.length, 1);
 });
 
 test('P1 12/11: a person proposing with the switch off gets a confirmable draft', async () => {

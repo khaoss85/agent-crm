@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import {
-  AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
 } from '../../core/index.js';
 
@@ -1587,10 +1587,18 @@ export const BOOK_APPOINTMENTS_PERMISSION = 'book-appointments';
  * never wait behind it — their Conferma is the approval. Agents and the
  * system stay gated, and so does the public booking link, which reads the
  * switch itself.
- * @param {{type: string}} actor
+ *
+ * Review #818 (P0): a person is a `user` the server identified — never the
+ * framework's anonymous actor (`ANONYMOUS_ACTOR`, what an unverified
+ * request or a missing actor normalizes to, itself typed `user`) and never
+ * an empty id. Those stay gated like an agent: the switch decides, and off
+ * means a proposal, never a booking.
+ * @param {{type: string, id: string}} actor
  */
 function isHumanBooker(actor) {
-  return actor?.type === 'user';
+  if (actor?.type !== 'user') return false;
+  const id = typeof actor.id === 'string' ? actor.id.trim() : '';
+  return id !== '' && id !== ANONYMOUS_ACTOR.id;
 }
 
 /** The proposal kind recorded when the switch is off. */
