@@ -73,6 +73,33 @@ export function percentReason(reason) {
     `${(Number(bps) / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}%`);
 }
 
+/**
+ * backlog:a2ea75f705fd: a discount in basis points as the operator writes a
+ * percentage — 750 → «7,5», 1000 → «10», 0 → «0». Never «punti base».
+ * @param {unknown} bps
+ */
+export function bpsToPercentText(bps) {
+  const value = Number.isSafeInteger(bps) ? /** @type {number} */ (bps) : 0;
+  return (value / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',');
+}
+
+/**
+ * A percentage typed by the operator («7,5», «10», «0,25») as integer basis
+ * points, or null when it is not a number from 0 to 100 with at most two
+ * decimals. Empty reads 0: no discount.
+ * @param {unknown} text
+ */
+export function percentToBps(text) {
+  const raw = String(text ?? '').trim().replace('%', '').trim().replace(',', '.');
+  if (raw === '') return 0;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(raw)) return null;
+  const bps = Math.round(Number(raw) * 100);
+  return bps >= 0 && bps <= 10000 ? bps : null;
+}
+
+/** The refusal a malformed discount reads, before anything is sent. */
+const DISCOUNT_FORMAT_TEXT = 'Scrivi lo sconto in percentuale, da 0 a 100 (es. 10 o 7,5).';
+
 export function createQuoteView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   /** The space the quote is issued by (Dan 06/11: a quote is a little personal). */
@@ -99,6 +126,20 @@ export function createQuoteView(deps) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
   const money = (cents, currency) => formatAmount(cents, currency);
+  /** A discount field in percent (backlog:a2ea75f705fd). @param {string} value */
+  const percentInput = (value) => {
+    const input = el('input');
+    input.setAttribute('type', 'text');
+    input.setAttribute('inputmode', 'decimal');
+    input.value = value;
+    return input;
+  };
+  /** Basis points from a percent field; a malformed value refuses before any write. */
+  const discountFrom = (input) => {
+    const bps = percentToBps(input.value);
+    if (bps === null) throw new Error(DISCOUNT_FORMAT_TEXT);
+    return bps;
+  };
   /** Frozen VAT text for one group, or '' when the totals predate VAT. */
   const vatText = (vatEntry, currency, rateBps) => {
     if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 10000
@@ -197,7 +238,9 @@ export function createQuoteView(deps) {
     if (opportunityId === null) return { back: null, opportunityName: null, customerName: null };
     let opportunity;
     try {
-      opportunity = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}`);
+      // backlog:a2ea75f705fd: the core offer route — the generic records
+      // surface never serves core modules and answered 404 here.
+      opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
       return { back: null, opportunityName: null, customerName: null };
     }
@@ -451,7 +494,7 @@ export function createQuoteView(deps) {
       // The owner reads the package, the quantity, a discount only when one
       // applies, and the net: SKU and offer revision stay in the records.
       const lineDiscount = (line.discountBps ?? 0) > 0
-        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%`
+        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%${Number.isSafeInteger(line.discountAmountCents) && line.discountAmountCents > 0 ? ` (−${money(line.discountAmountCents, quote.currency)})` : ''}`
         : '';
       const head = el('span', 'quote-line-head');
       head.appendChild(el('span', 'quote-line-name', line.offerName));
@@ -484,17 +527,14 @@ export function createQuoteView(deps) {
         const quantityInput = el('input');
         quantityInput.setAttribute('type', 'number');
         quantityInput.value = String(line.quantity);
-        const discountInput = el('input');
-        discountInput.setAttribute('type', 'number');
-        discountInput.value = String(line.discountBps);
-        discountInput.setAttribute('title', 'Sconto in punti base: 1000 = 10,00%');
+        const discountInput = percentInput(bpsToPercentText(line.discountBps ?? 0));
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
         busy.push(updateButton, removeButton);
         updateButton.addEventListener('click', () => uiBusy(updateButton, 'Aggiorno…', () => withBusy(() => act('update-line', {
           lineId: line.id,
           quantity: Number(quantityInput.value),
-          discountBps: Number(discountInput.value),
+          discountBps: discountFrom(discountInput),
           expectedRevision: quote.draftRevision,
         }))));
         removeButton.addEventListener('click', () => uiBusy(removeButton, 'Rimuovo…', () => withBusy(() => act('remove-line', {
@@ -503,11 +543,11 @@ export function createQuoteView(deps) {
         }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
-        edit.appendChild(labelled('Sconto (punti base)', discountInput));
+        edit.appendChild(labelled('Sconto (%)', discountInput));
         edit.appendChild(updateButton);
         edit.appendChild(removeButton);
         row.appendChild(edit);
-        row.__update = () => withBusy(() => act('update-line', { lineId: line.id, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
+        row.__update = () => withBusy(() => act('update-line', { lineId: line.id, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
         row.__quantity = quantityInput;
         row.__discount = discountInput;
       }
@@ -531,34 +571,37 @@ export function createQuoteView(deps) {
       const quantityInput = el('input');
       quantityInput.setAttribute('type', 'number');
       quantityInput.value = '1';
-      const discountInput = el('input');
-      discountInput.setAttribute('type', 'number');
-      discountInput.value = '0';
-      const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Sconto in punti base (intero 0–10000): 1000 = 10,00%.');
+      const discountInput = percentInput('0');
+      const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Lo sconto è in percentuale, es. 10 o 7,5.');
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
       addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
         quantity: Number(quantityInput.value),
-        discountBps: Number(discountInput.value),
+        discountBps: discountFrom(discountInput),
         expectedRevision: quote.draftRevision,
       }))));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
-      addPanel.appendChild(labelled('Sconto (punti base)', discountInput));
+      addPanel.appendChild(labelled('Sconto (%)', discountInput));
       addPanel.appendChild(hint);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
+      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
-      addPanel.__discountBps = discountInput;
+      addPanel.__discount = discountInput;
       side.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
       submitPanel.appendChild(el('h3', undefined, 'Invia per l’approvazione'));
+      // backlog:a2ea75f705fd: the discount rule is a choice only when there
+      // is one to make. One rule is simply applied; none means the send is
+      // not available here, said once — never an empty menu.
+      const policies = (commercialBlock(schema)?.discountPolicies ?? [])
+        .filter((policy) => typeof policy?.name === 'string' && policy.name !== '' && Number.isSafeInteger(policy?.version));
       const policySelect = el('select');
-      for (const policy of commercialBlock(schema)?.discountPolicies ?? []) {
-        const option = el('option', undefined, `${policy.label} (v${policy.version})`);
+      for (const policy of policies) {
+        const option = el('option', undefined, `${policy.label ?? policy.name} (v${policy.version})`);
         option.setAttribute('value', `${policy.name}@${policy.version}`);
         policySelect.appendChild(option);
         if (policySelect.value === undefined || policySelect.value === '') policySelect.value = `${policy.name}@${policy.version}`;
@@ -569,8 +612,12 @@ export function createQuoteView(deps) {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
       })));
-      submitPanel.appendChild(labelled('Regola di sconto', policySelect));
-      submitPanel.appendChild(submitButton);
+      if (policies.length === 0) {
+        submitPanel.appendChild(el('p', 'muted quote-submit-off', 'L’invio per l’approvazione non è ancora disponibile in questo spazio.'));
+      } else {
+        if (policies.length > 1) submitPanel.appendChild(labelled('Regola di sconto', policySelect));
+        submitPanel.appendChild(submitButton);
+      }
       submitPanel.__submit = () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });

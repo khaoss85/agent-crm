@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createQuoteView, percentReason } from '../apps/admin/public/admin-quotes.js';
+import { bpsToPercentText, createQuoteView, percentReason, percentToBps } from '../apps/admin/public/admin-quotes.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -73,7 +73,8 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
         if (failAction) throw Object.assign(new Error(failAction.message), failAction);
         return { ok: true, result: { quote: quoteRecord } };
       }
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (path.startsWith('/api/modules/opportunity/records/')) throw Object.assign(new Error('Not Found'), { status: 404 });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path)) {
         if (failOpportunity || opportunityRecord === undefined) throw Object.assign(new Error('Not Found'), { status: 404 });
         return opportunityRecord;
       }
@@ -139,7 +140,8 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.ok(text.includes('non si sommano tra loro'), 'the grouping contract is disclosed');
   assert.ok(!text.includes('server'), 'voce ef92f728: no developer note about who computes the amounts');
   assert.ok(text.includes('5,00%'), 'basis points shown as a percentage');
-  assert.ok(text.includes('Sconto in punti base'), 'the discount unit is explained');
+  assert.ok(text.includes('Lo sconto è in percentuale'), 'the discount unit is explained in percent (backlog:a2ea75f705fd)');
+  assert.ok(!/punti base/i.test(text), 'never «punti base»');
   assert.ok(text.includes('le quote fisse si addebitano una volta'), 'quantity semantics disclosed');
   // Component breakdown with the tier band.
   const components = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-component');
@@ -156,7 +158,7 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.equal(mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-revise').length, 0);
 });
 
-test('adding a line posts the server action with quantity, basis points and the draft revision', async () => {
+test('adding a line posts the server action with quantity, the percent as basis points and the draft revision', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ lines: [LINE], entries: [ENTRY] });
@@ -165,7 +167,7 @@ test('adding a line posts the server action with quantity, basis points and the 
 
   const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
   addPanel.__quantity.value = '5';
-  addPanel.__discountBps.value = '750';
+  addPanel.__discount.value = '7,5';
   await addPanel.__add();
   const post = client.calls.find((call) => call.method === 'POST');
   assert.equal(post.path, '/api/modules/quote/records/q1/actions/add-line');
@@ -497,4 +499,75 @@ test('Dan 06/11: the quote is issued by the space and reads as a document beside
   assert.ok(side.textContent.includes('in sola lettura'), 'the approval state lives in the side column');
   const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-amount');
   assert.equal(amount?.textContent, '5.000 €', 'the one-time total leads the document');
+});
+
+
+// backlog:a2ea75f705fd (verifica 12/11, pilota 62654a1): the quote reads
+// its discount in percent or euro, never «punti base»; an empty rule menu
+// never shows; the way back reads the offer on its own route.
+test('a2ea75f705fd: the discount is written and read in percent, never «punti base»', async () => {
+  assert.equal(percentToBps('7,5'), 750);
+  assert.equal(percentToBps('10'), 1000);
+  assert.equal(percentToBps(' 12.25 % '), 1225);
+  assert.equal(percentToBps(''), 0, 'empty is no discount');
+  for (const bad of ['abc', '101', '7,555', '-5', '1e2']) assert.equal(percentToBps(bad), null, bad);
+  assert.equal(bpsToPercentText(750), '7,5');
+  assert.equal(bpsToPercentText(1000), '10');
+  assert.equal(bpsToPercentText(0), '0');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ lines: [{ ...LINE, discountAmountCents: 60000 }], entries: [ENTRY] });
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(!/punti base/i.test(text), 'no «punti base» anywhere');
+  assert.ok(text.includes('Sconto (%)'), 'the field says percent');
+  assert.ok(text.includes('sconto 5,00% (−600 €)'), 'the line reads the discount in percent and in euro');
+  const row = mount.findAll('div').find((node) => node.getAttribute('data-line') === LINE.id);
+  assert.equal(row.__discount.value, '5', 'the line field shows its percent, not 500');
+
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  addPanel.__discount.value = 'tanto';
+  await addPanel.__add();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'a malformed discount sends nothing');
+  const error = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
+  assert.match(error.textContent, /Scrivi lo sconto in percentuale, da 0 a 100/);
+});
+
+test('a2ea75f705fd: the discount rule shows only when there is a choice; none means no empty menu', async () => {
+  const one = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: one, client: stubClient({ lines: [LINE], entries: [ENTRY] }) }).renderQuoteDetail('q1');
+  assert.ok(!one.textContent.includes('Regola di sconto'), 'one rule is applied, never a menu of one');
+  assert.ok(one.findAll('button').some((node) => node.textContent === 'Invia'), 'the send stays');
+
+  const policies = [
+    { name: 'standard-sales-discount', version: 1, label: 'Standard', fingerprint: 'f'.repeat(64) },
+    { name: 'standard-sales-discount', version: 2, label: 'Standard', fingerprint: 'e'.repeat(64) },
+  ];
+  const withSchema = (schema) => {
+    const base = stubClient({ lines: [LINE], entries: [ENTRY] });
+    return { calls: base.calls, request: (path, options) => (path === '/api/schema' ? Promise.resolve(schema) : base.request(path, options)) };
+  };
+  const two = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: two, client: withSchema({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: policies } }) }).renderQuoteDetail('q1');
+  assert.ok(two.textContent.includes('Regola di sconto'), 'two rules are a choice');
+
+  const none = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: none, client: withSchema({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: [] } }) }).renderQuoteDetail('q1');
+  assert.ok(!none.textContent.includes('Regola di sconto'), 'no empty rule menu');
+  assert.ok(!none.findAll('button').some((node) => node.textContent === 'Invia'), 'no send that cannot work');
+  assert.ok(none.textContent.includes('L’invio per l’approvazione non è ancora disponibile in questo spazio.'));
+});
+
+test('a2ea75f705fd: the way back reads the offer on its own route, never a generic read that 404s', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const paths = client.calls.map((call) => call.path);
+  assert.ok(paths.includes('/api/opportunities/o1'));
+  assert.ok(!paths.some((path) => path.startsWith('/api/modules/opportunity/records/')), 'no read on the generic surface');
 });

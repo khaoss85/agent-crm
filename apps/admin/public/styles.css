@@ -405,6 +405,8 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
 .bo-offer .offer-quote-create-line:empty { display: none; }
+/* backlog:a2ea75f705fd: «Apri il preventivo» is a link that reads as the main button. */
+.bo-offer a.offer-quote-open-main { display: inline-flex; align-items: center; text-decoration: none; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }

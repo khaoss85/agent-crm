@@ -1314,7 +1314,7 @@ test('the offer panel names the quote after its opportunity, with the opportunit
   assert.ok(!text.includes('approved'), 'the raw English state is never shown');
 });
 
-test('cf340b571e98: the quote offer line links to the quote detail', async () => {
+test('a2ea75f705fd: the quote offer line opens the offer page, not the quote', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1333,7 +1333,7 @@ test('cf340b571e98: the quote offer line links to the quote detail', async () =>
   }));
   const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.ok(link, 'the quote offer line is a link');
-  assert.equal(link.getAttribute('href'), '#/quotes/q9', 'the link opens the quote detail');
+  assert.equal(link.getAttribute('href'), '#/offerte/o1', 'the line opens its offer page (backlog:a2ea75f705fd)');
   assert.ok(link.textContent.includes('Pacchetto 10 ingressi · proposta'),
     'the link keeps the opportunity name and the Italian stage');
 });
@@ -1375,7 +1375,7 @@ test('a551982c06eb: a quote without a readable opportunity still reads its own s
   assert.equal(shownOfferState({ id: 'o1', stage: 'proposal', pipelineKey: 'accordo-sales', pipelineStage: 'prova' }, false, null, [accordoSalesPipeline]), 'Prova');
 });
 
-test('cf340b571e98: a hostile quote id stays inside the detail href', async () => {
+test('cf340b571e98: a quote without an offer keeps its own detail; a hostile id stays inside the href', async () => {
   const hostile = 'q1" onmouseover="alert(1)';
   const mount = await renderCard(stubClient({
     profile: {
@@ -1392,9 +1392,8 @@ test('cf340b571e98: a hostile quote id stays inside the detail href', async () =
     'the id is encoded, never breaking out of the href');
 });
 
-test('cf340b571e98: the opportunity-fallback offer line stays plain text', async () => {
-  // No quote, one staged opportunity: there is no opportunity detail screen,
-  // so the fallback line must not pretend to open one.
+test('a2ea75f705fd: the opportunity-fallback offer line opens the offer page', async () => {
+  // No quote, one staged opportunity: the offer page is its detail screen.
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1406,8 +1405,8 @@ test('cf340b571e98: the opportunity-fallback offer line stays plain text', async
     },
   }));
   assert.ok(mount.textContent.includes('Pacchetto sede · proposta'), 'the fallback offer line still reads');
-  assert.equal(mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link').length, 0,
-    'no offer link without a quote');
+  const links = mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
+  assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/o1'], 'the offer opens its page');
 });
 
 test('the opportunity-fallback offer line reads the name with its Italian stage, never the bare name', async () => {
@@ -4392,8 +4391,9 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
   assert.ok(amount, 'the opportunity fallback paints its amount');
   assert.equal(amount.textContent, '1.200 €');
-  assert.equal(mount.findAll('a').filter((node) => node.getAttribute('class') === 'bo-scheda-offer-link').length, 0,
-    'an opportunity has no quote detail: the line stays plain');
+  const link = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-scheda-offer-link');
+  assert.equal(link?.getAttribute('href'), '#/offerte/o1', 'the offer opens its page (backlog:a2ea75f705fd)');
+  assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
 test('59def6cb805d: the next appointment reads title then day and hours (C26)', async () => {
