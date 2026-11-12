@@ -4486,6 +4486,11 @@ test('cta-loading: Conferma reads «Prenoto…» while booking and a second pres
   await flushMany();
   const confirms = () => base.calls.filter((call) => call.path === '/api/appointments/confirm').length;
   assert.equal(confirms(), 1, 'one booking for two presses');
+  // Review Muse #775: the other booking buttons are off meanwhile, never
+  // pressable and silently dropped.
+  const propose = manualButton(mount, 'Proponi');
+  assert.equal(propose.disabled, true, 'Proponi is off while Conferma books');
+  assert.equal(propose.getAttribute('aria-busy'), null, 'only the pressed button reads busy');
   release();
   await flushMany();
   const back = manualButton(mount, 'Conferma');

@@ -2640,7 +2640,7 @@ export function createCalendarioView(deps) {
           attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        if (state.bookingBusy === slotBusyKey(slot)) uiMarkBusy(ghost, 'Prenoto…');
+        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
         ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         col.appendChild(ghost);
       }
@@ -3209,7 +3209,7 @@ export function createCalendarioView(deps) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
         const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        if (state.bookingBusy === slotBusyKey(slot)) uiMarkBusy(confirm, 'Prenoto…');
+        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
         confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         item.appendChild(confirm);
         list.appendChild(item);
@@ -4255,10 +4255,10 @@ export function createCalendarioView(deps) {
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
-    if (state.bookingBusy === 'propose') uiMarkBusy(propose, 'Controllo…');
+    holdBookingButton(propose, 'propose', 'Controllo…');
     propose.addEventListener('click', () => void busyBooking('propose', () => submitBooking(inputs, false)));
     const confirm = el(doc, 'button', { className: 'secondary small', text: 'Conferma' });
-    if (state.bookingBusy === 'confirm') uiMarkBusy(confirm, 'Prenoto…');
+    holdBookingButton(confirm, 'confirm', 'Prenoto…');
     confirm.addEventListener('click', () => void busyBooking('confirm', () => submitBooking(inputs, true)));
     form.appendChild(propose);
     form.appendChild(confirm);
@@ -4395,6 +4395,21 @@ export function createCalendarioView(deps) {
       state.bookingBusy = null;
       renderAll();
     }
+  }
+  /**
+   * Review Muse #775: while one booking is in flight every booking button is
+   * off — the pressed one reads «Prenoto…», the others are simply not
+   * pressable — so no click is ever silently dropped.
+   * @param {any} button @param {string} key @param {string} label
+   */
+  function holdBookingButton(button, key, label) {
+    if (!state.bookingBusy) return;
+    if (state.bookingBusy === key) {
+      uiMarkBusy(button, label);
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute('disabled', 'disabled');
   }
   /** @param {any} slot */
   const slotBusyKey = (slot) => `slot:${slot?.teamMemberId ?? ''}:${slot?.startsAt ?? ''}`;
