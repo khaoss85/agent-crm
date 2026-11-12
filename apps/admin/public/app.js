@@ -84,7 +84,7 @@ async function api(path, options = {}) {
       throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
     }
     return body;
-  }, { method });
+  }, { method, onWaking: wakingNotice });
 }
 
 const submissions = createSubmissionController({
@@ -216,10 +216,25 @@ const moduleClient = {
       }
       return payload;
     };
-    return withWakeRetry(once, { method });
+    return withWakeRetry(once, { method, onWaking: wakingNotice });
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
+
+/**
+ * backlog:2b62c771f1f9: while reads wait for the host to wake, the shell
+ * says so once — «Il server si sta svegliando…» — and the screen keeps its
+ * loading state; the scheda's parallel reads share one notice.
+ */
+let wakingReads = 0;
+function wakingNotice(waking) {
+  if (!waking) {
+    wakingReads = Math.max(0, wakingReads - 1);
+    return;
+  }
+  wakingReads += 1;
+  if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
@@ -505,7 +520,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
