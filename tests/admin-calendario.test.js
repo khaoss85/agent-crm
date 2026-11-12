@@ -84,7 +84,9 @@ const WEEK = {
         },
         {
           id: 'a2',
-          status: 'cancelled',
+          // A closed booking that still paints (backlog:5346ab531538: a
+          // cancelled one leaves the grid, a done one stays).
+          status: 'done',
           startsAt: '2026-10-23T09:00:00.000Z',
           endsAt: '2026-10-23T09:30:00.000Z',
           serviceKey: 'barba',
@@ -328,9 +330,10 @@ test('week renders five day columns with real Rome-time events', async () => {
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
   assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
-  // Cancelled rows stay listed with their status, in Italian (C14).
-  assert.ok(texts(mount, 'span').includes('annullato'));
-  assert.ok(!texts(mount, 'span').includes('cancelled'), 'C14: never the raw English status');
+  // Closed rows stay listed with their status, in Italian (C14); a
+  // cancelled booking leaves the grid (backlog:5346ab531538).
+  assert.ok(texts(mount, 'span').includes('svolto'));
+  assert.ok(!texts(mount, 'span').includes('done'), 'C14: never the raw English status');
   // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
   // Selecting the block opens the popover, and the customer links the scheda.
@@ -913,7 +916,9 @@ test('the manual customer search lists names, never ids or resources', async () 
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   assert.ok(search, 'the manual form searches by name');
-  assert.equal(search.getAttribute('placeholder'), 'Cerca il cliente per nome…');
+  // backlog:6e6750ff8163: the «Cliente» label names the field, so the hint
+  // stays short enough for the popover.
+  assert.equal(search.getAttribute('placeholder'), 'Cerca per nome…');
   search.value = 'Ad';
   search.dispatch('input');
   for (let round = 0; round < 7; round += 1) {
@@ -1152,10 +1157,12 @@ test('the voices focus the phrase field and the manual form', async () => {
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
   toggle.dispatch('click');
   const manual = menu.findAll('button').find((node) => node.textContent.includes('Compila manualmente'));
-  const first = mount.querySelector('input[name="customerSearch"]');
-  first.focus = () => { focused = 'manual'; };
   manual.dispatch('click');
-  assert.equal(focused, 'manual', 'the manual voice focuses the booking form');
+  // backlog:6e6750ff8163: the voice opens the form popover (a repaint) and
+  // focuses its first field — the live node, never a scroll to the rail.
+  const pop = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'manual-pop');
+  assert.ok(pop && pop.getAttribute('hidden') === null, 'the manual voice opens the form');
+  assert.equal(mount.querySelector('input[name="customerSearch"]').__focused, true, 'the manual voice focuses the booking form');
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
 });
 
@@ -1963,9 +1970,10 @@ test('hiding the selected block member closes the detail card', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   mount.findAll('button').find((node) => /piega/i.test(node.textContent)).dispatch('click');
-  assert.ok(mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'the detail card opens');
+  const detail = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(detail(), 'the detail card opens');
   teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
-  assert.ok(!mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'hiding the member closes the card');
+  assert.equal(detail(), undefined, 'hiding the member closes the card');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 });
 
@@ -3019,14 +3027,16 @@ test('dragging on a day column chooses the slot and opens the filled form beside
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.ok(pick, 'the chosen slot stays painted on the grid');
   assert.equal(pick.textContent, '11:00–12:30');
-  const pop = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  const visiblePop = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null);
+  const pop = visiblePop();
   assert.ok(pop, 'the form opens beside the slot');
+  assert.equal(pop.getAttribute('data-anchor'), 'slot');
   const value = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name)?.value;
   assert.equal(value('date'), '2026-10-21');
   assert.equal(value('start'), '11:00');
   assert.equal(value('end'), '12:30');
   pop.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
-  assert.ok(!mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop')), '× closes the form');
+  assert.equal(visiblePop(), undefined, '× closes the form');
 });
 
 test('a plain click on an empty slot is half an hour', async () => {
@@ -3061,7 +3071,7 @@ async function phoneWeek() {
   for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const col = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'))[1];
   col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 366, bottom: 360, height: 360, width: 366 });
-  const hasPop = () => mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  const hasPop = () => mount.findAll('div').some((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null);
   const pick = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   return { mount, col, hasPop, pick };
 }
@@ -3915,9 +3925,15 @@ test('the manual form offers the catalog menu with the default and price prefill
   assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
   assert.ok(labels.includes('Lezione prova · 15,00 €'), labels.join(' | '));
   assert.ok(!labels.some((text) => /\d\.\d{2} €/.test(text)), 'no dotted decimals in the menu');
-  assert.equal(service.value, 'taglio', 'the first entry is preselected like the worker default');
+  // backlog:6e6750ff8163: with two services nothing is preselected — the
+  // first catalog entry was a test product on a real listino.
+  assert.equal(service.value, '', 'no service preselected');
+  assert.equal(service.findAll('option')[0].textContent, 'Scegli il servizio');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
-  assert.equal(byName().price.value, '45.00', 'the price prefills from the default');
+  assert.equal(byName().price.value, '', 'no price before a service is chosen');
+  service.value = 'taglio';
+  service.dispatch('change');
+  assert.equal(byName().price.value, '45.00', 'the price follows the chosen service');
   assert.equal(
     mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length,
     0,
@@ -4189,7 +4205,11 @@ test('review #805 giro 4 P1: a transient served-list failure retries on the next
   assert.ok(servicesReads() > readsBefore, 'the next submit re-reads the list instead of replaying the cached failure');
   const service = mount.querySelector('select[name="serviceKey"]');
   assert.notEqual(service.getAttribute('disabled'), 'disabled', 'the menu unblocks once the list reads');
-  assert.equal(service.value, 'prova-verifica-0711-b-prodotto', 'the served default is chosen');
+  // backlog:6e6750ff8163: with several services nothing is preselected (the
+  // first was a test product): the operator chooses, then submits again.
+  assert.equal(service.value, '', 'no served service preselected');
+  service.value = 'prova-verifica-0711-b-prodotto';
+  service.dispatch('change');
   clickButton(mount, 'Proponi');
   await flushMany(9);
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
@@ -5016,4 +5036,57 @@ test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian
   const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
   assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
   assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+});
+
+// Verifica 12/11: «È disponibile una nuova versione · Ricarica» answered
+// «Hai del testo non salvato» with nothing typed — the Calendario form
+// prefills the default service and its price on its own, and that counted
+// as the operator's text after leaving the screen.
+test('verifica 12/11: prefilled form values are nobody\'s unsaved text, typed ones are', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const price = mount.findAll('input').find((node) => node.getAttribute('name') === 'price');
+  assert.equal(price.value, '45.00', 'the price prefilled on its own');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'a prefilled form is not unsaved text');
+  const notes = mount.findAll('input').find((node) => node.getAttribute('name') === 'notes')
+    ?? mount.findAll('textarea').find((node) => node.getAttribute('name') === 'notes');
+  notes.value = 'Porta le scarpe';
+  notes.dispatch('input');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'what the operator typed is');
+  resetVersionWatchState();
+});
+
+// Review #818 (P2): a choice made with a menu is the operator's work too.
+test('review #818: a service or a person chosen in the menus counts as unsaved work', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: 'piega', name: 'Piega', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 2000 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog, memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }] }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the defaults are not unsaved work');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  service.value = 'piega';
+  service.dispatch('change');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'a chosen service is');
+  resetVersionWatchState();
 });

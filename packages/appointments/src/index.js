@@ -22,6 +22,7 @@ import {
   bookAppointment,
   bookFromLink,
   bounds,
+  cancelAppointment,
   confirmBooking,
   createAppointmentBookCapability,
   createAppointmentScheduleCapability,
@@ -108,6 +109,7 @@ export {
   bookAppointment,
   bookFromLink,
   bounds,
+  cancelAppointment,
   confirmBooking,
   dispatchDueReminders,
   findOverlap,
@@ -212,7 +214,11 @@ export function createAppointmentsPackage(options = {}) {
     // a new slot through `app.rescheduleAppointmentBooking` (409 on overlap,
     // terminal states and stranded reminders). Additive: reads, capabilities
     // and the booking contract are untouched.
-    version: 3,
+    // 4 (backlog:5346ab531538): cancel-appointment cancels one booking with
+    // a reason through `app.cancelAppointmentBooking` — the lifecycle's own
+    // `-> cancelled` advance, idempotent on an already cancelled row.
+    // Additive: the transition table and the booking contract are untouched.
+    version: 4,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -346,6 +352,22 @@ export function createAppointmentsPackage(options = {}) {
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'cancel-appointment',
+        label: 'Cancel appointment',
+        appMethod: 'cancelAppointmentBooking',
+        description:
+          'Cancel one booking with a reason (backlog:5346ab531538): the row named by exactly one of id/sourceKey advances to cancelled, frees its slot and stays in the customer history — refused 409 when it is done or no-show, idempotent when it is already cancelled.',
+        input: [
+          { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
+          { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
+          { name: 'reason', type: 'string', required: true, hint: 'Why the booking is cancelled, at most 300 characters.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).cancelAppointment(input);
         },
       },
     ],

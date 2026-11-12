@@ -161,3 +161,36 @@ test('a reminder failure rolls the booking back with it', async (t) => {
     'no orphan booking may survive a reminder that was never created',
   );
 });
+
+test('backlog:5346ab531538 — the cancel operation cancels with reason, audit and the row kept for the history', async (t) => {
+  const root = project(t);
+  const app = await boot(t, root, 'cancel.sqlite');
+  const bookingCap = openBooking(app);
+  const booked = await bookingCap.bookAppointment(booking({ sourceKey: 'gym:e2e:cancel', remindAt: undefined }));
+  const id = booked.appointment.id;
+  assert.equal(typeof app.cancelAppointmentBooking, 'function', 'the declared operation is attached to the app');
+
+  const out = await app.cancelAppointmentBooking({ id, reason: 'Il cliente ha disdetto' }, ACTOR);
+  assert.equal(out.cancelled, true);
+  assert.equal(out.appointment.status, 'cancelled');
+  assert.equal(out.appointment.cancelReason, 'Il cliente ha disdetto');
+
+  // Idempotent: the retry answers the cancelled row and writes nothing.
+  const auditBefore = app.audit.list({ entityType: 'appointment', entityId: id });
+  const again = await app.cancelAppointmentBooking({ id, reason: 'Doppio clic' }, ACTOR);
+  assert.equal(again.cancelled, false);
+  assert.equal(app.audit.list({ entityType: 'appointment', entityId: id }).length, auditBefore.length, 'no second audit row');
+
+  // The cancellation is audited with its author.
+  const cancelAudit = auditBefore.filter((entry) => JSON.stringify(entry.data ?? {}).includes('cancelled'));
+  assert.ok(cancelAudit.length >= 1, `the cancellation is audited: ${JSON.stringify(auditBefore.map((entry) => entry.action))}`);
+  assert.ok(cancelAudit.some((entry) => entry.actorId === ACTOR.id || entry.actor?.id === ACTOR.id), 'the audit names the operator');
+
+  // The row stays stored as cancelled: the customer's schedule (the history
+  // the scheda reads) still lists it with its status, and its slot is free.
+  const rows = app.modules.get('appointment').service.listWhere({ sourceKey: 'gym:e2e:cancel' });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'cancelled');
+  const rebooked = await bookingCap.bookAppointment(booking({ sourceKey: 'gym:e2e:cancel:2', remindAt: undefined }));
+  assert.equal(rebooked.appointment.status, 'booked', 'the cancelled booking freed its slot');
+});

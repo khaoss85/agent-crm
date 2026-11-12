@@ -211,6 +211,8 @@ const ICON_PATHS = Object.freeze({
   messaggio: '<path d="M4 5h16v11H9l-5 4z"/>',
   offerta: '<path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/>',
   appuntamento: '<path d="M5 6h14v13H5zM5 10h14M9 4v4M15 4v4"/>',
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  cestino: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 });
 
 export const UI_ICONS = Object.freeze(Object.keys(ICON_PATHS));

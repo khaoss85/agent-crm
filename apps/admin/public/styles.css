@@ -786,7 +786,8 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
  * so it carries the card's own inner margins (like .bo-scheda-timeline);
  * field and button stay inside, the help sentence below them too. */
 .bo-scheda-note-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 14px 20px 20px; }
-.bo-scheda-note-form input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
@@ -1564,6 +1565,22 @@ select.bo-spazi-input { flex: none; }
 .cal-pop-person .cal-avatar { min-width: 24px; height: 24px; line-height: 24px; color: var(--ink); }
 .cal-pop-note { color: var(--muted); }
 .cal-event-pop .cal-sync { margin-left: 24px; }
+/* backlog:5346ab531538: «Annullare l'appuntamento?» asked inside the popover. */
+.cal-pop-confirm { margin: 0 0 12px; padding: 12px; border-radius: 12px; background: var(--danger-soft); }
+.cal-pop-question { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.cal-pop-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.cal-pop-confirm .cal-move-field input { background: var(--surface); }
+.cal-pop-actions { display: flex; gap: 8px; }
+.cal-pop-confirm .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
+/* backlog:6e6750ff8163: «Nuovo appuntamento» lives only in this popover.
+ * Opened without a slot it sits at the top right of the grid; every field
+ * carries its label; a long form scrolls inside, never off screen. */
+.cal-form-pop[data-anchor="grid"] { top: 12px; right: 12px; }
+.cal-form-pop { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+.cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
+.cal-form .cal-field-wide { flex-basis: 100%; }
+.cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
@@ -1601,15 +1618,15 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
   /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
-   * «Fissa con una frase», the week, Team, the manual form, online
-   * booking — so the grid is not pushed under every rail card. The rail
-   * dissolves into the column and each card takes its place by order. */
+   * «Fissa con una frase», the week, Team, online booking — so the grid
+   * is not pushed under every rail card. The rail dissolves into the column
+   * and each card takes its place by order. The «Nuovo appuntamento» form
+   * is the bottom sheet popover (backlog:6e6750ff8163), never a card here. */
   .cal-layout { display: flex; flex-direction: column; gap: 14px; }
   .cal-layout > .cal-rail { display: contents; }
   .cal-rail > .cal-ai { order: 2; }
   .cal-layout > .cal-main { order: 3; }
   .cal-rail > .cal-team { order: 4; }
-  .cal-rail > .cal-manual { order: 5; }
   .cal-rail > .cal-booking { order: 6; }
   /* backlog:5fbebe8559e9: an empty day is one compact row (day, «Nessun
    * appuntamento», «+ Prenota») instead of a 540px empty timeline; a day
@@ -2555,9 +2572,19 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* A note reads as a note: a pencil mark and one paper card in the pending
    tone, never a channel bubble; the Note chip and its writer chips filter. */
 .bo-scheda-chan.bo-tile-note { background: var(--pending-soft); color: var(--pending-ink); font-family: inherit; font-size: 15px; }
+/* backlog:5346ab531538: a cancelled appointment in the cronologia — the
+   note card shape, in the neutral tone, with an × mark. */
+.bo-scheda-chan.bo-tile-cancelled { background: var(--surface-soft); color: var(--muted); font-family: inherit; font-size: 15px; }
+.bo-scheda-entry-cancelled .bo-scheda-note-paper { border-color: var(--line-soft); background: var(--surface-soft); }
+.bo-scheda-entry .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head, .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head { color: var(--ink); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+/* backlog:82235e46e3e9: offers and stage moves in «Tutti i contatti» — a quiet system line, not a bubble. */
+.bo-scheda-chan.bo-tile-event { background: var(--agent-soft); color: var(--agent-ink); font-family: inherit; font-size: 14px; }
+.bo-scheda-event-paper { grid-column: 2; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 8px 14px 10px; }
+.bo-scheda-entry .bo-scheda-event-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-weight: 600; }
+.bo-scheda-entry .bo-scheda-event-paper p.bo-scheda-event-body { margin: 2px 0 0; padding: 0; border: 0; background: transparent; color: var(--ink); overflow-wrap: anywhere; }
 .bo-scheda-chips .bo-scheda-chip-note { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; border: 1px dashed color-mix(in srgb, var(--pending) 70%, var(--line)); background: var(--pending-soft); color: var(--pending-ink); cursor: pointer; }
 .bo-scheda-chips .bo-scheda-chip-note[data-active="true"] { border-style: solid; border-color: var(--pending-ink); background: var(--pending-ink); color: var(--surface); }
 .bo-scheda-chips-authors { display: inline-flex; flex-wrap: wrap; gap: 6px; padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-soft); }

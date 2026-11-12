@@ -134,14 +134,14 @@ test('2a214b66fe12: a note shows in the cronologia with its toast, and only the 
     },
   });
   const { mount, toasts, atToast } = await open(client);
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare lunedì';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare lunedì';
   client.hold();
   const saving = byAction(mount, 'add-note').listeners.click[0]();
   await flush();
   assert.deepEqual(toasts, ['Nota aggiunta']);
   assert.ok(atToast[0].includes('Richiamare lunedì'), 'the note is on screen when the toast speaks');
   assert.ok(mount.textContent.includes('Richiamare lunedì'), 'before the re-read answers');
-  assert.equal(mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value, '', 'the field is empty');
+  assert.equal(mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value, '', 'the field is empty');
   assert.deepEqual(READ_KINDS(client.reads), ['customer-hub/timeline'], 'only the cronologia is read again');
   client.release();
   await saving;
@@ -260,7 +260,7 @@ test('2a214b66fe12: a move waiting for approval does not move the pill', async (
 test('2a214b66fe12: a failed re-read keeps the written note on screen', async () => {
   const client = fakeClient({ onWrite: ({ body }) => ({ id: 'n1', body: body.body, actorId: 'elena' }) });
   const { mount } = await open(client);
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Nota importante';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Nota importante';
   client.failReads(true);
   await byAction(mount, 'add-note').listeners.click[0]();
   await flush();
@@ -274,7 +274,7 @@ test('2a214b66fe12: a full re-read started before the note never paints over it'
   client.hold();
   const full = view.renderCard('contact', 'c1');
   await flush();
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Scritta durante la lettura';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Scritta durante la lettura';
   const saving = byAction(mount, 'add-note').listeners.click[0]();
   await flush();
   // The server now knows the note; the full read in flight was asked before it.
@@ -329,7 +329,7 @@ test('review #787: what Aggiorna read survives the repaint after a note', async 
   enriched = { ...enriched, items: [{ field: 'role', value: 'Personal trainer', source: 'email-signature', observedAt: '2026-11-10T09:00:00.000Z' }] };
   await byAction(mount, 'refresh-enrichment').listeners.click[0]();
   assert.ok(mount.textContent.includes('Personal trainer'), 'Aggiorna paints the fresh row');
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Nota dopo Aggiorna';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Nota dopo Aggiorna';
   await byAction(mount, 'add-note').listeners.click[0]();
   await flush();
   assert.ok(mount.textContent.includes('Nota dopo Aggiorna'));
@@ -354,7 +354,7 @@ test('review #787: a cronologia re-read older than a full read never paints over
     }
     return base(path, options);
   };
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Prima nota';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Prima nota';
   const saving = byAction(mount, 'add-note').listeners.click[0]();
   await flush();
   // Meanwhile the server gains a second write and a full read sees it.
@@ -381,7 +381,7 @@ test('review #787: a failed re-read after a write is logged with its cause, neve
   try {
     const client = fakeClient({ onWrite: ({ body }) => ({ id: 'n1', body: body.body, actorId: 'elena' }) });
     const { mount } = await open(client);
-    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Testo riservato';
+    mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Testo riservato';
     client.failReads(true);
     await byAction(mount, 'add-note').listeners.click[0]();
     await flush();

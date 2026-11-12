@@ -63,14 +63,28 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
-  const body = await response.json();
-  if (!response.ok) {
-    const error = new Error(body?.error?.message || `Request failed (${response.status})`);
-    Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
-    throw error;
-  }
-  return body;
+  // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first answer
+  // may be a waking service — one retry, same key, instead of an error.
+  // The body is read as text first (review khaoss85/agent-crm#673): a waking
+  // host may answer non-JSON (e.g. 503 HTML), and response.json() would throw
+  // a bare SyntaxError the wake verdict never sees.
+  return withWakeRetry(async () => {
+    const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
+    const text = await response.text();
+    let body;
+    try {
+      body = text === '' ? null : JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    if (!response.ok) {
+      throw apiFailure(response.status, body ?? null);
+    }
+    if (body === undefined) {
+      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
+    }
+    return body;
+  }, { method, onWaking: wakingNotice });
 }
 
 const submissions = createSubmissionController({
@@ -147,57 +161,80 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(`${ADMIN_BASE}${path}`, {
-      ...options,
-      headers: requestHeaders,
-    });
-    // fetch followed the host's login redirect (the mount emits no other
-    // redirect for API paths): the session is gone. Navigated once here;
-    // the branches below skip a second navigation for the same answer.
-    const followedLogin = MOUNTED && response.redirected === true;
-    if (followedLogin) {
-      leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
-    }
-    const text = await response.text();
-    let payload;
-    try {
-      payload = text === '' ? null : JSON.parse(text);
-    } catch {
-      payload = undefined;
-    }
-    if (!response.ok) {
-      // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
-      // and claimId on the error, so the composer reads it back.
-      const error = apiFailure(response.status, payload);
-      // A followed login redirect still throws: carry the signal so the
-      // calling view can tell a lost session from a refused write.
-      if (followedLogin) Object.assign(error, { redirected: true });
-      if (MOUNTED && !followedLogin) {
-        leaveForSpaceLogin(sessionLostTarget({
-          status: response.status,
-          code: /** @type {any} */ (error).code,
-          adminBase: ADMIN_BASE,
-        }));
+    // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
+    // answer may be a waking service — one retry, same key, while the
+    // screen still shows its loading state, instead of an error. A lost
+    // session is never a retry: it leaves for the login at once and only
+    // once (review #673 giro 3: isWakeTransient excludes it).
+    const once = async () => {
+      const response = await fetch(`${ADMIN_BASE}${path}`, {
+        ...options,
+        headers: requestHeaders,
+      });
+      // fetch followed the host's login redirect (the mount emits no other
+      // redirect for API paths): the session is gone. Navigated once here;
+      // the branches below skip a second navigation for the same answer.
+      const followedLogin = MOUNTED && response.redirected === true;
+      if (followedLogin) {
+        leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
       }
-      throw error;
-    }
-    if (payload === undefined) {
-      if (MOUNTED && !followedLogin) {
-        // A 200 that is not JSON under a mount is the followed login page
-        // fetch no longer flags (or a host that answered HTML directly).
-        leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text === '' ? null : JSON.parse(text);
+      } catch {
+        payload = undefined;
       }
-      // A 200 that is not JSON still throws: carry which login-page shape
-      // it was, so the calling view reads it like the shell just did.
-      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
-      if (followedLogin) Object.assign(invalid, { redirected: true });
-      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
-      throw invalid;
-    }
-    return payload;
+      if (!response.ok) {
+        // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
+        // and claimId on the error, so the composer reads it back.
+        const error = apiFailure(response.status, payload);
+        // A followed login redirect still throws: carry the signal so the
+        // calling view can tell a lost session from a refused write.
+        if (followedLogin) Object.assign(error, { redirected: true });
+        if (MOUNTED && !followedLogin) {
+          leaveForSpaceLogin(sessionLostTarget({
+            status: response.status,
+            code: /** @type {any} */ (error).code,
+            adminBase: ADMIN_BASE,
+          }));
+        }
+        throw error;
+      }
+      if (payload === undefined) {
+        if (MOUNTED && !followedLogin) {
+          // A 200 that is not JSON under a mount is the followed login page
+          // fetch no longer flags (or a host that answered HTML directly).
+          leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+        }
+        // A 200 that is not JSON still throws: carry which login-page shape
+        // it was, so the calling view reads it like the shell just did.
+        const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+        if (followedLogin) Object.assign(invalid, { redirected: true });
+        else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+        throw invalid;
+      }
+      return payload;
+    };
+    return withWakeRetry(once, { method, onWaking: wakingNotice });
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
+
+/**
+ * backlog:2b62c771f1f9: while reads wait for the host to wake, the shell
+ * says so once — «Il server si sta svegliando…» — and the screen keeps its
+ * loading state; the scheda's parallel reads share one notice.
+ */
+let wakingReads = 0;
+function wakingNotice(waking) {
+  if (!waking) {
+    wakingReads = Math.max(0, wakingReads - 1);
+    return;
+  }
+  wakingReads += 1;
+  if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
@@ -483,7 +520,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure } from './admin-core.js';
+import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 

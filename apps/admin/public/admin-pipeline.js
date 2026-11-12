@@ -52,7 +52,6 @@ import { bindAdminMutations } from './admin-submission.js';
 import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
-/** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
 const OFF_PIPELINE_LISTED = 50;
 
 /**
@@ -645,7 +644,7 @@ export function createPipelineBoard(deps) {
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
     // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
-    // the read hits the cap every count below is a lower bound, never exact.
+    // the read is truncated the counts below are lower bounds.
     const truncated = records.length >= BOARD_LIMIT;
     const visible = placed.filter((record) => matchesFilters(record, state));
 
@@ -1015,17 +1014,27 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
-   * excluded by documented behavior, never silently hidden. The count
-   * still names how many offers live on the other boards, and when the
-   * space composes more than one pipeline a selector replaces the old
-   * "(non mostrata)" line — every composed pipeline is one choice away.
-   * With a single composed pipeline the legacy links stay, so an
-   * out-of-band record still names where the operator can go see it. A
-   * key outside the route grammar cannot be linked: it stays in the
-   * count, never in an href. Every value renders as text, never HTML.
+   * Pipeline switch (backlog:1cb4cc48, review accordo-muse-review on #727):
+   * records of other pipelines are excluded by documented behavior, never
+   * silently hidden. The count still names how many offers live on the other
+   * boards (renderOffPipeline, one click per offer to its #/offerte page),
+   * and when the space composes more than one pipeline a selector offers
+   * every composed pipeline — each one renders a real board, one choice away.
+   * A key the schema does not compose (unknown, keyless, or outside the route
+   * grammar) never becomes a pipeline choice or a #/pipelines link: the
+   * destination would not render (renderBoard resolves against `composed`
+   * only). Those offers stay reachable through the disclosure list. Choices
+   * come from the schema, never from the truncated record read, so a
+   * BOARD_LIMIT read cannot make them partial; the lower-bound wording
+   * («almeno N») lives on the counts (backlog 13f43804). Every value renders
+   * as text, never HTML.
+   * DECISION (to be confirmed): with a single composed pipeline and only
+   * unresolvable off-board offers there is no one-choice selector — the
+   * disclosure list is the actionable path to the offer pages.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
+   * @param {string} pipelineName
+   * @param {number} offPipeline
    * @param {boolean} truncated whether the read hit BOARD_LIMIT (counts are lower bounds)
    */
   function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline, truncated) {
@@ -1033,11 +1042,12 @@ export function createPipelineBoard(deps) {
     if (offPipeline > 0) {
       box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated));
     }
-    if (composedPipelineNames(pipelines).length > 1) {
+    const composed = composedPipelineNames(pipelines);
+    if (composed.length > 1) {
       const selectId = 'pipeline-switch';
       box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
       const select = el(doc, 'select', { attrs: { id: selectId } });
-      for (const name of composedPipelineNames(pipelines)) {
+      for (const name of composed) {
         const defined = pipelines.find((candidate) => candidate?.name === name);
         const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
         select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
@@ -1050,17 +1060,7 @@ export function createPipelineBoard(deps) {
         }
       });
       box.appendChild(select);
-      return box;
     }
-    const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
-      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
-      .sort();
-    others.forEach((key, index) => {
-      box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));
-      const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
-      link.textContent = `Vedi ${key}`;
-      box.appendChild(link);
-    });
     return box;
   }
 

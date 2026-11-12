@@ -417,6 +417,9 @@ function shapeAppointments(schedule) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    // backlog:5346ab531538: the history row of a cancellation.
+    cancelReason: row.cancelReason ?? null,
+    decidedAt: row.decidedAt ?? null,
   }));
   return Object.freeze({
     available: true,

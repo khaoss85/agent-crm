@@ -229,8 +229,18 @@ const probe = {
   scrollWidth: document.documentElement.scrollWidth,
   innerWidth: window.innerWidth,
   // Spec 390 order (backlog:5fbebe8559e9): «Fissa con una frase», the week,
-  // Team, online booking — top edges in page order.
-  order: ['.cal-ai', '.cal-week', '.cal-team', '.cal-manual', '.cal-booking']
+  // Team, online booking — top edges in page order. The «Nuovo
+  // appuntamento» form is no rail card any more (backlog:6e6750ff8163): it
+  // is the popover, a bottom sheet on the phone, probed apart below.
+  form: (() => {
+    const node = document.querySelector('[data-role="manual-pop"]');
+    if (!node || node.hidden) return null;
+    const box = node.getBoundingClientRect();
+    return { top: Math.round(box.top), bottom: Math.round(box.bottom), left: Math.round(box.left), right: Math.round(box.right),
+      inRail: Boolean(node.closest('.cal-rail')), forms: document.querySelectorAll('.cal-manual').length,
+      labels: [...node.querySelectorAll('.cal-field-label')].map((n) => n.textContent) };
+  })(),
+  order: ['.cal-ai', '.cal-week', '.cal-team', '.cal-booking']
     .map((selector) => Math.round(document.querySelector(selector).getBoundingClientRect().top)),
   // backlog:5fbebe8559e9: empty days collapse to compact rows on the phone.
   compact: [...document.querySelectorAll('.cal-day-compact')]
@@ -252,6 +262,16 @@ probe.pop = popRect === null ? null : {
   side: popNode.getAttribute('data-side'), role: popNode.getAttribute('role'),
   focused: document.activeElement === popNode,
   innerHeight: window.innerHeight,
+};
+// backlog:5346ab531538: the cancel question opens inside the popover and
+// the popover still fits on screen with it.
+document.querySelector('[data-action="event-cancel"]').click();
+await new Promise((r) => setTimeout(r, 50));
+const askNode = document.querySelector('[data-role="cancel-confirm"]');
+const askPop = document.querySelector('[data-role="event-detail"]').getBoundingClientRect();
+probe.ask = askNode === null ? null : {
+  focusedNo: document.activeElement === document.querySelector('[data-action="cancel-no"]'),
+  popBottom: Math.round(askPop.bottom), popRight: Math.round(askPop.right), innerHeight: window.innerHeight, innerWidth: window.innerWidth,
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
@@ -388,7 +408,12 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.pop.right <= probe.pop.anchorLeft, `the popover sits left of the event: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.left >= 0 && probe.pop.right <= 1280, `never off screen sideways: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `never off screen vertically: ${JSON.stringify(probe.pop)}`);
+  assert.ok(probe.ask, 'the cancel question opens in the popover');
+  assert.equal(probe.ask.focusedNo, true, '«No» takes the focus');
+  assert.ok(probe.ask.popBottom <= probe.ask.innerHeight && probe.ask.popRight <= probe.ask.innerWidth, `the popover with the question stays on screen: ${JSON.stringify(probe.ask)}`);
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
+  assert.ok(probe.form && probe.form.inRail === false && probe.form.forms === 1, `one form, in the popover (${JSON.stringify(probe.form)})`);
+  assert.deepEqual(probe.form.labels, ['Cliente', 'Persona del team', 'Servizio', 'Prezzo (€)', 'Giorno', 'Inizio', 'Fine', 'Note'], 'every field carries its label');
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
   assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
   assert.equal(probe.outside, 1, 'the out-of-hours slot is named under the grid (fetta 8)');
@@ -409,9 +434,14 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.ok(probe.pop.left >= 0 && probe.pop.right <= 390, `the sheet stays on screen sideways: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `the sheet stays on screen: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
-  console.log(`calendario phone tops (AI, week, Team, form, booking): ${probe.order.join(', ')}`);
+  console.log(`calendario phone tops (AI, week, Team, booking): ${probe.order.join(', ')}`);
   const sorted = [...probe.order].sort((a, b) => a - b);
-  assert.deepEqual(probe.order, sorted, `C21: one column in the spec order — AI, week, Team, form, booking (${probe.order})`);
+  assert.deepEqual(probe.order, sorted, `C21: one column in the spec order — AI, week, Team, booking (${probe.order})`);
+  // backlog:6e6750ff8163: the drafted form is one sheet on screen, never a rail card.
+  assert.ok(probe.form, 'the drafted form opens');
+  assert.equal(probe.form.inRail, false, 'never in the rail');
+  assert.equal(probe.form.forms, 1, 'one form only');
+  assert.ok(probe.form.left >= 0 && probe.form.right <= 390 && probe.form.bottom <= 844 && probe.form.top >= 0, `the sheet stays on screen: ${JSON.stringify(probe.form)}`);
   // The fixture week holds events on Thu and Fri only: Mon–Wed are compact
   // rows, never 540px empty timelines.
   assert.equal(probe.compact.length, 3, `three empty days paint compact rows (${probe.compact})`);

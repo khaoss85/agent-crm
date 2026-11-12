@@ -41,7 +41,9 @@ const WEEK = () => ({
         },
         {
           id: 'a2',
-          status: 'cancelled',
+          // A closed booking that still paints (backlog:5346ab531538: a
+          // cancelled one leaves the grid, a done one stays).
+          status: 'done',
           startsAt: '2026-10-23T09:00:00.000Z',
           endsAt: '2026-10-23T09:30:00.000Z',
           serviceKey: 'barba',
