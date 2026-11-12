@@ -1,6 +1,5 @@
 // @ts-check
 
-import { takePendingClientiView } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -79,8 +78,6 @@ export const SEARCH_DEBOUNCE_MS = 300;
 export const LIST_REFRESH_MS = 60_000;
 /** The server's view of customers with unread inbound messages. */
 const UNREAD_VIEW = 'da-leggere';
-/** «Da rispondere» (backlog:c2bf6b206d96): lit like «Da leggere» when someone waits. */
-const AWAITING_VIEW = 'da-rispondere';
 /**
  * Grid track per column id: [minimum px, flexible share]. Optional and custom
  * columns get a readable 120px minimum (review #600 P2: never a 0px track).
@@ -259,15 +256,6 @@ export function createCustomerListView(deps) {
   function render() {
     // A keystroke read left pending by the previous frame dies here.
     searchSeq += 1;
-    // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
-    // the view alone, never a search or filter left from an earlier visit
-    // (review Muse #795).
-    const askedView = takePendingClientiView(store);
-    if (askedView !== null) {
-      Object.assign(state, {
-        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
-      });
-    }
     drawShell();
     return load();
   }
@@ -651,7 +639,7 @@ export function createCustomerListView(deps) {
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
-      if ((view.id === UNREAD_VIEW || view.id === AWAITING_VIEW) && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
+      if (view.id === UNREAD_VIEW && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
       if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
