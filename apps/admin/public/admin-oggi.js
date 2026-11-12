@@ -32,7 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectionCount, channelState, composedAdapters, mergeProfileConnections, schemaChannelAdapters } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1270,26 +1270,30 @@ export function missingLeadChannels(connections = [], profile = null) {
  * Google Calendar «dal Profilo» when the profile offers it, else «non
  * ancora disponibile» like Stripe — so connected + named = 9.
  * @param {{ connections?: Array<any>, profile?: unknown }} input
- * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null }}
+ * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null, route: string }}
  */
-export function buildChannelInvite({ connections = [], profile = null } = {}) {
+export function buildChannelInvite({ connections = [], profile = null, adapters = null } = {}) {
   const count = channelConnectionCount(mergeProfileConnections(connections, profile));
   const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
   const leads = [];
   const fromProfile = [];
   const unavailable = [];
   for (const entry of count.missing) {
-    if (guided.includes(entry.channel)) {
-      leads.push(entry.label);
-      continue;
-    }
-    // Outside the guided flow only Google Calendar has a destination
-    // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
-    if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
-      fromProfile.push(`${entry.label} dal Profilo`);
-    } else {
-      unavailable.push(entry.label);
-    }
+    // backlog:6d0df351185b: where a missing channel connects is the one
+    // shared answer (`channelState`, the one Connettori and Stato sync
+    // read): with the schema's adapters known, a channel no adapter serves
+    // and Profilo cannot connect is «non ancora disponibile» here too,
+    // never a Collega (TikTok, Telefono, Form sito on the pilot).
+    const shared = channelState(entry.channel, {
+      rows: [],
+      profile,
+      adapters: composedAdapters(entry.channel, adapters),
+      guided,
+    });
+    const route = shared.state === 'da-collegare' ? shared.connectRoute : null;
+    if (route === `#/connettori/${entry.channel}`) leads.push(entry.label);
+    else if (route === '#/profilo') fromProfile.push(`${entry.label} dal Profilo`);
+    else unavailable.push(entry.label);
   }
   const notes = [...fromProfile];
   if (unavailable.length === 1) notes.push(`${unavailable[0]} non ancora disponibile`);
@@ -1299,11 +1303,25 @@ export function buildChannelInvite({ connections = [], profile = null } = {}) {
   // Oggi stays on the spec's nine (review #692): a linked channel outside
   // the nine (SMS, Telegram) never turns the strip into «1 di 10» — that
   // extra row lives on Stato sync only.
+  // Nothing connects in the guided flow but Profilo does (the pilot: no
+  // channel adapter, Gmail and Meta on Profilo): the strip invites there.
+  if (leads.length === 0 && fromProfile.length > 0) {
+    const named = fromProfile.map((line) => line.replace(/ dal Profilo$/, ''));
+    const rest = notes.filter((line) => !fromProfile.includes(line));
+    return {
+      connected: count.connectedChannels.filter((channel) => OGGI_NINE_CHANNELS.includes(channel)).length,
+      total: OGGI_TOTAL_CHANNELS,
+      leads: [`${named.join(', ')} dal Profilo`],
+      aside: rest.length > 0 ? rest.join('; ') : null,
+      route: '#/profilo',
+    };
+  }
   return {
     connected: count.connectedChannels.filter((channel) => OGGI_NINE_CHANNELS.includes(channel)).length,
     total: OGGI_TOTAL_CHANNELS,
     leads,
     aside: notes.length > 0 ? notes.join('; ') : null,
+    route: '#/connettori',
   };
 }
 
@@ -1419,6 +1437,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     appointments: [],
     connections: [],
     profile: null,
+    /** @type {Array<any> | null} the schema's channel adapters, null when unread */
+    adapters: null,
     briefMessages: [],
     briefCalls: [],
     inboxComposed: false,
@@ -1451,6 +1471,9 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   try {
     const schema = await client.request('/api/schema');
     domains = schema?.domains ?? {};
+    // backlog:6d0df351185b: the composed adapters decide which missing
+    // channel the strip may invite, like Connettori.
+    outcome.adapters = schemaChannelAdapters(schema);
   } catch (error) {
     noteReadFailure('schema', error);
     // The profile read started already: nothing waits on it.
@@ -2229,7 +2252,7 @@ export function renderOggi({
     // channels that are not leads to connect here (Google Calendar, Stripe)
     // are named apart, so what the text promises adds up with the count.
     const invite = Array.isArray(home.connections)
-      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null })
+      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null, adapters: home.adapters ?? null })
       : {
         connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS),
         total: OGGI_TOTAL_CHANNELS,
@@ -2244,10 +2267,11 @@ export function renderOggi({
       anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
       const aside = invite.aside !== null ? ` (${invite.aside})` : '';
       anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
-      anchor.setAttribute('href', '#/connettori');
+      const route = typeof invite.route === 'string' ? invite.route : '#/connettori';
+      anchor.setAttribute('href', route);
       anchor.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
+        navigate(route);
       });
       section.appendChild(anchor);
       page.appendChild(section);
@@ -2484,6 +2508,7 @@ export function createOggiView(deps) {
         missing,
         connections: last.connections,
         profile: last.profile ?? null,
+        adapters: last.adapters ?? null,
         availability: {
           work: last.workAvailable,
           appointments: last.appointmentsAvailable,

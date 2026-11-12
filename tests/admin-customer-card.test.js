@@ -5463,3 +5463,48 @@ test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda ava
   assert.equal(avatar.textContent, 'SS');
   assert.ok(!avatar.textContent.includes('?'));
 });
+
+// backlog:a5fb07706bff (verifica rilascio 2111df8), Identità collegate:
+// TikTok read «↔ in entrata e in uscita» though it only receives; WhatsApp
+// changed its words at every opening because /api/connectors lands last;
+// Email read «→ in uscita» with Gmail linked.
+test('a5fb07706bff: inbound-only stays inbound, a placeholder holds the place, a linked two-way channel reads sincronizzato', async () => {
+  const items = TIMELINE.entries.items;
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, items: [
+    ...items,
+    { ...items[0], channel: 'tiktok', direction: 'inbound' },
+    { ...items[0], channel: 'tiktok', direction: 'outbound' },
+    { ...items[0], channel: 'email', direction: 'outbound' },
+  ] } };
+  const base = stubClient({ timeline });
+  let releaseConnectors;
+  const connectorsLate = new Promise((resolve) => { releaseConnectors = resolve; });
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) { await connectorsLate; return { connectors: [] }; }
+      if (path === '/api/profile') {
+        return { member: {}, connections: { available: true, reason: null, meta: { configured: true }, items: [
+          { connector: 'whatsapp', status: 'connected', account: '+390200000001' },
+          { connector: 'gmail', status: 'connected', account: 'dan@presti.it' },
+        ] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = await renderCard(client, 'presti');
+  const syncNode = (channel) => mount.findAll('p')
+    .find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync') ?? null;
+  // Before the channel state lands: a grey placeholder, no words to change.
+  const pending = syncNode('whatsapp');
+  assert.ok(pending, 'the WhatsApp line has its place');
+  assert.equal(pending.textContent, '', 'no words before the state is known');
+  assert.ok(pending.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton holds the place');
+  releaseConnectors();
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(syncNode('whatsapp').textContent, '↔ sincronizzato', 'linked: the words paint once');
+  assert.equal(syncNode('email').textContent, '↔ sincronizzato', 'Gmail linked: two-way, even with only sends on this page');
+  assert.equal(syncNode('tiktok').textContent, '← in entrata · canale non collegato', 'TikTok only receives, and is not linked');
+  assert.ok(!syncNode('tiktok').textContent.includes('uscita'), 'never an outbound side for an inbound-only channel');
+});

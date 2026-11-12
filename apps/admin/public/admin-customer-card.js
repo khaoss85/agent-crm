@@ -426,6 +426,12 @@ function cardCountedChannel(system) {
   return Object.hasOwn(local, system) ? local[system] : countedChannel(system);
 }
 
+/**
+ * Channels nothing outbound travels on (CHANNEL_SEND_UNSUPPORTED in
+ * packages/channels): the scheda never says they send (backlog:a5fb07706bff).
+ */
+const CARD_IN_ONLY_CHANNELS = Object.freeze(['tiktok', 'site-form']);
+
 const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
 /** Identity systems whose handle is a phone number once display separators are stripped. */
@@ -2437,8 +2443,11 @@ export function createCustomerCardView(deps) {
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
     const directions = observedDirections(timeline);
-    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    /** @type {Array<{ node: any, system: string, traffic: string, inOnly: boolean }>} */
     const syncLines = [];
+    // The space's channel state is read for this scheda (one read per space,
+    // see readSpaceChannels): only with a space is one coming.
+    const stateComing = activeSpaceId() !== null;
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -2459,29 +2468,48 @@ export function createCustomerCardView(deps) {
       // names the partial list, the same honesty standard as the count.
       const seen = directions.get(system);
       const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+      // backlog:a5fb07706bff: an inbound-only channel (TikTok, the site
+      // form) never claims an outbound side, even when a refused send left
+      // an outbound passage. Calls stay two-way: an outgoing call is real.
+      const inOnly = CARD_IN_ONLY_CHANNELS.includes(cardCountedChannel(system));
+      const sawIn = seen?.in === true;
+      const sawOut = seen?.out === true && !inOnly;
       // backlog:e381c48581fa: both directions seen prove traffic, not a
       // sync. «↔ sincronizzato» needs the channel linked in the space (the
       // shared `channelState`); until that is known the line says what was
       // seen, and a channel known unlinked says so.
-      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
-        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) {
-        const node = el('span', 'bo-scheda-identity-sync', sync);
+      const traffic = sawIn && sawOut ? '↔ in entrata e in uscita'
+        : sawIn ? `← in entrata${partial}` : sawOut ? `→ in uscita${partial}` : null;
+      if (traffic) {
+        // backlog:a5fb07706bff: the line used to paint the traffic and then
+        // change once /api/connectors landed (WhatsApp at every opening).
+        // While the space's channel state is coming, a grey placeholder
+        // holds the place; the words paint once, when known.
+        const node = el('span', 'bo-scheda-identity-sync');
+        if (stateComing) node.appendChild(uiSkeleton(doc, { width: '9em' }));
+        else node.textContent = traffic;
         line.appendChild(node);
-        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+        syncLines.push({ node, system, traffic, inOnly });
       }
       box.appendChild(line);
     }
-    if (syncLines.length > 0) {
+    if (stateComing && syncLines.length > 0) {
       void readSpaceChannels().then((space) => {
-        if (space === null) return;
         for (const entry of syncLines) {
+          if (space === null) {
+            entry.node.textContent = entry.traffic;
+            continue;
+          }
           const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
-          if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
+          // A linked channel reads what it does: two ways for a two-way
+          // channel (Email with Gmail linked, even with only sends on this
+          // page), «in entrata» for an inbound-only one.
+          if (linked) entry.node.textContent = entry.inOnly ? '← in entrata' : '↔ sincronizzato';
           // «non collegato» only when known (review #819 P2): with the
           // profile unread a Profilo link cannot be ruled out, so the line
           // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+          else if (space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
+          else entry.node.textContent = entry.traffic;
         }
       });
     }

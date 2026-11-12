@@ -262,3 +262,101 @@ test('1cfc68175ab7: a settings tab keeps the tab row while its content loads', (
   assert.equal(keepSettingsTabs(doc, { mount, loading, view: 'customer-data' }), false);
   assert.ok(!mount.textContent.includes('IMPOSTAZIONI'));
 });
+
+// backlog:6d0df351185b (verifica rilascio 2111df8): on the pilot, which
+// composes no channel adapter, Personalizzazione › Connettori (Scopri) and
+// the Oggi strip «3 di 9 collegati» still offered Collega for TikTok,
+// Telefono, Form sito and Telegram, which nothing can connect; Stato sync
+// did not list Telegram. The three surfaces now read the one channelState.
+const PILOT_SCHEMA = Object.freeze({ domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } });
+const PILOT_PROFILE = Object.freeze({
+  member: {},
+  connections: {
+    available: true,
+    reason: null,
+    items: [
+      { connector: 'whatsapp', status: 'connected', account: '+390200000001' },
+      { connector: 'calendar', status: 'connected', account: 'dan@presti.it' },
+      { connector: 'gmail', status: 'connected', account: 'dan@presti.it' },
+      { connector: 'instagram', status: 'disconnected', account: null },
+      { connector: 'messenger', status: 'disconnected', account: null },
+    ],
+    meta: { configured: true },
+  },
+});
+const UNCONNECTABLE = ['TikTok', 'Telefono', 'Form sito', 'Telegram'];
+
+test('6d0df351185b: Personalizzazione Scopri offers + only where something can connect the channel', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return PILOT_SCHEMA;
+      if (path === '/api/profile') return PILOT_PROFILE;
+      if (path === '/api/space-packages/catalog') return { units: [] };
+      if (path.startsWith('/api/modules/space-package/records')) return { items: [] };
+      if (path.startsWith('/api/connectors?')) return { connectors: [] };
+      if (path.startsWith('/api/modules/') || path.startsWith('/api/connectors/activity')) return { items: [], connections: [] };
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const view = createPersonalizzazioneView({ doc, mount, client, navigate: (hash) => navigated.push(hash), spaceId: () => 'presti' });
+  view.test.state.tab = 'connettori';
+  view.test.state.view = 'scopri';
+  await view.render();
+  await flush();
+  const card = (label) => mount.findAll('article').find((node) => node.findAll('strong').some((strong) => strong.textContent === label));
+  for (const label of UNCONNECTABLE) {
+    const node = card(label);
+    assert.ok(node, `${label} is listed`);
+    assert.ok(node.textContent.includes('Non ancora disponibile'), `${label}: the shared words`);
+    assert.equal(node.findAll('button').length, 0, `${label}: no + that leads nowhere`);
+  }
+  // Instagram connects on Profilo (Meta configured): its + stays.
+  const instagram = card('Instagram');
+  assert.equal(instagram.findAll('button').filter((node) => node.getAttribute('aria-label') === 'Collega Instagram').length, 1);
+  // WhatsApp and Google Calendar are linked through Profilo.
+  assert.ok(card('WhatsApp').findAll('span').some((node) => node.getAttribute('title') === 'Collegato'));
+});
+
+test('6d0df351185b: the Oggi strip never invites a channel nothing can connect', async () => {
+  const { buildChannelInvite } = await import('../apps/admin/public/admin-oggi.js');
+  const invite = buildChannelInvite({ connections: [], profile: PILOT_PROFILE, adapters: [] });
+  assert.equal(invite.connected, 3, 'WhatsApp, Email and Google Calendar through Profilo: 3 di 9');
+  const words = `${invite.leads.join(', ')} ${invite.aside ?? ''}`;
+  for (const label of ['TikTok', 'Telefono', 'Form sito']) {
+    assert.ok(!invite.leads.join(' ').includes(label), `${label} is never a Collega`);
+    assert.ok(words.includes(label), `${label} is named as not yet available`);
+  }
+  assert.deepEqual(invite.leads, ['Instagram, Facebook dal Profilo'], 'the strip invites where they connect');
+  assert.equal(invite.route, '#/profilo');
+  assert.match(invite.aside ?? '', /non ancora disponibil/);
+  // Unknown adapters (no schema): the old invitation, unchanged.
+  const unknown = buildChannelInvite({ connections: [], profile: PILOT_PROFILE });
+  assert.equal(unknown.route, '#/connettori');
+});
+
+test('6d0df351185b: Stato sync lists Telegram exactly when the composition can connect it', async () => {
+  const { syncChannelTable } = await import('../apps/admin/public/admin-sync.js');
+  const activity = { connections: [], feed: [] };
+  const pilot = syncChannelTable(activity, Date.now(), { profile: PILOT_PROFILE, adapters: [] });
+  assert.ok(!pilot.some((row) => row.channel === 'telegram'), 'the pilot cannot connect Telegram: no row, like no + elsewhere');
+  for (const row of pilot) {
+    if (['tiktok', 'voice', 'site-form'].includes(row.channel)) assert.equal(row.connectRoute, null, `${row.channel}: no Collega`);
+  }
+  const composed = syncChannelTable(activity, Date.now(), {
+    profile: null,
+    adapters: [{ channel: 'telegram', name: 'telegram-bot', version: 1 }],
+  });
+  const telegram = composed.find((row) => row.channel === 'telegram');
+  assert.ok(telegram, 'a composed Telegram is listed');
+  assert.equal(telegram.connectRoute, '#/connettori/telegram');
+  assert.equal(telegram.connected, false);
+  // The same answer as Personalizzazione for the same composition.
+  const cards = filterConnettori({ connectors: [], adapters: [{ channel: 'telegram', name: 'telegram-bot', version: 1 }] })
+    .flatMap((group) => group.cards);
+  assert.equal(cards.find((entry) => entry.entry.key === 'telegram').state, 'da-collegare');
+  assert.equal(cards.find((entry) => entry.entry.key === 'tiktok').state, 'non-disponibile');
+});

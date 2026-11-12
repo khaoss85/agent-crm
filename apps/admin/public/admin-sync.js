@@ -280,7 +280,16 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   }
   if (waiting) {
     const importing = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'importazione');
-    return { tone: 'wait', title: importing ? 'Importazione in corso' : 'In attesa del primo evento', detail, count: 0 };
+    if (importing) return { tone: 'wait', title: 'Importazione in corso', detail, count: 0 };
+    // backlog:a5fb07706bff: «In attesa del primo evento» over «1 evento
+    // ricevuto» contradicted itself (Presti, 12/11): only the channels with
+    // nothing yet wait. With events already in, the hero names those.
+    if (received > 0) {
+      const quiet = rows.filter((row) => row.connected && row.pill !== null && row.pill.tone === 'attesa')
+        .map((row) => row.label);
+      return { tone: 'wait', title: `In attesa su ${quiet.join(', ')}`, detail, count: 0 };
+    }
+    return { tone: 'wait', title: 'In attesa del primo evento', detail, count: 0 };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }
@@ -677,6 +686,35 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
       connectRoute: syncConnectRoute(channel, profile, adapters),
     });
+  }
+  // backlog:6d0df351185b: a catalog channel outside the nine (Telegram,
+  // SMS) is listed when the composition can connect it — the same
+  // `channelState` answer that offers its Collega in Connettori and
+  // Personalizzazione — so the three screens list the same connectable
+  // channels. It joins the table unlinked, after the nine, and widens no
+  // count until it is linked (review #680: a pending row widens nothing).
+  if (Array.isArray(adapters)) {
+    for (const entry of CONNECTOR_CATALOG) {
+      const channel = entry.channel;
+      if (SYNC_CHANNELS.some((fixed) => fixed.id === channel) || byChannel.has(channel)) continue;
+      const route = syncConnectRoute(channel, profile, adapters);
+      if (route === null) continue;
+      rows.push({
+        channel,
+        label: channelLabel(channel),
+        mark: syncMark(channel),
+        direction: directionLabel(null),
+        present: false,
+        connected: false,
+        received: 0,
+        lastAt: null,
+        pill: null,
+        keys: [],
+        catalogued: true,
+        detailRoute: `#/connettori/${channel}`,
+        connectRoute: route,
+      });
+    }
   }
   return rows;
 }

@@ -1061,7 +1061,7 @@ test('#680: the Stripe card reads Non disponibile and carries no action', async 
   await flush();
   const stripe = mount.findAll('article').find((node) => node.textContent.includes('Stripe'));
   assert.ok(stripe, 'the Stripe card is listed');
-  assert.ok(stripe.textContent.includes('Non disponibile'), 'it says Non disponibile, like Stato sync');
+  assert.ok(stripe.textContent.includes('Non ancora disponibile'), 'it says Non ancora disponibile, the shared channel words');
   assert.equal(stripe.findAll('button').length, 0, 'no «+» button');
   assert.equal(stripe.getAttribute('role'), null, 'not a link');
   assert.equal(stripe.getAttribute('tabindex'), null, 'not focusable as an action');

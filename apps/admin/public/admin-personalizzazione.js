@@ -27,7 +27,7 @@
 // usa solo DOM API — createElement + textContent/setAttribute — mai innerHTML
 // con dati, così un nome o un blurb ostile resta testo, mai markup.
 
-import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js';
+import { CHANNEL_CONNECT_ROUTES, CHANNEL_STATE_LABELS, channelState, composedAdapters, schemaChannelAdapters } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
@@ -374,6 +374,9 @@ export const CONNETTORI_SECTIONS = Object.freeze([
 
 const CONNETTORI_CATALOG_CHANNELS = new Set(CONNECTOR_CATALOG.map((entry) => entry && entry.channel));
 
+/** The channels the guided `#/connettori/<channel>` flow serves. */
+const CONNETTORI_GUIDED = Object.freeze(CONNECTOR_CATALOG.map((entry) => entry.channel));
+
 /**
  * Where a card leads: the guided `#/connettori/<canale>` detail for a live
  * catalog channel (the detail forwards to the wizard), the entry's own
@@ -399,17 +402,32 @@ export function connettoriHref(entry) {
  * @param {{ channel?: unknown, countAs?: unknown, href?: unknown }} entry
  * @param {unknown} connectors
  * @param {unknown} [profile] the /api/profile answer, null when unread
+ * @param {unknown} [adapters] the schema's channel adapters, null when unread
  */
-export function connettoriCardState(entry, connectors, profile = null) {
+export function connettoriCardState(entry, connectors, profile = null, adapters = null) {
   const guided = entry && typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : '';
   const counted = guided !== '' ? guided
     : entry && typeof entry.countAs === 'string' ? entry.countAs : '';
   // The profile (GET /api/profile) merges like the shared count: a link
   // that lives only on Profilo is one of yours too (review #782 P1).
-  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [], profile }).state === 'collegato') {
+  const rows = Array.isArray(connectors) ? connectors : [];
+  if (counted !== '' && channelState(counted, { rows, profile }).state === 'collegato') {
     return 'collegato';
   }
-  if (guided !== '') return 'da-collegare';
+  if (guided !== '') {
+    // backlog:6d0df351185b: with the schema's adapters read, a guided
+    // channel no adapter serves and Profilo cannot connect is
+    // «non-disponibile» here too — the one answer of Connettori, Oggi and
+    // Stato sync — never a + that leads nowhere (TikTok, Telefono, Form
+    // sito, Telegram on the pilot).
+    if (Array.isArray(adapters)) {
+      const shared = channelState(guided, {
+        rows, profile, adapters: composedAdapters(guided, adapters), guided: CONNETTORI_GUIDED,
+      });
+      return shared.state === 'non-disponibile' ? 'non-disponibile' : 'da-collegare';
+    }
+    return 'da-collegare';
+  }
   // No guided channel: connectable only where its destination leads.
   return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
 }
@@ -423,12 +441,12 @@ export function connettoriCardState(entry, connectors, profile = null) {
  * order (no usage counts exist server-side, so the catalog order is the
  * honest ranking), `stato` sorts connected cards first.
  */
-export function filterConnettori({ connectors = [], profile = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
+export function filterConnettori({ connectors = [], profile = null, adapters = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
   const needle = String(query ?? '').trim().toLowerCase();
   return CONNETTORI_SECTIONS.map((section) => {
     const cards = [];
     for (const entry of section.entries) {
-      const state = connettoriCardState(entry, connectors, profile);
+      const state = connettoriCardState(entry, connectors, profile, adapters);
       if (view === 'tuoi' && state !== 'collegato') continue;
       if (stato === 'attivi' && state !== 'collegato') continue;
       if (stato === 'da-attivare' && state !== 'da-collegare') continue;
@@ -489,6 +507,7 @@ export function createPersonalizzazioneView(deps) {
     unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
     /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
+    /** @type {Array<any> | null} the schema's channel adapters, null when unread */ adapters: null,
     connectorsMissing: false,
     connectorsForbidden: false,
     /** @type {string | null} */ previewFor: null,
@@ -571,7 +590,11 @@ export function createPersonalizzazioneView(deps) {
     if (space === '') return;
     // The profile links merge like the shared count (review #782 P1);
     // readProfile never throws — an unreadable profile adds nothing.
+    // backlog:6d0df351185b: the schema's adapters, beside the profile, so a
+    // card offers + only where the composition can connect the channel.
+    const schemaRead = client.request('/api/schema').then(schemaChannelAdapters, () => null);
     state.profile = await readProfile(deps.client);
+    state.adapters = await schemaRead;
     try {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(space)}`);
       state.connectors = Array.isArray(sync?.connectors) ? sync.connectors : [];
@@ -1133,7 +1156,7 @@ export function createPersonalizzazioneView(deps) {
     if (state.view !== 'tuoi') renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
     const groups = filterConnettori({
-      connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+      connectors, profile: state.profile, adapters: state.adapters, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
     });
     const sections = el(doc, 'div', { cls: 'connettori-sections' });
     let shown = 0;
@@ -1304,7 +1327,7 @@ export function createPersonalizzazioneView(deps) {
         badge.setAttribute('title', 'Collegato');
         actions.appendChild(badge);
       } else if (unavailable) {
-        actions.appendChild(el(doc, 'span', { text: 'Non disponibile', cls: 'bo-muted' }));
+        actions.appendChild(el(doc, 'span', { text: CHANNEL_STATE_LABELS['non-disponibile'].text, cls: 'bo-muted' }));
       } else {
         const add = uiButton(doc, {
           variant: 'secondary', small: true, label: '+',
@@ -1353,7 +1376,7 @@ export function createPersonalizzazioneView(deps) {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
       count = filterConnettori({
-        connectors: state.connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+        connectors: state.connectors, profile: state.profile, adapters: state.adapters, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(toolRow, count);

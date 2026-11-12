@@ -351,3 +351,33 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
   if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
 }
+
+/**
+ * The composed adapters of the live schema serving one channel, or null
+ * when the screen did not read the schema (backlog:6d0df351185b): what
+ * `channelState` needs as `adapters`, from the whole
+ * `domains.channels.metadata.adapters` list. Same shape test as
+ * admin-connectors.js `matchAdapters`.
+ * @param {string} channel
+ * @param {unknown} adapters the schema's adapter list, null when unread
+ * @returns {Array<any> | null}
+ */
+export function composedAdapters(channel, adapters) {
+  if (!Array.isArray(adapters)) return null;
+  return adapters.filter((entry) => entry !== null && typeof entry === 'object'
+    && countedChannel(entry.channel) === countedChannel(channel)
+    && typeof entry.name === 'string'
+    && Number.isSafeInteger(entry.version));
+}
+
+/**
+ * The schema's channel adapter list, or null when the schema carries no
+ * channels domain (the screen cannot know what is composed).
+ * @param {unknown} schema the /api/schema answer
+ */
+export function schemaChannelAdapters(schema) {
+  const domain = /** @type {any} */ (schema)?.domains?.channels;
+  const meta = domain?.metadata ?? domain;
+  if (meta === null || typeof meta !== 'object') return null;
+  return Array.isArray(meta.adapters) ? meta.adapters : [];
+}

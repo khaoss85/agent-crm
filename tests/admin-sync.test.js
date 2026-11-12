@@ -90,7 +90,10 @@ const activityOf = (over = {}) => ({
 // A composition whose guided channels each have an adapter: every catalog
 // channel can connect here (backlog:e381c48581fa — the Collega follows
 // the shared channel state, which needs a composed adapter).
-const COMPOSED_ADAPTERS = ['whatsapp', 'instagram', 'telegram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form']
+// The default fixture composes the nine's catalog channels only, so the
+// table keeps its nine rows; Telegram and SMS join when composed
+// (backlog:6d0df351185b, tested on its own).
+const COMPOSED_ADAPTERS = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form']
   .map((channel) => ({ channel, name: `${channel}-adapter`, version: 1 }));
 const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: COMPOSED_ADAPTERS } } } };
 /** The production pilot: channels composed, no channel adapter at all. */
@@ -1524,4 +1527,23 @@ test('e381c48581fa: with no adapter Stato sync offers Collega only where Connett
     const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
     assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
   }
+});
+
+// backlog:a5fb07706bff (Presti, verifica 2111df8): the hero read «In attesa
+// del primo evento» over «1 evento ricevuto». Only the quiet channels wait:
+// with events already in, the hero names them.
+test('a5fb07706bff: with events already in, the hero names the channels still waiting', () => {
+  const live = activityOf({
+    connections: [
+      entryOf({ inbox: { ...inboxOf(), received: 1 } }),
+      entryOf({ connectionKey: 'cal-1', channel: 'calendar', account: 'dan@presti.it', health: 'idle', inbox: null, importable: false }),
+    ],
+    lastActivityAt: null,
+  });
+  const indicator = syncIndicator(live, NOW);
+  assert.equal(indicator.tone, 'wait');
+  assert.equal(indicator.title, 'In attesa su Google Calendar', 'never «del primo evento» beside a received event');
+  assert.match(indicator.detail, /1 evento ricevuto/);
+  const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
+  assert.equal(syncIndicator(quiet, NOW).title, 'In attesa del primo evento', 'nothing in yet: the first event');
 });
