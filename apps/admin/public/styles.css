@@ -1179,6 +1179,8 @@ select.bo-spazi-input { flex: none; }
   border: none; cursor: pointer; background: var(--line);
 }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
+/* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
+.bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
   position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
   border-radius: 50%; background: var(--paper); transition: left .2s;
