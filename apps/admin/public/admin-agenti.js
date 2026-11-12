@@ -631,6 +631,9 @@ export const NEW_AGENT_LIMITS = Object.freeze({ name: 120, role: 120, instructio
 export const NEW_AGENT_EXAMPLE = 'Es. Ogni mattina guarda chi compie gli anni tra i clienti e prepara un messaggio di auguri. '
   + 'Ogni messaggio aspetta il mio ok.';
 
+/** The locked panel after a lost answer (review #836 P2). */
+export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Riprova: se c’è già, lo ritrovo senza crearne un altro.';
+
 /** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
 export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
 
@@ -833,7 +836,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     notice: '',
     /**
      * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
-     * @type {{ key: string, name: string, role: string, instructions: string, cap: string, error: string, busy: boolean } | null}
+     * `pending` is the body of a create whose answer was lost: the panel
+     * is locked and «Riprova» sends exactly that body under its key
+     * (review #836 P2), never the fields as they are now.
+     * @type {{ key: string, name: string, role: string, instructions: string, cap: string, error: string, busy: boolean, pending: any } | null}
      */
     newAgent: null,
     /** Agents whose card lists every incarico («Mostra tutti»). @type {Set<string>} */
@@ -1264,7 +1270,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function openNewAgent() {
     // One caller key per open panel: a retry or a double click replays it.
-    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', busy: false };
+    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', busy: false, pending: null };
     paint();
     focusIn('input[name="agent-name"]');
   }
@@ -1307,9 +1313,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (hint !== null) row.appendChild(el(documentNode, 'p', 'bo-agent-new-hint', hint));
       return row;
     };
+    const locked = form.pending !== null;
+    if (locked) panel.appendChild(el(documentNode, 'p', 'bo-agent-new-hint bo-agent-new-pending', NEW_AGENT_PENDING_NOTE));
     const field = (tag, name, value, max, placeholder) => {
       const node = el(documentNode, tag, 'ui-field', undefined);
       if (tag === 'input') node.setAttribute('type', 'text');
+      if (locked) node.disabled = true;
       node.setAttribute('name', name);
       node.setAttribute('maxlength', String(max));
       if (placeholder) node.setAttribute('placeholder', placeholder);
@@ -1333,7 +1342,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     panel.appendChild(fieldRow('Tetto di spesa al mese, in euro (facoltativo)', 'bo-agent-new-cap', cap,
       'Con un tetto, a ogni incarico scrivi anche quanto costa più o meno un giro.'));
     const row = el(documentNode, 'div', 'bo-seq-btns');
-    const submit = uiButton(documentNode, { variant: 'cta', label: 'Crea l’agente', attrs: { type: 'button', 'data-action': 'create-agent' } });
+    const submit = uiButton(documentNode, { variant: 'cta', label: locked ? 'Riprova' : 'Crea l’agente', attrs: { type: 'button', 'data-action': 'create-agent' } });
     if (form.busy) uiMarkBusy(submit, 'Creo…');
     submit.addEventListener('click', () => { void submitNewAgent(); });
     row.appendChild(submit);
@@ -1353,11 +1362,17 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       await render();
       return;
     }
-    const checked = checkNewAgent(form, state.agents);
-    if (checked.error) {
-      form.error = checked.error;
-      paint();
-      return;
+    // A create whose answer was lost is retried as it was sent: same body,
+    // same key. Only a new, checked intent reads the fields.
+    let body = form.pending;
+    if (body === null) {
+      const checked = checkNewAgent(form, state.agents);
+      if (checked.error) {
+        form.error = checked.error;
+        paint();
+        return;
+      }
+      body = { spaceId: state.space, key: form.key, ...checked.body };
     }
     form.busy = true;
     form.error = '';
@@ -1365,10 +1380,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     try {
       const answer = await bound.request('/api/agents/create', {
         method: 'POST',
-        body: { spaceId: state.space, key: form.key, ...checked.body },
-        idempotencyKey: form.key,
+        body,
+        idempotencyKey: body.key,
       });
-      const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : checked.body.name;
+      const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : body.name;
       state.newAgent = null;
       state.notice = `${name} è entrato nel tuo team.`;
       if (await reload()) paint();
@@ -1381,7 +1396,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // a new intent with a new key. A lost answer keeps its key, so the
       // retry replays instead of creating a second agent.
       const status = /** @type {any} */ (error)?.status;
-      if (Number.isInteger(status) && status >= 400 && status < 500) form.key = issueAdminKey();
+      if (Number.isInteger(status) && status >= 400 && status < 500) {
+        form.key = issueAdminKey();
+        form.pending = null;
+      } else {
+        // No answer, or one that cannot say whether the agent was written:
+        // lock the panel on what was sent until a retry settles it.
+        form.pending = body;
+      }
       paint();
     }
   }

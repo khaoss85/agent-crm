@@ -377,11 +377,20 @@ export function createAgentOperations(options = {}) {
     const actor = requireAgentActor(record.actor, 'Creating an agent');
     const input = checkAgentInput(record);
     const at = now();
+    // backlog:1f7cb20d3c30 (review #836 P2): the name check and the insert
+    // hold one chain per space, so two concurrent creates of the same
+    // @name in this process cannot both pass the check. Two processes
+    // writing one space at the same instant are not serialized here; the
+    // deployments compose one writer per space.
+    return withAgentCapLock(`${input.spaceId}\u0000agent-names`, () => createAgentLocked(input, actor, at));
+  }
+
+  async function createAgentLocked(input, actor, at) {
     const existing = (await agents().listWhere({ spaceId: input.spaceId, sourceKey: input.sourceKey }))[0] ?? null;
     if (existing) return { duplicate: true, agent: existing };
-    // backlog:1f7cb20d3c30: an agent is instructed by its name («@Nome …»),
-    // so two agents of one space never answer to the same name. Checked
-    // after the replay above, so a retry of the same key still replays.
+    // An agent is instructed by its name («@Nome …»), so two agents of one
+    // space never answer to the same name. Checked after the replay above,
+    // so a retry of the same key still replays.
     const wanted = agentMentionName(input.name);
     const clash = (await agents().listWhere({ spaceId: input.spaceId }))
       .find((row) => agentMentionName(row?.name) === wanted) ?? null;

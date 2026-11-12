@@ -14,6 +14,7 @@ import {
   AGENT_CAP_USE_CARD_NOTE,
   AGENT_COST_NEEDED_NOTE,
   AGENT_NAME_TAKEN_NOTE,
+  NEW_AGENT_PENDING_NOTE,
   AGENT_NO_ENGINE_LABEL,
   AGENT_NO_ENGINE_NOTE,
   ASSIGNMENT_NO_ENGINE_LABEL,
@@ -199,21 +200,29 @@ test('errori del server: nome preso, permesso negato, rete persa — testo in it
   await flush();
   assert.match(mount.querySelector('.bo-seq-create-error').textContent, /Connessione non riuscita/);
   assert.equal(mount.querySelector('textarea[name="agent-instructions"]').value, 'Ogni mattina prepara gli auguri.', 'le istruzioni restano');
+  // Review #836 P2: la risposta persa può aver creato l'agente. Il pannello
+  // si blocca su quello che è partito e «Riprova» rimanda proprio quello.
+  assert.ok(mount.textContent.includes(NEW_AGENT_PENDING_NOTE));
+  assert.equal(mount.querySelector('input[name="agent-name"]').disabled, true, 'i campi sono bloccati');
+  assert.equal(button(mount, 'create-agent').textContent, 'Riprova');
+  type(mount, 'agent-name', 'Report');
   button(mount, 'create-agent').dispatch('click', {});
   await flush();
   assert.match(mount.querySelector('.bo-seq-create-error').textContent, /Non hai il permesso di creare agenti/);
   button(mount, 'create-agent').dispatch('click', {});
   await flush();
   assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE, 'un nome preso nel frattempo');
-  assert.equal(mount.querySelector('input[name="agent-name"]').value, 'Auguri');
+  assert.equal(mount.querySelector('input[name="agent-name"]').value, 'Report');
   button(mount, 'create-agent').dispatch('click', {});
   await flush();
   const sent = posts(client);
   assert.equal(sent.length, 4);
   assert.equal(sent[1].body.key, sent[0].body.key, 'una risposta persa si riprova con la stessa chiave');
+  assert.deepEqual(sent[1].body, sent[0].body, 'e con lo stesso agente, non con i campi cambiati');
+  assert.equal(sent[2].body.name, 'Report', 'dopo un rifiuto certo il pannello si sblocca e manda i campi di adesso');
   assert.notEqual(sent[2].body.key, sent[1].body.key, 'dopo un rifiuto del server è un tentativo nuovo');
   assert.notEqual(sent[3].body.key, sent[2].body.key);
-  assert.ok(mount.textContent.includes('Auguri è entrato nel tuo team.'));
+  assert.ok(mount.textContent.includes('Report è entrato nel tuo team.'));
 });
 
 test('un agente con tetto: la card chiede il costo di un giro prima di affidare, poi lo manda', async () => {

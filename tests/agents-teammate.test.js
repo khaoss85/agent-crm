@@ -1253,3 +1253,15 @@ test('1f7cb20d3c30: run-due leaves an agent the deployment cannot run waiting â€
   assert.equal(again.waiting, undefined, 'without the seam every agent is runnable and the summary shape is unchanged');
   assert.ok(executed.includes('custom-agent:ws:k1'));
 });
+
+test('1f7cb20d3c30 review #836 P2: two concurrent creates of one @name in a space â€” one agent, one AGENT_NAME_TAKEN', async () => {
+  const { ops, modules } = compose();
+  const create = (sourceKey) => ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey, name: 'Auguri', role: 'r', instructions: 'i' });
+  const outcomes = await Promise.allSettled([create('ag-x'), create('ag-y'), create('ag-z')]);
+  assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 1, 'exactly one agent is created');
+  for (const lost of outcomes.filter((o) => o.status === 'rejected')) {
+    assert.equal(/** @type {any} */ (lost).reason.code, 'AGENT_NAME_TAKEN');
+  }
+  const rows = (await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE })).filter((row) => row.name === 'Auguri');
+  assert.equal(rows.length, 1, 'never two agents with the same @name');
+});
