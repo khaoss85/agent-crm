@@ -4142,6 +4142,56 @@ test('review #805 giro 2: a space switch reads the new space list and books its 
   assert.equal(payload(sent[0]).serviceKey, 'taglio');
 });
 
+// Review #805 giro 4 P1: a transient served-list failure (503, timeout) is
+// never cached — the next submit re-reads the list, so the promised
+// «riprova tra poco» can succeed instead of blocking until reload.
+test('review #805 giro 4 P1: a transient served-list failure retries on the next submit, never cached', async () => {
+  const box = { fail: true };
+  const base = stubClient({
+    memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }],
+    catalog: TEST_SPACE_CATALOG,
+    customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]),
+  });
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') {
+        base.calls.push({ path, method: 'GET' });
+        if (box.fail) throw Object.assign(new Error('boom'), { status: 503 });
+        return PILOT_SERVICES;
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  assert.equal(mount.querySelector('select[name="serviceKey"]').getAttribute('disabled'), 'disabled', 'a failed list blocks the field');
+  const servicesReads = () => client.calls.filter((call) => call.path === '/api/appointments/services').length;
+  assert.ok(servicesReads() >= 1, 'the list was read');
+  const readsBefore = servicesReads();
+  box.fail = false;
+  choosePerson(mount, 'sara');
+  await pickCustomerByName(mount, 'Ada');
+  const form = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  form().date.value = '2026-10-22';
+  form().start.value = '18:00';
+  form().end.value = '18:30';
+  clickButton(mount, 'Proponi');
+  await flushMany(9);
+  assert.ok(servicesReads() > readsBefore, 'the next submit re-reads the list instead of replaying the cached failure');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  assert.notEqual(service.getAttribute('disabled'), 'disabled', 'the menu unblocks once the list reads');
+  assert.equal(service.value, 'prova-verifica-0711-b-prodotto', 'the served default is chosen');
+  clickButton(mount, 'Proponi');
+  await flushMany(9);
+  const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
+  assert.equal(proposes.length, 1, 'the booking goes through after the retry');
+  assert.equal(payload(proposes[0]).serviceKey, 'prova-verifica-0711-b-prodotto', 'with the worker key');
+});
+
 // backlog:810ed0bf review (P1 currency): the claim only speaks EUR, so a
 // non-EUR single stays out of the menu instead of being mislabeled in euro.
 test('catalogBookingServices drops non-EUR singles the claim could never book', () => {

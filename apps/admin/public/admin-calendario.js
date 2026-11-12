@@ -1502,7 +1502,10 @@ export function createCalendarioView(deps) {
    * the raw name and was refused). Resolves at once once the catalog is read.
    */
   function ensureServices() {
-    if (state.services instanceof Map) return Promise.resolve();
+    // Review #805 giro 4 P1: a failed served list is never cached (state
+    // holds no Map for it), so the next submit re-reads instead of
+    // short-circuiting on the failure until reload or space switch.
+    if (state.services instanceof Map && state.servicesMode !== 'failed') return Promise.resolve();
     if (servicesRead === null) {
       servicesRead = loadServices().finally(() => { servicesRead = null; });
     }
@@ -1574,7 +1577,10 @@ export function createCalendarioView(deps) {
       }
     }
     if (readSpace() !== askedSpace) return;
-    state.services = names;
+    // Review #805 giro 4 P1: a failed served list is not cached as an
+    // (empty) Map — state.services stays unset, so the next submit retries
+    // the read (see ensureServices) instead of blocking until reload.
+    state.services = mode === 'failed' ? undefined : names;
     state.catalogServices = bookable;
     state.servicesMode = mode;
     // The service menu paints from this read: repaint once it settles while
