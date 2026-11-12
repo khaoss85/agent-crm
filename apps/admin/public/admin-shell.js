@@ -2,6 +2,7 @@
 
 import { sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { createCommandMenu } from './admin-cmdk.js';
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -45,9 +46,9 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
-  // backlog:33782ba68747: «Agenti» takes the place of Sequenze in the
-  // sidebar. Sequenze keep their route (#/sequenze, linked from Agenti and
-  // from the native-modules catalog) but no sidebar voice of their own.
+  // backlog:33782ba68747 put «Agenti» in the sidebar; backlog:b368bbf992ce
+  // (Dan 11/11) gives Sequenze its voice back when the sequences module is
+  // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
@@ -394,7 +395,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
-        return { ...item, route: '#/sequenze', available: true, disabledReason: '' };
+        return { ...item, route: '#/sequenze', available: true, disabledReason: '', nav: true };
       }
       return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }
@@ -438,6 +439,8 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
  *   onAiSubmit?: ((text: string) => void) | null,
+ *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null> } | null,
+ *   schedule?: (fn: () => void, ms: number) => any,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
  */
@@ -454,6 +457,8 @@ export function createShellView({
   onLogout = () => {},
   onPickSpace = () => {},
   onAiSubmit = null,
+  commandSearch = null,
+  schedule = undefined,
   win = null,
 } = {}) {
   const state = {
@@ -736,9 +741,47 @@ export function createShellView({
 
   /** @type {object | null} */
   let aiInput = null;
+  /** @type {any} */
+  let aiForm = null;
+  /** The space the ⌘K list last read for; undefined before the first bar. */
+  let commandSpaceId;
+
+  /**
+   * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
+   * shell's own voices and settings areas; customers and offers from the
+   * reads app.js already makes (commandSearch). The AI is the last row.
+   */
+  function commandPages() {
+    const customerData = state.items.some((item) => item.id === 'clienti' && item.available === true);
+    const pages = [];
+    for (const item of state.items) {
+      if (item.available === true && typeof item.route === 'string' && item.route.startsWith('#/')) {
+        pages.push({ label: item.label, href: item.route });
+      }
+    }
+    for (const area of SETTINGS_AREAS) {
+      if (area.id === 'stato-sync' && !customerData) continue;
+      pages.push({ label: area.label, href: area.route, sub: 'Impostazioni' });
+    }
+    pages.push({ label: 'Connettori', href: '#/connettori', sub: 'Impostazioni' });
+    pages.push({ label: 'Profilo', href: '#/profilo' });
+    return pages;
+  }
+
+  const commandMenu = createCommandMenu({
+    doc,
+    pages: commandPages,
+    search: commandSearch,
+    navigate: (href) => go(href),
+    ask: (text) => {
+      if (typeof onAiSubmit === 'function') onAiSubmit(text);
+      else notify('Barra AI: descrivi cosa fare e premi Invio.');
+    },
+    ...(typeof schedule === 'function' ? { schedule, cancel: () => {} } : {}),
+  });
 
   function focusAiEntry() {
-    if (aiInput !== null && typeof aiInput.focus === 'function') aiInput.focus();
+    commandMenu.focus();
   }
 
   function renderTopbar() {
@@ -784,6 +827,9 @@ export function createShellView({
     form.appendChild(hint);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      // backlog:be99004b06e4 (review #779): every submit path goes through
+      // the results list — the selected row opens, exactly once per Enter.
+      if (commandMenu.submit()) return;
       if (typeof onAiSubmit === 'function') {
         onAiSubmit(aiInput !== null && typeof aiInput.value === 'string' ? aiInput.value : '');
       } else {
@@ -791,6 +837,14 @@ export function createShellView({
       }
     });
     topbar.appendChild(form);
+    aiForm = form;
+    // Review #779: what the list read belongs to one space — a switch
+    // (menu, ⌘1/2/3, setSpaces) drops it before the bar is bound again.
+    if (commandSpaceId !== state.activeSpaceId) {
+      if (commandSpaceId !== undefined) commandMenu.invalidate();
+      commandSpaceId = state.activeSpaceId;
+    }
+    commandMenu.attach(form, aiInput);
   }
 
   function screenLabelFor(id) {
@@ -848,6 +902,7 @@ export function createShellView({
     // without this the tap that dismisses the menu would also press the
     // button underneath it.
     win.addEventListener('click', (event) => {
+      commandMenu.closeUnlessInside(event?.target ?? null, aiForm);
       if (!state.drawerOpen) return;
       const target = event?.target ?? null;
       if (sidebar.contains(target) || (menuToggle !== null && menuToggle.contains(target))) return;
@@ -965,6 +1020,38 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     list.appendChild(row);
   }
   mount.appendChild(list);
+}
+
+/**
+ * The routed views that sit under the Impostazioni tab row, by the area
+ * their tab opens (the `view` of parseModuleRoute → SETTINGS_AREAS id).
+ */
+export const SETTINGS_VIEW_AREAS = Object.freeze({
+  personalizzazione: 'personalizzazione',
+  catalog: 'catalogo',
+  sync: 'stato-sync',
+  'spazi-accessi': 'spazi-accessi',
+});
+
+/**
+ * Keep the Impostazioni tabs on screen while a tab's content loads
+ * (backlog:1cfc68175ab7). The router clears the shared mount and paints
+ * its loading line on every navigation, so switching tab blanked the whole
+ * page, tabs included, for the 3–5 s of the new tab's reads. For a settings
+ * view this puts the tab row back above the loading line, the new tab
+ * already underlined: only the content below reloads. Returns whether the
+ * row was painted (false for any other view, or with no loading line).
+ * @param {any} doc
+ * @param {{ mount: any, loading: any, view: unknown, fixCount?: unknown, navigate?: (hash: string) => void }} options
+ */
+export function keepSettingsTabs(doc, { mount, loading, view, fixCount = null, navigate = () => {} }) {
+  if (typeof view !== 'string' || !Object.hasOwn(SETTINGS_VIEW_AREAS, view)) return false;
+  if (!loading || !Array.from(mount.childNodes ?? []).includes(loading)) return false;
+  const tabs = settingsTabs(doc, { activeId: SETTINGS_VIEW_AREAS[view], fixCount, navigate });
+  mount.removeChild(loading);
+  mount.appendChild(tabs);
+  mount.appendChild(loading);
+  return true;
 }
 
 /**

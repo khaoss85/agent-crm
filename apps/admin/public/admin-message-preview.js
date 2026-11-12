@@ -42,7 +42,7 @@ const HIDDEN_ELEMENT_RE = new RegExp(
  * these count as tags when bare: `<S> <M> <L>`, `<nome>`,
  * `<mario@example.com>` and `<https://…>` in plain text stay text.
  */
-const HTML_TAG_NAMES = '(?:a|abbr|b|big|blockquote|body|br|center|code|col|colgroup|dd|div|dl|dt|em|font|footer|form|h[1-6]|head|header|hr|html|i|iframe|img|input|li|link|main|meta|nav|ol|p|picture|pre|section|small|source|span|strike|strong|style|sub|sup|svg|table|tbody|td|tfoot|th|thead|title|tr|tt|u|ul|wbr|script|template|xml|[ov]:[\\w-]+)';
+const HTML_TAG_NAMES = '(?:a|abbr|article|b|big|blockquote|body|br|caption|center|code|col|colgroup|dd|div|dl|dt|em|font|footer|form|h[1-6]|head|header|hr|html|i|iframe|img|input|li|link|main|meta|nav|ol|p|picture|pre|section|small|source|span|strike|strong|style|sub|sup|svg|table|tbody|td|tfoot|th|thead|title|tr|tt|u|ul|wbr|script|template|xml|[ov]:[\\w-]+)';
 const TAG_NAME = HTML_TAG_NAMES + '(?=[\\s/>])';
 /** Any other name counts only with an attribute: `<x-foo class=\x22…\x22>`. */
 const ATTRIBUTED_TAG = '[a-zA-Z][\\w:-]*\\s+[a-zA-Z][\\w:-]*\\s*=';
@@ -52,8 +52,13 @@ const CLOSING_TAG = '<\\/[a-zA-Z][\\w:-]*\\s*>';
 const TAG_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')' + IN_TAG + '*>|' + CLOSING_TAG, 'gi');
 /** A tag cut by a length fence: `<div style=…` with no `>` until the end. */
 const CUT_TAG_RE = new RegExp('<\\/?' + HTML_TAG_NAMES + '(?:\\s[^<>]*)?$', 'i');
-const BLOCK_OPEN_RE = /<(p|div|li|tr|table|blockquote|h[1-6])(?=[\s/>])/gi;
-const BLOCK_CLOSE_RE = /<\/(p|div|li|tr|table|blockquote|h[1-6])\s*>/gi;
+/**
+ * Blocks, cells and sections break the text (Dan 10/11: «Danielepelleri400
+ * internal URLs» came from two table cells glued together).
+ */
+const BLOCK_NAMES = '(p|div|li|ul|ol|tr|td|th|table|tbody|thead|tfoot|caption|blockquote|section|header|footer|article|main|nav|center|hr|h[1-6])';
+const BLOCK_OPEN_RE = new RegExp('<' + BLOCK_NAMES + '(?=[\\s/>])', 'gi');
+const BLOCK_CLOSE_RE = new RegExp('<\\/' + BLOCK_NAMES + '\\s*>', 'gi');
 const BREAK_RE = /<br\b[^<>]*>/gi;
 /**
  * Attribute residue left in stored text by an older stripper: `id="…"
@@ -65,12 +70,18 @@ const ATTRIBUTE_NAMES = '(?:id|class|style|width|height|align|valign|bgcolor|bac
 const ATTRIBUTE = ATTRIBUTE_NAMES + '\\s*=\\s*(?:\\x22[^\\x22]*(?:\\x22|$)|\\x27[^\\x27]*(?:\\x27|$))';
 const ATTRIBUTE_RESIDUE_RE = new RegExp('(^|[\\s>])' + ATTRIBUTE + '(?:\\s+' + ATTRIBUTE + ')*\\s*\\/?>?', 'gi');
 /** Any sign of markup: a tag, a cut tag or attribute residue. */
-const MARKUP_HINT_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
+const MARKUP_HINT_RE = new RegExp('<!\\[|<![a-zA-Z]|<\\?[a-zA-Z]|<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
 
 const NAMED_ENTITIES = Object.freeze({
   amp: '&', lt: '<', gt: '>', quot: '\u0022', apos: '\u0027', nbsp: ' ',
   laquo: '«', raquo: '»', hellip: '…', ndash: '–', mdash: '—', euro: '€',
   rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d', ldquo: '\u201c', copy: '©', reg: '®', trade: '™',
+  // Format and spacing entities newsletters pad their preheaders with
+  // (Dan 12/11: «&zwnj;» read as text in Clienti and Oggi).
+  zwnj: '\u200c', zwj: '\u200d', lrm: '\u200e', rlm: '\u200f', shy: '\u00ad',
+  ensp: ' ', emsp: ' ', thinsp: ' ', hairsp: ' ', numsp: ' ', puncsp: ' ', zwsp: '\u200b',
+  middot: '·', bull: '•', pound: '£', yen: '¥', cent: '¢', sect: '§', deg: '°', times: '×', iacute: 'í',
+  agrave: 'à', egrave: 'è', eacute: 'é', igrave: 'ì', ograve: 'ò', ugrave: 'ù', oacute: 'ó', uacute: 'ú', aacute: 'á',
 });
 
 /** `<…url…>`, `[…url…]`, `(…url…)` and bare URLs, `mailto:` included. */
@@ -96,24 +107,24 @@ const SERVICE_PHRASE_RES = Object.freeze([
   // «se non + verbo» alone is the customer's sentence («se non leggi il
   // contratto, chiamami»): only «correttamente» or a newsletter tail
   // («clicca qui», «apri sul link», «nel browser») makes it a service line.
-  /\bse non (?:riesci a )?(?:visualizzi|vedi|leggi)(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))? correttamente(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))?(?: o le immagini)?[,:]?(?: (?:clicca|apri|visualizza|vai)(?: qui| sul link)?(?: per (?:visualizzarla|vederla|aprirla|leggerla)| per visualizzare (?:la|questa) (?:e-?mail|mail|newsletter|versione (?:web|online)))?(?: (?:online|nel (?:tuo )?browser|sul web))?)?[.!:]?/gi,
-  /\bse non (?:riesci a )?(?:visualizzi|vedi|leggi)(?: (?:questa|la|il|questo) (?:e-?mail|mail|messaggio|newsletter|comunicazione))?[,:]? (?:clicca|apri|visualizza|vai) (?:qui|sul link)(?: per (?:visualizzarla|vederla|aprirla|leggerla)| per visualizzare (?:la|questa) (?:e-?mail|mail|newsletter|versione (?:web|online)))?(?: (?:online|nel (?:tuo )?browser|sul web))?[.!:]?/gi,
-  /\b(?:visualizza|apri|leggi|vedi) (?:la |questa )?(?:versione (?:web|online)(?: (?:della|di questa) (?:e-?mail|mail|newsletter))?|(?:e-?mail|mail|newsletter|messaggio) (?:nel (?:tuo )?browser|online|sul web|come pagina web))[.!:]?/gi,
-  /\b(?:clicca|click) (?:qui|here) (?:per (?:visualizzarla|vederla|leggerla)(?: (?:online|nel (?:tuo )?browser))?|to view (?:it |this (?:e-?mail|message) )?(?:in (?:your |a )?(?:web )?browser|online))[.!:]?/gi,
-  /\b(?:having )?trouble viewing this (?:e-?mail|message)\??/gi,
-  /\b(?:please )?view this (?:e-?mail|message) in an? html[- ]capable (?:e-?mail )?(?:client|reader)\.?/gi,
-  /\bview (?:this (?:e-?mail|message|newsletter) )?(?:in (?:your |a )?(?:web )?browser|as a web ?page)[.!:]?/gi,
-  /\bview (?:this |the )?(?:e-?mail|message|newsletter) online[.!:]?/gi,
+  /\bse\s+non\s+(?:riesci\s+a\s+)?(?:visualizzi|vedi|leggi)(?:\s+(?:questa|la|il|questo)\s+(?:e-?mail|mail|messaggio|newsletter|comunicazione))?\s+correttamente(?:\s+(?:questa|la|il|questo)\s+(?:e-?mail|mail|messaggio|newsletter|comunicazione))?(?:\s+o\s+le\s+immagini)?[,:]?(?:\s+(?:clicca|apri|visualizza|vai)(?:\s+qui|\s+sul\s+link)?(?:\s+per\s+(?:visualizzarla|vederla|aprirla|leggerla)|\s+per\s+visualizzare\s+(?:la|questa)\s+(?:e-?mail|mail|newsletter|versione\s+(?:web|online)))?(?:\s+(?:online|nel\s+(?:tuo\s+)?browser|sul\s+web))?)?[.!:]?/gi,
+  /\bse\s+non\s+(?:riesci\s+a\s+)?(?:visualizzi|vedi|leggi)(?:\s+(?:questa|la|il|questo)\s+(?:e-?mail|mail|messaggio|newsletter|comunicazione))?[,:]?\s+(?:clicca|apri|visualizza|vai)\s+(?:qui|sul\s+link)(?:\s+per\s+(?:visualizzarla|vederla|aprirla|leggerla)|\s+per\s+visualizzare\s+(?:la|questa)\s+(?:e-?mail|mail|newsletter|versione\s+(?:web|online)))?(?:\s+(?:online|nel\s+(?:tuo\s+)?browser|sul\s+web))?[.!:]?/gi,
+  /\b(?:visualizza|apri|leggi|vedi)\s+(?:la\s+|questa\s+)?(?:versione\s+(?:web|online)(?:\s+(?:della|di\s+questa)\s+(?:e-?mail|mail|newsletter))?|(?:e-?mail|mail|newsletter|messaggio)\s+(?:nel\s+(?:tuo\s+)?browser|online|sul\s+web|come\s+pagina\s+web))[.!:]?/gi,
+  /\b(?:clicca|click)\s+(?:qui|here)\s+(?:per\s+(?:visualizzarla|vederla|leggerla)(?:\s+(?:online|nel\s+(?:tuo\s+)?browser))?|to\s+view\s+(?:it\s+|this\s+(?:e-?mail|message)\s+)?(?:in\s+(?:your\s+|a\s+)?(?:web\s+)?browser|online))[.!:]?/gi,
+  /\b(?:having\s+)?trouble\s+viewing\s+this\s+(?:e-?mail|message)\??/gi,
+  /\b(?:please\s+)?view\s+this\s+(?:e-?mail|mail|message)\s+in\s+an?\s+html[-\s]capable\s+(?:e-?mail\s+|mail\s+)?(?:client|reader)\.?/gi,
+  /\b(?:please\s+)?view\s+(?:this\s+(?:e-?mail|mail|message|newsletter)\s+)?(?:in\s+(?:your\s+|a\s+)?(?:web\s+)?browser|as\s+a\s+web\s*page)[.!:]?/gi,
+  /\bview\s+(?:this\s+|the\s+)?(?:e-?mail|message|newsletter)\s+online[.!:]?/gi,
 ]);
 /**
  * A service phrase goes only as a whole unit (Muse giro 3): it carries a
- * newsletter tail («clicca qui», «nel browser»), or closes its sentence
+ * newsletter tail («clicca qui», «HTML-capable»), or closes its sentence
  * (`.`, `!`, `?`, `:`), or nothing but spaces and punctuation follow it up
  * to the line end or the end of the text (URLs are already gone). Otherwise
  * it is the start of the customer's sentence and the text stays whole:
  * «Se non visualizzi correttamente il file, dimmelo» keeps every word.
  */
-const SERVICE_TAIL_RE = /\b(?:clicca|click|apri|vai) (?:qui|here|sul link)\b|\b(?:nel (?:tuo )?|in (?:your |a )?(?:web )?)browser\b|html[- ]capable/i;
+const SERVICE_TAIL_RE = /\b(?:clicca|click|apri|vai)\s+(?:qui|here|sul\s+link)\b|html[-\s]capable/i;
 const UNIT_END_RE = /^[ \t]*(?:[.,;:!?|•·–—-][ \t]*)*(?:\n|$)/;
 
 /** @param {string} text */
@@ -125,6 +136,30 @@ function dropServicePhrases(text) {
         ? ' ' : match));
   }
   return out;
+}
+
+/**
+ * An amount that names its currency twice, symbol and code: «4,99 € EUR»,
+ * «€4.99 EUR», «$5 USD», «EUR 4,99 €» read as «4,99 €», «€4.99», «$5»,
+ * «4,99 €» (Dan 10/11). Any space counts, NBSP and narrow NBSP included
+ * (Dan 12/11: «4,99&nbsp;€&nbsp;EUR» stored as NBSP characters).
+ */
+const CURRENCY_CODES = Object.freeze({ '€': 'EUR', '$': 'USD', '£': 'GBP' });
+const DOUBLE_CURRENCY_RE = /(?:([€$£])\s?(\d[\d.,]*)|(\d[\d.,]*)\s?([€$£]))\s+(EUR|USD|GBP)\b/g;
+const LEADING_CODE_RE = /\b(EUR|USD|GBP)\s+((?:[€$£])\s?\d[\d.,]*|\d[\d.,]*\s?(?:[€$£]))/g;
+
+/** @param {string} text */
+function dropDoubleCurrency(text) {
+  return text
+    .replace(DOUBLE_CURRENCY_RE, (whole, before, amountAfter, amountBefore, after, code) => {
+      const symbol = before ?? after;
+      if (CURRENCY_CODES[/** @type {keyof typeof CURRENCY_CODES} */ (symbol)] !== code) return whole;
+      return before !== undefined ? `${before}${amountAfter}` : `${amountBefore} ${after}`;
+    })
+    .replace(LEADING_CODE_RE, (whole, code, amount) => {
+      const symbol = /[€$£]/.exec(amount)?.[0];
+      return symbol !== undefined && CURRENCY_CODES[/** @type {keyof typeof CURRENCY_CODES} */ (symbol)] === code ? amount : whole;
+    });
 }
 
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
@@ -147,6 +182,12 @@ export function htmlToText(html) {
   if (html === null || html === undefined) return '';
   return String(html)
     .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+    // Declarations and processing instructions (Dan 12/11: «<!DOCTYPE html>»
+    // read as text): `<!DOCTYPE …>`, `<?xml …?>`; a CDATA section keeps its
+    // text and loses only its delimiters.
+    .replace(/<!\[CDATA\[([\s\S]*?)(?:\]\]>|$)/g, '$1')
+    .replace(/<![a-zA-Z][^>]*>?/g, '')
+    .replace(/<\?[a-zA-Z][\s\S]*?(?:\?>|$)/g, '')
     .replace(/<(script|style|head|title|template)\b[\s\S]*?<\/\1\s*>/gi, '')
     .replace(HIDDEN_ELEMENT_RE, '')
     .replace(BREAK_RE, '\n')
@@ -180,6 +221,16 @@ export function cleanMessageBody(value) {
 }
 
 /** @param {string} text */
+/**
+ * HTML entities to text, named (the table above) and numeric. Text stays
+ * text: nothing decoded here is ever parsed as markup by the caller.
+ * @param {string} text
+ */
+export function decodeHtmlEntities(text) {
+  return decodeEntities(String(text ?? ''));
+}
+
+/** @param {string} text */
 function decodeEntities(text) {
   return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
     if (name[0] === '#') {
@@ -206,6 +257,7 @@ export function cleanPreviewText(value) {
   for (const re of IMAGE_RES) text = text.replace(re, ' ');
   for (const re of URL_RES) text = text.replace(re, ' ');
   text = text.replace(DECORATIVE_RE, ' ');
+  text = dropDoubleCurrency(text);
   text = dropServicePhrases(text);
   return text
     .replace(/\(\s*\)|\[\s*\]|<\s*>/g, ' ')

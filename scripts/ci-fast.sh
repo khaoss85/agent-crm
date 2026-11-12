@@ -21,9 +21,9 @@
 #   BASE_REF='<pr base branch>' bash scripts/ci-fast.sh
 #
 # `BASE_REF` names the PR base branch whose tracking ref the truth
-# agreement check diffs against (`origin/$BASE_REF`, fetched by the step
-# before); the touched-tests selection diffs against FETCH_HEAD, left by
-# the same fetch. Each phase keeps its `::group::` log section, prints its
+# agreement check and the touched-tests selection both diff against
+# (`origin/$BASE_REF`, fetched by the step before; the selection uses its
+# merge-base with HEAD). Each phase keeps its `::group::` log section, prints its
 # own elapsed time, and the script prints the total on success — that line
 # is the live evidence for the ten-minute bound. The first failing phase
 # stops the gate with a `::error::` annotation, the way a red Actions step
@@ -62,6 +62,27 @@ parallel_cap() {
     *) echo "$CI_FAST_PARALLEL" ;;
   esac
 }
+
+# The busy rule (backlog:3d560518f3e2): the touched-tests phase writes only
+# a CANDIDATE (`$CI_TOUCHED_BUSY_FILE.candidate`) when it timed out on a full
+# machine with no failed file. After every lane has ended, the aggregation
+# below promotes it to the record the workflow retries on
+# (scripts/ci-fast-busy-confirm.sh) only when the touched lane is the one
+# failure. Killed before that, the gate leaves no record. Only the parallel
+# gate offers the retry, so sequential mode drops the variable.
+busy_record="${CI_TOUCHED_BUSY_FILE:-}"
+busy_candidate=''
+if [ -n "$busy_record" ]; then
+  busy_candidate="$busy_record.candidate"
+  rm -f "$busy_record" "$busy_candidate"
+fi
+if [ "$(parallel_cap)" -le 1 ] || [ -z "$busy_record" ]; then
+  unset CI_TOUCHED_BUSY_FILE
+  busy_record=''
+  busy_candidate=''
+else
+  export CI_TOUCHED_BUSY_FILE="$busy_candidate"
+fi
 
 # Parallel mode: start one lane (one log, one exit code, one name in the
 # failure list) once fewer than the cap are running.
@@ -102,7 +123,11 @@ run_lane() {
 # 2026-11-08) and gtm:check took 7-15 s on that day's green runs, so the
 # lane ends ~75 s before the 540 s total; the other lanes ended by 196 s.
 touched_then_gtm() {
-  run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base FETCH_HEAD || return
+  # The base is the tracking ref the workflow's explicit fetch step updates,
+  # never FETCH_HEAD: any later fetch (a parallel phase, repo-truth's retry)
+  # rewrites FETCH_HEAD. The script pins it to a sha and diffs against its
+  # merge-base with HEAD, and logs both (backlog:3d560518f3e2).
+  run_phase_now 'tests of the touched files' node scripts/ci-touched-tests.js --base "origin/$BASE_REF" || return
   run_phase_now 'public claims and packaging agree' npm run gtm:check
 }
 
@@ -180,6 +205,10 @@ if [ "$(parallel_cap)" -gt 1 ]; then
   for i in "${!phases[@]}"; do cat "$logs_dir/$i.log"; done
   rm -rf "$logs_dir"
   if [ "${#failed[@]}" -gt 0 ]; then
+    if [ -n "$busy_record" ] && bash scripts/ci-fast-busy-confirm.sh "$busy_candidate" "$busy_record" "${failed[@]}"; then
+      echo "::warning::ci-fast: the touched tests timed out on a full machine ($(tr -d '\n' < "$busy_record")): busy, not red; every other phase passed in $((SECONDS - started))s, the step retries the touched tests once"
+      exit "$first_code"
+    fi
     echo "::error::ci-fast: ${#failed[@]} of ${#phases[@]} phases failed in parallel after $((SECONDS - started))s: ${failed[*]}"
     exit "$first_code"
   fi

@@ -249,29 +249,65 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'exclusion disclosed in correct Italian');
-  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/another-pipeline');
-  assert.ok(link, 'the other pipeline links to its own board');
-  assert.equal(link.textContent, 'Vedi another-pipeline');
+  // 'another-pipeline' is grammar-valid but absent from schema.pipelines, so
+  // it can never be a selector choice or a #/pipelines link (review P2-756):
+  // the destination would not render. The parked offer stays one click away.
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector with a single composed pipeline and no resolvable choice',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the parked offer is disclosed, never hidden');
+  assert.equal(toggle.textContent, "almeno 1 offerta di un'altra pipeline", 'the truncated count is a lower bound');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/other'],
+    'the parked offer keeps its click path to its page',
+  );
+  await board.renderBoard('another-pipeline');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked route renders no board');
 });
 
-test('past BOARD_LIMIT the off-pipeline counts say they are partial (250 offers)', async () => {
-  // Backlog 13f43804: 250 offers over the 200-record read — both counts are
-  // lower bounds and must say so, never read as exact.
+test('past BOARD_LIMIT the off-pipeline counts stay lower bounds (250 offers)', async () => {
+  // Backlog 13f43804: 250 offers over the 200-record read — the truncation
+  // notice stays and both counts are lower bounds. 'other' is absent from
+  // schema.pipelines, so it is disclosed with offer links, never as a
+  // pipeline choice (review P2-756).
   const onBoard = Array.from({ length: 190 }, (_, i) => record(`r${i}`, 'discovery'));
   const offBoard = Array.from({ length: 60 }, (_, i) => ({ ...record(`o${i}`, 'discovery'), pipelineKey: 'other' }));
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient([...onBoard, ...offBoard]) });
   await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: the off-board key is not a composed pipeline',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
   const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
   assert.ok(toggle, 'the off-pipeline count is a button');
   assert.equal(toggle.textContent, 'almeno 60 offerte di altre pipeline', 'truncated toggle is a lower bound');
   assert.ok(mount.textContent.includes('e almeno altre 10'), 'unlisted remainder is a lower bound');
-  assert.ok(!mount.textContent.includes('e altre 10.') && !mount.textContent.includes('e altre 10 '), 'no exact remainder phrasing');
+  toggle.dispatch('click');
+  const links = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+    .findAll('a').map((node) => node.getAttribute('href'));
+  assert.equal(links.length, 50, 'the list shows the first fifty parked offers');
+  assert.equal(links[0], '#/offerte/o0', 'each parked offer links to its page');
 });
 
-test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
+test('off-board records surface as offer links, never as pipeline choices', async () => {
   const records = [
     record('a', 'discovery'),
     { ...record('x', 'discovery'), pipelineKey: 'other' },
@@ -281,10 +317,21 @@ test('the off-pipeline disclosure uses the Italian plural for several records', 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('2 offerte di altre pipeline.'), 'plural exclusion disclosed in correct Italian');
-  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/other');
-  assert.ok(link, 'the other pipeline links to its own board');
-  assert.equal(link.textContent, 'Vedi other');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector for unresolvable off-board keys',
+  );
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the parked offers are disclosed');
+  assert.equal(toggle.textContent, '2 offerte di altre pipeline', 'one disclosure for the shared key');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/x', '#/offerte/y'],
+    'every parked record keeps its click path to its page',
+  );
 });
 
 test('with several composed pipelines the board shows a selector instead of the note', async () => {
@@ -323,6 +370,18 @@ test('with several composed pipelines the board shows a selector instead of the 
   selects[0].value = 'upsell';
   selects[0].dispatch('change');
   assert.deepEqual(navigated, ['#/pipelines/upsell'], 'choosing a pipeline navigates to its board');
+  // P2-404: the measure resolves the destination for real — the routed
+  // board renders its own stages, while an unknown key renders no board.
+  await board.renderBoard('upsell');
+  assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the composed destination renders its board');
+  assert.ok(
+    mount.findAll('div')
+      .filter((node) => (node.getAttribute('class') ?? '').startsWith('pipeline-column'))
+      .some((node) => node.getAttribute('data-stage') === 'idea'),
+    'the destination board shows its own stages',
+  );
+  await board.renderBoard('other');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'an unknown key has no board to link to');
 });
 
 test('the selector lists every composed pipeline even when nothing is off-board', async () => {
@@ -361,6 +420,43 @@ test('with a single composed pipeline there is no selector, only the disclosure'
   const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
   await board.renderBoard('b2b-sales');
   assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no selector for a single pipeline');
+});
+
+test('1cb4cc488340: unresolvable off-board keys never become selector choices or pipeline links', async () => {
+  // VERIFIER_BACK repro: on the failing head the parked offers below were
+  // either invisible (no choice, no link) or one dead #/pipelines choice
+  // away from an empty board. They must surface as offer links instead.
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'discovery'), pipelineKey: 'other' }, // grammar-valid, absent from schema.pipelines
+    { ...record('y', 'discovery'), pipelineKey: null, pipelineStage: null }, // keyless, parked
+    { ...record('z', 'discovery'), pipelineKey: 'Altro Spazio' }, // outside the route grammar
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: a single composed pipeline offers no resolvable choice',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no pipeline link for keys the schema does not compose');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the three parked offers are disclosed, never hidden');
+  assert.equal(toggle.textContent, '3 offerte di altre pipeline', 'one disclosure for every parked offer');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/x', '#/offerte/y', '#/offerte/z'],
+    'each parked offer keeps its click path to its page',
+  );
+  await board.renderBoard('other');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked route renders no board');
 });
 
 test('the summary counts the shown cards, never the off-pipeline offers', async () => {
@@ -485,8 +581,8 @@ test('Lista view renders the same filtered records as a read-only table', async 
   const rows = list.findAll('tr').filter((row) => row.getAttribute('data-record') !== null);
   assert.equal(rows.length, 5, 'all placed records are listed');
   assert.ok(rows[0].textContent.includes('Discovery'), 'stage renders as its label');
-  assert.ok(rows[0].textContent.includes('alice'), 'referente is visible');
-  assert.ok(rows[0].textContent.includes('2026-11-01'), 'expected close renders as a day');
+  assert.ok(rows[0].textContent.includes('Alice'), 'referente is visible');
+  assert.ok(rows[0].textContent.includes('1 nov 2026'), 'expected close renders as an Italian day');
 
   const kanbanButton = mount.findAll('button').find((node) => node.getAttribute('data-view') === 'kanban');
   kanbanButton.dispatch('click');
@@ -518,7 +614,7 @@ test('search and the Referente, Creata, Stati pills narrow both views (C8)', asy
 
   pickVoice(mount, 'owner', 'bob');
   assert.match(summaryText(mount), /2 offerte/, 'Referente pill keeps only bob’s cards');
-  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente bob'), 'the pill names the active referente');
+  assert.ok(filterPill(mount, 'owner').textContent.includes('Referente Bob'), 'the pill names the active referente');
 
   pickVoice(mount, 'stage', 'discovery');
   assert.match(summaryText(mount), /1 offerta/, 'Stati pill intersects with Referente');
@@ -610,7 +706,7 @@ test('forecast names the highest-value open offer when one currency is in play',
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
   assert.ok(
-    box.textContent.includes('Il rischio più alto è alice.'),
+    box.textContent.includes('Il rischio più alto è Alice.'),
     `the risk names the owner of the highest-value open offer (${box.textContent})`,
   );
 });
@@ -999,8 +1095,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
-    "1 offerta di un'altra pipeline.",
-    'Vedi altra',
+    "1 offerta di un'altra pipeline",
     'Fuori definizione (1)',
     'fase registrata: svincolata',
     'Sposta in',
@@ -1010,6 +1105,11 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   ]) {
     assert.ok(painted().includes(italian), `kanban shows «${italian}»`);
   }
+  const switchSelect = mount.findAll('select').filter((n) => n.getAttribute('id') === 'pipeline-switch');
+  assert.equal(switchSelect.length, 0, 'no selector for a key the schema does not compose');
+  const parkedToggle = mount.findAll('button').find((n) => n.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(parkedToggle, 'the parked offer is disclosed in Italian');
+  assert.equal(parkedToggle.textContent, "1 offerta di un'altra pipeline", 'the disclosure names the parked offer');
 
   // Move toast and the lost-reason reveal are customer-facing too.
   const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
@@ -1069,26 +1169,27 @@ test('pipeline lista follows the prototype: headers order, pill, probability, da
   const headers = list.findAll('th').map((node) => node.textContent);
   assert.deepEqual(
     headers,
-    ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente'],
-    'C19: lista headers follow the prototype order',
+    ['Offerta', 'Cliente', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente'],
+    'C19: lista headers follow the prototype order, with Cliente after the offer (backlog:fb47ab99b6ee)',
   );
 
   // C20: one row carries the state pill with its dot, value, probability,
   // close day, creation day and referente.
   const row = list.findAll('tr').find((node) => node.getAttribute('data-record') === 'a');
   const cells = row.findAll('td');
-  assert.equal(cells.length, 7, 'one cell per header');
+  assert.equal(cells.length, 8, 'one cell per header');
   assert.ok(cells[0].textContent.includes('Cucina per Giulia'), 'offerta shows the record title');
-  assert.ok(cells[1].textContent.includes('Discovery'), 'stato shows the stage label');
+  assert.equal(cells[1].textContent, 'Rossi', 'cliente shows the customer');
+  assert.ok(cells[2].textContent.includes('Discovery'), 'stato shows the stage label');
   assert.ok(
-    cells[1].findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
+    cells[2].findAll('span').some((node) => (node.getAttribute('class') ?? '').includes('stage-dot')),
     'stato pill carries its dot hook',
   );
-  assert.ok(cells[2].textContent.includes('27.500') || cells[2].textContent.includes('27,500'), `valore shows the amount (${cells[2].textContent})`);
-  assert.equal(cells[3].textContent, '10%', 'probabilità shows the discovery stage probability');
-  assert.equal(cells[4].textContent, '2026-11-20', 'chiusura shows the expected close day');
-  assert.equal(cells[5].textContent, '2026-10-02', 'creata shows the creation day');
-  assert.ok(cells[6].textContent.includes('maria'), 'referente shows the owner');
+  assert.ok(cells[3].textContent.includes('27.500') || cells[3].textContent.includes('27,500'), `valore shows the amount (${cells[3].textContent})`);
+  assert.equal(cells[4].textContent, '10%', 'probabilità shows the discovery stage probability');
+  assert.equal(cells[5].textContent, '20 nov 2026', 'chiusura shows the expected close day as a person writes it');
+  assert.equal(cells[6].textContent, '2 ott 2026', 'creata shows the creation day as a person writes it');
+  assert.ok(cells[7].textContent.includes('Maria'), 'referente shows the owner');
 
   // C21: an empty filter shows the exact prototype message.
   const search = mount.findAll('input').find((node) => node.getAttribute('data-filter') === 'q');
@@ -1209,8 +1310,9 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
     .find((n) => n.textContent === ({ a: 'MR', b: 'M', c: 'P' })[id]);
   const cardA = ownerOf('a');
   assert.ok(cardA, 'card a shows the referente initials');
-  assert.equal(cardA.getAttribute('title'), 'Maria Rossi', 'the badge title names the referente');
-  assert.equal(ownerOf('b').getAttribute('title'), 'maria', 'single-word names keep their title');
+  assert.equal(cardA.getAttribute('title'), 'Referente: Maria Rossi', 'the badge title names the referente');
+  assert.equal(cardA.getAttribute('aria-label'), 'Referente: Maria Rossi', 'and so does its accessible name (backlog:7b2203e69826)');
+  assert.equal(ownerOf('b').getAttribute('title'), 'Referente: Maria', 'single-word names read as a name in the title');
   assert.equal(ownerOf('c').textContent, 'P', 'single-word names badge the first letter');
 
   const closeOf = (id) => mount.findAll('div')
@@ -1365,10 +1467,11 @@ test('kanban rides a scroll wrap hiding the end cue at the end (backlog 339ca222
 });
 
 /**
- * Voce ef92f728: Apri navigates to the offer detail page (#/offerte/<id>)
- * and never expands the card in place. The card stays a summary: editing
- * the three commercial facts (importo, chiusura, referente) moved to the
- * detail page behind Modifica, covered by tests/admin-offer.test.js.
+ * Voce ef92f728, Dan 11/11: Apri opens the offer panel over the board and
+ * never expands the card in place. The card stays a summary: editing the
+ * three commercial facts (importo, chiusura, referente) lives on the offer
+ * page behind Modifica (tests/admin-offer.test.js), linked from the panel.
+ * The panel itself is covered by tests/admin-pipeline-drag-panel.test.js.
  */
 function navigableClient(records, pipelines = [PIPELINE]) {
   return {
@@ -1384,7 +1487,7 @@ function apriButton(mount) {
   return mount.findAll('button').find((n) => n.getAttribute('data-action') === 'open-offer');
 }
 
-test('ef92f728: Apri navigates to the offer detail page; the card never expands', async () => {
+test('ef92f728: Apri opens the offer panel, never the page; the card never expands', async () => {
   const records = [record('a', 'discovery', {
     name: 'Cucina per Giulia', valueCents: 2750000, currency: 'EUR',
     expectedCloseDate: '2026-11-20T00:00:00.000Z', owner: 'maria',
@@ -1408,10 +1511,10 @@ test('ef92f728: Apri navigates to the offer detail page; the card never expands'
   assert.equal(card.__save, undefined, 'no save hook on the card');
 
   button.dispatch('click');
-  assert.deepEqual(hashes, ['#/offerte/a'], 'Apri navigates to the offer detail');
-  // The test hook drives the same navigation as the click.
-  card.__open();
-  assert.deepEqual(hashes, ['#/offerte/a', '#/offerte/a'], 'the hook navigates too');
+  assert.deepEqual(hashes, [], 'Apri never leaves the pipeline');
+  const panel = mount.findAll('div').find((n) => n.getAttribute('data-offer-drawer') === 'a');
+  assert.ok(panel, 'Apri opens the offer panel');
+  assert.equal(panel.getAttribute('role'), 'dialog');
   // After the click the card still shows the summary, never an expansion.
   const same = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   assert.ok(!same.textContent.includes('Valore:'), 'the card stays a summary after Apri');
@@ -1489,7 +1592,11 @@ test('2a075e2d9250: the direct link #/pipeline opens the board of the first comp
   assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the bare link finds the composed pipeline');
 });
 
-test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those offers', async () => {
+test('1e939a362c7c + 1cb4cc488340: the off-board disclosure lists every parked offer with its page link', async () => {
+  // Review P1-759/P2-756: 'renewals' is absent from schema.pipelines, so it
+  // is not a selector choice and has no #/pipelines link — the destination
+  // would not render. Both parked offers (keyless and unknown-key) open
+  // their #/offerte pages from the disclosure list instead.
   const records = [
     record('a', 'demo'),
     { ...record('x', 'demo'), name: 'Proposta esempio', pipelineKey: null, pipelineStage: null, stage: 'proposal' },
@@ -1499,6 +1606,15 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: renewals is not a composed pipeline',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
   const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
   assert.ok(toggle, 'the count is a button, not plain text');
   assert.equal(toggle.textContent, '2 offerte di altre pipeline');
@@ -1510,8 +1626,11 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   assert.ok(!(list.getAttribute('class') ?? '').includes('hidden'), 'the click unfolds the offers');
   const links = list.findAll('a');
   assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/x', '#/offerte/y'], 'each offer opens its page');
-  assert.equal(links[0].textContent, 'Proposta esempio · proposta', 'the stage reads in Italian like the scheda');
+  assert.equal(links[0].textContent, 'Proposta esempio', 'the name opens the offer');
+  assert.equal(list.findAll('li')[0].textContent, 'Proposta esempio · Acme · Proposta', 'customer and stato in Italian, capitalised');
   assert.ok(!list.textContent.includes('Deal a'), 'offers of this board are not listed');
+  await board.renderBoard('renewals');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked key has no board to render');
 });
 
 /**
@@ -1606,4 +1725,23 @@ test('9d2209b24f0b: una risposta ancora in coda non legge mai come fallimento', 
   assert.ok(!toasts.some((message) => message.includes('non riuscito')), 'no failure toast for a queued move');
   const moveButton = card.findAll('button').find((n) => n.getAttribute('aria-busy') === 'true');
   assert.ok(moveButton, 'the move stays locked: no second POST while queued');
+});
+
+test('169cd4bc988c: the offers of other pipelines read in the /bo dress — customer, stato capitalised, never «Senza azienda»', async () => {
+  const records = [
+    record('a', 'demo'),
+    { ...record('x', 'demo'), name: 'Pacchetto', companyName: 'Senza azienda', contactName: 'Guido Presti', pipelineKey: null, pipelineStage: null, stage: 'qualification' },
+    { ...record('z', 'demo'), name: 'Prova', companyName: 'Senza azienda', pipelineKey: null, pipelineStage: null, stage: 'proposal' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  const list = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list');
+  const rows = list.findAll('li').map((node) => node.textContent);
+  assert.deepEqual(rows, ['Pacchetto · Guido Presti · Qualificazione', 'Prova · Proposta']);
+  assert.ok(!list.textContent.includes('Senza azienda'));
+  for (const link of list.findAll('a')) assert.equal(link.getAttribute('class'), 'pipeline-off-name', 'a styled link, never the browser default');
+  const css = (await import('node:fs')).readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.pipeline-off-list \.pipeline-off-name \{[^}]*color: var\(--ink\)/, 'the name reads in ink, not link blue');
 });

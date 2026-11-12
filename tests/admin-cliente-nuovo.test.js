@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
@@ -17,12 +18,15 @@ import {
   normalizeTelefono,
   readNewCustomerDraft,
   saveNewCustomerDraft,
+  customerNames,
+  sameCustomerNames,
   splitNome,
   stepNeedsRun,
   tabDraftStorage,
   validateCustomerForm,
 } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { WAKE_WAIT_TEXT } from '../apps/admin/public/admin-core.js';
 
 /**
  * The "Nuovo cliente" form (backlog:273de560), against a stub server.
@@ -115,10 +119,12 @@ test('validateCustomerForm refuses empty identity with Italian errors', () => {
 test('the form renders every field with Salva and Annulla, in Italian', async () => {
   const { mount, view } = render(stubClient(() => accepted()));
   await view.render();
-  for (const name of ['nome', 'email', 'telefono', 'azienda', 'stato', 'nota']) {
+  for (const name of ['nome', 'cognome', 'email', 'telefono', 'azienda', 'nota']) {
     assert.ok(field(mount, name), `the ${name} control renders`);
-    assert.ok(errorFor(mount, name) ?? (name === 'stato' || name === 'nota'), `the ${name} error slot renders`);
+    assert.ok(errorFor(mount, name), `the ${name} error slot renders`);
   }
+  // backlog:ff8bb60f417f: no Stato — nothing stores it and Modifica has none.
+  assert.equal(field(mount, 'stato'), undefined, 'no Stato field');
   const buttons = mount.findAll('button').map((node) => node.textContent);
   assert.ok(buttons.includes('Salva'), 'Salva renders');
   assert.ok(buttons.includes('Annulla'), 'Annulla renders');
@@ -270,6 +276,9 @@ test('Annulla navigates back to the list without writing', async () => {
   setValue(rendered.mount, 'nome', 'Mario Rossi');
   rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-customer').dispatch('click');
   await flush();
+  // backlog:ff8bb60f417f: with text typed, Annulla asks first.
+  rendered.mount.findAll('button').find((node) => node.getAttribute('data-action') === 'discard-customer').dispatch('click');
+  await flush();
   assert.equal(appliesOf(client).length, 0, 'Annulla writes nothing');
   assert.equal(rendered.navigated(), '#/customer-data');
 });
@@ -280,10 +289,12 @@ test('a leaving route invalidates the form so a late save cannot clear the next 
   await rendered.view.render();
   setValue(rendered.mount, 'nome', 'Mario Rossi');
   setValue(rendered.mount, 'email', 'mario@esempio.it');
-  rendered.view.invalidate();
   clickSave(rendered.mount);
+  rendered.view.invalidate();
   await flush();
   assert.equal(rendered.navigated(), null, 'the invalidated save never navigates onto the next screen');
+  assert.equal(rendered.mount.findAll('div').filter((node) => node.getAttribute('data-customer-panel') === 'open').length, 0,
+    'leaving the route closes the window');
 });
 
 test('CLIENTI_NUOVO_ROUTE never points at the import tool', () => {
@@ -1253,4 +1264,239 @@ test('a generic failure keeps its own error and stores no draft', async () => {
   assert.match(rendered.mount.textContent, /Riprova più tardi/, 'a broken write keeps its own error');
   assert.equal(readNewCustomerDraft(store), null, 'only a lost session stores the draft');
   clearNewCustomerDraft(store);
+});
+
+// Review khaoss85/agent-crm#673 giro 3 P2 (backlog:5a40c73e54aa): a create
+// that meets an explicit starting signal after the sleep shows the wait in
+// the general branch too, not just on a field — the operator waits instead
+// of retyping.
+test('a create refused by a starting signal names the wait in the general error (review #673 P2)', async () => {
+  const store = memoryStore();
+  const client = stubClient(() => Promise.reject(
+    Object.assign(new Error('Workspace starting'), { status: 503, code: 'WORKSPACE_STARTING' }),
+  ));
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  setValue(rendered.mount, 'nota', LONG_NOTE);
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(rendered.navigated(), null, 'no scheda while the service wakes');
+  assert.ok(
+    rendered.mount.textContent.includes(WAKE_WAIT_TEXT),
+    'the general error names the wait, never the generic failure',
+  );
+  assert.equal(readNewCustomerDraft(store), null, 'a waking service is not a lost session: no draft');
+  clearNewCustomerDraft(store);
+});
+
+/* ------------------------------------------------ backlog:ff8bb60f417f (punti 11-12) */
+
+const panelOf = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-customer-panel') === 'open') ?? null;
+const action = (mount, name) => mount.findAll('button').find((node) => node.getAttribute('data-action') === name);
+const discardBox = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-discard') === '');
+
+test('ff8bb60f417f: Nuovo cliente opens as a window like the scheda panels, focus on Nome before the reads answer', async () => {
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = stubClient(async (path) => {
+    await gate;
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    return { available: false };
+  });
+  const rendered = render(client);
+  const pending = rendered.view.render();
+  const panel = panelOf(rendered.mount);
+  assert.ok(panel, 'the window shows at once, before the field and AI reads answer');
+  const classes = String(panel.getAttribute('class')).split(/\s+/);
+  assert.ok(classes.includes('bo-scheda-composer'), 'the same frame as Scrivi and Nuova offerta');
+  assert.equal(panel.getAttribute('role'), 'dialog');
+  assert.ok(panel.findAll('h4').some((node) => node.textContent === 'Nuovo cliente'), 'the dark head names the purpose');
+  assert.ok(action(rendered.mount, 'customer-minimize') && action(rendered.mount, 'customer-close'), 'minimize and close');
+  assert.equal(field(rendered.mount, 'nome').__focused, true, 'the focus is on Nome');
+  assert.equal(rendered.mount.findAll('h1').length, 0, 'no page title: it is a window');
+  release();
+  await pending;
+  // A second render (route re-entry) never stacks a second window.
+  await rendered.view.render();
+  assert.equal(rendered.mount.findAll('div').filter((node) => node.getAttribute('data-customer-panel') === 'open').length, 1);
+});
+
+test('ff8bb60f417f: Annulla, ✕ and Esc with text ask inline, never with confirm(); empty closes at once', async () => {
+  const original = globalThis.confirm;
+  let browserConfirms = 0;
+  globalThis.confirm = () => { browserConfirms += 1; return true; };
+  try {
+    // Empty: Annulla closes at once.
+    const empty = render(stubClient(() => accepted()));
+    await empty.view.render();
+    action(empty.mount, 'cancel-customer').dispatch('click');
+    assert.equal(empty.navigated(), '#/customer-data', 'nothing typed: Annulla leaves at once');
+    assert.equal(panelOf(empty.mount), null, 'and the window closes');
+
+    for (const how of ['annulla', 'close', 'escape']) {
+      const rendered = render(stubClient(() => accepted()));
+      await rendered.view.render();
+      setValue(rendered.mount, 'cognome', 'Rossi');
+      const ask = () => {
+        if (how === 'annulla') action(rendered.mount, 'cancel-customer').dispatch('click');
+        else if (how === 'close') action(rendered.mount, 'customer-close').dispatch('click');
+        else panelOf(rendered.mount).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+      };
+      ask();
+      assert.equal(rendered.navigated(), null, `${how}: nothing typed is lost without asking`);
+      assert.ok(!discardBox(rendered.mount).classList.contains('hidden'), `${how}: the question shows inline`);
+      assert.match(discardBox(rendered.mount).textContent, /Scartare quello che hai scritto\?/);
+      assert.equal(action(rendered.mount, 'keep-customer').__focused, true, `${how}: the focus goes to the safe answer`);
+      // Esc on the question keeps the text.
+      panelOf(rendered.mount).dispatch('keydown', { key: 'Escape', preventDefault() {} });
+      assert.ok(discardBox(rendered.mount).classList.contains('hidden'), `${how}: Esc on the question keeps writing`);
+      assert.equal(field(rendered.mount, 'cognome').value, 'Rossi', `${how}: the text stays`);
+      ask();
+      action(rendered.mount, 'keep-customer').dispatch('click');
+      assert.ok(discardBox(rendered.mount).classList.contains('hidden'), `${how}: Continua a scrivere goes back`);
+      assert.equal(panelOf(rendered.mount) !== null, true);
+      ask();
+      action(rendered.mount, 'discard-customer').dispatch('click');
+      assert.equal(rendered.navigated(), '#/customer-data', `${how}: Scarta leaves`);
+      assert.equal(panelOf(rendered.mount), null, `${how}: and closes the window`);
+    }
+    assert.equal(browserConfirms, 0, 'never the browser confirm()');
+  } finally {
+    globalThis.confirm = original;
+  }
+});
+
+test('ff8bb60f417f: after Salva a toast says so, the badge recounts and the window closes', async () => {
+  const client = stubClient(() => accepted());
+  let saved = 0;
+  const rendered = render(client, { onSaved: () => { saved += 1; } });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario');
+  setValue(rendered.mount, 'cognome', 'Rossi');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.deepEqual(rendered.notes, ['Cliente creato.']);
+  assert.equal(saved, 1);
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
+  assert.equal(panelOf(rendered.mount), null, 'the window closes on the new scheda');
+});
+
+test('ff8bb60f417f: Nome and Cognome travel apart, like Modifica; one field alone still splits', async () => {
+  assert.deepEqual(customerNames({ nome: 'Anna Maria', cognome: 'Bianchi' }), { firstName: 'Anna Maria', lastName: 'Bianchi' });
+  assert.deepEqual(customerNames({ nome: ' Mario  Rossi ', cognome: '' }), { firstName: 'Mario', lastName: 'Rossi' });
+  const client = stubClient(() => accepted());
+  const rendered = render(client);
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Anna Maria');
+  setValue(rendered.mount, 'cognome', 'Bianchi');
+  setValue(rendered.mount, 'email', 'anna@esempio.it');
+  clickSave(rendered.mount);
+  await flush();
+  assert.deepEqual(appliesOf(client)[0].body.rows, [{ firstName: 'Anna Maria', lastName: 'Bianchi', email: 'anna@esempio.it' }]);
+});
+
+test('ff8bb60f417f: the kept draft carries Cognome across a lost session', () => {
+  const map = new Map();
+  const storage = { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => map.set(k, v), removeItem: (k) => map.delete(k) };
+  assert.equal(saveNewCustomerDraft(storage, { nome: 'Anna', cognome: 'Bianchi' }, { spaceId: 's1' }), true);
+  const draft = readNewCustomerDraft(storage, { spaceId: 's1' });
+  assert.equal(draft.cognome, 'Bianchi');
+  assert.equal(saveNewCustomerDraft(storage, { nome: '', cognome: 'Bianchi' }, { spaceId: 's2' }), true, 'a Cognome alone is text worth keeping');
+});
+
+test('ff8bb60f417f: the question takes the place of Salva/Annulla while asked', async () => {
+  const rendered = render(stubClient(() => accepted()));
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Lia');
+  const actions = rendered.mount.findAll('div').find((node) => node.getAttribute('class')?.split(/\s+/).includes('bo-cliente-nuovo-actions'));
+  action(rendered.mount, 'cancel-customer').dispatch('click');
+  assert.ok(actions.classList.contains('hidden'), 'Salva/Annulla step aside');
+  action(rendered.mount, 'keep-customer').dispatch('click');
+  assert.ok(!actions.classList.contains('hidden'), 'and come back with Continua a scrivere');
+  assert.equal(field(rendered.mount, 'nome').__focused, true, 'the focus goes back to the form');
+});
+
+/* ------------------------------------------------ review Muse #791 giro 1 */
+
+test('review #791 giro 1: the window lives under the router mount, so the session keep/restore keeps its text', async () => {
+  const { captureDrafts, restoreDrafts } = await import('../apps/admin/public/admin-draft-keep.js');
+  const map = new Map();
+  const storage = { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => map.set(k, String(v)), removeItem: (k) => map.delete(k) };
+  const first = render(stubClient(() => accepted()));
+  await first.view.render();
+  setValue(first.mount, 'nome', 'Anna');
+  setValue(first.mount, 'cognome', 'Bianchi');
+  setValue(first.mount, 'nota', 'Cerca un pacchetto da 10 lezioni');
+  // The shell leaves for the login with the router mount as the root.
+  assert.equal(captureDrafts({ root: first.mount, hash: '#/clienti/nuovo', space: 's1', storage }), 3);
+  const back = render(stubClient(() => accepted()));
+  await back.view.render();
+  assert.equal(restoreDrafts({ root: back.mount, hash: '#/clienti/nuovo', space: 's1', storage }), 3);
+  assert.equal(field(back.mount, 'nome').value, 'Anna');
+  assert.equal(field(back.mount, 'cognome').value, 'Bianchi');
+  assert.equal(field(back.mount, 'nota').value, 'Cerca un pacchetto da 10 lezioni');
+  // The shell hands the form the router mount itself, never a detached host.
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const wiring = app.slice(app.indexOf('const customerFormView = createCustomerFormView('), app.indexOf('const customerFormView = createCustomerFormView(') + 900);
+  assert.match(wiring, /\n  mount: moduleView,/);
+  assert.doesNotMatch(wiring, /document\.body/);
+});
+
+test('review #791 giro 1: a Salva clicked while the window still reads its fields saves once they arrive', async () => {
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = stubClient(async (path) => {
+    if (path === '/api/customer-data/fields') { await gate; return { definitions: [] }; }
+    if (path === '/api/customer-data/phrase/ai-available') { await gate; return { available: false }; }
+    return accepted();
+  });
+  const rendered = render(client);
+  const pending = rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Mario');
+  setValue(rendered.mount, 'email', 'mario@esempio.it');
+  clickSave(rendered.mount);
+  assert.equal(appliesOf(client).length, 0, 'nothing writes before the window is ready');
+  assert.equal(action(rendered.mount, 'save-customer').disabled, true, 'Salva shows it took the click');
+  release();
+  await pending;
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'the early click saves, never silently dropped');
+  assert.equal(rendered.navigated(), '#/customer-card/contact/c1');
+});
+
+test('review #791 giro 1: a corrected Nome/Cognome split after the rescue is written back', async () => {
+  assert.equal(sameCustomerNames({ nome: 'Anna', cognome: 'Maria Bianchi' }, { nome: 'Anna Maria', cognome: 'Bianchi' }), false);
+  assert.equal(sameCustomerNames({ nome: 'Mario Rossi', cognome: '' }, { nome: 'Mario', cognome: 'Rossi' }), true);
+  const store = memoryStore();
+  let notes = 0;
+  const client = stubClient((path) => {
+    if (path === '/api/customer-data/phrase/ai-available') return { available: false };
+    if (path === '/api/customer-data/fields') return { definitions: [] };
+    if (path === '/api/customer-hub/notes') {
+      notes += 1;
+      if (notes === 1) return Promise.reject(Object.assign(new Error('Workspace membership required'), { status: 401 }));
+      return { note: { id: 'n1' } };
+    }
+    if (path === '/api/contacts/c9') return { id: 'c9' };
+    return accepted({ id: 'c9', resource: 'contact' }, 'CREATED_RECORD');
+  });
+  const rendered = render(client, { storage: store });
+  await rendered.view.render();
+  setValue(rendered.mount, 'nome', 'Anna');
+  setValue(rendered.mount, 'cognome', 'Maria Bianchi');
+  setValue(rendered.mount, 'email', 'anna@esempio.it');
+  setValue(rendered.mount, 'nota', 'una nota');
+  clickSave(rendered.mount);
+  await flush();
+  setValue(rendered.mount, 'nome', 'Anna Maria');
+  setValue(rendered.mount, 'cognome', 'Bianchi');
+  clickSave(rendered.mount);
+  await flush();
+  assert.equal(appliesOf(client).length, 1, 'no second apply');
+  const patches = client.calls.filter((call) => call.path === '/api/contacts/c9');
+  assert.equal(patches.length, 1, 'the moved split is a real change');
+  assert.deepEqual(patches[0].body, { firstName: 'Anna Maria', lastName: 'Bianchi' });
 });

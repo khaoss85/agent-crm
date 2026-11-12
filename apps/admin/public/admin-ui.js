@@ -205,12 +205,15 @@ const ICON_PATHS = Object.freeze({
   plus: '<path d="M12 5v14M5 12h14"/>',
   colonne: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+  importa: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
   // Azioni rapide della scheda (prototype 05 Scheda cliente).
   telefono: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
   'telefono-piu': '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/><path d="M18 3v6M15 6h6"/>',
   messaggio: '<path d="M4 5h16v11H9l-5 4z"/>',
   offerta: '<path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/>',
   appuntamento: '<path d="M5 6h14v13H5zM5 10h14M9 4v4M15 4v4"/>',
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  cestino: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 });
 
 export const UI_ICONS = Object.freeze(Object.keys(ICON_PATHS));
@@ -281,11 +284,12 @@ export function uiButton(doc, options = {}) {
  * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,
  * offerta, persona, spazio, prodotto): a 28 px tile, a bold title and one
  * muted line under it. `kind` picks the tile: `ai` is the violet ✦, `manual`
- * the pencil. Built without `el` normalization so a menu voice never picks
+ * the pencil — or `icon`, when the voice is not a hand-filled form (the
+ * file import, backlog:4968615de0a4). Built without `el` normalization so a menu voice never picks
  * up a chip or button class (design pass 7: every menu read in monospace).
  *
  * @param {any} doc
- * @param {{ kind: 'ai' | 'manual', title: string, line: string, attrs?: Record<string, unknown> }} options
+ * @param {{ kind: 'ai' | 'manual', title: string, line: string, icon?: string, attrs?: Record<string, unknown> }} options
  */
 export function uiAddOption(doc, options) {
   const node = doc.createElement('button');
@@ -299,7 +303,7 @@ export function uiAddOption(doc, options) {
   tile.setAttribute('class', 'ui-add-tile');
   tile.setAttribute('aria-hidden', 'true');
   if (options.kind === 'ai') tile.textContent = '\u2726';
-  else tile.appendChild(uiIcon(doc, 'matita'));
+  else tile.appendChild(uiIcon(doc, typeof options.icon === 'string' && options.icon !== '' ? options.icon : 'matita'));
   node.appendChild(tile);
   const words = doc.createElement('span');
   words.setAttribute('class', 'ui-add-words');
@@ -546,6 +550,26 @@ export function uiLoading(doc, options = {}) {
 }
 
 /**
+ * A grey placeholder bar where a value is still arriving (backlog:bd5e84545021,
+ * production 11/11: Oggi showed «un ospite da confermare» and stored labels
+ * for seconds, and they read as real data). It carries no text and is
+ * hidden from assistive tech; the screen announces the wait once, with
+ * its own status line. `width` is a CSS length («60%», «8em»).
+ *
+ * @param {any} doc
+ * @param {{ width?: unknown, block?: boolean }} [options]
+ */
+export function uiSkeleton(doc, options = {}) {
+  const bar = doc.createElement('span');
+  bar.setAttribute('class', options.block === true ? 'ui-skeleton ui-skeleton-block' : 'ui-skeleton');
+  bar.setAttribute('aria-hidden', 'true');
+  bar.setAttribute('data-skeleton', 'true');
+  const width = typeof options.width === 'string' && /^\d{1,3}(?:%|em|px)$/.test(options.width) ? options.width : '60%';
+  bar.setAttribute('style', `width: ${width}`);
+  return bar;
+}
+
+/**
  * @param {any} doc
  * @param {{ text?: unknown, error?: boolean }} [options]
  */
@@ -554,6 +578,97 @@ export function uiToast(doc, options = {}) {
   toast.setAttribute('class', `ui-toast${options.error ? ' error' : ''}`);
   toast.textContent = String(options.text ?? '');
   return toast;
+}
+
+/**
+ * Fill the shell toast (backlog:7b2203e69826): the message and, when given,
+ * one action button after it — «Annulla» after a Pipeline move, like
+ * Trello. The action runs once; `onDone` lets the shell hide the toast.
+ * Text only, never HTML.
+ * @param {any} doc @param {any} node
+ * @param {unknown} message
+ * @param {{ error?: boolean, action?: { label: string, run: () => void } | null, onDone?: () => void }} [options]
+ */
+export function paintToast(doc, node, message, options = {}) {
+  node.textContent = String(message ?? '');
+  if (node.classList && typeof node.classList.toggle === 'function') node.classList.toggle('error', Boolean(options.error));
+  const action = options.action;
+  if (!action || typeof action.run !== 'function' || typeof action.label !== 'string' || action.label === '') return;
+  const button = doc.createElement('button');
+  button.setAttribute('type', 'button');
+  button.setAttribute('class', 'ui-toast-action');
+  button.setAttribute('data-action', 'toast-action');
+  button.textContent = action.label;
+  let used = false;
+  button.addEventListener('click', () => {
+    if (used) return;
+    used = true;
+    if (typeof options.onDone === 'function') options.onDone();
+    action.run();
+  });
+  node.appendChild(el(doc, 'span', { text: ' ' }));
+  node.appendChild(button);
+}
+
+/**
+ * The shell toast's clock (backlog:2f72000d4a4d): a toast with an action
+ * («Annulla») stays at least `duration` (10 s by default), a plain one 3,2 s;
+ * while the pointer or the keyboard focus is on it, it never hides — after
+ * the person leaves it, it stays what is left of its minimum, and never less
+ * than 4 s more. The action closes it at once.
+ * @param {any} doc @param {any} node the shell's toast element
+ * @param {{ setTimer?: (fn: () => void, ms: number) => any, clearTimer?: (timer: any) => void }} [clock]
+ */
+export function createToastController(doc, node, clock = {}) {
+  const setTimer = clock.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = clock.clearTimer ?? ((timer) => clearTimeout(timer));
+  const now = clock.now ?? (() => Date.now());
+  let timer = null;
+  // Review Muse #809: pointer and keyboard hold the toast independently, and
+  // leaving it never cuts the promised minimum short.
+  let pointerHeld = false;
+  let focusHeld = false;
+  let deadline = 0;
+  const held = () => pointerHeld || focusHeld;
+  const hide = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    node.classList.add('hidden');
+  };
+  const arm = (ms) => {
+    if (timer !== null) clearTimer(timer);
+    timer = held() ? null : setTimer(hide, ms);
+  };
+  const hold = (kind) => () => {
+    if (kind === 'pointer') pointerHeld = true;
+    else focusHeld = true;
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
+  const release = (kind) => () => {
+    if (kind === 'pointer') pointerHeld = false;
+    else focusHeld = false;
+    if (held() || node.classList.contains('hidden')) return;
+    arm(Math.max(4000, deadline - now()));
+  };
+  node.addEventListener('mouseenter', hold('pointer'));
+  node.addEventListener('mouseleave', release('pointer'));
+  node.addEventListener('focusin', hold('focus'));
+  node.addEventListener('focusout', release('focus'));
+  return {
+    /**
+     * @param {unknown} message @param {boolean} [error]
+     * @param {{ action?: { label: string, run: () => void } | null, duration?: number }} [options]
+     */
+    show(message, error = false, options = {}) {
+      paintToast(doc, node, message, { error, action: options?.action ?? null, onDone: hide });
+      node.classList.remove('hidden');
+      const duration = Number.isFinite(options?.duration) ? Number(options.duration) : (options?.action ? 10000 : 3200);
+      deadline = now() + duration;
+      arm(duration);
+    },
+    hide,
+  };
 }
 
 /**
@@ -598,3 +713,86 @@ export function uiSecretField(doc, options = {}) {
   }
   return wrap;
 }
+
+/**
+ * Backlog cta-loading (Dan 11/11: «quando clicco … non c'è un loader sul
+ * CTA che fa capire che la sta salvando»): the one way a write button shows
+ * it is working. While `work` runs the button is disabled, marked
+ * aria-busy and reads `label` («Salvo…», «Invio…»). When it settles —
+ * success or error — the button gets back its own content (icons too) and
+ * its previous disabled state; a view that closes or re-renders simply
+ * drops it. A second click while busy runs nothing, so a double tap is one
+ * write. Errors are not caught: the caller's own try/catch keeps showing
+ * its message next to the command. A `work` that must leave the button off
+ * (an uncertain create that must not be blindly retried) returns
+ * UI_BUSY_LOCKED.
+ *
+ * @template T
+ * @param {any} button
+ * @param {string} label
+ * @param {() => Promise<T> | T} work
+ * @returns {Promise<T | undefined>}
+ */
+export async function uiBusy(button, label, work) {
+  if (!button) return work();
+  if (button.getAttribute('aria-busy') === 'true') return undefined;
+  const release = uiHold(button, label);
+  let result;
+  try {
+    result = await work();
+    return result;
+  } finally {
+    release(result === UI_BUSY_LOCKED);
+  }
+}
+
+/**
+ * The same waiting state for a write that starts mid-handler (after its
+ * own checks): returns the function that gives the button back — its own
+ * content, icons too, and its previous disabled state; `keepOff` leaves
+ * it off. A label the work wrote itself stays.
+ *
+ * @param {any} button
+ * @param {string} label
+ * @returns {(keepOff?: boolean) => void}
+ */
+export function uiHold(button, label) {
+  const wasDisabled = button.disabled === true;
+  const ownText = button.textContent;
+  const ownNodes = Array.from(button.childNodes ?? []);
+  const hadElements = ownNodes.some((node) => node && node.nodeType !== 3 && typeof node.tagName === 'string');
+  uiMarkBusy(button, label);
+  return (keepOff = false) => {
+    button.removeAttribute('aria-busy');
+    // A label the work wrote itself stays, on text and icon buttons alike.
+    if (button.textContent === label) {
+      if (hadElements) {
+        button.textContent = '';
+        for (const node of ownNodes) button.appendChild(node);
+      } else {
+        button.textContent = ownText;
+      }
+    }
+    button.disabled = wasDisabled || keepOff === true;
+    if (!button.disabled) button.removeAttribute('disabled');
+  };
+}
+
+/**
+ * The busy look alone, for views that re-render while a write is in
+ * flight and rebuild the button from their own state (the button uiBusy
+ * would restore no longer exists): off, aria-busy, «Salvo…».
+ *
+ * @param {any} button
+ * @param {string} label
+ */
+export function uiMarkBusy(button, label) {
+  button.disabled = true;
+  button.setAttribute('disabled', 'disabled');
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = label;
+  return button;
+}
+
+/** What a uiBusy `work` returns to keep its button off once it settles. */
+export const UI_BUSY_LOCKED = Symbol('ui-busy-locked');

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { POLICY, TERM, boot, project, signedOrder } from './helpers/contracts-project.js';
+import { POLICY, TERM, boot, project, signedOrder } from './helpers/contracts-project-cache.js';
 
 /**
  * Milestone 12 adversarial review: the regressions for the defects the review

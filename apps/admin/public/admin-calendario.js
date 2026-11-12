@@ -21,12 +21,12 @@
 
 import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
-import { isTodayInRome, romeDayKey, romeShortDay, romeTime } from './admin-oggi.js';
+import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { takePendingCustomerPick } from './admin-prefill.js';
+import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { isTechnicalMemberText, memberText, nameFromProfile } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -36,13 +36,40 @@ import { uiAddOption, uiButton, uiChannelChip, uiSearchField, uiSecondaryButton,
  */
 let openMenu = null;
 
+/**
+ * The open event popover (Dan 11/11: the event detail opens beside the
+ * event, like Google Calendar and Outlook): one live view at a time, so one
+ * slot is enough. Set while a popover is painted, cleared when it closes or
+ * the view routes away.
+ * @type {{ close: () => void } | null}
+ */
+let openEventPop = null;
+
 /** The document the single outside-click closer is installed on, if any. */
 let outsideInstalledOn = null;
 
 /**
- * Install once per document: a click outside the open menu closes it. The
- * containment walk uses parentNode, so the dependency-free fake DOM used by
- * the unit tests behaves like a real Element. Documents without
+ * True when the click landed in the event popover or on an event block.
+ * Matched by attribute, never by node identity: a click that repaints the
+ * view (the block toggling its selection, a popover button) leaves its
+ * target in the detached old tree, which still carries the same markers.
+ * @param {any} target
+ */
+function insideEventPop(target) {
+  let node = target ?? null;
+  while (node) {
+    const read = typeof node.getAttribute === 'function' ? (name) => node.getAttribute(name) : () => null;
+    if (read('data-role') === 'event-detail' || read('data-event-id') !== null) return true;
+    node = node.parentNode ?? null;
+  }
+  return false;
+}
+
+/**
+ * Install once per document: a click outside the open menu closes it, and
+ * a click outside the event popover (or Esc anywhere) closes the popover.
+ * The containment walk uses parentNode, so the dependency-free fake DOM
+ * used by the unit tests behaves like a real Element. Documents without
  * addEventListener (the fake document) skip the closer; the toggle button,
  * the voices and Escape still work there.
  * @param {any} doc
@@ -51,6 +78,7 @@ function installOutsideCloser(doc) {
   if (outsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
   outsideInstalledOn = doc;
   doc.addEventListener('click', (event) => {
+    if (openEventPop && !insideEventPop(event?.target)) openEventPop.close({ restoreFocus: false });
     const current = openMenu;
     if (!current) return;
     let node = event?.target ?? null;
@@ -60,6 +88,42 @@ function installOutsideCloser(doc) {
     }
     current.close();
   });
+  doc.addEventListener('keydown', (event) => {
+    if ((event?.key === 'Escape' || event?.key === 'Esc') && openEventPop) {
+      // Focus lost to a repaint (on the page body) goes back to the event;
+      // focus the operator put in another control stays there.
+      const active = doc.activeElement ?? null;
+      const lost = active === null || active === doc.body || insideEventPop(active);
+      openEventPop.close({ restoreFocus: lost });
+    }
+  });
+}
+
+/**
+ * Where the event popover sits (Dan 11/11): right of the event, or left of
+ * it when the right side has no room, and never past the screen edges.
+ * Rects are viewport coordinates (getBoundingClientRect); the answer is
+ * relative to `box`, the positioned container the popover is absolute in.
+ * Pure, so the placement is unit-tested without a browser.
+ * @param {{ anchor: {left: number, right: number, top: number}, box: {left: number, top: number},
+ *   width: number, height: number, viewportWidth: number, viewportHeight: number, gap?: number, margin?: number }} input
+ * @returns {{ left: number, top: number, side: 'right' | 'left' }}
+ */
+export function eventPopoverPlacement(input) {
+  const gap = input.gap ?? 12;
+  const margin = input.margin ?? 8;
+  const { anchor, box, width, height, viewportWidth, viewportHeight } = input;
+  const rightStart = anchor.right + gap;
+  const leftStart = anchor.left - gap - width;
+  const fitsRight = rightStart + width <= viewportWidth - margin;
+  const fitsLeft = leftStart >= margin;
+  // Neither side fits whole: the side with more room, clamped on screen.
+  const side = fitsRight || (!fitsLeft && viewportWidth - anchor.right >= anchor.left) ? 'right' : 'left';
+  const maxLeft = Math.max(margin, viewportWidth - margin - width);
+  const left = Math.min(Math.max(side === 'right' ? rightStart : leftStart, margin), maxLeft);
+  const maxTop = Math.max(margin, viewportHeight - margin - height);
+  const top = Math.min(Math.max(anchor.top, margin), maxTop);
+  return { left: Math.round(left - box.left), top: Math.round(top - box.top), side };
 }
 
 /**
@@ -174,13 +238,23 @@ export function displayKeys(weekKeys) {
   return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
 }
 
-/** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
+/**
+ * Grid geometry, 09:00 (inclusive) to 18:00. backlog:7587307d5215: the day
+ * columns are drawn in quarter-hour rows of a FIXED height (CSS), so every
+ * hour is the same height in every column and a block covers exactly its
+ * time — rows that grew with their content drew 11:00–13:00 between about
+ * 11:25 and 12:35. A plain click still picks half an hour.
+ */
 export const GRID_START_MINUTES = 9 * 60;
 /** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
 const WEEK_PROFILE_READS = 40;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
-export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
+/** One drawn row, and the step a drag, a stretch or a pick snaps to. */
+export const GRID_ROW_MINUTES = 15;
+export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_ROW_MINUTES;
+/** The page grid keeps half-hour rows for the hour labels beside the columns. */
+const GRID_HALF_HOURS = (GRID_END_MINUTES - GRID_START_MINUTES) / 30;
 
 /** Column header `<ddd> <n>` ("lun 19"), null when unparsable. */
 export function dayHead(key) {
@@ -274,68 +348,20 @@ export function teamRows(named, hidden) {
 }
 
 /**
- * Non-empty trimmed text, or null. Display names and mailboxes travel
- * through here, so a blank or non-string value never becomes a person.
- * @param {unknown} value
- */
-function cleanPersonText(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  return text === '' ? null : text;
-}
-
-/** Lower-cased person key for grouping, or null when there is none. @param {unknown} value */
-function personKeyOf(value) {
-  const text = cleanPersonText(value);
-  return text === null ? null : text.toLowerCase();
-}
-
-/**
- * backlog:810ed0bf — the control-plane same-person key of a roster row
- * (`operatorAccountId`, one per human), or null when the roster carries
- * none. The pilot forwards it beside the subject when it knows it, so the
- * Team card unites one member's identities (broker, github, google) even
- * when they carry different mailboxes. Only this documented key merges:
- * generic `personKey`/`personId`/`userId` fields have no producer contract
- * in this repo, and two unrelated humans sharing one would merge into a
- * single unbookable row — so they never merge here.
- * @param {any} member
- */
-function rosterPersonId(member) {
-  if (!member || typeof member !== 'object') return null;
-  const value = member.operatorAccountId;
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
- * Member creation instant (epoch ms), or null when the roster carries none.
- * The roster's own order is the fallback: it lists members oldest first.
- * @param {any} member
- */
-function memberBornAt(member) {
-  const raw = member?.createdAt ?? member?.created_at ?? null;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const ms = Date.parse(raw);
-    return Number.isNaN(ms) ? null : ms;
-  }
-  return null;
-}
-
-/**
  * backlog:df55cf25 — one Team row per PERSON, never a technical id on
  * screen. The roster (`GET /api/spine/memberships`, enriched by the pilot
  * with the control-plane displayName/email beside each opaque subject) names
  * the human behind every subject, and one human can hold several subjects
- * (`github|…`, `google|…`, mailbox): subjects merge ONLY on the shared
- * mailbox (unique per person), so Dan is one row called Dan. A shared
+ * (`github|…`, `google|…`, mailbox): subjects merge through the shared
+ * `teamPeople` (admin-labels.js) — the person key first, then mailbox AND
+ * name together, so Dan is one row called Dan. A mailbox alone or a shared
  * display name alone never merges — two email-less homonyms are two humans,
  * two rows with distinct booking identities and ordinal labels («Rossi (1)»,
  * «Rossi (2)» in member-creation order, never a technical id). A group
- * with no roster name and no mailbox paints the
- * operator's own typed words, unless they look like a technical subject
- * (a pipe id never paints anywhere); such a row falls back to the generic
- * «Membro del team». No role line: the E2E takes the «Proprietario» chip out
+ * with no roster name and no mailbox paints the teamPeople label (plain
+ * words for a stored id, the operator's own typed words, a pipe id never
+ * paints anywhere); such a row falls back to the generic «Membro del
+ * team». No role line: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
  * accessi. Tint stays hashed on the stable primary subject and initials
  * follow the painted name, so a block and its toggle always match.
@@ -347,50 +373,25 @@ export function personRows(named, hidden, members) {
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
-  /** @type {Array<{subjects: Array<string>, displayName: string|null, email: string|null, born: number|null, bornIndex: number}>} */
-  const groups = [];
+  // backlog:3ce220e60c33 (famiglia F5): one person per row through the
+  // shared teamPeople (admin-labels.js) — person key first, then mailbox AND
+  // name; a mailbox alone or a name alone never merges (backlog:f4a1f25048c8,
+  // the Spazi e accessi rule of agent-crm#644/#742).
+  const groups = teamPeople(roster).map((person, index) => ({
+    subjects: [...person.subjects], displayName: person.name, email: person.email, label: person.label,
+    born: person.born, bornIndex: index,
+  }));
   const bySubject = new Map();
-  const byEmail = new Map();
-  const byPerson = new Map();
+  for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
   const groupFor = (subject) => bySubject.get(subject) ?? null;
-  for (const member of roster) {
-    const subject = member.subject;
-    if (bySubject.has(subject)) continue;
-    const personId = rosterPersonId(member);
-    // The shared member filter (admin-labels.js, production 10/11): a broker
-    // mailbox or a provider id never names or merges a person.
-    const email = personKeyOf(memberText(member.email));
-    const display = memberText(member.displayName);
-    // One human shares one mailbox — or one control-plane person key when
-    // the roster carries it (backlog:810ed0bf): either merges two subjects
-    // into one person row. A shared display name alone never merges — two
-    // email-less homonyms are two humans, two rows.
-    let group = (personId !== null && byPerson.get(personId))
-      || (email !== null && byEmail.get(email))
-      || null;
-    if (!group) {
-      group = { subjects: [], displayName: null, email: null, personId: null, born: null, bornIndex: groups.length };
-      groups.push(group);
-    }
-    group.subjects.push(subject);
-    bySubject.set(subject, group);
-    const born = memberBornAt(member);
-    if (born !== null) group.born = group.born === null ? born : Math.min(group.born, born);
-    if (personId !== null && group.personId === null) {
-      group.personId = personId;
-      byPerson.set(personId, group);
-    }
-    if (email !== null && group.email === null) {
-      group.email = member.email.trim();
-      byEmail.set(email, group);
-    }
-    if (group.displayName === null && display !== null) group.displayName = display;
-  }
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
     if (!groupFor(id)) {
-      const group = { subjects: [id], displayName: null, email: null };
+      const group = {
+        subjects: [id], displayName: null, email: null, label: subjectText(id) ?? 'Membro del team',
+        born: null, bornIndex: groups.length,
+      };
       groups.push(group);
       bySubject.set(id, group);
     }
@@ -409,7 +410,10 @@ export function personRows(named, hidden, members) {
     const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
     const name = group.displayName ?? group.email;
     const listed = group.subjects.some((subject) => names.includes(subject));
-    const base = name ?? (listed && !isTechnicalMemberText(primary) ? primary : 'Membro del team');
+    // backlog:e52c5e0dd49f (review Muse #750 giro 2): a row without a name
+    // paints the teamPeople label (name, mailbox, plain words, else the
+    // generic fallback) — never the raw stored id, so no slug leaks.
+    const base = name ?? group.label;
     return { group, primary, name, listed, base };
   });
   // Same base label on two humans is unreadable: the operator could not tell
@@ -470,9 +474,9 @@ export function resolveMemberName(subject, named, members) {
   // show, so every line names the same human.
   if (group && group.name) return group.label;
   // A readable nickname the phrase or slot named paints back; a pipe id is
-  // a technical subject and never paints — the caller omits it instead.
-  if (!isTechnicalMemberText(subject)) return subject;
-  return null;
+  // a technical subject and never paints — the caller omits it instead. A
+  // stored slug reads as words, never the raw id (backlog:e52c5e0dd49f).
+  return subjectText(subject);
 }
 
 /**
@@ -508,7 +512,7 @@ export function romeMinutes(value) {
 }
 
 /**
- * Half-hour grid rows (1-based, inside the day column) for an event: start
+ * Quarter-hour grid rows (1-based, inside the day column) for an event: start
  * row and span, clamped into the 09:00–18:00 body so an out-of-hours booking
  * still paints at the edge with its exact time in the label — never dropped.
  * @param {unknown} startsAt @param {unknown} endsAt
@@ -520,9 +524,9 @@ export function gridRowsFor(startsAt, endsAt) {
     return { row: 1, span: 1 };
   }
   const clampedStart = Math.min(Math.max(startMin, GRID_START_MINUTES), GRID_END_MINUTES);
-  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_SLOT_MINUTES), GRID_END_MINUTES);
-  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES), GRID_ROWS - 1) + 1;
-  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_SLOT_MINUTES)) / GRID_SLOT_MINUTES));
+  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_ROW_MINUTES), GRID_END_MINUTES);
+  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_ROW_MINUTES), GRID_ROWS - 1) + 1;
+  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_ROW_MINUTES)) / GRID_ROW_MINUTES));
   return { row, span: Math.min(span, GRID_ROWS - row + 1) };
 }
 
@@ -547,6 +551,13 @@ export function slotInGrid(startsAt, endsAt) {
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * backlog:a332dcd070ca — how long a move still queued on the shared /bo
+ * waits before the week is read again, so the grid shows where the worker
+ * actually put it.
+ */
+export const QUEUED_MOVE_REREAD_MS = 4000;
 /**
  * backlog:3771ac637027 — slot Conferma refusals the manual form fixes. They
  * name the form by its title, never «qui sotto»: a slot Conferma only
@@ -571,11 +582,11 @@ export function draftMinutes(draft) {
   const to = draft?.endsAt ? Date.parse(draft.endsAt) : NaN;
   const pair = Math.round((to - from) / 60000);
   const stated = draft?.durationMinutes;
-  const statedOk = Number.isSafeInteger(stated) && [15, 30, 45, 60, 90, 120].includes(stated);
+  const statedOk = Number.isSafeInteger(stated) && BOOKING_MINUTES.includes(stated);
   // A day-only draft (midnight start, production 07/11) carries an end the
   // model padded, not one the sentence stated: the stated minutes win.
   if (statedOk && draftDayOnly(draft)) return stated;
-  if ([15, 30, 45, 60, 90, 120].includes(pair)) return pair;
+  if (BOOKING_MINUTES.includes(pair)) return pair;
   if (statedOk) return stated;
   return 30;
 }
@@ -766,6 +777,34 @@ export function catalogBookingServices(payload) {
 }
 
 /**
+ * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
+ * the name and the price as Italian money («Lezione di prova · 1,00 €»,
+ * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. A price that is not whole cents, or not in euros, reads as the
+ * name alone.
+ * @param {{name: string, priceCents: number, currency?: string}} entry
+ */
+export function serviceOptionLabel(entry) {
+  const cents = entry?.priceCents;
+  const currency = entry?.currency === undefined ? 'EUR' : entry.currency;
+  // The menu books euros only (catalogBookingServices keeps EUR singles):
+  // any other or unknown currency reads as the name alone, never a throw.
+  if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
+  return `${entry.name} · ${italianEuros(cents)}`;
+}
+
+/**
+ * Italian money with the grouping pinned (review #813): «1.080,00 €», the
+ * same thousands dot as the rest of the /bo, never left to the runtime's
+ * locale data.
+ * @param {number} cents
+ */
+function italianEuros(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
+}
+
+/**
  * backlog:810ed0bf — minor units to the price text the manual form paints
  * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
  * Null when the amount is no integer of cents.
@@ -825,7 +864,67 @@ export function calendarRefusalText(error) {
   if (code === 'LLM_DAILY_CAP_EXCEEDED') {
     return 'Hai raggiunto il tetto di spesa AI di oggi: puoi compilare l’appuntamento a mano, o riprovare domani.';
   }
+  // backlog:3d0fbe7dc8d1 — a refused move keeps its sentence beside the
+  // event: the slot is held, the reminder would strand, or the booking is
+  // closed and moves nowhere. The event stays where it was.
+  if (code === 'APPOINTMENTS_OVERLAP') {
+    return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
+  }
+  if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
+    return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
+  }
+  if (code === 'APPOINTMENTS_INVALID_STATE') {
+    return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
+  }
   return null;
+}
+
+/**
+ * The Italian sentence for a refused cancellation (backlog:5346ab531538),
+ * or null when the shared write-error text says it better.
+ * @param {any} error
+ */
+export function cancelRefusalText(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (code === 'APPOINTMENTS_INVALID_STATE') {
+    return 'Questo appuntamento è già chiuso (svolto o cliente non presentato): non si può più annullare.';
+  }
+  if (code === 'VALIDATION_ERROR' || error?.status === 400) {
+    return 'Il motivo è troppo lungo o contiene caratteri non validi: accorcialo e riprova.';
+  }
+  return null;
+}
+
+/**
+ * The reason sent with a cancellation (backlog:5346ab531538): the
+ * operator's own words when given, else the plain origin of the cancel.
+ * One line, at most 300 characters, like the lifecycle requires.
+ * @param {unknown} typed
+ */
+export function cancelReasonFrom(typed) {
+  const text = String(typed ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return text === '' ? 'Annullato dal calendario' : text.slice(0, 300);
+}
+
+/**
+ * backlog:5346ab531538 — a cancelled booking: it leaves the calendar grid
+ * (like Google Calendar) and stays in the customer's history.
+ * @param {any} row
+ */
+export function isCancelledRow(row) {
+  return String(row?.status ?? '') === 'cancelled';
+}
+
+/**
+ * Whether a booking row still moves: only held states (`booked`,
+ * `confirmed`) drag. Terminal states never regress — a repeat visit is a
+ * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
+ * are the ones «Annulla appuntamento» offers to cancel.
+ * @param {any} row
+ */
+export function isMovableAppointment(row) {
+  const status = String(row?.status ?? 'booked');
+  return status === 'booked' || status === 'confirmed';
 }
 
 /**
@@ -1027,9 +1126,11 @@ export function weekCovers(week, searchIds) {
  * Overlap lanes per day column: blocks sharing grid rows split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
- * the column lane count. Lanes follow the PAINTED half-hour rows, not the
- * exact minutes (backlog:5fbebe8559e9): a 10:00–10:45 booking and a
- * 10:45–11:30 proposal both cover the 10:30 row, so they sit side by side.
+ * the column lane count. Lanes follow the PAINTED quarter-hour rows, not the
+ * exact minutes (backlog:5fbebe8559e9, backlog:7587307d5215): a 10:00–10:20
+ * booking covers the 10:15 row, so a 10:15–11:00 proposal sits beside it,
+ * while 10:00–10:45 and 10:45–11:30 touch without sharing a row and stack
+ * in one lane.
  * Events and «✦ Proposta» ghosts share one pass, so a ghost never covers a
  * booking or another ghost.
  * @param {Array<any>} rows
@@ -1079,8 +1180,27 @@ export function createCalendarioView(deps) {
   /** Guards the phrase search and its read-back: a newer search or a route away stops the old one. */
   let phraseSeq = 0;
   let renderToken = 0;
+  /**
+   * Bumps only when the operator leaves the Calendario (invalidate), never
+   * on a week reload: a write in flight survives «Mostra settimana» and
+   * still lands its outcome (review #781).
+   */
+  let viewToken = 0;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
+  /**
+   * The event drag in flight (backlog:3d0fbe7dc8d1): `{ mode, id, startMin,
+   * endMin, grabOffset, dayKey, targetDay, targetStart, targetEnd, moved,
+   * originCol }`, or null.
+   * Shared by every day column: the press starts on one, the release may
+   * land on another. A full renderAll mid-drag never happens — the ghost is
+   * painted directly — so no token guards it; the commit clears it first.
+   */
+  let eventDrag = null;
+  /** A drag that moved eats the click that follows it: the event keeps its selection. */
+  let suppressEventClick = false;
+  /** A queued move's week reread that waits for the move in flight (review #811). */
+  let rereadAfterMove = false;
   /**
    * Drops a pending read (backlog:607f33ee): the view paints into the
    * shell's shared mount, so a late week response must not repaint a
@@ -1089,6 +1209,7 @@ export function createCalendarioView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    viewToken += 1;
     phraseSeq += 1;
     // The search in flight is dropped with the route (review #664): the
     // card comes back idle, never wedged on «Sto cercando…».
@@ -1098,7 +1219,65 @@ export function createCalendarioView(deps) {
     memberToken += 1;
     // A search pending or in flight dies with the route, like the week.
     cancelCustomerSearch();
+    // The popover closer never repaints a screen the operator left.
+    if (openEventPop === eventPopHandle) openEventPop = null;
     trackRetainedDraft();
+  }
+
+  /** Folds the popover's own steps (move form, cancel question) back. */
+  function resetPopSteps() {
+    state.moveOpen = false;
+    state.cancelAsk = false;
+    state.cancelNote = '';
+    state.cancelReason = '';
+  }
+
+  /** This view's popover handle, registered while its popover is painted. */
+  const eventPopHandle = { close: (/** @type {{restoreFocus?: boolean}} */ options = {}) => closeEventPop(options) };
+  /** Painted event blocks by id, so focus returns to the event on close. @type {Map<string, any>} */
+  const paintedEvents = new Map();
+  /** The painted event popover, or null. @type {any} */
+  let paintedPop = null;
+
+  /**
+   * Closes the event popover (×, Esc, a click outside). × and Esc put focus
+   * back on the event it belonged to; a click outside leaves focus where the
+   * operator clicked (a field, a toggle). A view no longer mounted only
+   * drops the handle: the shared mount may already hold another screen.
+   * @param {{restoreFocus?: boolean}} [options]
+   */
+  function closeEventPop({ restoreFocus = true } = {}) {
+    if (openEventPop === eventPopHandle) openEventPop = null;
+    if (state.selectedId === null) return;
+    const id = state.selectedId;
+    state.selectedId = null;
+    resetPopSteps();
+    state.moveNote = '';
+    if (mount.querySelector('.cal-wrap') === null) return;
+    // A light dismissal, never a full repaint (review #773): the click that
+    // closes the popover may have just changed another control — the
+    // «Nuovo appuntamento» menu it opened — and a repaint would put that
+    // control back closed. Only the popover leaves and the block drops its
+    // selected mark.
+    detachNode(paintedPop);
+    paintedPop = null;
+    const block = paintedEvents.get(id);
+    if (block && typeof block.setAttribute === 'function') {
+      const classes = String(block.getAttribute?.('class') ?? '').split(/\s+/).filter((name) => name !== '' && name !== 'cal-selected');
+      block.setAttribute('class', classes.join(' '));
+      block.setAttribute('aria-pressed', 'false');
+    }
+    if (restoreFocus && block && typeof block.focus === 'function') block.focus();
+  }
+
+  /** True when keyboard focus sits inside the painted event popover. */
+  function popHasFocus() {
+    let node = doc?.activeElement ?? null;
+    while (node) {
+      if (node === paintedPop) return true;
+      node = node.parentNode ?? null;
+    }
+    return false;
   }
 
   /**
@@ -1114,8 +1293,11 @@ export function createCalendarioView(deps) {
    */
   function trackRetainedDraft() {
     const typedFilter = state.autoTeam === true ? '' : (state.memberFilter ?? '');
-    const manualText = Object.values(state.manual ?? {})
-      .some((value) => String(value ?? '') !== '');
+    // Verifica 12/11: «Hai del testo non salvato» answered even with
+    // nothing typed — the menu default and its price fill the form on
+    // their own. Only what the operator typed counts.
+    const manualText = [...state.manualTyped]
+      .some((name) => String(state.manual?.[name] ?? '') !== '');
     markUnsaved('calendario-draft',
       (state.phrase ?? '') !== ''
       || String(typedFilter) !== ''
@@ -1133,7 +1315,12 @@ export function createCalendarioView(deps) {
     }
   };
 
+  /** The booking buttons of the current paint, by key (cleared on every repaint). */
+  /** @type {Map<string, Array<{ button: any, label: string }>>} */
+  const bookingButtons = new Map();
   const state = {
+    /** @type {string | null} cta-loading: the booking button whose write is in flight */
+    bookingBusy: null,
     memberFilter: '',
     /** True while the filter holds the roster auto-fill nobody edited yet:
      * a later roster refusal clears it back to the honest prompt instead of
@@ -1153,12 +1340,36 @@ export function createCalendarioView(deps) {
     weekKeys: openingWeekKeys(clock()),
     /** Selected event id: a block click opens the detail card (fetta 4). @type {string|null} */
     selectedId: null,
+    /** An event another screen asked to open (Oggi «Fonti»): selected once its week loads. @type {string|null} */
+    pendingEventId: null,
+    /** Its team member: loaded and shown for that selection whatever the filters say (review Muse #792). @type {string|null} */
+    pendingEventMember: null,
+    /** Latest move outcome beside the selected event, Italian (backlog:3d0fbe7dc8d1). */
+    moveNote: '',
+    /** True while a reschedule write is in flight: no second move meanwhile. */
+    moveBusy: false,
+    /** backlog:7587307d5215 — the roster read in flight: Team shows its skeleton, never «nessuna persona». */
+    membersLoading: false,
+    /** backlog:7587307d5215 — the first week read in flight: the grid shows its skeleton. */
+    weekLoading: false,
+    /** The «Modifica o sposta» form shows in the event popover (Dan 11/11). */
+    moveOpen: false,
+    /** backlog:5346ab531538 — the popover asks «Annullare l'appuntamento?». */
+    cancelAsk: false,
+    /** True while the cancellation write is in flight. */
+    cancelBusy: false,
+    /** The cancellation refusal, in Italian, beside the question. */
+    cancelNote: '',
+    /** The optional reason the operator typed, kept across repaints. */
+    cancelReason: '',
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
     profiles: {},
     /** Catalog product names by lowercase listino key; undefined until read, an empty Map when unreadable. @type {Map<string, string> | null | undefined} */
     services: undefined,
+    /** Review #805: where the service menu came from — the server's own list ('served'), a served list that failed ('failed'), or the catalog rule ('fallback'). @type {'served' | 'failed' | 'fallback' | null} */
+    servicesMode: null,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -1195,6 +1406,8 @@ export function createCalendarioView(deps) {
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
     manual: null,
+    /** Verifica 12/11: the manual fields the operator typed in — prefilled values (a menu default, its price, a grid selection) are nobody's unsaved text. @type {Set<string>} */
+    manualTyped: new Set(),
     /** The manual form shows once asked for, or once a draft or an edit fills it. */
     manualOpen: false,
     /** The member filter row, painted inside the Team card. @type {any} */
@@ -1310,6 +1523,10 @@ export function createCalendarioView(deps) {
       state.weekError = 'Settimana non valida.';
       return;
     }
+    // backlog:7587307d5215: the first read paints the skeleton at once,
+    // never an empty week that reads as «no appointments».
+    state.weekLoading = true;
+    if (!state.week && mount.querySelector('.cal-wrap') !== null) renderAll();
     try {
       // One row per person, every identity of each listed person: the roster
       // may name sibling subjects after the filter was set (or the filter
@@ -1320,6 +1537,9 @@ export function createCalendarioView(deps) {
         .filter((row) => row.listed)
         .flatMap((row) => row.ids);
       const expanded = [...members, ...listedIds.filter((id) => !members.includes(id))];
+      // An event Oggi asked for loads with its member even when the typed
+      // filter or the roster leaves them out (review Muse #792).
+      if (state.pendingEventMember !== null && !expanded.includes(state.pendingEventMember)) expanded.push(state.pendingEventMember);
       const week = await client.request(
         `/api/appointments/team-week?teamMemberIds=${encodeURIComponent(expanded.join(','))}`
         + `&from=${encodeURIComponent(window.from)}&to=${encodeURIComponent(window.to)}`,
@@ -1328,6 +1548,18 @@ export function createCalendarioView(deps) {
       state.week = week;
       state.weekError = null;
       state.unavailable = false;
+      // backlog:bd5e84545021: the event Oggi asked for opens its detail
+      // card as soon as its week is in; one try, a stale id selects nothing.
+      if (state.pendingEventId !== null) {
+        state.selectedId = state.pendingEventId;
+        state.pendingEventId = null;
+        state.pendingEventMember = null;
+        const asked = selectedRow();
+        if (asked === null) state.selectedId = null;
+        // The explicit request beats a retained «hide this person»
+        // (review Muse #792): the asked event's member shows again.
+        else state.hiddenMembers = state.hiddenMembers.filter((id) => id !== String(asked.teamMemberId ?? ''));
+      }
       // A reloaded week drops deselections nobody named anymore: toggling a
       // ghost would filter nothing and confuse the next render. A hidden
       // sibling of a listed person stays hidden with its row — pruning to
@@ -1350,6 +1582,7 @@ export function createCalendarioView(deps) {
         });
       }
     }
+    state.weekLoading = false;
     // Same mount guard as the roster and profile reads below: a late week
     // answer never paints over another screen sharing the mount
     // (backlog:607f33ee).
@@ -1397,46 +1630,92 @@ export function createCalendarioView(deps) {
    * the raw name and was refused). Resolves at once once the catalog is read.
    */
   function ensureServices() {
-    if (state.services instanceof Map) return Promise.resolve();
+    // Review #805 giro 4 P1: a failed served list is never cached (state
+    // holds no Map for it), so the next submit re-reads instead of
+    // short-circuiting on the failure until reload or space switch.
+    if (state.services instanceof Map && state.servicesMode !== 'failed') return Promise.resolve();
     if (servicesRead === null) {
       servicesRead = loadServices().finally(() => { servicesRead = null; });
     }
     return servicesRead;
   }
 
+  /**
+   * Review #805: with a served list the booking names one of its services;
+   * an empty service (the worker would pick a default) or a failed list
+   * books nothing.
+   * @param {unknown} serviceKey
+   */
+  function servicesBlockBooking(serviceKey) {
+    if (state.servicesMode === 'failed') return true;
+    if (state.servicesMode !== 'served') return false;
+    const key = typeof serviceKey === 'string' ? serviceKey : '';
+    return !(Array.isArray(state.catalogServices) && state.catalogServices.some((entry) => entry.key === key));
+  }
+
   /** Catalog product names for the block titles; fail-soft to the readable key. */
   async function loadServices() {
+    // Review #805 giro 2: the list belongs to the space it was asked in; a
+    // space switch while it loads reads its own (render resets the cache).
+    const askedSpace = readSpace();
     /** @type {Map<string, string>} */
     const names = new Map();
     /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
     let bookable = [];
+    // P1 11/11: the menu is the server's own bookable list when it serves
+    // one (the pilot), so a Conferma never sends a key the worker refuses.
+    // Review #805: a served list is the whole truth — its names alone map a
+    // typed service and title the week, and a served list that failed (or
+    // is empty) blocks the service field instead of reopening free text.
+    // The catalog is read only when no list is served (review #805 P3).
+    /** @type {'served' | 'failed' | 'fallback'} */
+    let mode = 'fallback';
     try {
-      const answer = await client.request('/api/catalog/products?limit=200');
-      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
-        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
-        const name = typeof product?.name === 'string' ? product.name.trim() : '';
-        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+      const read = await readBookingServicesDetailed(client);
+      bookable = [...read.services];
+      if (read.served) {
+        mode = read.failed ? 'failed' : 'served';
+        if (read.failed) {
+          console.warn(
+            'bo-calendario services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${askedSpace}`,
+          );
+        }
+      } else {
+        // The framework on its own: catalog product names title the week.
+        for (const product of Array.isArray(read.catalog?.products) ? read.catalog.products : []) {
+          const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+          const name = typeof product?.name === 'string' ? product.name.trim() : '';
+          if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+        }
       }
-      // The manual form's service menu (backlog:810ed0bf): the same
-      // singles rule the booking worker applies, read once with the names.
-      bookable = catalogBookingServices(answer);
+      for (const entry of bookable) names.set(entry.key, entry.name);
     } catch (error) {
-      // No catalog in this project (or a stale bundle): the readable key
-      // stays. Anything else is unexpected and logged without the message.
+      bookable = [];
+      // No served list and no catalog in this project (or a stale bundle):
+      // the readable key stays. Anything else is logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
           'bo-calendario catalog unreadable:',
           error instanceof Error ? error.name : (error?.code ?? 'unknown'),
-          `spaceId=${readSpace()}`,
+          `spaceId=${askedSpace}`,
         );
       }
     }
-    state.services = names;
+    if (readSpace() !== askedSpace) return;
+    // Review #805 giro 4 P1: a failed served list is not cached as an
+    // (empty) Map — state.services stays unset, so the next submit retries
+    // the read (see ensureServices) instead of blocking until reload.
+    state.services = mode === 'failed' ? undefined : names;
     state.catalogServices = bookable;
+    state.servicesMode = mode;
     // The service menu paints from this read: repaint once it settles while
     // the calendar is still mounted (same guard as the roster read).
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
+
 
   /**
    * The organization team behind the Team card (specs/calendario.md C10):
@@ -1476,9 +1755,11 @@ export function createCalendarioView(deps) {
 
   async function loadMembers() {
     const token = ++memberToken;
+    state.membersLoading = true;
     try {
       const answer = await client.request('/api/spine/memberships');
       if (token !== memberToken) return;
+      state.membersLoading = false;
       state.members = Array.isArray(answer?.items) ? answer.items : [];
       // The roster is the team: with nobody named yet, list the whole
       // space and load its week at once — no typing (backlog:0533362e8efe).
@@ -1495,6 +1776,7 @@ export function createCalendarioView(deps) {
       }
     } catch (error) {
       if (token !== memberToken) return;
+      state.membersLoading = false;
       // Fail-soft UI, but a failure nobody can diagnose blocks review
       // (AGENTS.md): record the sanitized cause with the active space —
       // never the message or personal data, like the profile read below.
@@ -1531,7 +1813,7 @@ export function createCalendarioView(deps) {
     if (state.selectedId === null || !state.week) return null;
     for (const group of state.week?.members ?? []) {
       for (const row of group?.appointments ?? []) {
-        if (row && String(row.id ?? '') === state.selectedId) {
+        if (row && String(row.id ?? '') === state.selectedId && !isCancelledRow(row)) {
           return { ...row, teamMemberId: group.teamMemberId };
         }
       }
@@ -1600,11 +1882,16 @@ export function createCalendarioView(deps) {
 
   function renderAll() {
     const kept = focusedField();
+    // A late repaint (customer name, week) must not drop the operator out
+    // of the popover: Esc and Tab keep working where they were.
+    const keepPop = paintedPop !== null && popHasFocus();
     renderView();
     restoreField(kept);
+    if (keepPop && kept === null && paintedPop && typeof paintedPop.focus === 'function') paintedPop.focus();
   }
 
   function renderView() {
+    bookingButtons.clear();
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -1619,42 +1906,83 @@ export function createCalendarioView(deps) {
       trackRetainedDraft();
       return;
     }
-    // BO-F6-11 fetta 4 (specs/calendario.md C6): the detail card paints above
-    // the grid while a block stays selected. Fetta 6 seats the Team toggles
-    // between the detail and the grid they filter; fetta 7 adds the honest
-    // booking card at the rail end (its final left-column home lands with
-    // the responsive pass, fetta 8).
     // Supervisor design pass: the prototype's two columns — a 300 px rail
-    // (selected block, phrase, team, manual form when asked) beside the grid.
+    // (phrase, team, manual form when asked, online booking) beside the
+    // grid. The selected block's detail is a popover over the grid (Dan
+    // 11/11), no longer a rail card.
     const layout = el(doc, 'div', { className: 'cal-layout' });
     const rail = el(doc, 'div', { className: 'cal-rail' });
     const main = el(doc, 'div', { className: 'cal-main' });
+    paintedEvents.clear();
+    paintedPop = null;
     const selected = selectedRow();
-    if (selected) rail.appendChild(renderDetailCard(selected));
-    else state.selectedId = null;
+    if (!selected) {
+      state.selectedId = null;
+      resetPopSteps();
+    }
     rail.appendChild(renderAi());
     rail.appendChild(renderTeam());
-    if (!state.selection) rail.appendChild(renderManual());
     rail.appendChild(renderBooking());
     main.appendChild(renderWeek());
-    let pop = null;
-    if (state.selection) {
-      // The form opens beside the chosen block, like a calendar app; × or
-      // Esc closes it and the rail form comes back.
-      pop = el(doc, 'div', { className: 'cal-pop', attrs: { role: 'dialog', 'aria-label': 'Nuovo appuntamento' } });
-      const close = el(doc, 'button', { className: 'cal-pop-close', text: '×', attrs: { type: 'button', 'aria-label': 'Chiudi' } });
-      close.addEventListener('click', () => closeSlot());
-      pop.appendChild(close);
-      pop.appendChild(renderManual());
-      pop.addEventListener?.('keydown', (event) => { if (event.key === 'Escape') closeSlot(); });
-      main.appendChild(pop);
+    // Dan 11/11: the event detail opens beside the event, like Google
+    // Calendar and Outlook — never only in the rail, which keeps the
+    // phrase, the team and the forms.
+    if (selected) {
+      paintedPop = renderEventPopover(selected);
+      main.appendChild(paintedPop);
+      openEventPop = eventPopHandle;
+    } else if (openEventPop === eventPopHandle) {
+      openEventPop = null;
     }
+    let pop = null;
+    // backlog:6e6750ff8163 — the «Nuovo appuntamento» form lives in one
+    // place only: this popover over the grid. A slot picked on the grid
+    // seats it beside the pick; «Compila manualmente», «+ Prenota», «Compila
+    // a mano» and a phrase draft open it at the top of the grid. The rail
+    // never holds a second copy. × or Esc closes it and empties it.
+    const formOpen = Boolean(state.selection || state.manualOpen || state.draftFill);
+    // Painted closed too (hidden), like the prototype: a phrase draft or a
+    // proposal Conferma always reads one live form — never a second copy.
+    const formPop = el(doc, 'div', {
+      className: `cal-pop cal-form-pop${formOpen ? '' : ' hidden'}`,
+      attrs: { role: 'dialog', 'aria-label': 'Nuovo appuntamento', 'data-role': 'manual-pop', 'data-anchor': state.selection ? 'slot' : 'grid' },
+    });
+    if (!formOpen) formPop.setAttribute('hidden', '');
+    const close = el(doc, 'button', { className: 'cal-pop-close', text: '×', attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'manual-close' } });
+    close.addEventListener('click', () => closeManual());
+    formPop.appendChild(close);
+    formPop.appendChild(renderManual());
+    formPop.addEventListener?.('keydown', (event) => { if (event?.key === 'Escape' || event?.key === 'Esc') closeManual(); });
+    main.appendChild(formPop);
+    if (formOpen && state.selection) pop = formPop;
     layout.appendChild(rail);
     layout.appendChild(main);
     wrap.appendChild(layout);
     mount.appendChild(wrap);
     if (pop) placePopover(main, pop);
+    if (paintedPop) placeEventPopover(main, paintedPop, selected);
     trackRetainedDraft();
+  }
+
+  /** Seats the event popover beside its event: right, or left without room, always on screen. */
+  function placeEventPopover(main, pop, row) {
+    const anchor = paintedEvents.get(String(row?.id ?? ''));
+    if (!anchor || typeof anchor.getBoundingClientRect !== 'function' || typeof main.getBoundingClientRect !== 'function') return;
+    const view = doc?.defaultView ?? null;
+    const viewportWidth = Number(view?.innerWidth) || Number(doc?.documentElement?.clientWidth) || 0;
+    const viewportHeight = Number(view?.innerHeight) || Number(doc?.documentElement?.clientHeight) || 0;
+    if (viewportWidth <= 0 || viewportHeight <= 0) return;
+    const size = typeof pop.getBoundingClientRect === 'function' ? pop.getBoundingClientRect() : null;
+    const placed = eventPopoverPlacement({
+      anchor: anchor.getBoundingClientRect(),
+      box: main.getBoundingClientRect(),
+      width: Number(size?.width) || 340,
+      height: Number(size?.height) || 280,
+      viewportWidth,
+      viewportHeight,
+    });
+    pop.setAttribute('style', `left: ${placed.left}px; top: ${placed.top}px`);
+    pop.setAttribute('data-side', placed.side);
   }
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */
@@ -1721,10 +2049,12 @@ export function createCalendarioView(deps) {
         title: 'Compila manualmente',
         sub: 'Giorno, ora, cliente e partecipanti',
         focus: () => {
-          // Open the painted form in place: a re-render would swap the
-          // field the operator is about to type in.
+          // backlog:6e6750ff8163: the voice opens the form popover over the
+          // grid — never a scroll down to a rail card — with focus on the
+          // customer field. An open event popover gives way: one at a time.
           state.manualOpen = true;
-          state.manualPanel?.classList?.add('open');
+          state.selectedId = null;
+          renderAll();
           return state.manualFirst;
         },
       },
@@ -1736,7 +2066,9 @@ export function createCalendarioView(deps) {
         close();
         const target = voice.focus();
         if (target && typeof target.focus === 'function') target.focus();
-        if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
+        // The phrase field sits in the rail and may be off screen; the form
+        // opens where the operator looks, so it never scrolls the page.
+        if (voice.title !== 'Compila manualmente' && target && typeof target.scrollIntoView === 'function') target.scrollIntoView();
       });
       menu.appendChild(item);
     }
@@ -1833,6 +2165,9 @@ export function createCalendarioView(deps) {
       // reselecting shows them again with no reload.
       if (hidden.has(group?.teamMemberId)) continue;
       for (const row of group?.appointments ?? []) {
+        // backlog:5346ab531538: a cancelled booking leaves the grid, like
+        // Google Calendar; the customer's history still lists it.
+        if (isCancelledRow(row)) continue;
         const key = romeDayKey(row.startsAt);
         if (key !== null && byDay.has(key)) byDay.get(key).push({ ...row, teamMemberId: group.teamMemberId });
       }
@@ -1862,6 +2197,18 @@ export function createCalendarioView(deps) {
     if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
     const rows = personRows(named, state.hiddenMembers, state.members);
+    if (rows.length === 0 && state.membersLoading) {
+      // backlog:7587307d5215: the roster is on its way — placeholders, one
+      // status line, never the empty state.
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico il team…' }));
+      for (const width of ['70%', '55%', '62%']) {
+        const line = el(doc, 'div', { className: 'cal-team-skeleton', attrs: { 'data-role': 'team-skeleton' } });
+        line.appendChild(uiSkeleton(doc, { width, block: true }));
+        panel.appendChild(line);
+      }
+      return panel;
+    }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
@@ -1948,7 +2295,7 @@ export function createCalendarioView(deps) {
   /**
    * BO-F6-11 fetta 4 (specs/calendario.md C13–C16): the prototype time grid —
    * an 09:00–18:00 hour gutter beside five work-day columns, event blocks on
-   * their Rome half-hour rows, the red now-line on the current day. Empty
+   * their Rome quarter-hour rows, the red now-line on the current day. Empty
    * days paint their empty timeline, never a message. DOM order interleaves
    * each day head with its column, so the narrow-screen stack (heads above
    * their day, hours hidden) needs no extra markup.
@@ -1980,12 +2327,27 @@ export function createCalendarioView(deps) {
     return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   }
 
-  /** The half-hour row under a pointer, as Rome minutes clamped to the grid body. */
+  /** The quarter-hour row under a pointer, as Rome minutes clamped to the grid body. */
   function minuteAt(col, event) {
     const rect = typeof col.getBoundingClientRect === 'function' ? col.getBoundingClientRect() : null;
     if (!rect || !(rect.height > 0)) return null;
     const fraction = Math.min(Math.max((Number(event.clientY) - rect.top) / rect.height, 0), 0.9999);
-    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_SLOT_MINUTES;
+    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_ROW_MINUTES;
+  }
+
+  /**
+   * The rows a span of Rome minutes covers, as a grid-row value: whole rows
+   * only, so a 20 or 50 minute booking still paints a valid span (review #834).
+   */
+  function rowsOf(start, end) {
+    const first = Math.floor((start - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    const last = Math.ceil((end - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    return `${first + 1} / span ${Math.max(1, last - first)}`;
+  }
+
+  /** A pick spans at least half an hour from its first row (a plain click). */
+  function pickEnd(anchor, current) {
+    return Math.min(Math.max(Math.max(anchor, current) + GRID_ROW_MINUTES, Math.min(anchor, current) + GRID_SLOT_MINUTES), GRID_END_MINUTES);
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2025,10 +2387,31 @@ export function createCalendarioView(deps) {
     state.manualFirst?.focus?.();
   }
 
-  function closeSlot() {
-    if (!state.selection) return;
+  /**
+   * backlog:6e6750ff8163 — × or Esc on the «Nuovo appuntamento» form:
+   * it closes AND empties, so the next opening starts clean — never the
+   * old slot, customer or price left behind. Focus goes back to the
+   * «Nuovo appuntamento» button.
+   */
+  function closeManual() {
+    if (!state.selection && !state.manualOpen && !state.draftFill) return;
+    cancelCustomerSearch();
     state.selection = null;
+    state.manualOpen = false;
+    state.manual = null;
+    state.draftFill = null;
+    state.draftWrote = null;
+    state.customerPick = null;
+    state.customerQuery = '';
+    state.customerItems = [];
+    state.customerError = null;
+    state.customerPartial = false;
+    state.bookingNote = '';
+    state.serviceError = '';
+    state.confirmed = null;
     renderAll();
+    const toggle = mount.querySelector('button[aria-haspopup="true"]');
+    if (toggle && typeof toggle.focus === 'function') toggle.focus();
   }
 
   /**
@@ -2043,13 +2426,66 @@ export function createCalendarioView(deps) {
     const paint = () => {
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
-      drag.node.setAttribute('style', `grid-row: ${(start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(end - start) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`);
+      const end = pickEnd(drag.anchor, drag.current);
+      drag.node.setAttribute('style', `grid-row: ${rowsOf(start, end)}; grid-column: 1 / -1`);
       drag.node.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
     };
     col.addEventListener('pointerdown', (event) => {
       if (event.button !== undefined && event.button !== 0) return;
-      if (event.target?.closest?.('.cal-event, .bo-add-button, .cal-pick')) return;
+      if (eventDrag) return;
+      // One move at a time (review #757): while a reschedule is in flight
+      // no second drag starts; a press on an event names the wait in
+      // Italian instead of dropping the move silently.
+      if (state.moveBusy) {
+        const busyBlock = (event.target ?? null)?.closest?.('.cal-event') ?? null;
+        if (busyBlock !== null) {
+          event.preventDefault?.();
+          sayMove(String(busyBlock.getAttribute?.('data-event-id') ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
+          if (mount.querySelector('.cal-wrap') !== null) renderAll();
+        }
+        return;
+      }
+      // A press on a movable event starts an event drag (backlog:3d0fbe7dc8d1),
+      // never a slot pick: the body moves the block, the bottom edge
+      // stretches it. Presses on ghosts, the pick or the add-slot button keep
+      // their own click, like before.
+      const target = event.target ?? null;
+      const resizeHandle = target?.closest?.('[data-role="event-resize"]') ?? null;
+      // The handle is a span inside the event button and carries no id: the
+      // row lookup always resolves the enclosing .cal-event (review #757:
+      // the handle alone left findWeekRow(null) and no resize ever started).
+      const eventBlock = target?.closest?.('.cal-event') ?? null;
+      const row = eventBlock !== null ? findWeekRow(eventBlock.getAttribute?.('data-event-id')) : null;
+      if (row !== null && isMovableAppointment(row)) {
+        const startMin = romeMinutes(row.startsAt);
+        const endMin = romeMinutes(row.endsAt);
+        if (startMin === null || endMin === null || endMin <= startMin) return;
+        event.preventDefault?.();
+        const pressMinute = minuteAt(col, event);
+        eventDrag = {
+          mode: resizeHandle !== null ? 'resize' : 'move',
+          id: String(row.id ?? ''),
+          row,
+          startMin,
+          endMin,
+          // Where inside the event the press landed (review #757): the move
+          // keeps this offset, so grabbing mid-event never shifts the start
+          // by the grab distance on release.
+          grabOffset: pressMinute === null ? 0 : pressMinute - startMin,
+          dayKey: key,
+          targetDay: key,
+          targetStart: startMin,
+          targetEnd: endMin,
+          moved: false,
+          // The column the press started on (review #757): a resize ghost
+          // always paints here, never on the hovered column.
+          originCol: col,
+        };
+        hookDocDragEnd();
+        return;
+      }
+      if (eventBlock !== null) return;
+      if (target?.closest?.('.bo-add-button, .cal-pick')) return;
       const minute = minuteAt(col, event);
       if (minute === null) return;
       event.preventDefault?.();
@@ -2060,6 +2496,12 @@ export function createCalendarioView(deps) {
       paint();
     });
     col.addEventListener('pointermove', (event) => {
+      if (eventDrag) {
+        const minute = minuteAt(col, event);
+        if (minute === null) return;
+        retargetEventDrag(key, minute, col);
+        return;
+      }
       if (!drag) return;
       const minute = minuteAt(col, event);
       if (minute === null || minute === drag.current) return;
@@ -2067,13 +2509,290 @@ export function createCalendarioView(deps) {
       paint();
     });
     col.addEventListener('pointerup', () => {
+      if (eventDrag) {
+        void commitEventDrag();
+        return;
+      }
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
+      const end = pickEnd(drag.anchor, drag.current);
       drag = null;
       openSlot(key, start, end);
     });
-    col.addEventListener('pointercancel', () => { drag?.node?.remove?.(); drag = null; });
+    col.addEventListener('pointercancel', () => {
+      if (eventDrag) {
+        eventDrag = null;
+        detachNode(mount.querySelector('.cal-drag-ghost'));
+        return;
+      }
+      drag?.node?.remove?.(); drag = null;
+    });
+  }
+
+  /**
+   * The booking row behind a dragged event (backlog:3d0fbe7dc8d1): the live
+   * week row by id, so the commit moves the row the grid painted. Unknown
+   * ids fail closed (null): a ghost button never starts a write.
+   * @param {unknown} id
+   */
+  function findWeekRow(id) {
+    const wanted = String(id ?? '');
+    if (wanted === '') return null;
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (String(row?.id ?? '') === wanted) return row;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Detach a node on the real DOM and on the test double: `remove()` exists
+   * only on the real one, the double detaches through its parent.
+   * @param {any} node
+   */
+  function detachNode(node) {
+    if (!node) return;
+    try {
+      if (typeof node.remove === 'function') {
+        node.remove();
+        return;
+      }
+    } catch { /* fall through to the parent detach */ }
+    try {
+      node.parentNode?.removeChild?.(node);
+    } catch { /* a detached ghost is already gone */ }
+  }
+
+  /**
+   * A release outside every day column still ends the drag
+   * (backlog:3d0fbe7dc8d1): the columns own the commit, the document only
+   * guarantees the drag cannot stick with its ghost on screen. Installed
+   * once per view; the fake test document has no listeners and is skipped.
+   */
+  let docDragHooked = false;
+  function hookDocDragEnd() {
+    if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
+    docDragHooked = true;
+    doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
+    doc.addEventListener('pointercancel', () => {
+      if (!eventDrag) return;
+      eventDrag = null;
+      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+    });
+  }
+
+  /**
+   * Follow the pointer across columns while an event drag is in flight
+   * (backlog:3d0fbe7dc8d1): a move keeps its duration and takes the hovered
+   * day and hour, a resize keeps its start and day and takes the hovered
+   * end on the same column. Both
+   * stay inside the painted 09:00–18:00 hours in quarter-hour steps; the ghost
+   * paints the target range on the hovered column, except a resize ghost,
+   * which stays on the origin column (review #757).
+   * @param {string} dayKey @param {number} minute @param {any} col
+   */
+  function retargetEventDrag(dayKey, minute, col) {
+    const drag = eventDrag;
+    if (!drag) return;
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
+    if (drag.mode === 'resize') {
+      // The stretch stays on the origin day (review #757): sideways motion
+      // into another column is ignored, so preview and commit agree.
+      if (dayKey !== drag.dayKey) return;
+      // backlog:7587307d5215: the bottom edge snaps to the quarter hour.
+      const end = Math.min(Math.max(minute + GRID_ROW_MINUTES, drag.startMin + GRID_ROW_MINUTES), GRID_END_MINUTES);
+      if (end === drag.targetEnd) return;
+      drag.targetDay = drag.dayKey;
+      drag.targetStart = drag.startMin;
+      drag.targetEnd = end;
+    } else {
+      const latest = GRID_END_MINUTES - durationMin;
+      // backlog:7587307d5215: the moved start snaps to the quarter hour,
+      // whatever minute the booking started on; the duration stays whole.
+      const snapped = Math.round((minute - (drag.grabOffset ?? 0)) / GRID_ROW_MINUTES) * GRID_ROW_MINUTES;
+      const start = Math.min(
+        Math.max(snapped, GRID_START_MINUTES),
+        Math.max(GRID_START_MINUTES, latest),
+      );
+      if (start === drag.targetStart && dayKey === drag.targetDay) return;
+      drag.targetDay = dayKey;
+      drag.targetStart = start;
+      drag.targetEnd = start + durationMin;
+    }
+    drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    const ghost = el(doc, 'div', {
+      className: 'cal-pick is-dragging cal-drag-ghost',
+      attrs: {
+        'aria-hidden': 'true',
+        style: `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; grid-column: 1 / -1`,
+      },
+      text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
+    });
+    // A resize ghost paints on the origin column (review #757); a move
+    // ghost paints on the hovered column.
+    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+  }
+
+  /**
+   * Release an event drag (backlog:3d0fbe7dc8d1): a press without movement
+   * stays a click and selects the event; a moved block asks the server for
+   * the new slot. The grid paints the new time at once (optimistic) and the
+   * week reload confirms it; a refusal restores the old instants on the same
+   * row and names the cause in Italian beside the event.
+   */
+  async function commitEventDrag() {
+    const drag = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (!drag || !drag.moved) return;
+    // A second move while a reschedule is in flight is never dropped
+    // silently (review #757): no suppress flag, an Italian note, the grid
+    // repaints while the first request runs.
+    if (state.moveBusy) {
+      sayMove(String(drag.row?.id ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
+    suppressEventClick = true;
+    const durationMs = Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt);
+    const startIso = romeWallToIso(drag.targetDay, Math.floor(drag.targetStart / 60), drag.targetStart % 60);
+    if (startIso === null) {
+      suppressEventClick = false;
+      return;
+    }
+    const endIso = drag.mode === 'resize'
+      ? romeWallToIso(drag.targetDay, Math.floor(drag.targetEnd / 60), drag.targetEnd % 60)
+      : new Date(Date.parse(startIso) + durationMs).toISOString();
+    if (endIso === null || Date.parse(endIso) <= Date.parse(startIso)) {
+      suppressEventClick = false;
+      return;
+    }
+    await commitEventMove(drag.row, startIso, endIso, { fromDrag: true });
+  }
+
+  /**
+   * The outcome of a move, where the operator looks (backlog:a332dcd070ca):
+   * inside the event popover when it is open on that booking, else a toast
+   * — a drag never opens the popover by itself, so its refusal must not
+   * hide in a popover nobody sees. Nothing is said without a toast handle.
+   * @param {string} id @param {string} text @param {boolean} error
+   */
+  function sayMove(id, text, error) {
+    if (state.selectedId !== null && state.selectedId === id) {
+      state.moveNote = text;
+      return;
+    }
+    if (typeof deps.toast === 'function' && text !== '') deps.toast(text, error);
+  }
+
+  /**
+   * Move one booking through the reschedule route (backlog:3d0fbe7dc8d1).
+   * A drag (backlog:a332dcd070ca) leaves the selection as it was: the
+   * popover opens only on a click, never by itself after a drop — refused
+   * or not. The «Sposta» form inside the popover keeps its own selection.
+   * On the shared /bo the move rides the worker queue: a move still queued
+   * (`BO_CRM_PENDING`) stays where the operator dropped it and the week is
+   * read again shortly, never reverted as if refused.
+   * @param {any} row @param {string} startsAt @param {string} endsAt
+   * @param {{fromDrag?: boolean}} [options]
+   */
+  async function commitEventMove(row, startsAt, endsAt, { fromDrag = false } = {}) {
+    // The generation this write started from (review #757): a route away
+    // during the request invalidates the view, and the late answer must not
+    // repaint the calendar over the next screen nor start another week load.
+    // The busy flag still clears in the finally below.
+    const token = renderToken;
+    // A form submit racing a drag's request names the wait in Italian
+    // instead of dropping silently (review #757).
+    const id = String(row?.id ?? '');
+    if (state.moveBusy) {
+      sayMove(id, 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
+      if (mount.querySelector('.cal-wrap') !== null) renderAll();
+      return;
+    }
+    const before = { startsAt: row.startsAt, endsAt: row.endsAt };
+    if (!fromDrag) {
+      // The «Sposta» form: its popover stays on this booking, folded
+      // (move form and cancel question) when the booking changed.
+      if (state.selectedId !== id) resetPopSteps();
+      state.selectedId = id !== '' ? id : null;
+    }
+    if (before.startsAt === startsAt && before.endsAt === endsAt) {
+      state.moveNote = '';
+      renderAll();
+      return;
+    }
+    state.moveBusy = true;
+    row.startsAt = startsAt;
+    row.endsAt = endsAt;
+    state.moveNote = '';
+    renderAll();
+    let ok = false;
+    let queued = false;
+    /** @type {{text: string, error: boolean} | null} */
+    let outcome = null;
+    try {
+      const body = row.id !== undefined && row.id !== null && String(row.id) !== ''
+        ? { id: row.id, startsAt, endsAt }
+        : { sourceKey: row.sourceKey, startsAt, endsAt };
+      const answer = await client.request('/api/appointments/reschedule', { method: 'POST', body });
+      const moved = answer?.appointment ?? null;
+      if (moved && typeof moved === 'object') {
+        if (typeof moved.startsAt === 'string') row.startsAt = moved.startsAt;
+        if (typeof moved.endsAt === 'string') row.endsAt = moved.endsAt;
+      }
+      const day = romeDayKey(row.startsAt);
+      state.moveOpen = false;
+      // backlog:7587307d5215: the day and the date, like a person says it —
+      // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
+      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      ok = true;
+    } catch (error) {
+      if (error?.code === 'BO_CRM_PENDING') {
+        // Still queued on the worker: the drop stands where the operator
+        // put it until the week read says otherwise.
+        queued = true;
+        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+      } else {
+        row.startsAt = before.startsAt;
+        row.endsAt = before.endsAt;
+        outcome = {
+          text: calendarRefusalText(error)
+            ?? humanWriteError(error, {
+              failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
+              notComposed: 'Il calendario non è composto in questo spazio.',
+            }),
+          error: true,
+        };
+      }
+    } finally {
+      state.moveBusy = false;
+    }
+    if (token !== renderToken) return;
+    if (outcome !== null) sayMove(id, outcome.text, outcome.error);
+    renderAll();
+    const members = parseMemberFilter(state.memberFilter);
+    // A queued reread deferred while this move was in flight (review #811):
+    // the week read happens now, after this move's own outcome.
+    const deferred = rereadAfterMove;
+    rereadAfterMove = false;
+    if ((ok || deferred) && members.length > 0) void loadWeek(members);
+    if (queued && members.length > 0) {
+      await wait(QUEUED_MOVE_REREAD_MS);
+      if (token !== renderToken) return;
+      // Review #811 (Muse P2): a reread never lands in the middle of another
+      // move — it would repaint the server week over that move's optimistic
+      // block and turn its outcome into a stale answer nobody hears. While a
+      // move is in flight the reread waits for it and runs at its end.
+      if (state.moveBusy) {
+        rereadAfterMove = true;
+        return;
+      }
+      void loadWeek(members);
+    }
   }
 
   function renderWeek() {
@@ -2085,6 +2804,9 @@ export function createCalendarioView(deps) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
       return panel;
     }
+    // backlog:7587307d5215: while the first week (or the roster that names
+    // it) is read, the grid shows a skeleton — never an empty week.
+    const loadingWeek = !state.week && (state.weekLoading || state.membersLoading);
     if (!state.week) {
       // backlog:29bb3f2c0d64: with nobody to show (a space with no people
       // yet, or no names while the roster is unread) the week still paints
@@ -2099,9 +2821,13 @@ export function createCalendarioView(deps) {
         : (roster.length === 0
           ? 'Nello spazio non c’è ancora nessuna persona: la settimana resta vuota finché il titolare non invita il team.'
           : '');
-      if (line !== '') panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
+      if (line !== '' && !loadingWeek) panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
     }
-    const grid = el(doc, 'div', { className: 'cal-grid' });
+    if (loadingWeek) {
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico la settimana…' }));
+    }
+    const grid = el(doc, 'div', { className: loadingWeek ? 'cal-grid is-loading' : 'cal-grid' });
     grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
     for (let hour = GRID_START_MINUTES / 60; hour <= GRID_END_MINUTES / 60; hour += 1) {
       const label = el(doc, 'div', {
@@ -2119,6 +2845,7 @@ export function createCalendarioView(deps) {
     const heldDays = new Set();
     for (const group of state.week?.members ?? []) {
       for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
         const day = romeDayKey(row?.startsAt);
         if (day !== null) heldDays.add(day);
       }
@@ -2132,7 +2859,9 @@ export function createCalendarioView(deps) {
       // Review #646 round 3: «Nessun appuntamento» is a claim about the day,
       // so it reads the whole loaded week — a day whose only bookings belong
       // to a hidden person keeps its timeline, never the compact row.
-      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
+      // Review #834: while the week loads no day is empty yet — the phone
+      // layout would hide its skeletons under «Nessun appuntamento».
+      const empty = !loadingWeek && rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
       const head = el(doc, 'div', {
         className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
@@ -2149,7 +2878,7 @@ export function createCalendarioView(deps) {
       grid.appendChild(head);
       const col = el(doc, 'div', {
         className: empty ? 'cal-day is-empty' : 'cal-day',
-        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
+        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_HALF_HOURS}` },
       });
       // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
       // never paints over a booking or over another ghost.
@@ -2158,6 +2887,16 @@ export function createCalendarioView(deps) {
       col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
         col.appendChild(renderEvent(row, lanes.get(row) ?? { lane: 0, lanes: 1 }));
+      }
+      if (loadingWeek) {
+        // backlog:7587307d5215: two grey placeholder blocks per day while the
+        // week is read, at fixed rows, carrying no text.
+        for (const [start, span] of [[5 + dayIndex * 2, 4], [17 + dayIndex, 6]]) {
+          col.appendChild(el(doc, 'div', {
+            className: 'cal-skeleton',
+            attrs: { 'aria-hidden': 'true', 'data-skeleton': 'true', style: `grid-row: ${start} / span ${span}; grid-column: 1 / -1` },
+          }));
+        }
       }
       // BO-F6-11 fetta 3 (specs/calendario.md C5): the "✦ Proposta" ghosts.
       // One dashed ghost per searched slot on its Rome day, clickable to
@@ -2174,7 +2913,8 @@ export function createCalendarioView(deps) {
           attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        ghost.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -2186,7 +2926,7 @@ export function createCalendarioView(deps) {
           className: 'cal-pick',
           attrs: {
             'data-role': 'slot-pick',
-            style: `grid-row: ${(state.selection.start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${Math.max(1, (state.selection.end - state.selection.start) / GRID_SLOT_MINUTES)}; grid-column: 1 / -1`,
+            style: `grid-row: ${rowsOf(state.selection.start, state.selection.end)}; grid-column: 1 / -1`,
           },
           text: `${minutesLabel(state.selection.start)}–${minutesLabel(state.selection.end)}`,
         }));
@@ -2276,12 +3016,17 @@ export function createCalendarioView(deps) {
     const status = String(row?.status ?? 'booked');
     const cancelled = status !== 'booked' && status !== 'confirmed';
     if (cancelled) classes.push('cal-cancelled');
+    const movable = isMovableAppointment(row);
+    if (movable) classes.push('is-movable');
+    const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
       attrs: {
         type: 'button',
         style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}`,
         'aria-pressed': selected ? 'true' : 'false',
+        'data-event-id': id,
+        'data-movable': movable ? '1' : '0',
       },
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
@@ -2309,10 +3054,32 @@ export function createCalendarioView(deps) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
     item.appendChild(foot);
-    const id = String(row?.id ?? '');
+    if (movable) {
+      // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
+      // span, never a button inside the event button. Dragging it changes
+      // only the end; dragging the body moves the whole block.
+      item.appendChild(el(doc, 'span', {
+        className: 'cal-resize',
+        attrs: { 'data-role': 'event-resize', 'aria-hidden': 'true', title: 'Allunga o accorcia' },
+      }));
+    }
+    if (id !== '') paintedEvents.set(id, item);
     item.addEventListener('click', () => {
+      if (suppressEventClick) {
+        suppressEventClick = false;
+        return;
+      }
       state.selectedId = state.selectedId === id ? null : id;
+      state.moveNote = '';
+      resetPopSteps();
+      // One popover at a time: an event opens over a slot pick or the form,
+      // not beside it (the form keeps its values until × or Esc).
+      state.selection = null;
+      if (state.selectedId !== null) state.manualOpen = false;
       renderAll();
+      // Focus follows the popover in, and back to the event when it closes.
+      if (state.selectedId !== null && paintedPop && typeof paintedPop.focus === 'function') paintedPop.focus();
+      else paintedEvents.get(id)?.focus?.();
     });
     return item;
   }
@@ -2394,65 +3161,154 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * BO-F6-11 fetta 5 (specs/calendario.md C7, C8): the selected-event card —
-   * title, day · time row, participant names, the channel pill and the
-   * customer button. No location paints because team-week rows carry none;
-   * the row names day and time only. The customer name resolves through the
-   * read-only customer profile (the map's own read), falling back to the row
-   * label or id when the profile is unavailable. The WA pill paints only
-   * from the explicit row marker (fetta 4's fail-closed rule) with the
-   * shared channel chip. backlog:29bb3f2c0d64: the other origins come from
-   * the row's source key (originOf) — never "✦ Fissato con l'AI", which the
-   * row cannot prove — and the «↔ Google Calendar» line paints only for
-   * events calendar-sync imported (`gcal:`); a booking made here carries no
-   * sync state, so it gets no «invito inviato» guess. "Apri scheda cliente"
-   * is the dark primary button over the shared customer-card route, only for linked events.
+   * The event popover (Dan 11/11, like Google Calendar and Outlook): it opens
+   * beside the clicked event and replaces the old rail card. On top the
+   * actions — «Modifica o sposta» for a held booking, and × — then the title
+   * with the event's colour square, the day · time row with the full month,
+   * the customer as a link to the scheda, the team person with avatar and
+   * name, the note and the origin. «Annulla appuntamento»
+   * (backlog:5346ab531538) asks inside the popover — never the browser's
+   * confirm() — and cancels through POST /api/appointments/cancel.
+   *
+   * Kept from the rail card (BO-F6-11 fetta 5, specs/calendario.md C7, C8):
+   * the customer name resolves through the read-only profile (the row label
+   * meanwhile, never an id as a name); the team person is the roster or
+   * typed name, never the opaque subject; the WA pill paints only from the
+   * explicit row marker; the other origins come from the source key
+   * (originOf), never «✦ Fissato con l'AI»; the «↔ Google Calendar» line
+   * only for events calendar-sync imported (`gcal:`).
    * @param {any} row
    */
-  function renderDetailCard(row) {
-    const card = el(doc, 'div', { className: 'panel', attrs: { 'data-role': 'event-detail' } });
-    // backlog:29bb3f2c0d64 (production 08/11): the card title is a card
-    // title, never the 46px page title.
-    const head = el(doc, 'div', { className: 'panel-heading cal-detail-head' });
-    head.appendChild(el(doc, 'h2', { className: 'cal-detail-title', text: titleOf(row) }));
+  function renderEventPopover(row) {
+    const pop = el(doc, 'div', {
+      className: 'cal-pop cal-event-pop',
+      attrs: {
+        'data-role': 'event-detail',
+        role: 'dialog',
+        'aria-labelledby': 'cal-event-pop-title',
+        tabindex: '-1',
+      },
+    });
+    pop.addEventListener?.('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeEventPop();
+    });
+    const tools = el(doc, 'div', { className: 'cal-pop-tools' });
+    if (isMovableAppointment(row)) {
+      const edit = el(doc, 'button', {
+        className: 'icon-button cal-pop-tool',
+        attrs: {
+          type: 'button',
+          'data-action': 'event-edit',
+          'aria-label': 'Modifica o sposta',
+          title: 'Modifica o sposta',
+          'aria-expanded': state.moveOpen ? 'true' : 'false',
+        },
+      });
+      edit.appendChild(uiIcon(doc, 'matita'));
+      // Review #790 (Muse P2): while a cancellation is in flight the move
+      // form stays shut, so the cancellation's outcome always has its place.
+      if (state.cancelBusy) edit.setAttribute('disabled', 'true');
+      edit.addEventListener('click', () => {
+        if (state.cancelBusy) return;
+        state.moveOpen = !state.moveOpen;
+        state.cancelAsk = false;
+        renderAll();
+        const first = state.moveOpen ? paintedPop?.querySelector?.('input[name="move-date"]') : paintedPop;
+        if (first && typeof first.focus === 'function') first.focus();
+      });
+      tools.appendChild(edit);
+      const cancel = el(doc, 'button', {
+        className: 'icon-button cal-pop-tool',
+        attrs: {
+          type: 'button',
+          'data-action': 'event-cancel',
+          'aria-label': 'Annulla appuntamento',
+          title: 'Annulla appuntamento',
+          'aria-expanded': state.cancelAsk ? 'true' : 'false',
+        },
+      });
+      cancel.appendChild(uiIcon(doc, 'cestino'));
+      if (state.cancelBusy) cancel.setAttribute('disabled', 'true');
+      cancel.addEventListener('click', () => {
+        if (state.cancelBusy) return;
+        state.cancelAsk = !state.cancelAsk;
+        state.cancelNote = '';
+        state.moveOpen = false;
+        renderAll();
+        // The safe answer takes the focus: Enter never cancels by accident.
+        const target = state.cancelAsk ? paintedPop?.querySelector?.('button[data-action="cancel-no"]') : paintedPop;
+        if (target && typeof target.focus === 'function') target.focus();
+      });
+      tools.appendChild(cancel);
+    }
     const close = el(doc, 'button', {
-      className: 'small secondary',
-      attrs: { type: 'button', 'aria-label': 'Chiudi dettaglio' },
-      text: '×',
+      className: 'icon-button cal-pop-tool',
+      attrs: { type: 'button', 'aria-label': 'Chiudi', title: 'Chiudi', 'data-action': 'event-close' },
     });
-    close.addEventListener('click', () => {
-      state.selectedId = null;
-      renderAll();
-    });
-    head.appendChild(close);
-    card.appendChild(head);
+    close.appendChild(uiIcon(doc, 'x'));
+    close.addEventListener('click', () => closeEventPop());
+    tools.appendChild(close);
+    pop.appendChild(tools);
+    const tint = `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`;
+    const title = el(doc, 'h2', { className: 'cal-detail-title', attrs: { id: 'cal-event-pop-title' } });
+    title.appendChild(el(doc, 'span', { className: `cal-swatch ${tint}`, attrs: { 'aria-hidden': 'true' } }));
+    title.appendChild(el(doc, 'span', { text: titleOf(row) }));
+    pop.appendChild(title);
     const key = romeDayKey(row?.startsAt);
-    const when = `${key ? `${dayName(key)} ${romeShortDay(`${key}T12:00:00Z`) ?? ''}` : '?'} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`;
-    card.appendChild(el(doc, 'p', { text: when }));
+    const day = key ? `${dayName(key)} ${romeLongDay(`${key}T12:00:00Z`) ?? ''}` : '?';
+    pop.appendChild(el(doc, 'p', {
+      className: 'cal-pop-when',
+      text: `${day} · ${romeTime(row?.startsAt) ?? '?'}–${romeTime(row?.endsAt) ?? '?'}`,
+    }));
+    // The move outcome (backlog:3d0fbe7dc8d1): success or the Italian
+    // refusal, beside the event it belongs to. It clears on the next
+    // selection change (the click handler above).
+    if (state.moveNote !== '') {
+      pop.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'move-note', 'aria-live': 'polite' }, text: state.moveNote }));
+    }
+    if (state.cancelAsk && isMovableAppointment(row)) pop.appendChild(renderCancelAsk(row));
+    if (state.moveOpen && isMovableAppointment(row)) pop.appendChild(renderMoveForm(row));
     const linked = subjectKeyOf(row);
     if (linked && !(linked.key in state.profiles)) {
-      // In flight: the label or id paints meanwhile, and one request serves
+      // In flight: the label paints meanwhile, and one request serves
       // every re-render until it resolves.
       state.profiles[linked.key] = null;
       void loadSubjectName(linked);
     }
     const display = displayNameOf(row, linked);
-    const customer = display ?? (linked ? linked.id : null);
-    // backlog:df55cf25 — the member part is a person name, never the opaque
-    // team subject: the roster person name when known, else the operator's
-    // own typed words, else nothing (a pipe id never paints). The customer
-    // fallback (label, then id as inert text) stays: the card must name whom
-    // the booking is for even without a profile.
+    if (linked) {
+      const route = `#/customer-card/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`;
+      const line = el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-customer' } });
+      const link = el(doc, 'a', {
+        className: 'cal-pop-link',
+        // Without a name yet the link says where it goes: an id is not a name.
+        text: display ?? 'Apri scheda cliente',
+        attrs: { href: route, title: 'Apri scheda cliente' },
+      });
+      link.addEventListener('click', (event) => {
+        event?.preventDefault?.();
+        navigate(route);
+      });
+      line.appendChild(link);
+      pop.appendChild(line);
+    } else if (display) {
+      pop.appendChild(el(doc, 'p', { className: 'cal-pop-row', attrs: { 'data-role': 'event-customer' }, text: display }));
+    }
+    // backlog:df55cf25 — the team person is a person name, never the opaque
+    // team subject: the roster name when known, else the operator's own
+    // typed words, else nothing (a pipe id or a login never paints).
     const member = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
-    const participants = [member, customer].filter((part) => typeof part === 'string' && part !== '');
-    if (participants.length > 0) {
-      card.appendChild(el(doc, 'p', { text: participants.join(', ') }));
+    if (typeof member === 'string' && member !== '') {
+      const person = el(doc, 'p', { className: 'cal-pop-row cal-pop-person', attrs: { 'data-role': 'event-member' } });
+      person.appendChild(el(doc, 'span', { className: `cal-avatar ${tint}`, text: memberInitials(member), attrs: { 'aria-hidden': 'true' } }));
+      person.appendChild(el(doc, 'span', { text: member }));
+      pop.appendChild(person);
     }
     const notes = typeof row?.notes === 'string' ? row.notes.trim() : '';
-    if (notes !== '') card.appendChild(el(doc, 'p', { text: `Nota: ${notes}` }));
+    if (notes !== '') pop.appendChild(el(doc, 'p', { className: 'cal-pop-row cal-pop-note', text: `Nota: ${notes}` }));
     const origin = originOf(row);
     if (origin === 'whatsapp') {
-      const pill = el(doc, 'p');
+      const pill = el(doc, 'p', { className: 'cal-pop-row' });
       pill.appendChild(uiChannelChip(doc, 'WA'));
       // Leading space: the chip and the sentence are sibling inline boxes. A
       // raw id is not a name, so the pill degrades to the nameless sentence
@@ -2460,7 +3316,7 @@ export function createCalendarioView(deps) {
       pill.appendChild(el(doc, 'span', {
         text: display ? ` Prenotato da ${display} su WhatsApp` : ' Prenotato su WhatsApp',
       }));
-      card.appendChild(pill);
+      pop.appendChild(pill);
     } else if (origin !== null) {
       // backlog:29bb3f2c0d64 (C8): the other origins the row proves, in the
       // prototype pill. A booking made here never claims «Fissato con
@@ -2470,20 +3326,16 @@ export function createCalendarioView(deps) {
         link: 'Prenotato dal cliente con il link online',
         calendario: 'Fissato dal calendario',
       }[origin];
-      const pill = el(doc, 'p');
+      const pill = el(doc, 'p', { className: 'cal-pop-row' });
       pill.appendChild(el(doc, 'span', { className: `cal-via cal-via-${origin}`, attrs: { 'data-role': 'event-origin' }, text: words }));
-      card.appendChild(pill);
+      pop.appendChild(pill);
     }
     if (origin === 'google') {
-      // backlog:29bb3f2c0d64 (C8): the «↔ Google Calendar» line, only where
-      // the row proves the link — an event calendar-sync imported. A
-      // booking made here carries no sync evidence on the row, so it stays
-      // without the line (no «invito inviato» guess).
       // Review #678: «collegato» only on positive proof from the profile; an
       // unknown state (profile unavailable or unread) says only where the
       // event came from.
       const connected = state.calendar?.connected;
-      card.appendChild(el(doc, 'p', {
+      pop.appendChild(el(doc, 'p', {
         className: 'cal-sync',
         attrs: { 'data-role': 'event-sync' },
         text: connected === true
@@ -2493,19 +3345,210 @@ export function createCalendarioView(deps) {
             : '↔ Google Calendar · evento importato da Google Calendar',
       }));
     }
-    if (linked) {
-      const open = uiButton(doc, {
-        variant: 'primary',
-        small: true,
-        label: 'Apri scheda cliente',
-        attrs: { type: 'button' },
-      });
-      open.addEventListener('click', () => {
-        navigate(`#/customer-card/${encodeURIComponent(linked.resource)}/${encodeURIComponent(linked.id)}`);
-      });
-      card.appendChild(open);
+    return pop;
+  }
+
+  /**
+   * backlog:5346ab531538 — «Annullare l'appuntamento?» inside the popover,
+   * never the browser's confirm(). «No» takes the focus (Enter never cancels
+   * by accident); the optional reason rides the cancellation, else «Annullato
+   * dal calendario». An event imported from Google Calendar says plainly
+   * that the event stays on Google: the backoffice cancel names no calendar
+   * and nothing in this application runs the two-way sync that would carry
+   * the cancellation there (calendar-sync's push/sync operations are not
+   * wired to any route or job), so «cancellalo anche lì» is the truth.
+   * @param {any} row
+   */
+  function renderCancelAsk(row) {
+    const box = el(doc, 'div', {
+      className: 'cal-pop-confirm',
+      attrs: { 'data-role': 'cancel-confirm', role: 'group', 'aria-labelledby': 'cal-cancel-question' },
+    });
+    box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
+    if (originOf(row) === 'google') {
+      box.appendChild(el(doc, 'p', {
+        className: 'cal-pop-hint',
+        attrs: { 'data-role': 'cancel-google' },
+        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
+      }));
     }
-    return card;
+    const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
+    const reason = el(doc, 'input', { attrs: { name: 'cancel-reason', type: 'text', autocomplete: 'off', maxlength: '300' } });
+    reason.value = state.cancelReason;
+    if (state.cancelBusy) reason.setAttribute('disabled', 'true');
+    reason.addEventListener('input', () => { state.cancelReason = String(reason.value ?? ''); });
+    field.appendChild(reason);
+    box.appendChild(field);
+    if (state.cancelNote !== '') {
+      box.appendChild(el(doc, 'p', { className: 'cal-move-note', attrs: { 'data-role': 'cancel-note', 'aria-live': 'polite' }, text: state.cancelNote }));
+    }
+    const actions = el(doc, 'div', { className: 'cal-pop-actions' });
+    const yes = uiButton(doc, {
+      variant: 'danger',
+      small: true,
+      label: state.cancelBusy ? 'Annullamento in corso…' : 'Sì, annulla',
+      attrs: { type: 'button', 'data-action': 'cancel-yes' },
+    });
+    const no = uiButton(doc, { variant: 'secondary', small: true, label: 'No', attrs: { type: 'button', 'data-action': 'cancel-no' } });
+    if (state.cancelBusy) {
+      yes.setAttribute('disabled', 'true');
+      yes.setAttribute('aria-busy', 'true');
+      no.setAttribute('disabled', 'true');
+    } else {
+      yes.addEventListener('click', () => { void submitCancel(row); });
+      no.addEventListener('click', () => {
+        state.cancelAsk = false;
+        state.cancelNote = '';
+        renderAll();
+        const back = paintedPop?.querySelector?.('button[data-action="event-cancel"]');
+        if (back && typeof back.focus === 'function') back.focus();
+      });
+    }
+    actions.appendChild(yes);
+    actions.appendChild(no);
+    box.appendChild(actions);
+    return box;
+  }
+
+  /**
+   * Cancels the booking through POST /api/appointments/cancel
+   * (backlog:5346ab531538). On success the row reads cancelled at once — it
+   * leaves the grid and the popover closes — and the week reloads; a refusal
+   * stays in the popover in Italian and the booking stays where it was.
+   * @param {any} row
+   */
+  async function submitCancel(row) {
+    if (state.cancelBusy) return;
+    // The view generation, not the render token: a week reload during the
+    // request is no route away (review #781).
+    const token = viewToken;
+    const id = String(row?.id ?? '');
+    state.cancelBusy = true;
+    state.cancelNote = '';
+    renderAll();
+    let ok = false;
+    let failure = '';
+    try {
+      const reason = cancelReasonFrom(state.cancelReason);
+      const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
+      await client.request('/api/appointments/cancel', { method: 'POST', body });
+      for (const group of state.week?.members ?? []) {
+        for (const stored of group?.appointments ?? []) {
+          if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
+        }
+      }
+      ok = true;
+    } catch (error) {
+      failure = cancelRefusalText(error)
+        ?? humanWriteError(error, {
+          failed: 'Non sono riuscito ad annullare l’appuntamento: è ancora in calendario. Riprova.',
+          notComposed: 'Il calendario non è composto in questo spazio.',
+        });
+    } finally {
+      state.cancelBusy = false;
+    }
+    // A route away during the request: the late answer never repaints the
+    // next screen nor reloads a week nobody looks at.
+    if (token !== viewToken) return;
+    // The operator may have closed the popover or opened another event
+    // meanwhile: the outcome then speaks through the toast, never inside
+    // another event's popover.
+    const stillOpen = state.selectedId === id;
+    if (ok) {
+      if (stillOpen) {
+        state.selectedId = null;
+        resetPopSteps();
+        state.moveNote = '';
+      }
+      renderAll();
+      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      const members = parseMemberFilter(state.memberFilter);
+      if (members.length > 0) void loadWeek(members);
+      return;
+    }
+    if (!stillOpen) {
+      if (typeof deps.toast === 'function') deps.toast(failure, true);
+      renderAll();
+      return;
+    }
+    // The refusal always paints in the question it answers (review #790):
+    // the question comes back open even if something folded it meanwhile.
+    state.cancelAsk = true;
+    state.moveOpen = false;
+    state.cancelNote = failure;
+    renderAll();
+    const retry = paintedPop?.querySelector?.('button[data-action="cancel-yes"]');
+    if (retry && typeof retry.focus === 'function') retry.focus();
+  }
+
+  /**
+   * The «Sposta» form in the event card (backlog:3d0fbe7dc8d1): the same move
+   * the drag performs, as named fields — the guaranteed path on a 390 px
+   * phone, where a drag is awkward, and the keyboard path everywhere. Day as
+   * YYYY-MM-DD, times as HH:MM; the write rides the same reschedule route,
+   * so a refusal reads the same Italian sentence and the event stays put.
+   * @param {any} row
+   */
+  function renderMoveForm(row) {
+    const box = el(doc, 'div', { className: 'cal-move', attrs: { 'data-role': 'move-form' } });
+    box.appendChild(el(doc, 'h3', { className: 'cal-move-title', text: 'Sposta' }));
+    const dayKey = romeDayKey(row?.startsAt) ?? '';
+    const fields = [
+      { name: 'move-date', label: 'Giorno (AAAA-MM-GG)', value: dayKey },
+      { name: 'move-start', label: 'Inizio (HH:MM)', value: romeTime(row?.startsAt) ?? '' },
+      { name: 'move-end', label: 'Fine (HH:MM)', value: romeTime(row?.endsAt) ?? '' },
+    ];
+    const inputs = {};
+    for (const field of fields) {
+      const wrap = el(doc, 'label', { className: 'cal-move-field', text: field.label });
+      const input = el(doc, 'input', { attrs: { name: field.name, type: 'text', autocomplete: 'off' } });
+      input.value = field.value;
+      wrap.appendChild(input);
+      box.appendChild(wrap);
+      inputs[field.name] = input;
+    }
+    const move = uiButton(doc, {
+      variant: 'secondary',
+      small: true,
+      label: 'Sposta',
+      attrs: { type: 'button', 'data-action': 'move-submit' },
+    });
+    if (state.moveBusy) {
+      uiMarkBusy(move, 'Spostamento in corso…'); // cta-loading: the shared waiting state
+    } else {
+      move.addEventListener('click', () => {
+        void submitMoveForm(row, {
+          date: String(inputs['move-date']?.value ?? ''),
+          start: String(inputs['move-start']?.value ?? ''),
+          end: String(inputs['move-end']?.value ?? ''),
+        });
+      });
+    }
+    box.appendChild(move);
+    return box;
+  }
+
+  /**
+   * Read the «Sposta» fields and move through the same route as the drag
+   * (backlog:3d0fbe7dc8d1). Bad fields fail closed in Italian before any
+   * request; the server refusal handling is the drag's own.
+   * @param {any} row @param {{ date: string, start: string, end: string }} values
+   */
+  async function submitMoveForm(row, values) {
+    const day = values.date.trim();
+    const startsAt = romeInstant(day, values.start.trim());
+    const endsAt = romeInstant(day, values.end.trim());
+    if (startsAt === null || endsAt === null) {
+      state.moveNote = 'Scrivi giorno e orari validi: giorno come AAAA-MM-GG, orari come HH:MM.';
+      renderAll();
+      return;
+    }
+    if (Date.parse(endsAt) <= Date.parse(startsAt)) {
+      state.moveNote = 'L’orario di fine deve essere dopo l’inizio: l’appuntamento è rimasto dov’era.';
+      renderAll();
+      return;
+    }
+    await commitEventMove(row, startsAt, endsAt);
   }
 
   /**
@@ -2603,7 +3646,8 @@ export function createCalendarioView(deps) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
         const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        confirm.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         item.appendChild(confirm);
         list.appendChild(item);
       }
@@ -2805,11 +3849,7 @@ export function createCalendarioView(deps) {
       const searchIds = memberIds.length > 0 ? memberIds : [member];
       // The draft paints (with its Annulla) while the slots are searched.
       renderAll();
-      const found = await client.request(
-        `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
-        + `&from=${encodeURIComponent(bounds.from)}&to=${encodeURIComponent(bounds.to)}`
-        + `&slotMinutes=${encodeURIComponent(String(draftMinutes(draft)))}`,
-      );
+      const found = await client.request(suggestSlotsPath(searchIds, bounds.from, bounds.to, draftMinutes(draft)));
       const groups = Array.isArray(found?.members) ? found.members : [];
       // backlog:d1e4d90e — the searched identities belong to one resolved
       // person: offer a step only when every identity reports it free, so a
@@ -3092,6 +4132,16 @@ export function createCalendarioView(deps) {
       }));
       return;
     }
+    // backlog:7d82fd84 (review #678 giro-2 P3): a partial list says so above
+    // the buttons too, not only on the empty branch — the operator could
+    // otherwise pick a visible name while a better match stays unread past
+    // the bound.
+    if (state.customerPartial) {
+      box.appendChild(el(doc, 'p', {
+        className: 'empty',
+        text: 'L’elenco è parziale: potrebbero esserci altri clienti oltre quelli letti.',
+      }));
+    }
     for (const item of state.customerItems) {
       const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
       const pick = uiSecondaryButton(doc, name);
@@ -3136,22 +4186,25 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    const customer = pickedCustomer();
-    const claim = {
+    const claim = bookingClaim({
       spaceId: readSpace(),
-      subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+      customer: pickedCustomer(),
       teamMemberId: member,
       serviceKey: serviceKeyFor(manualValue('serviceKey'), state.services),
       priceCents: priceToCents(manualValue('price')),
-      currency: 'EUR',
       startsAt,
       endsAt,
       notes: manualValue('notes') === '' ? null : manualValue('notes'),
-      sourceKey: `calendario:${member}:${startsAt}:${customer.id === '' ? 'senza-cliente' : customer.id}`,
-      source: { package: 'host', action: 'calendar-book' },
-    };
+    });
     state.confirmed = null;
     state.serviceError = '';
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.aiNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco.'
+        : 'Scegli il servizio dal listino nel modulo «Nuovo appuntamento», poi conferma.';
+      renderAll();
+      return;
+    }
     const presend = servicePresendError(claim.serviceKey);
     if (presend !== null) {
       // A typed service the server could never book (backlog:9a853f44,
@@ -3220,6 +4273,7 @@ export function createCalendarioView(deps) {
     state.bookingNote = '';
     state.serviceError = '';
     state.manual = null;
+    state.manualTyped.clear();
     state.customerPick = null;
     state.manualOpen = true;
     const day = romeDayKey(appointment?.startsAt);
@@ -3244,6 +4298,21 @@ export function createCalendarioView(deps) {
    * the screen — they ride the claim from `pickedCustomer()` only.
    * @param {any} form
    */
+  /**
+   * backlog:6e6750ff8163 — every field of «Nuovo appuntamento» carries its
+   * visible label (Cliente, Persona del team, Servizio, Prezzo, Giorno,
+   * Inizio, Fine, Note): a placeholder alone vanishes as soon as the field
+   * holds a value («1.00» read as nothing). The label wraps its control, so
+   * a click on the words focuses the field and screen readers name it.
+   * @param {string} label @param {any} control @param {{wide?: boolean}} [options]
+   */
+  function fieldBox(label, control, { wide = false } = {}) {
+    const box = el(doc, 'label', { className: `cal-field${wide ? ' cal-field-wide' : ''}` });
+    box.appendChild(el(doc, 'span', { className: 'cal-field-label', text: label }));
+    box.appendChild(control);
+    return box;
+  }
+
   function renderCustomerPick(form) {
     const pick = state.customerPick;
     if (pick && typeof pick?.name === 'string') {
@@ -3262,9 +4331,11 @@ export function createCalendarioView(deps) {
       state.manualFirst = change;
       return;
     }
+    // A short placeholder: the label says what the field is, so the hint
+    // never gets cut on the 340 px popover.
     const search = uiSearchField(doc, {
       name: 'customerSearch',
-      placeholder: 'Cerca il cliente per nome…',
+      placeholder: 'Cerca per nome…',
       value: state.customerQuery,
     });
     const box = el(doc, 'div', { attrs: { 'data-role': 'customer-results' } });
@@ -3275,7 +4346,7 @@ export function createCalendarioView(deps) {
         scheduleCustomerSearch(state.customerQuery);
       });
     }
-    form.appendChild(search);
+    form.appendChild(fieldBox('Cliente', search, { wide: true }));
     form.appendChild(box);
     paintCustomerResults(box);
     if (field) state.manualFirst = field;
@@ -3318,8 +4389,9 @@ export function createCalendarioView(deps) {
       }
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
+        state.manualTyped.add('teamMemberId');
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Persona del team', input, { wide: true }));
       return input;
     }
     // One option per PERSON under the person label (backlog:810ed0bf:
@@ -3341,12 +4413,15 @@ export function createCalendarioView(deps) {
       if (shown !== '') select.value = shown;
       const track = () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
+        // Review #818 (P2): a person the operator chose is their own work.
+        state.manualTyped.add('teamMemberId');
       };
       select.addEventListener('input', track);
       select.addEventListener('change', track);
-      form.appendChild(wrap);
+      form.appendChild(fieldBox('Persona del team', wrap, { wide: true }));
       return select;
     }
+    form.appendChild(fieldBox('Persona del team', wrap, { wide: true }));
     return wrap;
   }
 
@@ -3382,54 +4457,96 @@ export function createCalendarioView(deps) {
         form.appendChild(hint);
       }
     };
+    // Review #805: with a served list (or a served list that failed) the
+    // service is never free text — a typed name could mint a key the
+    // worker refuses. A failed or empty list blocks the field with why.
+    if (state.servicesMode === 'failed' || (state.servicesMode === 'served' && (bookable === null || bookable.length === 0))) {
+      const failed = state.servicesMode === 'failed';
+      const wrap = uiSelect(doc, {
+        name: 'serviceKey', value: '',
+        options: [{ value: '', label: failed ? 'Servizi non disponibili' : 'Nessun servizio prenotabile' }],
+      });
+      const select = wrap.querySelector('select') ?? wrap;
+      select.value = '';
+      select.setAttribute('disabled', 'disabled');
+      form.appendChild(fieldBox('Servizio', wrap, { wide: true }));
+      form.appendChild(el(doc, 'small', {
+        className: 'field-error',
+        attrs: { role: 'alert', 'data-role': 'services-blocked' },
+        text: failed
+          ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+          : 'Nessun servizio prenotabile nel listino: aggiungine uno in Catalogo.',
+      }));
+      return select;
+    }
     if (bookable === null || bookable.length === 0) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
       return input;
     }
     const kept = typeof state.manual?.serviceKey === 'string' ? state.manual.serviceKey : '';
     const drafted = typeof state.draftFill?.serviceKey === 'string' ? state.draftFill.serviceKey : '';
     const wanted = kept !== '' ? kept : drafted;
-    // A kept or drafted service is never replaced by the default: the
-    // match is case-insensitive (plus the catalog-name mapping), and an
-    // unknown key keeps the typed value in a text field instead of
-    // booking a service the operator never chose. Only with nothing kept
-    // and nothing drafted does the first entry preselect.
+    // A kept or drafted service is never replaced by a default: the match
+    // is case-insensitive (plus the catalog-name mapping), and an unknown
+    // key keeps the typed value in a text field instead of booking a
+    // service the operator never chose. backlog:6e6750ff8163: with nothing
+    // kept and nothing drafted the menu starts on «Scegli il servizio» —
+    // never the first catalog entry, which on a real listino was a test
+    // product — unless the listino holds exactly one bookable service,
+    // like the scheda's «Nuovo appuntamento» window.
     const mapped = serviceKeyFor(wanted, state.services);
     const match = bookable.find((entry) => entry.key === wanted)
       ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
       ?? bookable.find((entry) => entry.key === mapped)
-      ?? (wanted === '' ? bookable[0] : null);
-    if (match === null) {
+      ?? (wanted === '' && bookable.length === 1 ? bookable[0] : null);
+    if (match === null && wanted !== '' && state.servicesMode === 'served') {
+      // A kept or drafted service the served list does not hold (#805): the
+      // menu asks for a choice on its placeholder, never a free-text key.
+      state.manual = { ...(state.manual ?? {}), serviceKey: '' };
+    } else if (match === null && wanted !== '') {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       input.value = wanted;
       state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
-      form.appendChild(input);
+      form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
       return input;
     }
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
-    const options = bookable.map((entry) => ({
-      value: entry.key,
-      label: `${entry.name} · ${priceText(entry)} €`,
-    }));
-    const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
+    const options = [
+      ...(match === null ? [{ value: '', label: 'Scegli il servizio' }] : []),
+      ...bookable.map((entry) => ({
+        value: entry.key,
+        label: serviceOptionLabel(entry),
+      })),
+    ];
+    const chosenKey = match === null ? '' : match.key;
+    const wrap = uiSelect(doc, { name: 'serviceKey', value: chosenKey, options });
     const select = wrap.querySelector('select') ?? wrap;
-    select.value = match.key;
+    select.value = chosenKey;
     const track = () => {
       const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
       state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      // Review #818 (P2): a service the operator chose is their own work.
+      state.manualTyped.add('serviceKey');
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      } else if (chosen === null && priceInput) {
+        // Back on «Scegli il servizio» (review #790, Muse P2): no service,
+        // no price — never the price of a service nobody chose any more.
+        priceInput.value = '';
+        state.manual = { ...(state.manual ?? {}), price: '' };
       }
     };
     select.addEventListener('input', track);
@@ -3440,19 +4557,21 @@ export function createCalendarioView(deps) {
     // render all read the live menu, so a preselect stored here could
     // never shadow a later draft as a «kept» choice (a kept choice is
     // only what the operator or an absorbed draft actually set).
-    if (priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
+    if (match !== null && priceInput && (typeof state.manual?.price !== 'string' || state.manual.price === '')) {
       priceInput.value = priceText(match);
       state.manual = { ...(state.manual ?? {}), price: priceInput.value };
     }
-    form.appendChild(wrap);
+    form.appendChild(fieldBox('Servizio', wrap, { wide: true }));
     paintUnder(select);
     return select;
   }
 
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
-    // form stays in the DOM, so a draft can still prefill it.
-    const panel = el(doc, 'div', { className: `panel cal-manual${state.manualOpen || state.draftFill || state.manual ? ' open' : ''}` });
+    // form stays in the DOM inside its hidden popover, so a draft can still
+    // prefill it.
+    // The popover around it opens and closes the form (backlog:6e6750ff8163).
+    const panel = el(doc, 'div', { className: 'panel cal-manual open' });
     state.manualPanel = panel;
     panel.appendChild(el(doc, 'h2', { text: 'Nuovo appuntamento' }));
     panel.appendChild(el(doc, 'p', {
@@ -3480,25 +4599,26 @@ export function createCalendarioView(deps) {
     // The price rides the chosen catalog entry (backlog:810ed0bf): it
     // prefills from the menu default and follows every service change
     // until the operator types their own price.
-    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', placeholder: 'Prezzo EUR (es. 45.00)' } });
+    const priceInput = el(doc, 'input', { attrs: { type: 'text', name: 'price', inputmode: 'decimal', placeholder: 'es. 45.00' } });
     if (state.manual?.price != null) priceInput.value = String(state.manual.price);
     priceInput.addEventListener('input', () => {
       state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+      state.manualTyped.add('price');
     });
     // The service is a catalog menu with the default already chosen, never
     // free text (backlog:810ed0bf): the claim sends the menu key the worker
     // books by, with its price precompiled beside it.
     inputs.serviceKey = renderServiceChoice(form, priceInput);
-    form.appendChild(priceInput);
+    form.appendChild(fieldBox('Prezzo (€)', priceInput, { wide: true }));
     inputs.price = priceInput;
     const fields = [
-      ['date', 'date', 'Giorno'],
-      ['start', 'time', 'Inizio'],
-      ['end', 'time', 'Fine'],
-      ['notes', 'text', 'Note'],
+      ['date', 'date', 'Giorno', ''],
+      ['start', 'time', 'Inizio', ''],
+      ['end', 'time', 'Fine', ''],
+      ['notes', 'text', 'Note', 'Facoltative'],
     ];
-    for (const [name, type, placeholder] of fields) {
-      const input = el(doc, 'input', { attrs: { type, name, placeholder } });
+    for (const [name, type, label, placeholder] of fields) {
+      const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
       // rebuilds the inputs, so restore the last manual values first — and
       // track every keystroke live, so an unrelated re-render (week load,
@@ -3506,9 +4626,12 @@ export function createCalendarioView(deps) {
       if (state.manual?.[name] != null) input.value = String(state.manual[name]);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
+        state.manualTyped.add(name);
       });
       inputs[name] = input;
-      form.appendChild(input);
+      // Giorno and Note take the row; Inizio and Fine sit side by side, so
+      // no date ever gets cut on the 340 px popover.
+      form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
@@ -3591,9 +4714,11 @@ export function createCalendarioView(deps) {
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
-    propose.addEventListener('click', () => void submitBooking(inputs, false));
+    holdBookingButton(propose, 'propose', 'Controllo…');
+    propose.addEventListener('click', () => void busyBooking('propose', () => submitBooking(inputs, false)));
     const confirm = el(doc, 'button', { className: 'secondary small', text: 'Conferma' });
-    confirm.addEventListener('click', () => void submitBooking(inputs, true));
+    holdBookingButton(confirm, 'confirm', 'Prenoto…');
+    confirm.addEventListener('click', () => void busyBooking('confirm', () => submitBooking(inputs, true)));
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
@@ -3626,23 +4751,17 @@ export function createCalendarioView(deps) {
     const member = claimedMember(inputs);
     // The customer rides the name-search pick, never a typed id or
     // resource: without a pick the historical contact/empty fallback stays.
-    const customer = pickedCustomer();
     return {
-      claim: {
+      claim: bookingClaim({
         spaceId: readSpace(),
-        subject: { resource: customer.resource, id: customer.id, owner: 'host' },
+        customer: pickedCustomer(),
         teamMemberId: member,
         serviceKey: serviceKeyFor(read('serviceKey'), state.services),
         priceCents,
-        currency: 'EUR',
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
-        sourceKey: member !== '' && startsAt
-          ? `calendario:${member}:${startsAt}:${customer.id || 'senza-cliente'}`
-          : undefined,
-        source: { package: 'host', action: 'calendar-book' },
-      },
+      }),
     };
   }
 
@@ -3721,6 +4840,46 @@ export function createCalendarioView(deps) {
   }
 
   /** @param {any} inputs @param {boolean} confirm */
+  /**
+   * cta-loading (Dan 11/11): one booking at a time, and the pressed button
+   * reads «Prenoto…» on every re-render until the answer is in.
+   * @param {string} key @param {() => Promise<void>} work
+   */
+  async function busyBooking(key, work) {
+    if (state.bookingBusy) return;
+    state.bookingBusy = key;
+    // Review Muse #775 giro 2: the buttons on screen go off now, before the
+    // first await, not at the next repaint — no window where a second
+    // booking button looks pressable and drops its click.
+    for (const [shownKey, entries] of bookingButtons) {
+      for (const { button, label } of entries) holdBookingButton(button, shownKey, label, false);
+    }
+    try {
+      await work();
+    } finally {
+      state.bookingBusy = null;
+      renderAll();
+    }
+  }
+  /**
+   * Review Muse #775: while one booking is in flight every booking button is
+   * off — the pressed one reads «Prenoto…», the others are simply not
+   * pressable — so no click is ever silently dropped.
+   * @param {any} button @param {string} key @param {string} label
+   */
+  function holdBookingButton(button, key, label, remember = true) {
+    if (remember) bookingButtons.set(key, [...(bookingButtons.get(key) ?? []), { button, label }]);
+    if (!state.bookingBusy) return;
+    if (state.bookingBusy === key) {
+      uiMarkBusy(button, label);
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute('disabled', 'disabled');
+  }
+  /** @param {any} slot */
+  const slotBusyKey = (slot) => `slot:${slot?.teamMemberId ?? ''}:${slot?.startsAt ?? ''}`;
+
   async function submitBooking(inputs, confirm) {
     await ensureServices();
     const { claim } = claimFrom(inputs);
@@ -3738,7 +4897,16 @@ export function createCalendarioView(deps) {
     state.serviceError = '';
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
-      state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      state.bookingNote = state.servicesMode === 'failed' && missing.includes('servizio')
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      renderAll();
+      return;
+    }
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.bookingNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : 'Scegli il servizio dal listino: questo servizio non c’è.';
       renderAll();
       return;
     }
@@ -3822,6 +4990,12 @@ export function createCalendarioView(deps) {
       state.customerError = null;
       state.customerPartial = false;
       state.customerPick = null;
+      // Review #805 giro 2: space B has its own bookable list — never
+      // book or block with space A's.
+      state.services = undefined;
+      state.catalogServices = undefined;
+      state.servicesMode = null;
+      servicesRead = null;
     }
     state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
@@ -3829,11 +5003,26 @@ export function createCalendarioView(deps) {
     // cleared, so a later visit starts unpicked. A fresh pick opens the
     // manual form around the named customer; without one the form keeps its
     // own state (an operator search in progress is never clobbered).
+    // backlog:bd5e84545021: Oggi's «Fonti: Appuntamento delle …» lands on
+    // the event's own week with the event selected, like a block click.
+    const askedEvent = takePendingCalendarEvent(storage);
+    if (askedEvent !== null) {
+      state.weekKeys = romeWeekKeys(new Date(`${askedEvent.day}T12:00:00Z`));
+      state.week = null;
+      state.proposals = [];
+      state.aiNote = '';
+      state.selectedId = null;
+      state.pendingEventId = askedEvent.id;
+      state.pendingEventMember = askedEvent.member ?? null;
+    }
     const freshPick = takePendingCustomerPick(storage, 'appointment');
     if (freshPick !== null) {
       state.customerPick = freshPick;
       state.manualOpen = true;
     }
+    // backlog:7587307d5215: the roster read starts with this paint, so the
+    // first frame shows the loading skeletons, never «nessuna persona».
+    if (state.members === null) state.membersLoading = true;
     renderAll();
     // The roster arrives beside the week and becomes the team once it
     // lands (auto-fill plus week load inside loadMembers); its failure is
@@ -3852,4 +5041,110 @@ export function createCalendarioView(deps) {
   }
 
   return { render, invalidate };
+}
+
+/**
+ * The one booking claim every Conferma sends to `/api/appointments/confirm`
+ * (manual form, proposal row, and the scheda cliente «Nuovo appuntamento»
+ * window): the customer as a host subject, the listino key and price in
+ * EUR, and the source key that binds person, start and customer, so a retry
+ * or a double click replays instead of double-booking. Without a person or
+ * a start there is no source key yet (the server refuses the claim).
+ * @param {{spaceId: unknown, customer: {resource?: unknown, id?: unknown} | null | undefined,
+ *   teamMemberId: string, serviceKey: string, priceCents: number | null,
+ *   startsAt: string | null, endsAt: string | null, notes?: string | null}} input
+ */
+export function bookingClaim(input) {
+  const id = typeof input.customer?.id === 'string' ? input.customer.id : '';
+  const resource = typeof input.customer?.resource === 'string' && input.customer.resource !== ''
+    ? input.customer.resource : 'contact';
+  const member = input.teamMemberId;
+  return {
+    spaceId: input.spaceId,
+    subject: { resource, id, owner: 'host' },
+    teamMemberId: member,
+    serviceKey: input.serviceKey,
+    priceCents: input.priceCents,
+    currency: 'EUR',
+    startsAt: input.startsAt,
+    endsAt: input.endsAt,
+    notes: input.notes ?? null,
+    sourceKey: member !== '' && input.startsAt
+      ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
+      : undefined,
+    source: { package: 'host', action: 'calendar-book' },
+  };
+}
+
+/**
+ * The free-slot read for one person over a window: every searched booking
+ * identity, the bounds and the slot size, as `suggest-slots` expects them.
+ * @param {ReadonlyArray<string>} searchIds @param {string} from @param {string} to @param {number} minutes
+ */
+export function suggestSlotsPath(searchIds, from, to, minutes) {
+  return `/api/appointments/suggest-slots?teamMemberIds=${encodeURIComponent(searchIds.join(','))}`
+    + `&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    + `&slotMinutes=${encodeURIComponent(String(minutes))}`;
+}
+
+/** The slot sizes `suggest-slots` accepts, in minutes. */
+export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
+
+/**
+ * P1 11/11: the services a booking can name, as the server that books
+ * them lists them. The pilot answers `GET /api/appointments/services` with
+ * the very list its worker resolves a Conferma against (the menu used to
+ * key services by product SKU, and every key was refused). Only when the
+ * server answers that it serves no such list — a 404 or 405, the
+ * framework on its own — the menu falls back to the catalog singles rule.
+ * Any other failure is thrown: guessing a list the server would refuse is
+ * the bug this ends.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options] a catalog answer already read, for the fallback
+ * @returns {Promise<ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>>}
+ */
+export async function readBookingServices(client, { catalog = undefined } = {}) {
+  const read = await readBookingServicesDetailed(client, { catalog });
+  if (read.failed) throw read.error;
+  return read.services;
+}
+
+/**
+ * Review #805: the same read, saying where the list came from. `served`
+ * is true when the server answers the list (its answer is the whole truth,
+ * even empty); `failed` when it serves one and the read failed — the
+ * caller blocks the booking then, never falls back to catalog keys.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options]
+ * @returns {Promise<{served: boolean, failed: boolean, error: any, catalog: any, services: ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>}>}
+ */
+export async function readBookingServicesDetailed(client, { catalog = undefined } = {}) {
+  let answer;
+  try {
+    answer = await client.request('/api/appointments/services');
+  } catch (error) {
+    // Review #805 giro 2: fallback only where the server answers that it
+    // serves no list — 404/405 or the framework's not-composed answer. Any
+    // other failure, a missing HTTP answer included (a timeout, a dropped
+    // connection), blocks like a 5xx: guessing catalog keys is the bug.
+    const status = typeof error?.status === 'number' ? error.status : null;
+    const notServed = status === 404 || status === 405 || (status !== null && isNotComposedFailure(error));
+    if (!notServed) {
+      return { served: true, failed: true, error, services: Object.freeze([]), catalog: undefined };
+    }
+    // The caller's own catalog read when it has one: never read it twice.
+    const read = catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200');
+    return { served: false, failed: false, error: null, services: catalogBookingServices(read), catalog: read };
+  }
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(answer?.services) ? answer.services : []) {
+    const key = typeof entry?.serviceKey === 'string' ? entry.serviceKey.trim() : '';
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    if (!CATALOG_SLUG_RE.test(key) || name === '' || seen.has(key)) continue;
+    if (!Number.isSafeInteger(entry.priceCents) || entry.priceCents < 0 || entry.currency !== 'EUR') continue;
+    seen.add(key);
+    out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
+  }
+  return { served: true, failed: false, error: null, services: Object.freeze(out), catalog: undefined };
 }

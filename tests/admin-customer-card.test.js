@@ -186,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -231,6 +231,10 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       if (path.startsWith('/api/audit')) {
         if (auditError) throw auditError;
         return { items: audit };
+      }
+      if (path === '/api/spine/memberships') {
+        if (teamError) throw teamError;
+        return { items: team };
       }
       throw new Error(`unexpected request ${path}`);
     },
@@ -463,6 +467,52 @@ test('with no upcoming booking the scheda says none is booked', async () => {
     },
   }));
   assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
+});
+
+// backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
+// stays in the scheda's cronologia as one readable row, with its reason.
+test('a cancelled appointment reads in the cronologia as «Appuntamento annullato», with the reason', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2026-11-10T09:00:00.000Z', endsAt: '2026-11-10T09:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-09T15:00:00.000Z',
+          },
+          {
+            id: 'b1', status: 'cancelled', startsAt: '2026-11-12T09:00:00.000Z', endsAt: '2026-11-12T09:30:00.000Z',
+            serviceKey: 'pt-single', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+            cancelReason: null, decidedAt: null,
+          },
+        ],
+      },
+    },
+  }));
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(rows.length, 2, 'one cronologia row per cancelled appointment');
+  const first = rows.find((node) => node.textContent.includes('Lezione prova'));
+  assert.ok(first, 'the service reads as words');
+  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione prova · 10 nov 10:00'), first.textContent);
+  assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
+  const second = rows.find((node) => node.textContent.includes('Pt single'));
+  assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
+  const text = mount.textContent;
+  assert.ok(!text.includes('coach-guido'), 'never the member id');
+  assert.ok(!text.includes('cancelled'), 'never the raw status');
+  assert.ok(!text.includes('appointment-cancelled'), 'never the row key');
+  // A channel filter shows that channel only: the cancellation has none.
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+  assert.equal(
+    mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled')).length,
+    0,
+    'a channel filter hides the cancellation row',
+  );
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {
@@ -933,7 +983,10 @@ test('1a066ddfe42a: la scheda senza dati e con inglese/API grezza resta tutta it
   assert.ok(text.includes('Nessun telefono collegato'), 'empty phone reads as plain Italian');
   assert.ok(!text.includes('Offerta'), 'an uncomposed offer package shows no offer block at all');
   assert.ok(text.includes('Contatto'), 'the stato badge reads Contatto, not lowercase technical contatto');
-  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'unreadable evidence never reads as a definitive none');
+  // Voce ebde30a307f2: moduli order/commercial-contract/subscription non
+  // composti → nessuna riga (né hedge né «nessuna attività»).
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'uncomposed evidence shows no false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'uncomposed evidence never reads as a definitive none');
 });
 
 test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di sistema', async () => {
@@ -982,8 +1035,51 @@ test('1a066ddfe42a: complete zero evidence reads as a definitive Italian none', 
   assertCustomerItalian(text, 'proven-empty card');
   assert.ok(text.includes('Nessuna attività firmata collegata'), 'proven absence reads as a definitive none');
   assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'proven absence carries no hedge');
-  assert.ok(text.includes('Nessuna offerta firmata'), 'a composed-but-empty offer package reads its empty state');
+  assert.ok(!text.includes('Nessuna offerta firmata'), '2f2d22f2: the old confirmed-none line is gone');
+  assert.ok(!text.includes('Offerta'), '2f2d22f2: a readable-but-empty commercial page hides the offer card');
   assert.ok(text.includes('Nessun pacchetto attivo'), 'a complete empty package page reads its empty state');
+});
+
+test('ebde30a307f2: moduli non composti, nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: PROFILE_BARE, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'uncomposed evidence card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'no false hedge when nothing is composed');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'no definitive none when nothing is composed');
+});
+
+test('ebde30a307f2: profilo non composto (404), nessuna riga ordini/contratti', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE, timeline: TIMELINE_BARE, profile: null, enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'missing profile card');
+  assert.ok(!text.includes('Ordini e contratti non leggibili adesso'), 'a 404 profile hides the line instead of a false hedge');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a 404 profile never claims a definitive none');
+});
+
+test('ebde30a307f2: moduli composti ma illeggibili, resta il messaggio temporaneo', async () => {
+  const mount = await renderCard(stubClient({
+    card: CARD_BARE,
+    timeline: TIMELINE_BARE,
+    profile: {
+      ...PROFILE_BARE,
+      orders: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+      contracts: {
+        available: false,
+        reason: 'commercial contracts could not be read from this application',
+        items: null, count: null,
+      },
+      subscriptions: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    },
+    enriched: ENRICHED,
+  }));
+  const text = mount.textContent;
+  assertCustomerItalian(text, 'failed-evidence card');
+  assert.ok(text.includes('Ordini e contratti non leggibili adesso'), 'a failed read on composed modules keeps the temporary message');
+  assert.ok(!text.includes('Nessuna attività firmata collegata'), 'a failed read never reads as a definitive none');
 });
 
 // Voce 59def6cb805d: la colonna centrale parla come il prototipo — titolo,
@@ -1052,9 +1148,12 @@ test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27
     timeline: { ...TIMELINE, entries: { available: true, count: 0, truncated: false, items: [] } },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Nessun messaggio qui'), 'the empty title is exact');
-  assert.ok(text.includes('Prova un altro canale oppure scrivi il primo messaggio qui sotto.'),
+  // backlog:82235e46e3e9: the field below writes a note, not a message —
+  // the empty state names «Scrivi» for messages and the note below.
+  assert.ok(text.includes('Ancora nessun contatto'), 'the empty title is exact');
+  assert.ok(text.includes('Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'),
     'the empty hint is exact');
+  assert.ok(!text.includes('primo messaggio qui sotto'), 'never a message «qui sotto»: below is the note');
   assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
 });
 
@@ -1580,7 +1679,7 @@ test('826e377c: observed rows on any labeled channel render with no buttons', as
   assert.deepEqual(buttons, [], 'the read-only section offers no link buttons');
 });
 
-test('a customer with no linked offer reads none registered, never another customer offer', async () => {
+test('2f2d22f2: a customer with no linked offer shows no offer card, never another customer offer', async () => {
   const mount = await renderCard(stubClient({
     profile: {
       ...PROFILE,
@@ -1589,8 +1688,103 @@ test('a customer with no linked offer reads none registered, never another custo
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Nessuna offerta firmata'), 'the empty offer panel says so');
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!titles.includes('Offerta'), 'the offer card stays hidden without an offer');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'no confirmed-none line without an offer');
   assert.ok(!text.includes('Preventivo 10 ingressi'), 'no offer from anywhere is shown');
+});
+
+test('2f2d22f2: a half-readable commercial page keeps the offer card with its unavailable line', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: { available: false, items: null, reason: 'the commercial package is not composed' },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const text = mount.textContent;
+  const titles = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(titles.includes('Offerta'), 'the half-readable offer card stays');
+  assert.ok(text.includes('offerte non disponibili'), 'the unavailable side reads a fixed Italian line');
+  assert.ok(!text.includes('Nessuna offerta firmata'), 'a half read never claims a confirmed none');
+});
+
+test('2f2d22f2: the card names its customer to the shell breadcrumb, once per name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti'], 'the name fires once, not on every re-read');
+});
+
+test('2f2d22f2 review #722 P2-1: another customer with the same name re-narrows the breadcrumb', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // Same name on another customer (the router repainted plain «Clienti» on
+  // entry): the dedup must not swallow the second narrowing.
+  await view.renderCard('contact', 'c2');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 'same name, other customer: the crumb narrows again');
+});
+
+test('2f2d22f2 review #722 P2-1: re-entering the same card after navigation restores the name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient(), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  // The operator leaves the card (the router repaints plain «Clienti»)
+  // and comes back on the same scheda with the same hash.
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, ['Guido Presti', 'Guido Presti'], 're-entry restores «Clienti / <nome>»');
+});
+
+test('2f2d22f2 review #722 P2-2: a card read resolving after navigation never titles the new screen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  let releaseCard;
+  const cardGate = new Promise((resolve) => { releaseCard = resolve; });
+  const inner = stubClient();
+  const slowClient = {
+    ...inner,
+    async request(path, options = {}) {
+      if (path.includes('/card/')) await cardGate;
+      return inner.request(path, options);
+    },
+  };
+  const view = createCustomerCardView({
+    doc, mount, client: slowClient, onCustomerTitle: (title) => { titles.push(title); },
+  });
+  const pending = view.renderCard('contact', 'c1');
+  // The operator navigates on (Calendario) while the card read is in flight.
+  view.invalidate();
+  releaseCard();
+  await pending;
+  assert.deepEqual(titles, [], 'the stale read stays silent on the new screen');
+});
+
+test('2f2d22f2: a failed card read clears the shell breadcrumb', async () => {
+  const failure = Object.assign(new Error('PostgreSQL storage is unavailable'), { status: 503 });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const titles = [];
+  const view = createCustomerCardView({
+    doc, mount, client: stubClient({ cardError: failure }), onCustomerTitle: (title) => { titles.push(title); },
+  });
+  await view.renderCard('contact', 'c1');
+  assert.deepEqual(titles, [null], 'the shell falls back to plain Clienti');
 });
 
 test('backlog:32820692: attachments render on the card: thumbnail, player, icon with name', async () => {
@@ -1678,7 +1872,7 @@ test('714433c2: Modifica opens the edit form and Salva PATCHes the contact, then
   assert.ok(save, 'Salva is in the form');
   assert.ok(cancel, 'Annulla is in the form');
 
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Guido';
   byName('lastName').value = 'Presti';
   byName('email').value = 'guido@palestra-esempio.it';
@@ -1715,6 +1909,37 @@ test('Dettagli › Modifica › Salva sends ONE PATCH, however many times it fir
   const patches = client.writes.filter((write) => write.method === 'PATCH');
   assert.equal(patches.length, 1, 'one PATCH /contacts/<id> for one Salva');
   assert.equal(patches[0].path, '/api/contacts/c1');
+});
+
+// Dan 11/11 (cta-loading): saving the name showed no sign of work on the
+// button. While the PATCH is in flight Salva reads «Salvo…», is busy for
+// assistive tech and refuses a second press; a refusal gives it back as
+// «Salva» with the error next to it.
+test('cta-loading: Dettagli Salva reads «Salvo…» while saving and «Salva» again after a refusal', async () => {
+  let fail;
+  const pending = new Promise((_, reject) => { fail = reject; });
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => pending);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast: () => {} }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'firstName').value = 'Guido';
+  save.dispatch('click');
+  save.dispatch('click');
+  await flushClicks();
+  assert.equal(save.textContent, 'Salvo…', 'the button says it is saving');
+  assert.equal(save.getAttribute('aria-busy'), 'true', 'busy for assistive tech');
+  assert.equal(save.disabled, true, 'off while saving');
+  assert.equal(client.writes.filter((write) => write.method === 'PATCH').length, 1, 'a double tap is one PATCH');
+  fail(Object.assign(new Error('boom'), { code: 'BOOM', status: 500 }));
+  await flushClicks(8);
+  assert.equal(save.textContent, 'Salva', 'the label comes back after the refusal');
+  assert.equal(save.getAttribute('aria-busy'), null, 'no longer busy');
+  assert.equal(save.disabled, false, 'pressable again to retry');
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
+  assert.ok(fieldError && fieldError.textContent !== '', 'the refusal reads next to Salva');
 });
 
 test('a contact typed without Azienda shows no Azienda on the scheda (production 07/11)', async () => {
@@ -1828,7 +2053,7 @@ test('714433c2: Annulla drops the edits with no write and re-reads the card', as
   await createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
 
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Inventato';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-details').dispatch('click');
   await flushClicks();
@@ -1848,7 +2073,7 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
     doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
 
-  const noteInput = mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  const noteInput = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
   assert.ok(noteInput, 'the note field names its purpose for assistive tech');
   noteInput.value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
@@ -1949,10 +2174,10 @@ test('714433c2: an approval-gated move toasts the approval, and a quote line car
   );
 });
 
-// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
-// customer as a one-time pick — with the linked company the offer form needs
-// — and navigate to the creation screens. The destinations take the pick.
-test('714433c2: quick actions stash the picked customer and navigate to the creation screens', async () => {
+// Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» start with the
+// shown customer already chosen. Since Dan 06/11 (offer) and 11/11
+// (appointment) both open a window over the scheda instead of navigating.
+test('714433c2: quick actions open their windows over the scheda with the customer already chosen', async () => {
   const map = new Map();
   const storage = {
     getItem: (key) => (map.has(key) ? map.get(key) : null),
@@ -1977,13 +2202,16 @@ test('714433c2: quick actions stash the picked customer and navigate to the crea
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'no appointment pick leaks from the offer voice');
 
+  // Dan 11/11: Nuovo appuntamento opens its window over the scheda too (see
+  // tests/admin-appointment-panel.test.js) — no navigation, no stash, and
+  // only one window at a time.
   byAction('new-appointment').dispatch('click');
-  assert.deepEqual(navs, ['#/calendario'],
-    'Nuovo appuntamento opens the calendar manual booking');
-  assert.deepEqual(JSON.parse(storage.getItem('accordo.bo.customer-pick.appointment')), {
-    resource: 'contact', id: 'c1', name: 'Guido Presti',
-    company: { id: 'co1', name: 'Palestra Esempio' },
-  }, 'the appointment pick names the same record');
+  assert.deepEqual(navs, [], 'Nuovo appuntamento stays on the scheda');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'),
+    'the appointment window opens');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'the offer window steps aside');
+  assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -2167,6 +2395,113 @@ const typeAndSend = async (panel, value = 'Certo, domani alle 18.') => {
   composerSendButton(panel).dispatch('click');
   await flushComposer(12);
 };
+
+// backlog:d998cf15f011 (giro UX 11/11): the composer draft is kept per
+// customer like Gmail — through ✕ and Esc, through any re-read of the
+// scheda (a save elsewhere, the way back from another screen) — and goes
+// only after a send the server accepted. The state lived inside the quick
+// actions, so every re-read made it new and the draft was lost.
+async function draftView(client = composerClient()) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
+  await view.renderCard('contact', 'c1');
+  const open = async () => {
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+    await flushComposer();
+    return mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  };
+  const type = (panel, value) => {
+    const text = panel.findAll('textarea')[0];
+    text.value = value;
+    text.dispatch('input');
+  };
+  const leaveAndComeBack = async (other = null) => {
+    view.invalidate();
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    if (other !== null) await view.renderCard('contact', other);
+    await view.renderCard('contact', 'c1');
+  };
+  return { mount, view, open, type, leaveAndComeBack };
+}
+
+test('d998cf15f011: the draft survives ✕, Esc and a re-read of the same scheda', async () => {
+  const { mount, view, open, type } = await draftView();
+  let panel = await open();
+  type(panel, 'Ciao Guido, ti confermo');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined, '✕ closes');
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo', 'back after ✕ and a re-read');
+  type(panel, 'Ciao Guido, ti confermo domani');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Ciao Guido, ti confermo domani', 'back after Esc and a re-read');
+});
+
+test('d998cf15f011: the draft survives leaving the scheda and coming back, and stays with its customer', async () => {
+  const { open, type, leaveAndComeBack } = await draftView();
+  const panel = await open();
+  type(panel, 'Bozza per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Bozza per Guido', 'back from another screen');
+});
+
+test('d998cf15f011: another customer opens an empty composer, the first one keeps its draft', async () => {
+  const client = composerClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/card/contact/c2') return { ...CARD, subject: { resource: 'contact', id: 'c2' }, name: 'Altra Persona' };
+    return base(path, options);
+  };
+  const { open, type, view, leaveAndComeBack } = await draftView(client);
+  const panel = await open();
+  type(panel, 'Solo per Guido');
+  panel.dispatch('keydown', { key: 'Escape' });
+  view.invalidate();
+  await view.renderCard('contact', 'c2');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'the other customer starts empty');
+  await leaveAndComeBack();
+  assert.equal((await open()).findAll('textarea')[0].value, 'Solo per Guido');
+});
+
+test('d998cf15f011: a sent message empties the draft, also after a re-read', async () => {
+  const { open, type, view } = await draftView();
+  const panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  await view.renderCard('contact', 'c1');
+  assert.equal((await open()).findAll('textarea')[0].value, '', 'nothing comes back after the send');
+});
+
+test('d998cf15f011: a send retried after a re-read keeps its message key', async () => {
+  const keys = [];
+  const client = composerClient({
+    onPost: () => { throw Object.assign(new Error('gateway'), { status: 504, code: 'UNKNOWN' }); },
+  });
+  const base = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/messages' && options.method === 'POST') keys.push(JSON.parse(options.body).messageKey);
+    return base(path, options);
+  };
+  const { open, type, view } = await draftView(client);
+  let panel = await open();
+  type(panel, 'Certo, domani alle 18.');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  panel.dispatch('keydown', { key: 'Escape' });
+  await view.renderCard('contact', 'c1');
+  panel = await open();
+  assert.equal(panel.findAll('textarea')[0].value, 'Certo, domani alle 18.', 'the unsent text is still there');
+  composerSendButton(panel).dispatch('click');
+  await flushComposer(12);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1], 'the same message keeps the same key: the server finds its own request');
+});
 
 test('composer window hangs off the view, outside the sticky side columns', async () => {
   const { mount, panel } = await openComposerMount();
@@ -2500,7 +2835,9 @@ test('a935af6a6d19: a truly unlinked channel shows Collega to Connettori', async
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
   assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without any link stays off');
-  assert.ok(panel.textContent.includes('non collegato'), 'the off channel says it is not linked');
+  // backlog:bd9ae1482194: nothing linked in the space — one line, no
+  // per-channel list.
+  assert.ok(panel.textContent.includes('Collega un canale per scrivere a questo cliente'), 'the composer says what to do');
   const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
   assert.ok(link, 'the off channel links to Connettori');
   assert.equal(link.getAttribute('href'), '#/connettori');
@@ -2540,6 +2877,13 @@ test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  // The identities read the space's channel state once on paint
+  // (backlog:e381c48581fa): release it first, so only the composer's
+  // own reads are counted below.
+  for (const release of profileReleases.splice(0)) release();
+  await flushComposer();
+  for (const release of connectorReleases.splice(0)) release();
+  await flushComposer();
   const write = mount.findAll('button')
     .find((node) => node.getAttribute('data-action') === 'compose-message');
   assert.ok(write, 'a Scrivi action exists');
@@ -2631,7 +2975,7 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const form = mount.findAll('div')
     .find((node) => node.getAttribute('class') === 'bo-scheda-note-form');
   assert.ok(form, 'the note field lives in the note form block');
-  assert.ok(form.findAll('input').some((node) => node.getAttribute('name') === 'noteBody'),
+  assert.ok(form.findAll('textarea').some((node) => node.getAttribute('name') === 'noteBody'),
     'the note field is inside the form');
   assert.ok(form.findAll('button').some((node) => node.getAttribute('data-action') === 'add-note'),
     'the note button is inside the form');
@@ -2916,7 +3260,7 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   await createCustomerCardView({
     doc, mount, client: strict, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
   await flushClicks();
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
@@ -3506,15 +3850,84 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   };
   const { panel } = await openComposerMount({ client });
   const { input, go } = aiParts(panel);
-  if (!go) {
-    assert.match(panel.textContent, /Nessun canale collegato/, 'without channels the composer says so');
-    return;
-  }
+  assert.ok(go, 'Genera is in the composer');
   input.value = 'scrivi tu';
   go.dispatch('click');
   await flushComposer();
   assert.equal(inner.drafts.length, 0, 'no draft request without a channel');
-  assert.match(panel.textContent, /Nessun canale collegato/);
+  // backlog:bd9ae1482194 (verifica 11/11): the line says what to do, with
+  // the way to Connettori — never «l’AI scrive per il canale scelto» when
+  // there is no channel to choose.
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.ok(line, 'the AI row has its line');
+  assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente');
+  const go2 = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(go2, 'the line is a link');
+  assert.equal(go2.getAttribute('href'), '#/connettori', 'the link opens the Connettori screen of the /bo');
+  assert.ok(!panel.textContent.includes('canale scelto'), 'no sentence about a channel nobody can pick');
+});
+
+// backlog:bd9ae1482194, seguito (verifica produzione pilota 6b886ee, spazio
+// 2f07eeb9 con 0 canali collegati): the composer opened on «Email (…),
+// WhatsApp (…): canale non collegato · Collega in Connettori» — the
+// customer has addresses, so the per-channel line won. The raw production
+// shape: readSyncState rows (pending, never active, no profile row merged)
+// and /api/profile on its own, with no Gmail linked.
+const RAW_UNLINKED_SPACE = {
+  spaceId: 'presti',
+  connectors: [
+    { connectionKey: 'wa-pending', channel: 'whatsapp', account: '', adapter: 'whatsapp-cloud', adapterVersion: '1', status: 'pending', importable: false, sync: null },
+    { connectionKey: 'gm-pending', channel: 'email', account: '', adapter: 'gmail', adapterVersion: '1', status: 'pending', importable: true, sync: null },
+  ],
+  connected: 0,
+  completed: 0,
+};
+const RAW_PROFILE_NO_GMAIL = {
+  member: { name: 'Daniele Pelleri', email: 'daniele.pelleri@gmail.com', role: 'owner' },
+  connections: { available: true, reason: null, items: [{ connector: 'calendar', status: 'connected', account: 'daniele.pelleri@gmail.com' }] },
+};
+
+test('backlog:bd9ae1482194: a space with 0 linked channels opens on «Collega un canale per scrivere a questo cliente» (raw production shape)', async () => {
+  for (const connectors of [RAW_UNLINKED_SPACE, { spaceId: 'presti', connectors: [], connected: 0, completed: 0 }]) {
+    const { panel } = await openComposerMount({ client: composerClient({ connectors, profile: RAW_PROFILE_NO_GMAIL }) });
+    const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+    assert.ok(off, 'the composer says what to do before any click');
+    assert.equal(off.textContent, 'Collega un canale per scrivere a questo cliente');
+    const go = off.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+    assert.equal(go?.getAttribute('href'), '#/connettori', 'the sentence links the Connettori screen');
+    assert.ok(!panel.textContent.includes('canale non collegato'), 'no per-channel line when the space has no channel at all');
+    assert.equal(composerSendButton(panel).getAttribute('disabled'), 'disabled', 'nothing to send on');
+    const { input, go: generate } = aiParts(panel);
+    input.value = 'scrivi tu';
+    generate.dispatch('click');
+    await flushComposer();
+    const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+    assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente', 'Genera says the same');
+  }
+});
+
+test('backlog:bd9ae1482194: a space with a channel the customer is not on keeps the per-channel line, and Genera links Connettori', async () => {
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/connectors')) return { connectors: [{ channel: 'facebook', status: 'active', connectionKey: 'fb-1' }] }; // Messenger linked, no Messenger address on the card
+      if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+      return inner.request(path, options);
+    },
+  };
+  const { panel } = await openComposerMount({ client });
+  const off = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'));
+  assert.ok(off.textContent.includes('canale non collegato'), 'the space has a channel: the line names the customer channels to link');
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi tu';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(inner.drafts.length, 0, 'no draft request without a usable channel');
+  const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
+  assert.equal(line.textContent, 'Collega un canale per scrivere a questo cliente');
+  assert.ok(!line.textContent.includes('canale scelto'));
 });
 
 // Dan 06/11: «ho aggiunto una nota ma non si vede e non si capisce dove;
@@ -3717,7 +4130,9 @@ test('59def6cb805d: each identity reads its sync line from the observed passages
   const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
     && node.getAttribute('data-channel'));
   const byChannel = Object.fromEntries(rows.map((node) => [node.getAttribute('data-channel'), node.textContent]));
-  assert.ok(byChannel.whatsapp.includes('↔ sincronizzato'), `received and sent on WhatsApp: ${byChannel.whatsapp}`);
+  // No space channel state here: both directions read as traffic, never a sync claim.
+  assert.ok(byChannel.whatsapp.includes('↔ in entrata e in uscita'), `received and sent on WhatsApp: ${byChannel.whatsapp}`);
+  assert.ok(!byChannel.whatsapp.includes('sincronizzato'), 'no sync claim without the channel state');
   assert.ok(byChannel.instagram.includes('← in entrata'), `only received on Instagram: ${byChannel.instagram}`);
   assert.ok(byChannel.phone.includes('→ in uscita'), `only an outgoing call: ${byChannel.phone}`);
 });
@@ -3734,10 +4149,108 @@ test('59def6cb805d review: on a truncated page a one-way sync line names itself 
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('instagram'), '← in entrata (elenco parziale)', 'one direction on a partial page is not exhaustive');
   assert.equal(syncOf('phone'), '→ in uscita (elenco parziale)');
-  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'both directions seen are proven even on a partial page');
+  assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'both directions seen are proven even on a partial page');
   assert.ok(mount.textContent.includes('(elenco parziale)'), 'the count line and the sync lines share one honesty standard');
   const complete = await renderCard(stubClient());
   assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
+});
+
+// backlog:e381c48581fa (verifica pilota 51ab9ca): on Ada Rossi's scheda
+// Instagram read «↔ sincronizzato» with Instagram not linked in the space.
+// The production shape: raw GET /api/connectors rows plus GET /api/profile.
+// «sincronizzato» only for a channel the shared channelState calls
+// collegato; an unlinked one says so.
+test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channel', async () => {
+  const both = { ...TIMELINE, entries: { ...TIMELINE.entries, items: [
+    ...TIMELINE.entries.items,
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'inbound' },
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'outbound' },
+  ] } };
+  const base = stubClient({ timeline: both });
+  const requests = [];
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      requests.push(path);
+      if (path.startsWith('/api/connectors')) return { connectors: [] };
+      if (path === '/api/profile') {
+        return { member: {}, connections: { available: true, reason: null, meta: { configured: true },
+          items: [{ connector: 'whatsapp', status: 'connected', account: '+390200000001' }] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = await renderCard(client, 'presti');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const syncOf = (channel) => mount.findAll('p')
+    .find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'WhatsApp is linked (Profilo): the sync is real');
+  assert.equal(syncOf('instagram'), '↔ in entrata e in uscita · canale non collegato', 'Instagram is not linked: no sync claim');
+  assert.equal(requests.filter((path) => path === '/api/profile').length, 1, 'one channel-state read per space');
+  // The same answer as the shared state the other screens read.
+  const { channelState } = await import('../apps/admin/public/admin-channels-count.js');
+  assert.equal(channelState('instagram', { rows: [], profile: null }).state === 'collegato', false);
+});
+
+// Review #819 P2: an unread profile is unknown, never «non collegato» — a
+// Profilo link cannot be ruled out — and a failed channel-state read leaves
+// a diagnosable warning (name/code, status, space; never a message) and
+// claims nothing.
+test('e381c48581fa review: an unread profile never says «non collegato», failures are logged', async () => {
+  const both = { ...TIMELINE, entries: { ...TIMELINE.entries, items: [
+    ...TIMELINE.entries.items,
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'inbound' },
+    { ...TIMELINE.entries.items[0], channel: 'instagram', direction: 'outbound' },
+  ] } };
+  const base = stubClient({ timeline: both });
+  const requests = [];
+  let connectorsDown = false;
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      requests.push(path);
+      if (path === '/api/profile') throw Object.assign(new Error('unavailable'), { status: 503 });
+      if (path.startsWith('/api/connectors')) {
+        if (connectorsDown) throw Object.assign(new Error('boom'), { code: 'CHANNELS_DOWN', status: 500 });
+        return { connectors: [] };
+      }
+      return base.request(path, options);
+    },
+  };
+  const warned = [];
+  const original = console.warn;
+  console.warn = (...args) => { warned.push(args.map(String).join(' ')); };
+  try {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti' });
+    await view.renderCard('contact', 'c1');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    const syncOf = (channel) => mount.findAll('p')
+      .find((node) => node.getAttribute('data-channel') === channel)
+      ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+    assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'profile unread: no sync claim, no «non collegato»');
+    assert.equal(syncOf('instagram'), '↔ in entrata e in uscita');
+    assert.ok(warned.some((line) => line.includes('bo-scheda profile unreadable') && line.includes('spaceId=presti')),
+      'the failed profile read is diagnosable');
+    // A channels outage is logged with its code and the space, and the
+    // lines stay on the traffic they saw.
+    connectorsDown = true;
+    const other = createMount();
+    await createCustomerCardView({ doc, mount: other, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+    for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(!other.textContent.includes('canale non collegato'), 'an outage claims nothing');
+    assert.ok(!other.textContent.includes('sincronizzato'), 'an outage claims nothing');
+    const channelWarn = warned.find((line) => line.includes('bo-scheda channels unreadable'));
+    assert.ok(channelWarn, 'the failed connectors read is logged');
+    assert.ok(channelWarn.includes('CHANNELS_DOWN') && channelWarn.includes('500'), 'with its code and status');
+    assert.ok(channelWarn.includes('spaceId=presti'));
+    assert.ok(!warned.some((line) => line.includes('boom')), 'never the message');
+  } finally {
+    console.warn = original;
+  }
 });
 
 test('59def6cb805d: observedDirections never assumes a direction nobody recorded (C10)', () => {
@@ -3980,6 +4493,31 @@ test('another customer clears at once and starts from Tutti', async () => {
   assert.equal(active.getAttribute('data-channel'), 'all', 'a new scheda starts from Tutti');
 });
 
+test('backlog:5a40c73e54aa: another customer keeps the router loading line, never blank', async () => {
+  const client = gatedClient();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client });
+  await view.renderCard('contact', 'c1');
+  assert.ok(mount.textContent.includes('Guido Presti'));
+  // The router painted this screen's loading line before the view read.
+  const loading = doc.createElement('div');
+  loading.setAttribute('class', 'ui-loading');
+  loading.setAttribute('role', 'status');
+  loading.textContent = 'Carico Scheda…';
+  mount.appendChild(loading);
+
+  const release = hold(client);
+  const other = view.renderCard('contact', 'c2');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!mount.textContent.includes('Guido Presti'), 'the previous customer never stays up under another id');
+  assert.equal(mount.childNodes.length, 1, 'only the loading line stays, never a blank page');
+  assert.ok(mount.textContent.includes('Carico'), 'the page shows loading while the read runs');
+  release();
+  await other;
+  assert.ok(!mount.textContent.includes('Carico Scheda…'), 'the card replaces the loading line');
+});
+
 test('a slower older re-read never overwrites a newer one', async () => {
   const client = gatedClient();
   const mount = createMount();
@@ -4016,7 +4554,7 @@ test('review #612 round 2: the Scrivi window stays open with its text through a 
   assert.notEqual(mount.findAll('div').find((node) => String(node.getAttribute('class')).split(' ').includes('bo-scheda')), card, 'the scheda itself was swapped');
 
   async function reRead() {
-    mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
+    mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'nota';
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
     await flushComposer();
   }
@@ -4029,7 +4567,7 @@ test('review #612: a note being typed survives a re-read of the same scheda', as
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  const noteField = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody');
+  const noteField = () => mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
   noteField().value = 'Richiamare giovedì';
 
   await view.renderCard('contact', 'c1');
@@ -4047,7 +4585,7 @@ test('review #612: an open Dettagli form keeps its edits through a re-read, and 
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('firstName').value = 'Guidino';
   byName('email').value = 'nuova@esempio.invalid';
 
@@ -4069,7 +4607,7 @@ test('review #612: a phone number being typed survives a re-read, Annulla closes
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-phone').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer').dispatch('click');
   const phoneField = () => mount.findAll('input').find((node) => node.getAttribute('type') === 'tel');
   phoneField().value = '+39333000111';
 
@@ -4086,9 +4624,9 @@ test('review #612: another customer never inherits the previous one\'s typing', 
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
-  mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
+  mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value = 'solo per c1';
   await view.renderCard('contact', 'c2');
-  assert.equal(mount.findAll('input').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
+  assert.equal(mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value ?? '', '');
 });
 
 // Review #612 round 3 (P1): an open Dettagli form carries through a re-read
@@ -4107,7 +4645,7 @@ test('review #612 round 3: an untouched Dettagli field takes the fresh value aft
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
   await view.renderCard('contact', 'c1');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('email').value = 'nuova@esempio.invalid';
 
   // Another operator renames the contact; an Invia elsewhere re-reads.
@@ -4201,7 +4739,7 @@ test('review #612 round 5: typing in the scheda survives a failed re-read and re
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, toast: () => {} });
   await view.renderCard('contact', 'c1');
-  const byName = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
+  const byName = (name) => [...mount.findAll('input'), ...mount.findAll('textarea')].find((node) => node.getAttribute('name') === name);
   byName('noteBody').value = 'Richiamare giovedì';
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
   byName('email').value = 'nuova@esempio.invalid';
@@ -4607,6 +5145,25 @@ test('c1649d1d: the scheda Storia stati names who moved the offer from which sta
     'an unlabelled move still reads the generic Italian line, like the detail');
 });
 
+test('review Muse #750 giro 2 (backlog:e52c5e0dd49f): Storia stati names a team actor from the roster, never «utente»', async () => {
+  const mount = await renderCard(stubClient({
+    profile: PLACED_QUOTE_PROFILE,
+    schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+    audit: [
+      {
+        action: 'opportunity.updated', actorId: 'github|48571113', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+        data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+      },
+    ],
+    team: [{ subject: 'github|48571113', displayName: 'Daniele Pelleri', email: 'dan@example.com' }],
+  }));
+  await flushClicks(5);
+  const text = mount.textContent;
+  assert.ok(text.includes('da Daniele Pelleri'), 'the team actor reads the profile name from the roster');
+  assert.ok(!text.includes('da utente'), 'no team actor hides behind «utente»');
+  assert.ok(!text.includes('github|'), 'no provider id leaks on screen');
+});
+
 test('c1649d1d: an unreadable audit trail reads one honest line', async () => {
   const mount = await renderCard(stubClient({
     profile: PLACED_QUOTE_PROFILE,
@@ -4636,8 +5193,43 @@ test('review giro 1: a rejected audit read logs its cause, never its payload', a
   }
   const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
   assert.equal(reads.length, 1, 'the trail failure is logged once');
-  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', status: 500 },
-    'on-call sees area, code and status');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call sees area, code, name, space and status — never payload or PII');
+});
+
+test('review Muse #750 giro 2, P1 on this PR (backlog:e52c5e0dd49f): a rejected roster read is logged and the Storia stati still paints record names', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const profile = {
+      ...PLACED_QUOTE_PROFILE,
+      opportunities: {
+        ...PLACED_QUOTE_PROFILE.opportunities,
+        items: [{ ...PLACED_QUOTE_PROFILE.opportunities.items[0], owner: 'elena' }],
+      },
+    };
+    const mount = await renderCard(stubClient({
+      profile,
+      schema: { pipelineContract: 1, pipelines: [accordoSalesPipeline] },
+      audit: [
+        {
+          action: 'opportunity.updated', actorId: 'elena', actorType: 'user', createdAt: '2026-11-08T10:00:00.000Z',
+          data: { pipelineKey: 'accordo-sales', pipelineStage: 'prova', fromPipelineStage: 'richiesta-info' },
+        },
+      ],
+      teamError: Object.assign(new Error('down'), { code: 'UNKNOWN', status: 500 }),
+    }));
+    await flushClicks(5);
+    assert.ok(mount.textContent.includes('da elena'),
+      'the move still names its record actor when the roster is unavailable');
+  } finally {
+    console.error = original;
+  }
+  const reads = logged.filter(([label]) => label === '[bo] offerta non leggibile');
+  assert.equal(reads.length, 1, 'the roster failure is logged once, like the trail failure');
+  assert.deepEqual(reads[0][1], { area: 'scheda-stati-roster', code: 'UNKNOWN', name: 'Error', spaceId: null, status: 500 },
+    'on-call can tell an unavailable roster from an empty one — with no roster data');
 });
 
 test('review giro 1: moves without pipelines read generic lines, never a false empty', async () => {
@@ -4663,4 +5255,13 @@ test('review giro 1: moves without pipelines read generic lines, never a false e
     'real moves never read as no moves when the pipelines are unavailable');
   assert.ok(text.includes('Cambio di stato · da elena'),
     'the move reads the generic Italian line, like the detail');
+});
+
+test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda avatar, never «S?»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client: stubClient({ card: { ...CARD, name: 'Solo SpazioB 0711' } }) }).renderCard('contact', 'c1');
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.equal(avatar.textContent, 'SS');
+  assert.ok(!avatar.textContent.includes('?'));
 });
