@@ -10,7 +10,7 @@
 // same three commercial facts as the old card editor through
 // `/api/opportunities/:id`.
 
-import { elFor, uiBusy, uiSelect } from './admin-ui.js';
+import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
 import { auditActorLabel, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
@@ -236,12 +236,56 @@ export function createOfferDetail(deps) {
     }
   }
 
+  /**
+   * backlog:d8175e1c3495: the offer page skeleton — the same frame the page
+   * paints (sheet with the hero and the facts strip, the quotes card, the
+   * history card) with grey bars where values arrive. Busy for assistive
+   * tech, with one spoken line; the real paint replaces it whole.
+   */
+  function offerSkeleton() {
+    const page = el('div', 'bo-offer bo-offer-skeleton');
+    page.setAttribute('aria-busy', 'true');
+    page.setAttribute('data-offer-skeleton', 'true');
+    const spoken = el('p', 'sr-only', 'Carico l’offerta…');
+    spoken.setAttribute('role', 'status');
+    page.appendChild(spoken);
+    const sheet = el('article', 'bo-offer-sheet');
+    const hero = el('header', 'bo-offer-hero');
+    const words = el('div', 'bo-offer-hero-words');
+    words.appendChild(el('p', 'kicker', 'Offerta'));
+    words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+    words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    hero.appendChild(words);
+    const value = el('div', 'bo-offer-value');
+    value.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    hero.appendChild(value);
+    sheet.appendChild(hero);
+    const facts = el('div', 'offer-facts');
+    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+      const cell = el('p', 'offer-fact');
+      cell.appendChild(el('span', 'offer-fact-label', label));
+      cell.appendChild(uiSkeleton(doc, { width: '70%', block: true }));
+      facts.appendChild(cell);
+    }
+    sheet.appendChild(facts);
+    page.appendChild(sheet);
+    for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
+      const card = el('div', cls);
+      card.appendChild(el('h3', undefined, title));
+      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
+      page.appendChild(card);
+    }
+    return page;
+  }
+
   async function renderOfferDetail(offerId) {
     const token = ++renderToken;
     editing = false;
     clear();
-    const status = el('p', 'muted', 'Caricamento…');
-    mount.appendChild(status);
+    // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
+    // the facts, the quotes and the history as grey bars — never a lone
+    // «Caricamento…»; the wait is announced once, to assistive tech.
+    mount.appendChild(offerSkeleton());
     let schema;
     let record;
     let quotes;
@@ -292,7 +336,8 @@ export function createOfferDetail(deps) {
       people = team;
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' });
+      clear();
+      mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' })));
       return;
     }
     if (token !== renderToken || !record || typeof record !== 'object') return;

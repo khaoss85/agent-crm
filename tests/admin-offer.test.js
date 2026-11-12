@@ -976,3 +976,45 @@ test('d8175e1c3495: the offer page reads in rounds — schema with offer, then q
   const cards = mount.findAll('div').filter((node) => node.getAttribute('data-quote'));
   assert.deepEqual(cards.map((node) => node.getAttribute('data-quote')), ['q1', 'q2'], 'cards keep the order the quotes were read');
 });
+
+test('d8175e1c3495: the page shows its frame at once as a skeleton, never «Caricamento…», and the paint replaces it', async () => {
+  const base = pageClient();
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const client = { calls: base.calls, request: (path, options) => held.then(() => base.request(path, options)) };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  // Painted in the same tick the page opens, before any answer.
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the skeleton is on screen at once');
+  assert.equal(skeleton.getAttribute('aria-busy'), 'true');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'never a lone loading line');
+  for (const label of ['Offerta', 'Referente', 'Stato', 'Chiusura prevista', 'Preventivo', 'Cronologia']) {
+    assert.ok(mount.textContent.includes(label), `the frame names «${label}»`);
+  }
+  assert.ok(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length >= 10, 'grey bars where values arrive');
+  assert.equal(mount.findAll('p').find((node) => node.getAttribute('role') === 'status')?.textContent, 'Carico l’offerta…', 'the wait is said once');
+  release();
+  await done;
+  await flushAll();
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0, 'the skeleton is gone');
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no bar left');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+});
+
+test('d8175e1c3495: an offer that cannot be read replaces the skeleton with the honest line', async () => {
+  const mount = createMount();
+  const client = { request: () => Promise.reject(Object.assign(new Error('boom'), { status: 500, code: 'BOOM' })) };
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    await view.renderOfferDetail('off1');
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no skeleton over a failure');
+  assert.match(mount.textContent, /Offerta non trovata o non leggibile/);
+});
