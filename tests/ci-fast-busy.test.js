@@ -152,3 +152,87 @@ test('no busy record means nothing to retry: the gate\'s red stands', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+const confirmScript = join(repoRoot, 'scripts', 'ci-fast-busy-confirm.sh');
+const stepScript = join(repoRoot, 'scripts', 'ci-fast-step.sh');
+const TOUCHED_LANE = 'tests of the touched files, then public claims and packaging agree';
+
+test('the busy record exists only when the counted failures are the touched lane alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-busy-'));
+  try {
+    const candidate = join(dir, 'busy.json.candidate');
+    const record = join(dir, 'busy.json');
+    /** @param {string[]} lanes */
+    const confirm = (lanes) => spawnSync('bash', [confirmScript, candidate, record, ...lanes], { encoding: 'utf8' }).status;
+    for (const [label, lanes] of /** @type {Array<[string, string[]]>} */ ([
+      ['two failed lanes', [TOUCHED_LANE, 'smoke demo']],
+      ['another lane alone', ['smoke demo']],
+      ['no failed lane', []],
+    ])) {
+      writeFileSync(candidate, '{"threshold":24}\n');
+      assert.equal(confirm(lanes), 1, label);
+      assert.equal(existsSync(record), false, `${label}: no record`);
+      assert.equal(existsSync(candidate), false, `${label}: candidate removed`);
+    }
+    assert.equal(confirm([TOUCHED_LANE]), 1, 'no candidate, no record');
+    assert.equal(existsSync(record), false);
+    writeFileSync(candidate, '{"threshold":24}\n');
+    assert.equal(confirm([TOUCHED_LANE]), 0);
+    assert.equal(readFileSync(record, 'utf8'), '{"threshold":24}\n');
+    assert.equal(existsSync(candidate), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * @param {string} dir
+ * @param {string} gate the gate command stand-in
+ */
+function runStep(dir, gate) {
+  return spawnSync('bash', [stepScript], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      CI_TOUCHED_BUSY_FILE: join(dir, 'busy.json'),
+      CI_FAST_GATE_CMD: gate,
+      CI_FAST_RETRY_CMD: `echo RETRY-RAN; touch ${JSON.stringify(join(dir, 'retried'))}; exit 0`,
+    },
+  });
+}
+
+test('a gate killed mid-run leaves no record: its red stands and nothing is retried', () => {
+  // The P1 on #814: the 540 s wrapper kills ci-fast.sh during `wait`, after
+  // the touched lane wrote its busy candidate but before the failures were
+  // counted (another lane may have failed too). No retry may turn that green.
+  const dir = mkdtempSync(join(tmpdir(), 'ci-busy-'));
+  try {
+    const candidate = JSON.stringify(join(dir, 'busy.json.candidate'));
+    const run = runStep(dir, `echo '{"threshold":24}' > ${candidate}; exit 124`);
+    assert.equal(run.status, 124, run.stdout + run.stderr);
+    assert.doesNotMatch(run.stdout, /RETRY-RAN/);
+    assert.equal(existsSync(join(dir, 'retried')), false);
+    assert.equal(existsSync(join(dir, 'busy.json.candidate')), false, 'the leftover candidate is cleared');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('only a record the gate confirmed triggers the one retry; a stale record never does', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-busy-'));
+  try {
+    const record = JSON.stringify(join(dir, 'busy.json'));
+    const confirmed = runStep(dir, `echo '{"threshold":24}' > ${record}; exit 1`);
+    assert.equal(confirmed.status, 0, confirmed.stdout + confirmed.stderr);
+    assert.match(confirmed.stdout, /RETRY-RAN/);
+
+    rmSync(join(dir, 'retried'), { force: true });
+    writeFileSync(join(dir, 'busy.json'), '{"threshold":24}\n');
+    const stale = runStep(dir, 'exit 1');
+    assert.equal(stale.status, 1);
+    assert.doesNotMatch(stale.stdout, /RETRY-RAN/, 'a record left from before the gate started is removed first');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

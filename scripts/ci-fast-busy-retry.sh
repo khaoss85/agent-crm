@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # The one retry of a "busy" touched-tests phase (backlog:3d560518f3e2).
 #
-# scripts/ci-touched-tests.js writes CI_TOUCHED_BUSY_FILE when its run timed
-# out while the machine was full (load1 above 1.5 x CPUs at the start or at
-# the bound) and no file had failed; scripts/ci-fast.sh keeps it only when the
-# touched lane was the gate's only failure. The fast step then calls this
-# script once:
+# scripts/ci-touched-tests.js writes a busy candidate when its run timed out
+# while the machine was full (load1 above 1.5 x CPUs at the start or at the
+# bound) and no file had failed; scripts/ci-fast.sh promotes it to the record
+# CI_TOUCHED_BUSY_FILE only after counting the gate's failures, when the
+# touched lane is the only one (scripts/ci-fast-busy-confirm.sh). The fast
+# step (scripts/ci-fast-step.sh) then calls this script once:
 #
 #   1. wait, outside any lock, until load1 is back under the same threshold,
 #      at most CI_BUSY_WAIT_SEC (default 600 s), logging the load;
