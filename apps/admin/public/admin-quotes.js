@@ -245,19 +245,24 @@ export function createQuoteView(deps) {
       return { back: null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
+    // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
+    // and the other quotes live there.
+    const offer = el('a', 'quote-offer-link', 'Apri l’offerta →');
+    offer.setAttribute('href', `#/offerte/${encodeURIComponent(opportunityId)}`);
+    offer.setAttribute('data-action', 'quote-open-offer');
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
     const subjectId = contactId ?? companyId;
-    if (resource === null || subjectId === null) return { back: null, opportunityName, customerName: null };
+    if (resource === null || subjectId === null) return { back: null, offer, opportunityName, customerName: null };
     const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
     const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
-    if (name === null) return { back: null, opportunityName, customerName: null };
+    if (name === null) return { back: null, offer, opportunityName, customerName: null };
     const back = el('a', 'quote-back');
     back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
     // Text only: a hostile customer name stays inert text inside the link.
     back.textContent = `← ${name}`;
-    return { back, opportunityName, customerName: name };
+    return { back, offer, opportunityName, customerName: name };
   }
 
   async function renderQuoteList() {
@@ -374,14 +379,15 @@ export function createQuoteView(deps) {
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
     // and the test double, never a copy).
-    const { back, opportunityName, customerName } = await resolveCardBackLink(quote);
+    const { back, offer = null, opportunityName, customerName } = await resolveCardBackLink(quote);
     if (token !== renderToken) return;
     if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
-    if (back !== null) {
+    if (back !== null || offer !== null) {
       mount.removeChild(heading);
       mount.removeChild(status);
-      mount.appendChild(back);
+      if (back !== null) mount.appendChild(back);
       mount.appendChild(heading);
+      if (offer !== null) mount.appendChild(offer);
       mount.appendChild(status);
     }
 

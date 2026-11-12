@@ -571,3 +571,32 @@ test('a2ea75f705fd: the way back reads the offer on its own route, never a gener
   assert.ok(paths.includes('/api/opportunities/o1'));
   assert.ok(!paths.some((path) => path.startsWith('/api/modules/opportunity/records/')), 'no read on the generic surface');
 });
+
+
+test('a2ea75f705fd: the quote links to its offer page; with no rule, «Invia» is not there at all', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'draft', opportunityId: 'o1' }),
+    lines: [LINE],
+    entries: [ENTRY],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const offer = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'quote-open-offer');
+  assert.ok(offer, 'the quote names the way to its offer');
+  assert.equal(offer.getAttribute('href'), '#/offerte/o1');
+  const noCustomer = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: noCustomer, client: stubClient({
+    quoteRecord: quote({ status: 'draft', opportunityId: 'o1' }), lines: [LINE], entries: [ENTRY],
+    opportunityRecord: { id: 'o1', name: 'Senza cliente' },
+  }) }).renderQuoteDetail('q1');
+  assert.ok(noCustomer.findAll('a').some((node) => node.getAttribute('href') === '#/offerte/o1'), 'the offer link stays even without a customer to go back to');
+
+  const base = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const noRules = { calls: base.calls, request: (path, options) => (path === '/api/schema' ? Promise.resolve({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: [] } }) : base.request(path, options)) };
+  const none = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: none, client: noRules }).renderQuoteDetail('q1');
+  const submitPanel = none.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-submit');
+  assert.equal(submitPanel.findAll('button').length, 0, 'no «Invia» that could send without a rule');
+  assert.equal(submitPanel.findAll('select').length, 0, 'no empty rule menu');
+});
