@@ -541,6 +541,13 @@ export function slotInGrid(startsAt, endsAt) {
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * backlog:a332dcd070ca — how long a move still queued on the shared /bo
+ * waits before the week is read again, so the grid shows where the worker
+ * actually put it.
+ */
+export const QUEUED_MOVE_REREAD_MS = 4000;
 /**
  * backlog:3771ac637027 — slot Conferma refusals the manual form fixes. They
  * name the form by its title, never «qui sotto»: a slot Conferma only
@@ -1109,6 +1116,8 @@ export function createCalendarioView(deps) {
   let eventDrag = null;
   /** A drag that moved eats the click that follows it: the event keeps its selection. */
   let suppressEventClick = false;
+  /** A queued move's week reread that waits for the move in flight (review #811). */
+  let rereadAfterMove = false;
   /**
    * Drops a pending read (backlog:607f33ee): the view paints into the
    * shell's shared mount, so a late week response must not repaint a
@@ -2245,7 +2254,7 @@ export function createCalendarioView(deps) {
         const busyBlock = (event.target ?? null)?.closest?.('.cal-event') ?? null;
         if (busyBlock !== null) {
           event.preventDefault?.();
-          state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+          sayMove(String(busyBlock.getAttribute?.('data-event-id') ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
           if (mount.querySelector('.cal-wrap') !== null) renderAll();
         }
         return;
@@ -2452,7 +2461,7 @@ export function createCalendarioView(deps) {
     // silently (review #757): no suppress flag, an Italian note, the grid
     // repaints while the first request runs.
     if (state.moveBusy) {
-      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      sayMove(String(drag.row?.id ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
       if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
@@ -2470,14 +2479,36 @@ export function createCalendarioView(deps) {
       suppressEventClick = false;
       return;
     }
-    await commitEventMove(drag.row, startIso, endIso);
+    await commitEventMove(drag.row, startIso, endIso, { fromDrag: true });
+  }
+
+  /**
+   * The outcome of a move, where the operator looks (backlog:a332dcd070ca):
+   * inside the event popover when it is open on that booking, else a toast
+   * — a drag never opens the popover by itself, so its refusal must not
+   * hide in a popover nobody sees. Nothing is said without a toast handle.
+   * @param {string} id @param {string} text @param {boolean} error
+   */
+  function sayMove(id, text, error) {
+    if (state.selectedId !== null && state.selectedId === id) {
+      state.moveNote = text;
+      return;
+    }
+    if (typeof deps.toast === 'function' && text !== '') deps.toast(text, error);
   }
 
   /**
    * Move one booking through the reschedule route (backlog:3d0fbe7dc8d1).
+   * A drag (backlog:a332dcd070ca) leaves the selection as it was: the
+   * popover opens only on a click, never by itself after a drop — refused
+   * or not. The «Sposta» form inside the popover keeps its own selection.
+   * On the shared /bo the move rides the worker queue: a move still queued
+   * (`BO_CRM_PENDING`) stays where the operator dropped it and the week is
+   * read again shortly, never reverted as if refused.
    * @param {any} row @param {string} startsAt @param {string} endsAt
+   * @param {{fromDrag?: boolean}} [options]
    */
-  async function commitEventMove(row, startsAt, endsAt) {
+  async function commitEventMove(row, startsAt, endsAt, { fromDrag = false } = {}) {
     // The generation this write started from (review #757): a route away
     // during the request invalidates the view, and the late answer must not
     // repaint the calendar over the next screen nor start another week load.
@@ -2485,17 +2516,18 @@ export function createCalendarioView(deps) {
     const token = renderToken;
     // A form submit racing a drag's request names the wait in Italian
     // instead of dropping silently (review #757).
+    const id = String(row?.id ?? '');
     if (state.moveBusy) {
-      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      sayMove(id, 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
       if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
-    const id = String(row?.id ?? '');
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
-    // A drag on another event opens its popover folded, never with the
-    // form left open for the previous one.
-    if (state.selectedId !== id) state.moveOpen = false;
-    state.selectedId = id !== '' ? id : null;
+    if (!fromDrag) {
+      // The «Sposta» form: its popover stays on this booking.
+      if (state.selectedId !== id) state.moveOpen = false;
+      state.selectedId = id !== '' ? id : null;
+    }
     if (before.startsAt === startsAt && before.endsAt === endsAt) {
       state.moveNote = '';
       renderAll();
@@ -2507,6 +2539,9 @@ export function createCalendarioView(deps) {
     state.moveNote = '';
     renderAll();
     let ok = false;
+    let queued = false;
+    /** @type {{text: string, error: boolean} | null} */
+    let outcome = null;
     try {
       const body = row.id !== undefined && row.id !== null && String(row.id) !== ''
         ? { id: row.id, startsAt, endsAt }
@@ -2519,24 +2554,50 @@ export function createCalendarioView(deps) {
       }
       const day = romeDayKey(row.startsAt);
       state.moveOpen = false;
-      state.moveNote = `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`;
+      outcome = { text: `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
-      row.startsAt = before.startsAt;
-      row.endsAt = before.endsAt;
-      state.moveNote = calendarRefusalText(error)
-        ?? humanWriteError(error, {
-          failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
-          notComposed: 'Il calendario non è composto in questo spazio.',
-        });
+      if (error?.code === 'BO_CRM_PENDING') {
+        // Still queued on the worker: the drop stands where the operator
+        // put it until the week read says otherwise.
+        queued = true;
+        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+      } else {
+        row.startsAt = before.startsAt;
+        row.endsAt = before.endsAt;
+        outcome = {
+          text: calendarRefusalText(error)
+            ?? humanWriteError(error, {
+              failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
+              notComposed: 'Il calendario non è composto in questo spazio.',
+            }),
+          error: true,
+        };
+      }
     } finally {
       state.moveBusy = false;
     }
     if (token !== renderToken) return;
+    if (outcome !== null) sayMove(id, outcome.text, outcome.error);
     renderAll();
-    if (ok) {
-      const members = parseMemberFilter(state.memberFilter);
-      if (members.length > 0) void loadWeek(members);
+    const members = parseMemberFilter(state.memberFilter);
+    // A queued reread deferred while this move was in flight (review #811):
+    // the week read happens now, after this move's own outcome.
+    const deferred = rereadAfterMove;
+    rereadAfterMove = false;
+    if ((ok || deferred) && members.length > 0) void loadWeek(members);
+    if (queued && members.length > 0) {
+      await wait(QUEUED_MOVE_REREAD_MS);
+      if (token !== renderToken) return;
+      // Review #811 (Muse P2): a reread never lands in the middle of another
+      // move — it would repaint the server week over that move's optimistic
+      // block and turn its outcome into a stale answer nobody hears. While a
+      // move is in flight the reread waits for it and runs at its end.
+      if (state.moveBusy) {
+        rereadAfterMove = true;
+        return;
+      }
+      void loadWeek(members);
     }
   }
 
