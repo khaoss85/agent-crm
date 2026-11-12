@@ -58,6 +58,8 @@ function fakeClient({ catalog = CATALOG, members = MEMBERS, slots = SLOTS, confi
     async request(path, options = {}) {
       const method = String(options.method ?? 'GET').toUpperCase();
       calls.push({ path, method, body: options.body ? JSON.parse(options.body) : null, key: options.idempotencyKey ?? null });
+      // The framework on its own serves no bookable services list (review #805 giro 2).
+      if (path === '/api/appointments/services') throw Object.assign(new Error('Not Found'), { status: 404 });
       if (path === '/api/catalog/products?limit=200') {
         if (catalog instanceof Error) throw catalog;
         return catalog;
@@ -484,4 +486,31 @@ test('backlog:0a980182918f: a refused booking logs the shared write line, once, 
   assert.equal(lines.length, 1, `one line per failure: ${lines.join(' | ')}`);
   assert.equal(lines[0], `[bo] scrittura fallita POST ${APPOINTMENT_CONFIRM_PATH} · 400 VALIDATION_FAILED: Orario fuori dalle ore di lavoro`);
   assert.ok(!lines.some((line) => line.includes('appuntamento non fissato')));
+});
+
+// P1 11/11: the window books from the server's own bookable list when it
+// serves one (the pilot), so Conferma sends the key the worker books.
+test('P1 11/11: the window menu is the served bookable list and the claim books its key and price', async () => {
+  const served = { services: [
+    { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    { serviceKey: 'personal-training', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+  ] };
+  const base = fakeClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') return served;
+      return base.request(path, options);
+    },
+  };
+  const { panel } = await open({ client });
+  assert.deepEqual(selectNamed(panel, 'service').findAll('option').map((node) => node.textContent),
+    ['Scegli il servizio', 'Lezione di prova · 15,00 €', 'PT singola · 40,00 €']);
+  assert.ok(!base.paths().includes('/api/catalog/products?limit=200'), 'no second rule over the catalog');
+  await choose(panel, { service: 'personal-training' });
+  chips(panel)[0].dispatch('click');
+  await panel.__submit();
+  const sent = base.confirms()[0].body;
+  assert.equal(sent.serviceKey, 'personal-training');
+  assert.equal(sent.priceCents, 4000);
 });

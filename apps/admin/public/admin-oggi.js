@@ -1470,7 +1470,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiButton, uiEmpty, uiLoading, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiEmpty, uiLoading, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Open a target Oggi links to: the Calendario with one event selected when
@@ -1559,8 +1559,9 @@ function renderOggiSkeleton(doc, page) {
  * @param {'open' | 'done' | 'postponed'} state
  * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void }} [events]
  * @param {boolean} [disabled]
+ * @param {{ id: unknown, kind: string } | null} [pressed] cta-loading: the button whose write is in flight
  */
-function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
+function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pressed = null) {
   const row = el(doc, 'div', 'bo-oggi-row');
   row.setAttribute('data-action', String(action?.id ?? ''));
   if (state !== 'open') row.setAttribute('data-state', state);
@@ -1594,10 +1595,12 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
     const postpone = el(doc, 'button', 'small ghost', 'Domani');
     postpone.setAttribute('data-triage', 'postpone');
     postpone.disabled = disabled;
+    if (disabled && pressed?.id === action?.id && pressed?.kind === 'postpone') uiMarkBusy(postpone, 'Sposto…');
     postpone.addEventListener('click', () => events.onPostpone?.(action.id));
     const execute = el(doc, 'button', 'small primary', String(action?.cta ?? 'Apri'));
     execute.setAttribute('data-triage', 'execute');
     execute.disabled = disabled;
+    if (disabled && pressed?.id === action?.id && pressed?.kind === 'execute') uiMarkBusy(execute, 'Salvo…');
     execute.addEventListener('click', () => events.onExecute?.(action));
     controls.appendChild(postpone);
     controls.appendChild(execute);
@@ -1660,6 +1663,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     namesPending?: boolean,
  *     notificationsOpen?: boolean,
  *     inbox?: { available?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
+ *     pressed?: { id: unknown, kind: string } | null,
  *   },
  * }} options
  */
@@ -1757,7 +1761,7 @@ export function renderOggi({
   if (actions.length > 0) {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
-      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), events, disabled));
+      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), events, disabled, home.pressed ?? null));
     }
     advisor.appendChild(list);
     if (home.capped === true) {
@@ -2170,6 +2174,8 @@ export function createOggiView(deps) {
     writePendingCalendarEvent(deps.storage ?? null, calendarEvent);
     navigate(CALENDAR_ROUTE);
   }
+  /** @type {{ id: unknown, kind: string } | null} */
+  let pressed = null;
 
   /** @param {any} [target] where to paint: the live mount, or a detached box for fill() */
   function paint(target = mount) {
@@ -2231,6 +2237,7 @@ export function createOggiView(deps) {
         disabled: busy,
         namesPending: pendingNames,
         notificationsOpen,
+        pressed: busy ? pressed : null,
         events: {
           openCalendarEvent,
           onToggleNotifications: (open) => {
@@ -2274,6 +2281,7 @@ export function createOggiView(deps) {
     }
     if (busy) return;
     busy = true;
+    pressed = { id: action.id, kind: 'postpone' };
     error = '';
     paint();
     try {
@@ -2299,6 +2307,7 @@ export function createOggiView(deps) {
   async function execute(action) {
     if (busy || last?.pending === true) return;
     busy = true;
+    pressed = { id: action?.id, kind: 'execute' };
     error = '';
     paint();
     try {

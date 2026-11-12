@@ -1758,6 +1758,17 @@ function validateSuggestFilter(filter) {
 }
 
 /**
+ * The first round instant at or after `fromMs` a proposal may start on
+ * (backlog:c2f21b5debdd): half hours for steps that are multiples of 30
+ * minutes, quarters for the 15- and 45-minute ones.
+ * @param {number} fromMs @param {number} slotMinutes
+ */
+export function alignedSlotStart(fromMs, slotMinutes) {
+  const gridMs = (slotMinutes % 30 === 0 ? 30 : 15) * 60 * 1000;
+  return Math.ceil(fromMs / gridMs) * gridMs;
+}
+
+/**
  * Suggest free slots from real availability (BO-F3-02): the named window cut
  * into `slotMinutes` steps, minus every step a held booking overlaps. Read
  * only: no row is written, no slot is invented. Cancelled bookings hold
@@ -1774,6 +1785,12 @@ export async function suggestSlots({ modules, moduleNames, calendarSync }, filte
   const appointments = flowAppointments({ modules }, names);
   const checked = validateSuggestFilter(filter);
   const slotMs = checked.slotMinutes * 60 * 1000;
+  // backlog:c2f21b5debdd: a proposal starts on a round time — the hour, the
+  // half hour, or the quarter for the 15- and 45-minute services — never
+  // at the window's own odd instant (a draft «ora» at 09:14 used to offer
+  // 09:14, 09:44, …). Rome is a whole-hour offset from UTC, so aligning
+  // the epoch aligns the Rome clock too.
+  const firstStart = alignedSlotStart(checked.fromMs, checked.slotMinutes);
   const groups = [];
   for (const teamMemberId of checked.members) {
     const held = await appointments.listWhere({ teamMemberId });
@@ -1783,7 +1800,7 @@ export async function suggestSlots({ modules, moduleNames, calendarSync }, filte
     // a filter `busyBlocks` key is never read.
     const heldWithBlocks = [...held, ...(await ownerBlocksFor(calendarSync, teamMemberId, checked.fromIso, checked.toIso))];
     const slots = [];
-    for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
+    for (let start = firstStart; start + slotMs <= checked.toMs; start += slotMs) {
       // A proposal must be fully ahead: a step already begun cannot be
       // booked whole, so with a reference instant named it is cut silently —
       // an empty answer, never an invented one.

@@ -5,20 +5,20 @@
 // The window asks for the service (the listino singles the booking worker
 // accepts), the duration, the team person, then shows that person's free
 // slots and books one with Conferma. Every step is the Calendario's own:
-// `catalogBookingServices` for the menu, `personRows` for the team,
+// `readBookingServices` for the menu (the server's own bookable list), `personRows` for the team,
 // `suggest-slots` read through `personFreeSlots`/`filterPhraseProposals`/
 // `rankPhraseProposals`, and the claim built by `bookingClaim` and sent to
 // `/api/appointments/confirm` like the Calendario's Conferma. No AI is
 // involved: the window works the same with the AI switched off.
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
-  BOOKING_MINUTES, bookingClaim, calendarRefusalText, catalogBookingServices, filterPhraseProposals,
-  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, servicePresendError, slotInGrid, slotLabel,
+  BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
+  formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
   suggestSlotsPath,
 } from './admin-calendario.js';
-import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
+import { openSchedaWindow } from './admin-scheda-window.js';
 
 /** Days ahead the window searches for free slots. */
 export const APPOINTMENT_SEARCH_DAYS = 7;
@@ -140,10 +140,12 @@ export function openAppointmentPanel(deps) {
   const say = (node, text) => { node.textContent = text; };
 
   // ---- Listino ---------------------------------------------------------
-  client.request('/api/catalog/products?limit=200').then(
-    (answer) => {
+  // P1 11/11: the server's own bookable list (the one the worker books
+  // from), the catalog singles rule only where the server serves none.
+  readBookingServices(client).then(
+    (list) => {
       if (gone()) return;
-      services = catalogBookingServices(answer);
+      services = list;
       fillServices();
     },
     (error) => {
@@ -322,7 +324,7 @@ export function openAppointmentPanel(deps) {
       return;
     }
     booking = true;
-    const release = holdButton(confirm, 'Prenoto…');
+    const release = uiHold(confirm, 'Prenoto…');
     if (submissionKey === null) submissionKey = deps.issueKey();
     try {
       const answer = await client.request(APPOINTMENT_CONFIRM_PATH, {

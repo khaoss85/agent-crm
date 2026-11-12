@@ -86,7 +86,7 @@ function nonEmptyText(value) {
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiButton, uiSelect } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiMarkBusy, uiSelect } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian label for a sequence state; unknown states say so, never blank.
@@ -705,7 +705,7 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       yes.addEventListener('click', () => onConfirm(offered.action));
       const no = el(doc, 'button', undefined, 'Annulla');
       no.addEventListener('click', () => onCancelConfirm());
-      if (busy) yes.setAttribute('disabled', 'true');
+      if (busy) uiMarkBusy(yes, 'Salvo…');
       row.appendChild(yes);
       row.appendChild(no);
       headActions.appendChild(row);
@@ -987,7 +987,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     const create = uiButton(documentNode, {
       variant: 'cta', label: 'Crea la sequenza', attrs: { 'data-action': 'create-manual' },
     });
-    if (form.busy) create.setAttribute('disabled', 'true');
+    if (form.busy) uiMarkBusy(create, 'Creo…');
     create.addEventListener('click', () => void submitManualCreate());
     const cancel = uiButton(documentNode, {
       variant: 'secondary', label: 'Annulla', attrs: { 'data-action': 'cancel-create' },
@@ -1084,7 +1084,7 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
       const confirm = uiButton(documentNode, {
         variant: 'cta', label: 'Crea la sequenza', attrs: { 'data-action': 'ai-confirm' },
       });
-      if (panelState.busy) confirm.setAttribute('disabled', 'true');
+      if (panelState.busy) uiMarkBusy(confirm, 'Creo…');
       confirm.addEventListener('click', () => void submitAiCreate());
       const cancel = uiButton(documentNode, {
         variant: 'secondary', label: 'Annulla', attrs: { 'data-action': 'cancel-ai' },

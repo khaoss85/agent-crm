@@ -1862,6 +1862,37 @@ test('Dettagli › Modifica › Salva sends ONE PATCH, however many times it fir
   assert.equal(patches[0].path, '/api/contacts/c1');
 });
 
+// Dan 11/11 (cta-loading): saving the name showed no sign of work on the
+// button. While the PATCH is in flight Salva reads «Salvo…», is busy for
+// assistive tech and refuses a second press; a refusal gives it back as
+// «Salva» with the error next to it.
+test('cta-loading: Dettagli Salva reads «Salvo…» while saving and «Salva» again after a refusal', async () => {
+  let fail;
+  const pending = new Promise((_, reject) => { fail = reject; });
+  const base = stubClient({ profile: OPPORTUNITY_ONLY_PROFILE });
+  const client = recordingClient(base, () => pending);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, toast: () => {} }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-details').dispatch('click');
+  const save = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'save-details');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'firstName').value = 'Guido';
+  save.dispatch('click');
+  save.dispatch('click');
+  await flushClicks();
+  assert.equal(save.textContent, 'Salvo…', 'the button says it is saving');
+  assert.equal(save.getAttribute('aria-busy'), 'true', 'busy for assistive tech');
+  assert.equal(save.disabled, true, 'off while saving');
+  assert.equal(client.writes.filter((write) => write.method === 'PATCH').length, 1, 'a double tap is one PATCH');
+  fail(Object.assign(new Error('boom'), { code: 'BOOM', status: 500 }));
+  await flushClicks(8);
+  assert.equal(save.textContent, 'Salva', 'the label comes back after the refusal');
+  assert.equal(save.getAttribute('aria-busy'), null, 'no longer busy');
+  assert.equal(save.disabled, false, 'pressable again to retry');
+  const fieldError = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
+  assert.ok(fieldError && fieldError.textContent !== '', 'the refusal reads next to Salva');
+});
+
 test('a contact typed without Azienda shows no Azienda on the scheda (production 07/11)', async () => {
   assert.equal(NO_COMPANY_NAME, 'Senza azienda', 'the same reserved name customer-data writes');
   assert.equal(shownCompanyName({ company: { id: 'k0', name: 'Senza azienda' } }), null);
@@ -5043,4 +5074,13 @@ test('review giro 1: moves without pipelines read generic lines, never a false e
     'real moves never read as no moves when the pipelines are unavailable');
   assert.ok(text.includes('Cambio di stato · da elena'),
     'the move reads the generic Italian line, like the detail');
+});
+
+test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda avatar, never «S?»', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client: stubClient({ card: { ...CARD, name: 'Solo SpazioB 0711' } }) }).renderCard('contact', 'c1');
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.equal(avatar.textContent, 'SS');
+  assert.ok(!avatar.textContent.includes('?'));
 });

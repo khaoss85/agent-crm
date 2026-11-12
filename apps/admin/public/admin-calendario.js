@@ -26,7 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -541,6 +541,13 @@ export function slotInGrid(startsAt, endsAt) {
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * backlog:a332dcd070ca — how long a move still queued on the shared /bo
+ * waits before the week is read again, so the grid shows where the worker
+ * actually put it.
+ */
+export const QUEUED_MOVE_REREAD_MS = 4000;
 /**
  * backlog:3771ac637027 — slot Conferma refusals the manual form fixes. They
  * name the form by its title, never «qui sotto»: a slot Conferma only
@@ -757,6 +764,34 @@ export function catalogBookingServices(payload) {
     }
   }
   return Object.freeze(out);
+}
+
+/**
+ * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
+ * the name and the price as Italian money («Lezione di prova · 1,00 €»,
+ * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. A price that is not whole cents, or not in euros, reads as the
+ * name alone.
+ * @param {{name: string, priceCents: number, currency?: string}} entry
+ */
+export function serviceOptionLabel(entry) {
+  const cents = entry?.priceCents;
+  const currency = entry?.currency === undefined ? 'EUR' : entry.currency;
+  // The menu books euros only (catalogBookingServices keeps EUR singles):
+  // any other or unknown currency reads as the name alone, never a throw.
+  if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
+  return `${entry.name} · ${italianEuros(cents)}`;
+}
+
+/**
+ * Italian money with the grouping pinned (review #813): «1.080,00 €», the
+ * same thousands dot as the rest of the /bo, never left to the runtime's
+ * locale data.
+ * @param {number} cents
+ */
+function italianEuros(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
 }
 
 /**
@@ -1109,6 +1144,8 @@ export function createCalendarioView(deps) {
   let eventDrag = null;
   /** A drag that moved eats the click that follows it: the event keeps its selection. */
   let suppressEventClick = false;
+  /** A queued move's week reread that waits for the move in flight (review #811). */
+  let rereadAfterMove = false;
   /**
    * Drops a pending read (backlog:607f33ee): the view paints into the
    * shell's shared mount, so a late week response must not repaint a
@@ -1211,7 +1248,12 @@ export function createCalendarioView(deps) {
     }
   };
 
+  /** The booking buttons of the current paint, by key (cleared on every repaint). */
+  /** @type {Map<string, Array<{ button: any, label: string }>>} */
+  const bookingButtons = new Map();
   const state = {
+    /** @type {string | null} cta-loading: the booking button whose write is in flight */
+    bookingBusy: null,
     memberFilter: '',
     /** True while the filter holds the roster auto-fill nobody edited yet:
      * a later roster refusal clears it back to the honest prompt instead of
@@ -1247,6 +1289,8 @@ export function createCalendarioView(deps) {
     profiles: {},
     /** Catalog product names by lowercase listino key; undefined until read, an empty Map when unreadable. @type {Map<string, string> | null | undefined} */
     services: undefined,
+    /** Review #805: where the service menu came from — the server's own list ('served'), a served list that failed ('failed'), or the catalog rule ('fallback'). @type {'served' | 'failed' | 'fallback' | null} */
+    servicesMode: null,
     /** @type {any} */
     week: null,
     weekError: null,
@@ -1500,46 +1544,92 @@ export function createCalendarioView(deps) {
    * the raw name and was refused). Resolves at once once the catalog is read.
    */
   function ensureServices() {
-    if (state.services instanceof Map) return Promise.resolve();
+    // Review #805 giro 4 P1: a failed served list is never cached (state
+    // holds no Map for it), so the next submit re-reads instead of
+    // short-circuiting on the failure until reload or space switch.
+    if (state.services instanceof Map && state.servicesMode !== 'failed') return Promise.resolve();
     if (servicesRead === null) {
       servicesRead = loadServices().finally(() => { servicesRead = null; });
     }
     return servicesRead;
   }
 
+  /**
+   * Review #805: with a served list the booking names one of its services;
+   * an empty service (the worker would pick a default) or a failed list
+   * books nothing.
+   * @param {unknown} serviceKey
+   */
+  function servicesBlockBooking(serviceKey) {
+    if (state.servicesMode === 'failed') return true;
+    if (state.servicesMode !== 'served') return false;
+    const key = typeof serviceKey === 'string' ? serviceKey : '';
+    return !(Array.isArray(state.catalogServices) && state.catalogServices.some((entry) => entry.key === key));
+  }
+
   /** Catalog product names for the block titles; fail-soft to the readable key. */
   async function loadServices() {
+    // Review #805 giro 2: the list belongs to the space it was asked in; a
+    // space switch while it loads reads its own (render resets the cache).
+    const askedSpace = readSpace();
     /** @type {Map<string, string>} */
     const names = new Map();
     /** @type {Array<{key: string, name: string, priceCents: number, currency: string}>} */
     let bookable = [];
+    // P1 11/11: the menu is the server's own bookable list when it serves
+    // one (the pilot), so a Conferma never sends a key the worker refuses.
+    // Review #805: a served list is the whole truth — its names alone map a
+    // typed service and title the week, and a served list that failed (or
+    // is empty) blocks the service field instead of reopening free text.
+    // The catalog is read only when no list is served (review #805 P3).
+    /** @type {'served' | 'failed' | 'fallback'} */
+    let mode = 'fallback';
     try {
-      const answer = await client.request('/api/catalog/products?limit=200');
-      for (const product of Array.isArray(answer?.products) ? answer.products : []) {
-        const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
-        const name = typeof product?.name === 'string' ? product.name.trim() : '';
-        if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+      const read = await readBookingServicesDetailed(client);
+      bookable = [...read.services];
+      if (read.served) {
+        mode = read.failed ? 'failed' : 'served';
+        if (read.failed) {
+          console.warn(
+            'bo-calendario services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${askedSpace}`,
+          );
+        }
+      } else {
+        // The framework on its own: catalog product names title the week.
+        for (const product of Array.isArray(read.catalog?.products) ? read.catalog.products : []) {
+          const sku = typeof product?.sku === 'string' ? product.sku.trim().toLowerCase() : '';
+          const name = typeof product?.name === 'string' ? product.name.trim() : '';
+          if (sku !== '' && name !== '' && !names.has(sku)) names.set(sku, name);
+        }
       }
-      // The manual form's service menu (backlog:810ed0bf): the same
-      // singles rule the booking worker applies, read once with the names.
-      bookable = catalogBookingServices(answer);
+      for (const entry of bookable) names.set(entry.key, entry.name);
     } catch (error) {
-      // No catalog in this project (or a stale bundle): the readable key
-      // stays. Anything else is unexpected and logged without the message.
+      bookable = [];
+      // No served list and no catalog in this project (or a stale bundle):
+      // the readable key stays. Anything else is logged without the message.
       if (!isNotComposedFailure(error) && !isUnsupportedContractFailure(error)) {
         console.warn(
           'bo-calendario catalog unreadable:',
           error instanceof Error ? error.name : (error?.code ?? 'unknown'),
-          `spaceId=${readSpace()}`,
+          `spaceId=${askedSpace}`,
         );
       }
     }
-    state.services = names;
+    if (readSpace() !== askedSpace) return;
+    // Review #805 giro 4 P1: a failed served list is not cached as an
+    // (empty) Map — state.services stays unset, so the next submit retries
+    // the read (see ensureServices) instead of blocking until reload.
+    state.services = mode === 'failed' ? undefined : names;
     state.catalogServices = bookable;
+    state.servicesMode = mode;
     // The service menu paints from this read: repaint once it settles while
     // the calendar is still mounted (same guard as the roster read).
     if (mount.querySelector('.cal-wrap') !== null) renderAll();
   }
+
 
   /**
    * The organization team behind the Team card (specs/calendario.md C10):
@@ -1712,6 +1802,7 @@ export function createCalendarioView(deps) {
   }
 
   function renderView() {
+    bookingButtons.clear();
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -2197,7 +2288,7 @@ export function createCalendarioView(deps) {
         const busyBlock = (event.target ?? null)?.closest?.('.cal-event') ?? null;
         if (busyBlock !== null) {
           event.preventDefault?.();
-          state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+          sayMove(String(busyBlock.getAttribute?.('data-event-id') ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
           if (mount.querySelector('.cal-wrap') !== null) renderAll();
         }
         return;
@@ -2404,7 +2495,7 @@ export function createCalendarioView(deps) {
     // silently (review #757): no suppress flag, an Italian note, the grid
     // repaints while the first request runs.
     if (state.moveBusy) {
-      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      sayMove(String(drag.row?.id ?? ''), 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
       if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
@@ -2422,14 +2513,36 @@ export function createCalendarioView(deps) {
       suppressEventClick = false;
       return;
     }
-    await commitEventMove(drag.row, startIso, endIso);
+    await commitEventMove(drag.row, startIso, endIso, { fromDrag: true });
+  }
+
+  /**
+   * The outcome of a move, where the operator looks (backlog:a332dcd070ca):
+   * inside the event popover when it is open on that booking, else a toast
+   * — a drag never opens the popover by itself, so its refusal must not
+   * hide in a popover nobody sees. Nothing is said without a toast handle.
+   * @param {string} id @param {string} text @param {boolean} error
+   */
+  function sayMove(id, text, error) {
+    if (state.selectedId !== null && state.selectedId === id) {
+      state.moveNote = text;
+      return;
+    }
+    if (typeof deps.toast === 'function' && text !== '') deps.toast(text, error);
   }
 
   /**
    * Move one booking through the reschedule route (backlog:3d0fbe7dc8d1).
+   * A drag (backlog:a332dcd070ca) leaves the selection as it was: the
+   * popover opens only on a click, never by itself after a drop — refused
+   * or not. The «Sposta» form inside the popover keeps its own selection.
+   * On the shared /bo the move rides the worker queue: a move still queued
+   * (`BO_CRM_PENDING`) stays where the operator dropped it and the week is
+   * read again shortly, never reverted as if refused.
    * @param {any} row @param {string} startsAt @param {string} endsAt
+   * @param {{fromDrag?: boolean}} [options]
    */
-  async function commitEventMove(row, startsAt, endsAt) {
+  async function commitEventMove(row, startsAt, endsAt, { fromDrag = false } = {}) {
     // The generation this write started from (review #757): a route away
     // during the request invalidates the view, and the late answer must not
     // repaint the calendar over the next screen nor start another week load.
@@ -2437,17 +2550,18 @@ export function createCalendarioView(deps) {
     const token = renderToken;
     // A form submit racing a drag's request names the wait in Italian
     // instead of dropping silently (review #757).
+    const id = String(row?.id ?? '');
     if (state.moveBusy) {
-      state.moveNote = 'C’è già uno spostamento in corso: attendi un attimo e riprova.';
+      sayMove(id, 'C’è già uno spostamento in corso: attendi un attimo e riprova.', true);
       if (mount.querySelector('.cal-wrap') !== null) renderAll();
       return;
     }
-    const id = String(row?.id ?? '');
     const before = { startsAt: row.startsAt, endsAt: row.endsAt };
-    // A drag on another event opens its popover folded, never with the
-    // form left open for the previous one.
-    if (state.selectedId !== id) state.moveOpen = false;
-    state.selectedId = id !== '' ? id : null;
+    if (!fromDrag) {
+      // The «Sposta» form: its popover stays on this booking.
+      if (state.selectedId !== id) state.moveOpen = false;
+      state.selectedId = id !== '' ? id : null;
+    }
     if (before.startsAt === startsAt && before.endsAt === endsAt) {
       state.moveNote = '';
       renderAll();
@@ -2459,6 +2573,9 @@ export function createCalendarioView(deps) {
     state.moveNote = '';
     renderAll();
     let ok = false;
+    let queued = false;
+    /** @type {{text: string, error: boolean} | null} */
+    let outcome = null;
     try {
       const body = row.id !== undefined && row.id !== null && String(row.id) !== ''
         ? { id: row.id, startsAt, endsAt }
@@ -2471,24 +2588,50 @@ export function createCalendarioView(deps) {
       }
       const day = romeDayKey(row.startsAt);
       state.moveOpen = false;
-      state.moveNote = `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`;
+      outcome = { text: `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
-      row.startsAt = before.startsAt;
-      row.endsAt = before.endsAt;
-      state.moveNote = calendarRefusalText(error)
-        ?? humanWriteError(error, {
-          failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
-          notComposed: 'Il calendario non è composto in questo spazio.',
-        });
+      if (error?.code === 'BO_CRM_PENDING') {
+        // Still queued on the worker: the drop stands where the operator
+        // put it until the week read says otherwise.
+        queued = true;
+        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+      } else {
+        row.startsAt = before.startsAt;
+        row.endsAt = before.endsAt;
+        outcome = {
+          text: calendarRefusalText(error)
+            ?? humanWriteError(error, {
+              failed: 'Non sono riuscito a spostare l’appuntamento: è rimasto dov’era. Riprova.',
+              notComposed: 'Il calendario non è composto in questo spazio.',
+            }),
+          error: true,
+        };
+      }
     } finally {
       state.moveBusy = false;
     }
     if (token !== renderToken) return;
+    if (outcome !== null) sayMove(id, outcome.text, outcome.error);
     renderAll();
-    if (ok) {
-      const members = parseMemberFilter(state.memberFilter);
-      if (members.length > 0) void loadWeek(members);
+    const members = parseMemberFilter(state.memberFilter);
+    // A queued reread deferred while this move was in flight (review #811):
+    // the week read happens now, after this move's own outcome.
+    const deferred = rereadAfterMove;
+    rereadAfterMove = false;
+    if ((ok || deferred) && members.length > 0) void loadWeek(members);
+    if (queued && members.length > 0) {
+      await wait(QUEUED_MOVE_REREAD_MS);
+      if (token !== renderToken) return;
+      // Review #811 (Muse P2): a reread never lands in the middle of another
+      // move — it would repaint the server week over that move's optimistic
+      // block and turn its outcome into a stale answer nobody hears. While a
+      // move is in flight the reread waits for it and runs at its end.
+      if (state.moveBusy) {
+        rereadAfterMove = true;
+        return;
+      }
+      void loadWeek(members);
     }
   }
 
@@ -2590,7 +2733,8 @@ export function createCalendarioView(deps) {
           attrs: { type: 'button', style: `grid-row: ${placed.row} / span ${placed.span}; grid-column: ${lane.lane + 1}` },
           text: `✦ Proposta ${romeTime(slot.startsAt) ?? ''}`,
         });
-        ghost.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(ghost, slotBusyKey(slot), 'Prenoto…');
+        ghost.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         col.appendChild(ghost);
       }
       // Supervisor design pass (Dan 03/11, «come Google/Apple»): press on an
@@ -3022,12 +3166,11 @@ export function createCalendarioView(deps) {
     const move = uiButton(doc, {
       variant: 'secondary',
       small: true,
-      label: state.moveBusy ? 'Spostamento in corso…' : 'Sposta',
+      label: 'Sposta',
       attrs: { type: 'button', 'data-action': 'move-submit' },
     });
     if (state.moveBusy) {
-      move.setAttribute('disabled', 'true');
-      move.setAttribute('aria-busy', 'true');
+      uiMarkBusy(move, 'Spostamento in corso…'); // cta-loading: the shared waiting state
     } else {
       move.addEventListener('click', () => {
         void submitMoveForm(row, {
@@ -3159,7 +3302,8 @@ export function createCalendarioView(deps) {
         const item = el(doc, 'div');
         item.appendChild(el(doc, 'span', { text: slotLabel(slot) }));
         const confirm = el(doc, 'button', { className: 'small secondary', text: 'Conferma' });
-        confirm.addEventListener('click', () => void confirmSlot(slot));
+        holdBookingButton(confirm, slotBusyKey(slot), 'Prenoto…');
+        confirm.addEventListener('click', () => void busyBooking(slotBusyKey(slot), () => confirmSlot(slot)));
         item.appendChild(confirm);
         list.appendChild(item);
       }
@@ -3710,6 +3854,13 @@ export function createCalendarioView(deps) {
     });
     state.confirmed = null;
     state.serviceError = '';
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.aiNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco.'
+        : 'Scegli il servizio dal listino nel modulo «Nuovo appuntamento», poi conferma.';
+      renderAll();
+      return;
+    }
     const presend = servicePresendError(claim.serviceKey);
     if (presend !== null) {
       // A typed service the server could never book (backlog:9a853f44,
@@ -3940,6 +4091,28 @@ export function createCalendarioView(deps) {
         form.appendChild(hint);
       }
     };
+    // Review #805: with a served list (or a served list that failed) the
+    // service is never free text — a typed name could mint a key the
+    // worker refuses. A failed or empty list blocks the field with why.
+    if (state.servicesMode === 'failed' || (state.servicesMode === 'served' && (bookable === null || bookable.length === 0))) {
+      const failed = state.servicesMode === 'failed';
+      const wrap = uiSelect(doc, {
+        name: 'serviceKey', value: '',
+        options: [{ value: '', label: failed ? 'Servizi non disponibili' : 'Nessun servizio prenotabile' }],
+      });
+      const select = wrap.querySelector('select') ?? wrap;
+      select.value = '';
+      select.setAttribute('disabled', 'disabled');
+      form.appendChild(wrap);
+      form.appendChild(el(doc, 'small', {
+        className: 'field-error',
+        attrs: { role: 'alert', 'data-role': 'services-blocked' },
+        text: failed
+          ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+          : 'Nessun servizio prenotabile nel listino: aggiungine uno in Catalogo.',
+      }));
+      return select;
+    }
     if (bookable === null || bookable.length === 0) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
@@ -3963,6 +4136,32 @@ export function createCalendarioView(deps) {
       ?? bookable.find((entry) => entry.key === wanted.toLowerCase())
       ?? bookable.find((entry) => entry.key === mapped)
       ?? (wanted === '' ? bookable[0] : null);
+    if (match === null && state.servicesMode === 'served') {
+      // A kept or drafted service the served list does not hold: the menu
+      // asks for a choice, never a free-text key.
+      const wrap = uiSelect(doc, {
+        name: 'serviceKey', value: '',
+        options: [{ value: '', label: 'Scegli il servizio' }, ...bookable.map((entry) => ({
+          value: entry.key, label: `${entry.name} · ${formatPriceCents(entry.priceCents) ?? ''} €`,
+        }))],
+      });
+      const select = wrap.querySelector('select') ?? wrap;
+      select.value = '';
+      state.manual = { ...(state.manual ?? {}), serviceKey: '' };
+      const track = () => {
+        const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
+        state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+        if (chosen !== null && priceInput) {
+          priceInput.value = formatPriceCents(chosen.priceCents) ?? '';
+          state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+        }
+      };
+      select.addEventListener('input', track);
+      select.addEventListener('change', track);
+      form.appendChild(wrap);
+      paintUnder(select);
+      return select;
+    }
     if (match === null) {
       const input = el(doc, 'input', { attrs: { type: 'text', name: 'serviceKey', placeholder: 'Servizio' } });
       input.value = wanted;
@@ -3977,7 +4176,7 @@ export function createCalendarioView(deps) {
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
     const options = bookable.map((entry) => ({
       value: entry.key,
-      label: `${entry.name} · ${priceText(entry)} €`,
+      label: serviceOptionLabel(entry),
     }));
     const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
     const select = wrap.querySelector('select') ?? wrap;
@@ -4149,9 +4348,11 @@ export function createCalendarioView(deps) {
       state.draftFill = null;
     }
     const propose = el(doc, 'button', { className: 'primary small', text: 'Proponi' });
-    propose.addEventListener('click', () => void submitBooking(inputs, false));
+    holdBookingButton(propose, 'propose', 'Controllo…');
+    propose.addEventListener('click', () => void busyBooking('propose', () => submitBooking(inputs, false)));
     const confirm = el(doc, 'button', { className: 'secondary small', text: 'Conferma' });
-    confirm.addEventListener('click', () => void submitBooking(inputs, true));
+    holdBookingButton(confirm, 'confirm', 'Prenoto…');
+    confirm.addEventListener('click', () => void busyBooking('confirm', () => submitBooking(inputs, true)));
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
@@ -4273,6 +4474,46 @@ export function createCalendarioView(deps) {
   }
 
   /** @param {any} inputs @param {boolean} confirm */
+  /**
+   * cta-loading (Dan 11/11): one booking at a time, and the pressed button
+   * reads «Prenoto…» on every re-render until the answer is in.
+   * @param {string} key @param {() => Promise<void>} work
+   */
+  async function busyBooking(key, work) {
+    if (state.bookingBusy) return;
+    state.bookingBusy = key;
+    // Review Muse #775 giro 2: the buttons on screen go off now, before the
+    // first await, not at the next repaint — no window where a second
+    // booking button looks pressable and drops its click.
+    for (const [shownKey, entries] of bookingButtons) {
+      for (const { button, label } of entries) holdBookingButton(button, shownKey, label, false);
+    }
+    try {
+      await work();
+    } finally {
+      state.bookingBusy = null;
+      renderAll();
+    }
+  }
+  /**
+   * Review Muse #775: while one booking is in flight every booking button is
+   * off — the pressed one reads «Prenoto…», the others are simply not
+   * pressable — so no click is ever silently dropped.
+   * @param {any} button @param {string} key @param {string} label
+   */
+  function holdBookingButton(button, key, label, remember = true) {
+    if (remember) bookingButtons.set(key, [...(bookingButtons.get(key) ?? []), { button, label }]);
+    if (!state.bookingBusy) return;
+    if (state.bookingBusy === key) {
+      uiMarkBusy(button, label);
+      return;
+    }
+    button.disabled = true;
+    button.setAttribute('disabled', 'disabled');
+  }
+  /** @param {any} slot */
+  const slotBusyKey = (slot) => `slot:${slot?.teamMemberId ?? ''}:${slot?.startsAt ?? ''}`;
+
   async function submitBooking(inputs, confirm) {
     await ensureServices();
     const { claim } = claimFrom(inputs);
@@ -4290,7 +4531,16 @@ export function createCalendarioView(deps) {
     state.serviceError = '';
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
-      state.bookingNote = `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      state.bookingNote = state.servicesMode === 'failed' && missing.includes('servizio')
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      renderAll();
+      return;
+    }
+    if (servicesBlockBooking(claim.serviceKey)) {
+      state.bookingNote = state.servicesMode === 'failed'
+        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+        : 'Scegli il servizio dal listino: questo servizio non c’è.';
       renderAll();
       return;
     }
@@ -4374,6 +4624,12 @@ export function createCalendarioView(deps) {
       state.customerError = null;
       state.customerPartial = false;
       state.customerPick = null;
+      // Review #805 giro 2: space B has its own bookable list — never
+      // book or block with space A's.
+      state.services = undefined;
+      state.catalogServices = undefined;
+      state.servicesMode = null;
+      servicesRead = null;
     }
     state.renderedSpace = space;
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
@@ -4464,3 +4720,62 @@ export function suggestSlotsPath(searchIds, from, to, minutes) {
 
 /** The slot sizes `suggest-slots` accepts, in minutes. */
 export const BOOKING_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
+
+/**
+ * P1 11/11: the services a booking can name, as the server that books
+ * them lists them. The pilot answers `GET /api/appointments/services` with
+ * the very list its worker resolves a Conferma against (the menu used to
+ * key services by product SKU, and every key was refused). Only when the
+ * server answers that it serves no such list — a 404 or 405, the
+ * framework on its own — the menu falls back to the catalog singles rule.
+ * Any other failure is thrown: guessing a list the server would refuse is
+ * the bug this ends.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options] a catalog answer already read, for the fallback
+ * @returns {Promise<ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>>}
+ */
+export async function readBookingServices(client, { catalog = undefined } = {}) {
+  const read = await readBookingServicesDetailed(client, { catalog });
+  if (read.failed) throw read.error;
+  return read.services;
+}
+
+/**
+ * Review #805: the same read, saying where the list came from. `served`
+ * is true when the server answers the list (its answer is the whole truth,
+ * even empty); `failed` when it serves one and the read failed — the
+ * caller blocks the booking then, never falls back to catalog keys.
+ * @param {{request: (path: string, options?: any) => Promise<any>}} client
+ * @param {{catalog?: any}} [options]
+ * @returns {Promise<{served: boolean, failed: boolean, error: any, catalog: any, services: ReadonlyArray<{key: string, name: string, priceCents: number, currency: string}>}>}
+ */
+export async function readBookingServicesDetailed(client, { catalog = undefined } = {}) {
+  let answer;
+  try {
+    answer = await client.request('/api/appointments/services');
+  } catch (error) {
+    // Review #805 giro 2: fallback only where the server answers that it
+    // serves no list — 404/405 or the framework's not-composed answer. Any
+    // other failure, a missing HTTP answer included (a timeout, a dropped
+    // connection), blocks like a 5xx: guessing catalog keys is the bug.
+    const status = typeof error?.status === 'number' ? error.status : null;
+    const notServed = status === 404 || status === 405 || (status !== null && isNotComposedFailure(error));
+    if (!notServed) {
+      return { served: true, failed: true, error, services: Object.freeze([]), catalog: undefined };
+    }
+    // The caller's own catalog read when it has one: never read it twice.
+    const read = catalog !== undefined ? catalog : await client.request('/api/catalog/products?limit=200');
+    return { served: false, failed: false, error: null, services: catalogBookingServices(read), catalog: read };
+  }
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(answer?.services) ? answer.services : []) {
+    const key = typeof entry?.serviceKey === 'string' ? entry.serviceKey.trim() : '';
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    if (!CATALOG_SLUG_RE.test(key) || name === '' || seen.has(key)) continue;
+    if (!Number.isSafeInteger(entry.priceCents) || entry.priceCents < 0 || entry.currency !== 'EUR') continue;
+    seen.add(key);
+    out.push(Object.freeze({ key, name, priceCents: entry.priceCents, currency: 'EUR' }));
+  }
+  return { served: true, failed: false, error: null, services: Object.freeze(out), catalog: undefined };
+}

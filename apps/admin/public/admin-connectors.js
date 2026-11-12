@@ -310,7 +310,7 @@ export function flowBack(flow) {
   return Object.freeze({ ...flow, step: 0, error: null });
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -448,7 +448,7 @@ export function createConnectorsView(deps) {
     const go = el(doc, 'button', undefined, 'Autorizza e collega');
     go.setAttribute('data-action', 'connect-authorize');
     state.busyControls.push(go);
-    if (flow.busy) go.disabled = true;
+    if (flow.busy) uiMarkBusy(go, 'Collego…');
     go.addEventListener('click', async () => {
       const account = String(input.value ?? '').trim();
       if (account === '') {
@@ -521,7 +521,7 @@ export function createConnectorsView(deps) {
     const go = el(doc, 'button', undefined, 'Concludi il collegamento');
     go.setAttribute('data-action', 'connect-finish');
     state.busyControls.push(go);
-    if (flow.busy) go.disabled = true;
+    if (flow.busy) uiMarkBusy(go, 'Concludo…');
     go.addEventListener('click', async () => {
       state.flow = flowFinishStart(state.flow);
       render();
@@ -575,7 +575,7 @@ export function createConnectorsView(deps) {
       const more = el(doc, 'button', undefined, 'Continua l\u2019importazione');
       more.setAttribute('data-action', 'connect-resume');
       state.busyControls.push(more);
-      if (flow.busy) more.disabled = true;
+      if (flow.busy) uiMarkBusy(more, 'Importo…');
       more.addEventListener('click', async () => {
         state.flow = flowResumeImport(state.flow);
         render();

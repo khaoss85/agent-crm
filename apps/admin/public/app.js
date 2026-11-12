@@ -408,6 +408,7 @@ function duration(start, end) {
 function toggleBusy(element, busy) {
   if (!element) return;
   element.disabled = busy;
+  element.setAttribute?.('aria-busy', busy ? 'true' : 'false');
 }
 
 /** The shell toast and its clock (backlog:2f72000d4a4d), built on first use. */

@@ -10,7 +10,7 @@
 // same three commercial facts as the old card editor through
 // `/api/opportunities/:id`.
 
-import { elFor, uiSelect } from './admin-ui.js';
+import { elFor, uiBusy, uiSelect } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
 import { auditActorLabel, offerCustomer, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
@@ -462,7 +462,8 @@ export function createOfferDetail(deps) {
       editing = false;
       paintEdit(wrap, record, offerId, token, people);
     };
-    form.addEventListener('submit', save);
+    // cta-loading: «Salvo…» on Salva; the submit never reloads the page, even on a second press.
+    form.addEventListener('submit', (event) => { event?.preventDefault?.(); void uiBusy(saveButton, 'Salvo…', () => save(event)); });
     const saveButton = el('button', undefined, 'Salva');
     saveButton.setAttribute('type', 'submit');
     const cancelButton = el('button', undefined, 'Annulla');

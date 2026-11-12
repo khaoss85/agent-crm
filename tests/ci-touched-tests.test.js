@@ -427,7 +427,9 @@ test('the step budget leaves gtm:check at least a minute inside the fast job cap
   // gtm:check took 7-15 s on the green fast runs of 2026-11-08: a minute
   // keeps four times that free. Raising the step budget past it fails here.
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  // The fast step runs scripts/ci-fast-step.sh, which runs the gate under the wrapper.
+  const workflow = readFileSync(join(repoRoot, 'scripts/ci-fast-step.sh'), 'utf8');
+  assert.match(readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8'), /run: bash scripts\/ci-fast-step\.sh/);
   const step = workflow.split('\n').find((line) => line.includes('scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh'));
   assert.ok(step, 'the fast step runs scripts/ci-fast.sh under scripts/ci-heavy.sh');
   const cap = Number(/HEAVY_JOB_MAX_SEC=(\d+)/.exec(step)?.[1]);
