@@ -2625,10 +2625,15 @@ export function createOggiView(deps) {
       const live = mount.querySelector(`[${key}="true"]`);
       const fresh = scratch.querySelector(`[${key}="true"]`);
       if (live === null || fresh === null) continue;
+      // Read the fresh children first: moving them empties `fresh`, and a
+      // real DOM holds the recap words as a text child (bo:shots on #821:
+      // the recap vanished in Chromium while the fake DOM kept it).
+      const kids = Array.from(fresh.childNodes);
+      const words = fresh.textContent;
       while (live.firstChild) live.removeChild(live.firstChild);
       live.textContent = '';
-      for (const child of Array.from(fresh.childNodes)) live.appendChild(child);
-      if (fresh.childNodes.length === 0) live.textContent = fresh.textContent;
+      if (kids.length === 0) live.textContent = words;
+      else for (const child of kids) live.appendChild(child);
       if (fresh.getAttribute('data-pending') === 'true') live.setAttribute('data-pending', 'true');
       else live.removeAttribute('data-pending');
     }

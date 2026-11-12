@@ -85,15 +85,22 @@ test('review #821 P2: mail from the space’s own mailboxes never waits in the s
 });
 
 // Review Muse #821 (giro 2, testa c644531).
-test('review #821 giro 2 P1: a body cut at the 2000-character fence is read whole, and the preheader link at the top counts', () => {
+test('review #821 giro 2+4 P1: only the head and the tail of a body count — the preheader link at the top does, a quote in the middle never', () => {
   const stranger = (body) => isNotificationMessage({ channel: 'email', remoteHandle: 'news@palestra-amica.it', body }, { weWrote: false });
   const filler = 'Le novità del mese: nuovi corsi, nuovi orari e tante offerte per te e per i tuoi amici. ';
   const cut = (head, tail) => `${head}${filler.repeat(40)}`.slice(0, 2000 - tail.length) + tail;
   assert.equal(stranger(cut('', '')), false, 'no footer kept: nothing to say');
-  assert.equal(stranger(cut('Novembre in palestra. Unsubscribe from this list. ', '')), true, 'a footer kept anywhere in a cut body');
+  assert.equal(stranger(cut('Novembre in palestra. Unsubscribe from this list. ', '')), true, 'a footer link in the head of a cut body');
   assert.equal(stranger(`View in browser\n${filler.repeat(5)}Ciao!`), true, 'the preheader link at the top of a whole body');
   assert.equal(stranger(cut('Ciao, vorrei sapere come fare per unsubscribe dalla lista dei corsi del martedì. ', '')), false,
     'a person asking, even in a cut body');
+  // Review Muse #821 giro 4: a first-time sender forwards a newsletter and
+  // asks below it; the quoted «Unsubscribe from this list» sits mid-body of
+  // a 2000-character stored text — never a reason to hide the person.
+  const quoted = `${'Buongiorno, vi giro la newsletter che mi è arrivata. '.repeat(10)}\n> Offerte di novembre\n> Unsubscribe from this list\n${'> Le novità del mese. '.repeat(40)}`.slice(0, 1700)
+    + `\n${'Mi dite se il corso del martedì è ancora aperto? '.repeat(6)}`.padEnd(2000, ' ');
+  assert.equal(quoted.length >= 1990, true, 'a body at the storage fence');
+  assert.equal(stranger(quoted), false, 'a quoted footer in the middle never decides');
 });
 
 test('review #821 giro 2 P1: «never written to» spans the whole scan, like Oggi — a sender answered for one customer is a correspondent for all', () => {

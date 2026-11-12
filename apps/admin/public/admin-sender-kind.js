@@ -98,12 +98,6 @@ const BULK_FOOTER_WORDS = /\b(?:unsubscribe|view (?:it )?in (?:your )?browser|ma
 /** How far from each end of a body a mass-mail footer (or preheader link) is looked for. */
 const FOOTER_REGION = 400;
 
-/**
- * A stored body at or near the record fence (interactions keeps 2000
- * characters): its real end was cut, so the footer may be anywhere in
- * what was kept (review Muse #821 giro 2).
- */
-const STORED_BODY_FENCE = 1990;
 
 /** Pieces of a footer: lines, sentences, separators and the long blank runs of preheader padding. */
 const FOOTER_PIECES = /[\n\r.!?|\u2022\u00b7]+|[\s\u2007\u00a0\u200b]{3,}/;
@@ -122,9 +116,12 @@ const FIRST_PERSON = /\b(?:me|my|mine|please|help|can you|could you|i am|i want|
 export function hasBulkFooter(body) {
   if (typeof body !== 'string' || body === '') return false;
   // The tail, and the head too — «View in browser» opens many newsletters
-  // as a preheader link. A body cut at the fence lost its real tail: all
-  // of what was kept is read.
-  const region = body.length >= STORED_BODY_FENCE || body.length <= FOOTER_REGION * 2
+  // as a preheader link. Never the middle, not even of a body cut at the
+  // storage fence (review Muse #821 giro 4): a person's reply quoting a
+  // newsletter must not read as one. A cut newsletter with no preheader
+  // link stays a person — the safe side; such mail no longer enters (the
+  // Gmail readers quarantine it by its headers).
+  const region = body.length <= FOOTER_REGION * 2
     ? body
     : `${body.slice(0, FOOTER_REGION)}\n${body.slice(-FOOTER_REGION)}`;
   return region.split(FOOTER_PIECES).some((piece) => {
