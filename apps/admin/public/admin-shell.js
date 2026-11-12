@@ -1023,6 +1023,38 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
 }
 
 /**
+ * The routed views that sit under the Impostazioni tab row, by the area
+ * their tab opens (the `view` of parseModuleRoute → SETTINGS_AREAS id).
+ */
+export const SETTINGS_VIEW_AREAS = Object.freeze({
+  personalizzazione: 'personalizzazione',
+  catalog: 'catalogo',
+  sync: 'stato-sync',
+  'spazi-accessi': 'spazi-accessi',
+});
+
+/**
+ * Keep the Impostazioni tabs on screen while a tab's content loads
+ * (backlog:1cfc68175ab7). The router clears the shared mount and paints
+ * its loading line on every navigation, so switching tab blanked the whole
+ * page, tabs included, for the 3–5 s of the new tab's reads. For a settings
+ * view this puts the tab row back above the loading line, the new tab
+ * already underlined: only the content below reloads. Returns whether the
+ * row was painted (false for any other view, or with no loading line).
+ * @param {any} doc
+ * @param {{ mount: any, loading: any, view: unknown, fixCount?: unknown, navigate?: (hash: string) => void }} options
+ */
+export function keepSettingsTabs(doc, { mount, loading, view, fixCount = null, navigate = () => {} }) {
+  if (typeof view !== 'string' || !Object.hasOwn(SETTINGS_VIEW_AREAS, view)) return false;
+  if (!loading || !Array.from(mount.childNodes ?? []).includes(loading)) return false;
+  const tabs = settingsTabs(doc, { activeId: SETTINGS_VIEW_AREAS[view], fixCount, navigate });
+  mount.removeChild(loading);
+  mount.appendChild(tabs);
+  mount.appendChild(loading);
+  return true;
+}
+
+/**
  * The `IMPOSTAZIONI` tab row of the prototype (BO-F6-16): the four areas in
  * order with the open one underlined, plus the yellow "things to fix" badge
  * on Stato sync while its count is above zero (same count the sidebar shows,

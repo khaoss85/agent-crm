@@ -1253,7 +1253,11 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
   assert.deepEqual(syncChannelTable(quiet).find((row) => row.channel === 'whatsapp').pill,
     { text: 'in attesa del primo evento', tone: 'attesa' }, 'no update and no events waits');
-  assert.equal(syncIndicator(quiet, NOW).title, 'Quasi tutto sincronizzato', 'a waiting row is not «Tutto sincronizzato»');
+  // backlog:e381c48581fa: waiting is not a fix — grey «In attesa del primo
+  // evento», never the yellow «Quasi tutto sincronizzato» over «Niente da
+  // sistemare».
+  assert.equal(syncIndicator(quiet, NOW).title, 'In attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
+  assert.equal(syncIndicator(quiet, NOW).tone, 'wait');
   // C10: the subtitle keeps the prototype pattern «<aggiornamento> · <n> eventi … in tutto».
   assert.match(syncIndicator(quiet, NOW).detail, / · 0 eventi ricevuti in tutto\.$/);
   // A linked row that broke without a fix card (health only) reads Da sistemare, and the hero says so.
@@ -1267,6 +1271,29 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   await flush();
   assert.ok(!mount.textContent.includes('Tutto sincronizzato'));
   assert.ok(mount.textContent.includes('Quasi tutto sincronizzato'));
+  assert.ok(!mount.textContent.includes('Niente da sistemare'), 'a row to fix never sits beside «Niente da sistemare»');
+  assert.ok(mount.textContent.includes('Un canale va controllato'));
+});
+
+// backlog:e381c48581fa (giro UX 11/11, punto 32): Stato sync read «Quasi
+// tutto sincronizzato» with a yellow dot and «Niente da sistemare» together,
+// and its Collega was dark grey (it looked disabled) where Profilo's is green.
+test('e381c48581fa: a waiting space never pairs a yellow hero with «Niente da sistemare», Collega is green', async () => {
+  const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
+  const { mount, view } = renderView({ client: { activity: quiet } });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('In attesa del primo evento'));
+  assert.ok(!text.includes('Quasi tutto sincronizzato'), 'nothing to fix: not the yellow headline');
+  assert.ok(text.includes('Niente da sistemare'));
+  const dot = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-dot'));
+  assert.match(dot.getAttribute('class'), /bo-sync-hero-dot-wait/, 'grey dot, not yellow');
+  const collega = mount.findAll('a').filter((node) => node.getAttribute('data-action') === 'collega');
+  assert.ok(collega.length > 0, 'unlinked rows offer Collega');
+  for (const link of collega) {
+    assert.match(link.getAttribute('class') ?? '', /\bui-btn-cta\b/, 'the green Collega of every screen');
+  }
 });
 
 // Production 08/11 (3a3e6eaff1c5 C11): in Presti «Sincronizza ora» stayed

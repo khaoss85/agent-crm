@@ -228,3 +228,126 @@ export function channelConnectionCount(rows) {
     missing: Object.freeze(missing),
   });
 }
+
+/**
+ * The words and tone of each channel state, the same on every screen that
+ * names one (backlog:e381c48581fa): Connettori, its detail, Personalizzazione,
+ * Profilo. Tones are the `.bo-profilo-pill-<tone>` pills.
+ */
+export const CHANNEL_STATE_LABELS = Object.freeze({
+  collegato: Object.freeze({ text: 'Collegato', tone: 'ok' }),
+  'da-completare': Object.freeze({ text: 'Da completare', tone: 'warn' }),
+  'da-collegare': Object.freeze({ text: 'Da collegare', tone: 'muted' }),
+  'non-disponibile': Object.freeze({ text: 'Non ancora disponibile', tone: 'muted' }),
+});
+
+/** Said for a linked channel this backoffice does not configure itself. */
+export const LINKED_ELSEWHERE_NOTE = 'Collegato: i messaggi arrivano nelle schede dei clienti. Da qui non si configura.';
+
+/** Said for a linked channel whose link lives on Profilo (Google, Meta). */
+export const LINKED_ON_PROFILE_NOTE = 'Collegato: i messaggi arrivano nelle schede dei clienti. Si gestisce dal Profilo.';
+
+/** Said for a channel nothing here can connect yet. */
+export const NOT_AVAILABLE_NOTE = 'Questo canale non si può ancora collegare da Accordo.';
+
+/**
+ * Whether one row is a profile link (Google or Meta grant) rather than a
+ * package connection: the client merge marks it `source: 'profile'`, the
+ * pilot's server merge keys it `profile:<connector>`.
+ * @param {any} row
+ */
+function isProfileRow(row) {
+  return row != null && (row.source === 'profile'
+    || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:')));
+}
+
+/** Channels of the nine the guided `#/connettori/<channel>` flow never serves. */
+const OUTSIDE_GUIDED_FLOW = Object.freeze({ calendar: true, stripe: true });
+
+/** The Meta connectors: their Collega completes only on a configured Meta app. */
+const META_CONNECTORS = Object.freeze(['whatsapp', 'instagram', 'messenger']);
+
+/**
+ * Whether Profilo can connect this channel now: the profile offers its
+ * connector, and for a Meta connector the space's Meta app is configured
+ * (Profilo shows «Non ancora attivo» with no Collega otherwise).
+ * @param {unknown} profile
+ * @param {string} channel
+ */
+function profileConnects(profile, channel) {
+  const meta = /** @type {any} */ (profile)?.connections?.meta;
+  return Object.entries(PROFILE_CONNECTOR_CHANNELS).some(([connector, served]) => served === channel
+    && profileOffersConnector(profile, connector)
+    && (!META_CONNECTORS.includes(connector) || (meta != null && meta.configured === true)));
+}
+
+/**
+ * The one state of one channel (backlog:e381c48581fa). Before it, WhatsApp
+ * read ✓ in Personalizzazione, «Collegato» on Profilo and «Non disponibile
+ * qui · Nessun adattatore composto» in its own detail, on the same space:
+ * the detail asked «is an adapter composed?» where every other screen asked
+ * «is there an active connection?». The answer to «is it linked?» is the
+ * shared count's predicate (an active row, profile links merged), so a
+ * channel counted in «2 di 9» is `collegato` everywhere.
+ *
+ * - `collegato`: an active row serves the channel. `managedHere` says
+ *   whether this backoffice configures it (an adapter is composed, or the
+ *   adapters are unknown); when not, `note` says so in plain words and
+ *   `manageRoute` points to Profilo for a profile link.
+ * - `da-completare`: rows exist, none active, and an adapter can finish it.
+ * - `da-collegare`: nothing linked, and `connectRoute` is where it connects.
+ * - `non-disponibile`: nothing linked and nowhere here to connect it.
+ *
+ * @param {string} channel the counted channel id (NINE_CHANNELS, sms, telegram)
+ * @param {{ rows?: unknown, profile?: unknown, adapters?: ReadonlyArray<unknown> | null, guided?: ReadonlyArray<string> }} [input]
+ *   `rows` connection-like rows; `profile` the /api/profile answer (merged
+ *   like the count); `adapters` the composed adapters serving this channel,
+ *   null when the screen did not read them; `guided` the channels the
+ *   `#/connettori/<channel>` flow serves.
+ */
+export function channelState(channel, { rows = [], profile = null, adapters = null, guided = [] } = {}) {
+  const id = countedChannel(channel);
+  const matching = mergeProfileConnections(rows, profile)
+    .filter((row) => countedChannel(row.channel) === id);
+  const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
+  const active = matching.find((row) => row.status === 'active') ?? null;
+  const shape = (state, extra = {}) => Object.freeze({
+    channel: id,
+    state,
+    text: CHANNEL_STATE_LABELS[state].text,
+    tone: CHANNEL_STATE_LABELS[state].tone,
+    account: null,
+    rows: Object.freeze(matching),
+    managedHere: false,
+    note: null,
+    manageRoute: null,
+    connectRoute: null,
+    ...extra,
+  });
+  if (active !== null) {
+    const account = typeof active.account === 'string' && active.account.trim() !== '' ? active.account.trim() : null;
+    // A profile link (Google, Meta) is managed on Profilo, wherever an
+    // adapter is composed: only a package row is configured here.
+    const onProfile = isProfileRow(active)
+      && !matching.some((row) => row.status === 'active' && !isProfileRow(row));
+    if (composed !== false && !onProfile) return shape('collegato', { account, managedHere: true });
+    return shape('collegato', {
+      account,
+      note: onProfile ? LINKED_ON_PROFILE_NOTE : LINKED_ELSEWHERE_NOTE,
+      manageRoute: onProfile ? '#/profilo' : null,
+    });
+  }
+  if (matching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
+    return shape('da-completare', { managedHere: true });
+  }
+  // A composed adapter opens the guided flow only for a channel that flow
+  // serves: Google Calendar connects on Profilo, Stripe nowhere (review
+  // #782 P3), whatever the schema lists.
+  const guidedHere = composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id);
+  const connectRoute = guidedHere
+    ? `#/connettori/${id}`
+    : channelConnectRoute(id, { guided: composed === false ? [] : guided, profile })
+      ?? (profileConnects(profile, id) ? '#/profilo' : null);
+  if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
+  return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
+}

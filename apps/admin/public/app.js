@@ -450,6 +450,7 @@ import {
   ACTIVE_SPACE_KEY,
   buildShellNav,
   createShellView,
+  keepSettingsTabs,
   loadClientCount,
   loadFixCount,
   readSpaces,
@@ -1247,6 +1248,14 @@ async function route() {
   const loadingLine = routedView !== null && (routedView !== 'dashboard' || MOUNTED)
     ? paintScreenLoading({ doc: document, mount: moduleView, label: screenLabel })
     : null;
+  // backlog:1cfc68175ab7: a settings tab keeps the tab row while it loads.
+  keepSettingsTabs(document, {
+    mount: moduleView,
+    loading: loadingLine,
+    view: routedView,
+    fixCount: shellFixCount,
+    navigate: (next) => { window.location.hash = next; },
+  });
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
