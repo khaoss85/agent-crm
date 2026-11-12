@@ -1260,7 +1260,20 @@ export function createSpaziAccessiView(deps) {
   let generation = 0;
   const childrenOf = () => Array.from(mount?.childNodes ?? []);
 
+  // review #830 P2: the nodes this view painted last. A menu opened while
+  // the first reads are pending repaints the mount from inside this view;
+  // that is still this screen, so the late answer must paint over it.
+  /** @type {Array<any> | null} */
+  let lastPaint = null;
+  const sameNodes = (left, right) => Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((node, index) => node === right[index]);
+
   function render() {
+    paint();
+    lastPaint = childrenOf();
+  }
+
+  function paint() {
     refusalPainted = false;
     clear();
     const space = activeSpace();
@@ -1338,11 +1351,16 @@ export function createSpaziAccessiView(deps) {
     const before = childrenOf();
     await loading;
     const count = await countRead;
-    state.loading = false;
+    // Only the newest refresh decides the loading state: an older one
+    // landing late never lifts a newer one's skeleton.
     if (mine !== generation) return;
+    state.loading = false;
     if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
+    // Paint only while the mount still holds this screen: what it held
+    // when the reads started, or what this view painted since (a menu
+    // opened meanwhile). Anything else is another screen: stay out.
     const now = childrenOf();
-    if (now.length !== before.length || now.some((node, index) => node !== before[index])) return;
+    if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
   }
 

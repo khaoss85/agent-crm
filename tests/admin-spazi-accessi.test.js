@@ -389,6 +389,42 @@ test('1a96094db71d: the page paints a skeleton at once and starts every read tog
   assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
 });
 
+// Review #830 P2: a menu opened while the first reads are pending repaints
+// the mount from inside the view; when the reads land the data must still
+// replace the skeleton, never stay stuck behind it.
+test('1a96094db71d review: a menu opened during loading never leaves the skeleton on screen', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is up');
+  const adder = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  assert.ok(adder, 'the new-space menu toggle is there while loading');
+  adder.dispatch('click', {});
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'still loading after the menu opens');
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the statistic arrives');
+});
+
 test('1a96094db71d: a refresh after a write keeps the screen, never the skeleton', async () => {
   const { mount, view: v } = view({ client: stubClient({}) });
   await v.render();
