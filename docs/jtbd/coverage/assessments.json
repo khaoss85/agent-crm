@@ -7,7 +7,7 @@
    "jtbdId": "ACC-JTBD-CRM-ADMIN-003",
    "jobName": "Configurare entità, campi, relazioni e layout",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "3b61abd485b2c49969cb0983b9538ff93445286e",
+   "verifiedAtSha": "6b69bec7256b3748bc2c7b165b1d78c3ff004ee8",
    "evidence": [
     {
      "kind": "TEST",
@@ -50,7 +50,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-008",
    "jobName": "Instradare approvazioni",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "3b61abd485b2c49969cb0983b9538ff93445286e",
+   "verifiedAtSha": "6b69bec7256b3748bc2c7b165b1d78c3ff004ee8",
    "evidence": [
     {
      "kind": "TEST",
@@ -88,7 +88,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-009",
    "jobName": "Generare quote e documenti",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "3b61abd485b2c49969cb0983b9538ff93445286e",
+   "verifiedAtSha": "6b69bec7256b3748bc2c7b165b1d78c3ff004ee8",
    "evidence": [
     {
      "kind": "TEST",
@@ -106,7 +106,7 @@
      "kind": "TEST",
      "path": "tests/admin-quotes.test.js",
      "claim": "the quote and its versions render in the Admin with server-computed totals",
-     "sha256": "04e219804f16b9ba8d2bd9fcfa28ee8c76a09ad223f6b7ef7c1123d33080ca80"
+     "sha256": "0a45a6609b5148b703a52cbaa953ae96d23f2f865a919bea7249bf9d932007a8"
     }
    ],
    "factIds": [
@@ -124,7 +124,7 @@
    "jtbdId": "ACC-JTBD-DEAL-DESK-012",
    "jobName": "Portare contratto a firma e close",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "3b61abd485b2c49969cb0983b9538ff93445286e",
+   "verifiedAtSha": "6b69bec7256b3748bc2c7b165b1d78c3ff004ee8",
    "evidence": [
     {
      "kind": "TEST",
@@ -154,7 +154,7 @@
    "jtbdId": "ACC-JTBD-DATA-SCI-005",
    "jobName": "Costruire lead e account scoring",
    "coverageStatus": "partially supported",
-   "verifiedAtSha": "3b61abd485b2c49969cb0983b9538ff93445286e",
+   "verifiedAtSha": "6b69bec7256b3748bc2c7b165b1d78c3ff004ee8",
    "evidence": [
     {
      "kind": "TEST",
