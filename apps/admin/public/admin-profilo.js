@@ -287,9 +287,13 @@ export function cleanProfileName(value) {
 export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions } = {}) {
   let token = 0;
   // backlog:1cfc68175ab7: the name edit is local view state, never stored.
+  // `draft` keeps what the user typed across saving, validation errors and
+  // request failures (Codex P2 on #844): a repaint never rebuilds the input
+  // from the old server value, so a retry sends the draft again.
   let editing = false;
   let editError = '';
   let saving = false;
+  let draft = '';
   const bound = bindAdminMutations(client, submissions ? { submissions } : {}).client;
 
   function clear() {
@@ -311,6 +315,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       edit.addEventListener('click', () => {
         editing = true;
         editError = '';
+        draft = personText(person.name) ?? '';
         paintLast();
       });
       words.appendChild(edit);
@@ -322,7 +327,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       input.setAttribute('name', 'profile-name');
       input.setAttribute('aria-label', 'Nome');
       input.setAttribute('maxlength', String(PROFILE_NAME_MAX));
-      input.value = personText(person.name) ?? '';
+      input.value = draft;
       form.appendChild(label);
       form.appendChild(input);
       const actions = el(doc, 'div', 'bo-profilo-edit-actions');
@@ -334,9 +339,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       cancel.disabled = saving;
       const doSave = () => {
         if (saving) return;
-        const next = cleanProfileName(input.value);
+        draft = input.value;
+        const next = cleanProfileName(draft);
         if (next === null) {
-          editError = input.value.trim() === ''
+          editError = draft.trim() === ''
             ? 'Scrivi un nome prima di salvare.'
             : `Il nome è troppo lungo: al massimo ${PROFILE_NAME_MAX} caratteri.`;
           paintLast();
@@ -345,6 +351,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         if (next === (personText(person.name) ?? '')) {
           editing = false;
           editError = '';
+          draft = '';
           paintLast();
           return;
         }
@@ -355,6 +362,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
           async () => {
             saving = false;
             editing = false;
+            draft = '';
             const mine = ++token;
             const fresh = await read();
             if (mine !== token) return;
@@ -372,6 +380,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         if (saving) return;
         editing = false;
         editError = '';
+        draft = '';
         paintLast();
       };
       save.addEventListener('click', doSave);
