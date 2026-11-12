@@ -69,6 +69,9 @@ export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In 
 export const AGENT_NO_ENGINE_LABEL = 'Pronto, in attesa del motore';
 export const AGENT_NO_ENGINE_NOTE = 'È nel tuo team, ma in questo spazio non c’è ancora un motore che lo fa lavorare.';
 
+/** An incarico of an agent with no engine: kept, never «Non riuscito», it waits (run-due `runnable`). */
+export const ASSIGNMENT_NO_ENGINE_LABEL = 'In attesa del motore';
+
 /** A capped agent needs the cost of one run on every incarico (package rule requireCostEstimate). */
 export const AGENT_COST_NEEDED_NOTE = 'Questo agente ha un tetto di spesa: scrivi quanto costa più o meno un giro, in euro.';
 
@@ -217,7 +220,9 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         sourceKey: String(row.sourceKey ?? ''),
         phrase: String(row.phrase).trim(),
         schedule: describeSchedule(row),
-        status: assignmentStatusLabel(row, runs),
+        // backlog:1f7cb20d3c30: an active incarico of an agent nothing runs
+        // waits for the engine; paused or done still say so.
+        status: !engine && row.status === 'active' ? ASSIGNMENT_NO_ENGINE_LABEL : assignmentStatusLabel(row, runs),
         lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
         lastOutcome: lastRunOf(runs, String(row.sourceKey ?? ''))?.outcome ?? null,
         lastStamp: lastRunStamp(runs, String(row.sourceKey ?? '')),

@@ -16,6 +16,7 @@ import {
   AGENT_NAME_TAKEN_NOTE,
   AGENT_NO_ENGINE_LABEL,
   AGENT_NO_ENGINE_NOTE,
+  ASSIGNMENT_NO_ENGINE_LABEL,
   buildAgentCards,
   checkNewAgent,
   createAgentiView,
@@ -262,4 +263,17 @@ test('senza lettura del catalogo la card non inventa niente: resta «Attivo»', 
   assert.equal(waiting.engine, false);
   const [paused] = buildAgentCards({ agents: [{ ...AUGURI, status: 'paused' }], nowIso: NOW, catalog: CATALOG });
   assert.equal(paused.statusLabel, 'In pausa', 'in pausa resta in pausa');
+});
+
+test('gli incarichi di un agente senza motore restano visibili «In attesa del motore», mai «Non riuscito»', () => {
+  const assignments = [
+    { sourceKey: 'a-1', agentSourceKey: AUGURI.sourceKey, phrase: 'ogni lunedì fai gli auguri', cadence: 'weekly', weekday: 1, timeOfDay: '08:00', status: 'active', nextRunAt: '2026-11-09T07:00:00.000Z', decidedAt: NOW },
+    { sourceKey: 'a-2', agentSourceKey: AUGURI.sourceKey, phrase: 'fermo', cadence: 'weekly', status: 'paused', decidedAt: '2026-11-01T00:00:00.000Z' },
+  ];
+  const [card] = buildAgentCards({ agents: [AUGURI], assignments, runs: [], nowIso: NOW, catalog: CATALOG });
+  assert.equal(card.assignments[0].status, ASSIGNMENT_NO_ENGINE_LABEL, 'il giro è passato ma l’incarico aspetta il motore');
+  assert.equal(card.assignments[0].lastOutcome, null, 'nessun giro fallito');
+  assert.equal(card.assignments[1].status, 'In pausa', 'in pausa resta in pausa');
+  const [catalogCard] = buildAgentCards({ agents: [RIAGGANCIO], assignments: [{ ...assignments[0], agentSourceKey: RIAGGANCIO.sourceKey }], runs: [], nowIso: NOW, catalog: CATALOG });
+  assert.notEqual(catalogCard.assignments[0].status, ASSIGNMENT_NO_ENGINE_LABEL, 'un agente del catalogo non aspetta il motore');
 });

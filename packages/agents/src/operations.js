@@ -560,6 +560,11 @@ export function createAgentOperations(options = {}) {
         code: 'AGENT_EXECUTE_MISSING', status: 500,
       });
     }
+    // backlog:1f7cb20d3c30: the deployment says which agents it can run. An
+    // agent it cannot run (a hand-written one with no engine yet) is left
+    // alone: no run row, no failure, its assignment stays due and waits for
+    // the engine. Without the seam every agent is runnable, as before.
+    const runnable = typeof record.runnable === 'function' ? record.runnable : null;
     const at = typeof record.at === 'string' ? record.at : now();
     const scopeSpace = record.spaceId !== undefined ? checkSpaceId(record.spaceId) : null;
     const due = (await assignments().listWhere(scopeSpace ? { spaceId: scopeSpace } : {}))
@@ -567,6 +572,9 @@ export function createAgentOperations(options = {}) {
         && typeof row.nextRunAt === 'string' && Date.parse(row.nextRunAt) <= Date.parse(at));
     const summary = {
       advanced: 0, proposed: 0, applied: 0, artifacts: 0, capped: 0, failed: 0, skipped: 0, errors: [],
+      // Only with the seam: a caller that does not pass it sees the exact
+      // summary shape it always saw.
+      ...(runnable !== null ? { waiting: 0 } : {}),
     };
     for (const assignment of due) {
       try {
@@ -581,6 +589,10 @@ export function createAgentOperations(options = {}) {
           const spaceId = assignment.spaceId;
           const agent = await loadAgent(spaceId, assignment.agentSourceKey);
           if (agent.status !== 'active') return;
+          if (runnable !== null && (await runnable(agent)) !== true) {
+            summary.waiting += 1;
+            return;
+          }
           const { startedAt, runKey } = slotOf(assignment, at);
           const base = {
             spaceId,

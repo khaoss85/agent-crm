@@ -1223,3 +1223,33 @@ test('1f7cb20d3c30: create-agent refuses a second agent with the same @name in a
   const other = await ops.createAgent({ actor: USER, spaceId: 'altro-spazio', sourceKey: 'ag-c', name: 'Report Vendite', role: 'r', instructions: 'i' });
   assert.equal(other.duplicate, false, 'another space may use the name');
 });
+
+test('1f7cb20d3c30: run-due leaves an agent the deployment cannot run waiting — no run, no failure, still due', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'custom-agent:ws:k1', name: 'Auguri' });
+  await makeAgent(ops, { sourceKey: 'ag-ok', name: 'Pronto' });
+  for (const [sourceKey, agentSourceKey] of [['as-wait', 'custom-agent:ws:k1'], ['as-ok', 'ag-ok']]) {
+    await ops.createAssignment({
+      actor: USER, spaceId: SPACE, sourceKey, agentSourceKey,
+      phrase: 'ogni giorno il report', plan: { cadence: 'daily', timeOfDay: '08:00' },
+    });
+  }
+  const executed = [];
+  const execute = async ({ agent }) => {
+    executed.push(agent.sourceKey);
+    return { kind: 'artifact', costCents: 0, artifact: { total: 0 } };
+  };
+  const runnable = (agent) => !agent.sourceKey.startsWith('custom-agent:');
+  const summary = await ops.runDue({ actor: SYSTEM, at: MON_0801, execute, runnable });
+  assert.equal(summary.waiting, 1, 'the engine-less agent waits');
+  assert.equal(summary.failed, 0, 'never a failed run');
+  assert.deepEqual(executed, ['ag-ok'], 'its assignment is never executed');
+  const runs = await modules.get('teammate-run').service.listWhere({ spaceId: SPACE, agentSourceKey: 'custom-agent:ws:k1' });
+  assert.equal(runs.length, 0, 'no run row is born');
+  const [waiting] = await modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey: 'as-wait' });
+  assert.equal(waiting.status, 'active', 'the assignment is kept');
+  assert.ok(Date.parse(waiting.nextRunAt) <= Date.parse(MON_0801), 'and stays due: it runs once an engine exists');
+  const again = await ops.runDue({ actor: SYSTEM, at: MON_0801, execute });
+  assert.equal(again.waiting, undefined, 'without the seam every agent is runnable and the summary shape is unchanged');
+  assert.ok(executed.includes('custom-agent:ws:k1'));
+});

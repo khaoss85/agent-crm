@@ -61,7 +61,9 @@ export function createAgentsPackage(options = {}) {
     // approval-gated proposals, versioned artifacts, spending caps.
     // 2: backlog:fd36da512b0e — «Da fare» decisions on a proposed run:
     // reject-run (outcome `rejected`) and revise-run (edit one proposal).
-    version: 2,
+    // 3: backlog:1f7cb20d3c30 — hand-written agents: one @name per space
+    // (AGENT_NAME_TAKEN) and run-due's `runnable` seam (engine-less agents wait).
+    version: 3,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
@@ -120,7 +122,8 @@ export function createAgentsPackage(options = {}) {
         label: 'Run due assignments',
         description:
           'Run every due active assignment through the execute seam and record each execution with cost '
-          + 'and outcome. Agents over their monthly cap record a capped run and never execute.',
+          + 'and outcome. Agents over their monthly cap record a capped run and never execute. '
+          + 'Agents the deployment cannot run (the runnable seam) wait: no run, no failure.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'Optional: run one space only.' },
         ],
