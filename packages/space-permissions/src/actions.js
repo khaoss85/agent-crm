@@ -2,10 +2,12 @@
 
 import { AppError, ConflictError, ValidationError, requireActor } from '../../core/index.js';
 import {
+  SPACE_AI_MASTER_KEY,
   SPACE_AI_PERMISSIONS,
+  checkFlippableKey,
   checkPermissionKey,
   checkSpaceId,
-  effectivePermission,
+  isAiActionAllowed,
 } from './permissions.js';
 import { buildAiProposal, decideAiProposal, escapeKeyPart } from './proposals.js';
 
@@ -97,6 +99,8 @@ export function scopeKeyFor(spaceId, permission) {
  * on — a gated agent flipping its own switch would bypass the BO-F0-06
  * promise that a switched-off action is never executed. Non-human actors are
  * refused with `HUMAN_APPROVAL_REQUIRED`, like `approve`/`refuse` below.
+ * Besides the five switches this flips the master `ai-enabled` switch
+ * (backlog:2c3156a47f8e): the whole AI of the space, on or off.
  *
  * @param {Record<string, string>} [config] module renames
  */
@@ -106,12 +110,12 @@ export function buildSetPermissionAction(config) {
     module: names.override,
     name: 'set-permission',
     label: 'Set space AI permission',
-    description: 'Flip one of the five AI switches of one space. Creates the switch row on the first flip, patches it after. Records which actor flipped it.',
+    description: 'Flip one AI switch of one space: one of the five, or the ai-enabled master. Creates the switch row on the first flip, patches it after. Records which actor flipped it.',
     actionContract: 1,
     confirm: true,
     input: [
       { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
-      { name: 'permission', type: 'string', required: true, hint: `One of: ${SPACE_AI_PERMISSIONS.join(', ')}.` },
+      { name: 'permission', type: 'string', required: true, hint: `One of: ${SPACE_AI_PERMISSIONS.join(', ')}, ${SPACE_AI_MASTER_KEY} (the master AI switch).` },
       { name: 'enabled', type: 'enum', values: ['on', 'off'], required: true, hint: 'on lets the agent act alone; off turns the action into a proposal.' },
     ],
     /** @param {any} ctx */
@@ -123,7 +127,7 @@ export function buildSetPermissionAction(config) {
         });
       }
       const spaceId = checkSpaceId(input?.spaceId);
-      const permission = checkPermissionKey(input?.permission);
+      const permission = checkFlippableKey(input?.permission);
       if (input?.enabled !== 'on' && input?.enabled !== 'off') {
         throw new ValidationError('enabled must be on or off', { field: 'enabled' });
       }
@@ -199,7 +203,10 @@ export function buildProposeAction(config) {
       const spaceId = checkSpaceId(record.spaceId);
       const permission = checkPermissionKey(record.permission);
       const stored = await overrides.listWhere({ spaceId });
-      if (effectivePermission(spaceId, permission, Array.isArray(stored) ? stored : [])) {
+      // Master-aware: with the space master off, proposing stays open even
+      // when this own switch is on — the gate turns everything into a
+      // proposal, so refusing here would leave no path at all.
+      if (isAiActionAllowed(spaceId, permission, Array.isArray(stored) ? stored : [])) {
         throw new AppError(`Permission "${permission}" is on in this space: act, do not propose`, {
           code: 'SPACE_PERMISSION_ENABLED', status: 409,
         });

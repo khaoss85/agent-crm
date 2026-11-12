@@ -136,7 +136,8 @@
  * fail-closed case left), 2 unusable input.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { availableParallelism, cpus } from 'node:os';
 import { spawn } from 'node:child_process';
 import { spawnGit } from './git-env.js';
 import { dirname, join, normalize } from 'node:path';
@@ -1073,7 +1074,7 @@ export function testJobs(
  */
 export function runTestShards(
   /** @type {string[]} */ tests,
-  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void }} */ options,
 ) {
   const jobs = testJobs(tests, options.parts);
   const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
@@ -1097,15 +1098,27 @@ export function runTestShards(
     /** @type {string[]} */
     const failedFiles = [];
     let settled = false;
+    // Assigned below once the bound is armed. Declared first so a timer
+    // that fires synchronously (an injected one may) finds a callable
+    // cancel instead of a temporal-dead-zone ReferenceError.
+    /** @type {() => void} */
+    let cancelTimer = () => {};
     const settle = (
       /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }} */ result,
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cancelTimer();
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
+    // when the bound fires — e.g. once a given file has finished — instead
+    // of racing a wall-clock second against the machine's load.
+    const startTimer = options.startTimer ?? ((fire, ms) => {
+      const handle = setTimeout(fire, ms);
+      return () => clearTimeout(handle);
+    });
+    const cancel = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1123,6 +1136,8 @@ export function runTestShards(
         failedFiles: [...failedFiles],
       });
     }, options.timeoutSec * 1000);
+    // Fired already (settled): nothing left to cancel later, cancel now.
+    if (settled) cancel(); else cancelTimer = cancel;
     const startNext = (/** @type {number} */ part) => {
       const tag = `touched ${part + 1}/${parts}`;
       if (settled) return;
@@ -1189,12 +1204,83 @@ export function runTestShards(
         if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+        try {
+          options.onJobDone?.(files, status);
+        } catch (error) {
+          // An observer must never stall its part: log and keep draining.
+          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        }
         startNext(part);
       });
     };
     for (let part = 0; part < parts; part += 1) startNext(part);
   });
   return done;
+}
+
+/**
+ * The busy rule (backlog:3d560518f3e2, the core's external-ci #1004 for this
+ * gate): a run that timed out while the machine was full did not prove the
+ * tests slow, the machine was. "Full" = load1 above `factor` × CPUs at the
+ * run's start or at its bound. Pure: unit-tested.
+ * @param {{ loadStart: number | null, loadEnd: number | null, cpus: number, factor?: number }} input
+ * @returns {{ busy: boolean, threshold: number }}
+ */
+export function busyVerdict({ loadStart, loadEnd, cpus: cpuCount, factor = BUSY_LOAD_FACTOR }) {
+  const threshold = Math.round(cpuCount * factor * 10) / 10;
+  const readings = [loadStart, loadEnd].filter((value) => typeof value === 'number' && Number.isFinite(value));
+  return { busy: readings.some((value) => value > threshold), threshold };
+}
+
+/** load1 is "full" above this many times the CPU count. */
+export const BUSY_LOAD_FACTOR = 1.5;
+
+/**
+ * load1 from a loadavg file (`/proc/loadavg` by default, `CI_LOADAVG_FILE`
+ * in tests), or null where there is none (macOS, a bad file).
+ * @param {string} [file]
+ * @returns {number | null}
+ */
+export function readLoad1(file = process.env.CI_LOADAVG_FILE || '/proc/loadavg') {
+  try {
+    const value = Number(readFileSync(file, 'utf8').trim().split(/\s+/)[0]);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The CPU count the rule scales by (`CI_CPU_COUNT` in tests). */
+export function cpuCount() {
+  const forced = Number(process.env.CI_CPU_COUNT);
+  if (Number.isInteger(forced) && forced > 0) return forced;
+  return typeof availableParallelism === 'function' ? availableParallelism() : cpus().length;
+}
+
+/**
+ * Decide a red timeout's fate and say it. A timeout with a failed file, or on
+ * a machine under the bound, stays red. A timeout on a full machine is
+ * "busy": with `busyFile` set (the parallel gate sets it, once) the decision
+ * is written there, atomically, for the gate's single retry. The exit stays
+ * nonzero either way: only the retry can turn it green.
+ * @param {{ loadStart: number | null, loadEnd: number | null, cpus: number, failedFiles: string[], remaining: string[], busyFile?: string }} input
+ * @returns {{ busy: boolean, threshold: number, line: string }}
+ */
+export function decideTimeout({ loadStart, loadEnd, cpus: cpuTotal, failedFiles, remaining, busyFile }) {
+  const { busy: full, threshold } = busyVerdict({ loadStart, loadEnd, cpus: cpuTotal });
+  const busy = full && failedFiles.length === 0;
+  const loads = `load1 ${loadStart ?? 'n/a'} at start, ${loadEnd ?? 'n/a'} at the bound (busy above ${threshold} = ${BUSY_LOAD_FACTOR} x ${cpuTotal} CPUs)`;
+  let decision;
+  if (failedFiles.length > 0) decision = 'red: a file failed, the load does not matter';
+  else if (!full) decision = 'red: the machine was not full, the tests were slow';
+  else if (!busyFile) decision = 'red: busy, but this run is already the retry (or the gate does not retry)';
+  else decision = 'busy: not counted as red, the gate retries the touched tests once when the load drops';
+  if (busy && busyFile) {
+    const pending = `${busyFile}.${process.pid}`;
+    writeFileSync(pending, `${JSON.stringify({ loadStart, loadEnd, threshold, cpus: cpuTotal, remaining })}\n`);
+    renameSync(pending, busyFile);
+  }
+  return { busy: busy && Boolean(busyFile), threshold, line: `ci-touched-tests: timed out with ${loads}: ${decision}.` };
 }
 
 /**
@@ -1296,6 +1382,45 @@ export function buildFileImports(
 }
 
 /**
+ * The commit the PR is measured against, pinned once (backlog:3d560518f3e2):
+ * the base ref resolved to a sha, then the merge-base of that sha with HEAD.
+ * Every diff below reads this one sha, so a ref that moves mid-run — a
+ * parallel phase's `git fetch` rewriting FETCH_HEAD or a tracking ref — can
+ * never split the three diffs across two bases, and the log can name the
+ * base it really used.
+ * @param {(args: string[]) => { status: number | null, stdout: string }} runGit
+ * @param {string} base
+ * @returns {{ baseSha: string, mergeBase: string }}
+ */
+export function resolveDiffBase(runGit, base) {
+  const resolved = runGit(['rev-parse', '--verify', `${base}^{commit}`]);
+  const baseSha = String(resolved.stdout ?? '').trim();
+  if (resolved.status !== 0 || !/^[0-9a-f]{40,64}$/.test(baseSha)) {
+    throw new Error(`ci-touched-tests: base revision ${base} is not present. Fetch the PR base before running (CI does this in the step before).`);
+  }
+  const merged = runGit(['merge-base', baseSha, 'HEAD']);
+  const mergeBase = String(merged.stdout ?? '').trim();
+  if (merged.status !== 0 || !/^[0-9a-f]{40,64}$/.test(mergeBase)) {
+    throw new Error(`ci-touched-tests: ${base} (${baseSha.slice(0, 12)}) shares no history with HEAD: no merge-base to diff against.`);
+  }
+  return { baseSha, mergeBase };
+}
+
+/**
+ * The fallback's core before the guards, said as what it is: the PR's own
+ * changed test files and the nearest selected tests that filled the budget.
+ * It used to read "26 changed test file(s)" for 1 changed test plus 25
+ * nearest — which read like a 26-file diff (backlog:3d560518f3e2).
+ * @param {readonly string[]} core
+ * @param {readonly string[]} changed
+ */
+export function describeFallbackCore(core, changed) {
+  const own = new Set(changed);
+  const changedTests = core.filter((file) => own.has(file)).length;
+  return `${changedTests} changed test file(s), ${core.length - changedTests} nearest selected`;
+}
+
+/**
  * The PR's changed files against `base`, split in four: `changed` drives
  * what runs (the unfiltered diff minus the deleted-only diff: uppercase
  * `--diff-filter=D` selects only deleted paths — lowercase `-d` would
@@ -1345,21 +1470,18 @@ export function listChangedFiles(runGit, /** @type {string} */ base) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
-  const verify = git(['rev-parse', '--verify', options.base]);
-  if (verify.status !== 0 || !verify.stdout) {
-    process.stderr.write(
-      `ci-touched-tests: base revision ${options.base} is not present. `
-        + 'Fetch the PR base before running (CI does this in the step before).\n',
-    );
-    process.exit(2);
-  }
-
   let changed;
   let deleted;
   let added;
   let allChanged;
   try {
-    ({ changed, deleted, added, allChanged } = listChangedFiles(git, options.base));
+    const { baseSha, mergeBase } = resolveDiffBase(git, options.base);
+    ({ changed, deleted, added, allChanged } = listChangedFiles(git, mergeBase));
+    const changedTests = changed.filter((file) => file.endsWith('.test.js')).length;
+    process.stdout.write(
+      `ci-touched-tests: base ${options.base} = ${baseSha.slice(0, 12)}, merge-base with HEAD ${mergeBase.slice(0, 12)}: `
+        + `${allChanged.length} changed file(s), ${changedTests} of them test file(s).\n`,
+    );
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(2);
@@ -1588,7 +1710,7 @@ async function main() {
         : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
     process.stdout.write(
       `ci-touched-tests: warning: ${why} — running the fallback suite instead `
-      + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.`
+      + `(${describeFallbackCore(preGuardTests, changed)} plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.`
       + `${remainderNote === null ? '' : ` ${remainderNote}.`}\n`,
     );
     process.stdout.write(
@@ -1630,6 +1752,7 @@ async function main() {
         : `ci-touched-tests: running ${queue.length} test file(s) (${plan.tests.length} core plus ${bonus.length} bonus draining nearest-first while the bound allows) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`,
     );
   }
+  const loadStart = readLoad1();
   const run = await runTestShards(queue, { parts, timeoutSec: runBudget, cwd: root });
   if (run.timedOut) {
     const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
@@ -1653,6 +1776,15 @@ async function main() {
       );
       process.exit(0);
     }
+    const decision = decideTimeout({
+      loadStart,
+      loadEnd: readLoad1(),
+      cpus: cpuCount(),
+      failedFiles: run.failedFiles,
+      remaining: run.remaining,
+      busyFile: process.env.CI_TOUCHED_BUSY_FILE || undefined,
+    });
+    process.stdout.write(`${decision.line}\n`);
     process.stderr.write(
       `ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock. `
         + `${coreRemaining.length} core file(s) remaining: ${coreRemaining.join(', ') || '(none reported)'}; `

@@ -90,11 +90,14 @@ test('5083e7a77c26: a stored «Unknown» never reaches the sender name', () => {
     conversations: [{ id: 'cp', channel: 'email', status: 'open', ...host, subjectId: 'pp', subjectLabel: 'PayPal Unknown' }],
     now: NOW,
   });
-  assert.equal(fromLabel.rows[0].name, 'PayPal', 'the stored label drops its placeholder word');
+  // A PayPal receipt is a notification (backlog:bab63e32acdb): it lists in
+  // «Notifiche automatiche», named by the same rule.
+  assert.equal(fromLabel.rows.length, 0);
+  assert.equal(fromLabel.notifications.rows[0].name, 'PayPal', 'the stored label drops its placeholder word');
   const onlyPlaceholder = buildInbox({
     messages: [message],
     conversations: [{ id: 'cp', channel: 'email', status: 'open', ...host, subjectId: 'pp', subjectLabel: 'Unknown Unknown' }],
     now: NOW,
   });
-  assert.equal(onlyPlaceholder.rows[0].name, 'service@paypal.it', 'nothing real left: the sender handle names the row');
+  assert.equal(onlyPlaceholder.notifications.rows[0].name, 'service@paypal.it', 'nothing real left: the sender handle names the row');
 });

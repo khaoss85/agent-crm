@@ -54,7 +54,7 @@ import {
   extractProductDrafts,
   normalizeManualRows,
 } from '../packages/commercial/src/product-import.js';
-import { COMMERCIAL_MANIFESTS } from './helpers/contracts-project.js';
+import { COMMERCIAL_MANIFESTS } from './helpers/contracts-project-cache.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const here = dirname(fileURLToPath(import.meta.url));

@@ -140,11 +140,14 @@ const SLOTS = [
   { startsAt: '2026-10-22T17:00:00.000Z', endsAt: '2026-10-22T17:30:00.000Z' },
 ];
 
+// backlog:913c61ec: a phrase with a time proposes that time only, so the
+// shot drafts a day without a time («giovedì») to paint several proposals,
+// their ghost and the out-of-hours line.
 const DRAFT = {
   teamMemberId: 'marco',
   serviceKey: 'taglio',
-  startsAt: '2026-10-22T14:00:00.000Z',
-  endsAt: '2026-10-22T14:30:00.000Z',
+  day: '2026-10-22',
+  durationMinutes: 30,
   notes: 'taglio per Ada',
 };
 
@@ -185,7 +188,7 @@ byName('members').dispatchEvent(new Event('input', { bubbles: true }));
 click('Mostra settimana');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
-document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
 click('Trova slot liberi');
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
@@ -213,6 +216,22 @@ const probe = {
   compact: [...document.querySelectorAll('.cal-day-compact')]
     .filter((node) => node.getBoundingClientRect().height > 0)
     .map((node) => Math.round(node.getBoundingClientRect().height)),
+};
+// Dan 11/11: the event popover opens beside the clicked event and stays on
+// screen — the Friday booking sits in the last column, so it flips left on
+// the desktop; the phone shows it as a bottom sheet.
+document.querySelector('[data-event-id="a2"]').click();
+await new Promise((r) => setTimeout(r, 50));
+const popNode = document.querySelector('[data-role="event-detail"]');
+const popRect = popNode ? popNode.getBoundingClientRect() : null;
+const anchorRect = document.querySelector('[data-event-id="a2"]').getBoundingClientRect();
+probe.pop = popRect === null ? null : {
+  left: Math.round(popRect.left), right: Math.round(popRect.right),
+  top: Math.round(popRect.top), bottom: Math.round(popRect.bottom),
+  anchorLeft: Math.round(anchorRect.left), anchorRight: Math.round(anchorRect.right),
+  side: popNode.getAttribute('data-side'), role: popNode.getAttribute('role'),
+  focused: document.activeElement === popNode,
+  innerHeight: window.innerHeight,
 };
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
@@ -339,6 +358,13 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
   assert.equal(probe.compact.length, 0, 'desktop keeps every empty day as its timeline');
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the desktop render lists the week events');
+  assert.ok(probe.pop, 'the event popover opens in the browser');
+  assert.equal(probe.pop.role, 'dialog');
+  assert.equal(probe.pop.focused, true, 'focus moves into the popover');
+  assert.equal(probe.pop.side, 'left', 'the last column flips the popover left');
+  assert.ok(probe.pop.right <= probe.pop.anchorLeft, `the popover sits left of the event: ${JSON.stringify(probe.pop)}`);
+  assert.ok(probe.pop.left >= 0 && probe.pop.right <= 1280, `never off screen sideways: ${JSON.stringify(probe.pop)}`);
+  assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `never off screen vertically: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.filled.startsWith('marco|2026-10-22|'), `the interpreted draft prefills the manual form (${probe.filled})`);
   assert.equal(probe.proposals, 2, 'two proposal rows, one Conferma each');
   assert.equal(probe.ghosts, 1, 'one dashed ghost on the Thursday column');
@@ -354,6 +380,9 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.ok(dom.includes('<title>calendario-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the phone render lists the week events');
+  assert.ok(probe.pop, 'the event popover opens on the phone');
+  assert.ok(probe.pop.left >= 0 && probe.pop.right <= 390, `the sheet stays on screen sideways: ${JSON.stringify(probe.pop)}`);
+  assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `the sheet stays on screen: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);
   console.log(`calendario phone tops (AI, week, Team, form, booking): ${probe.order.join(', ')}`);
   const sorted = [...probe.order].sort((a, b) => a - b);

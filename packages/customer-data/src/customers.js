@@ -1,7 +1,9 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { CHANNEL_SYSTEMS, isNoCompany } from './sender.js';
+import { messagePreview } from '../../core/message-preview.js';
+import { CHANNEL_SYSTEMS } from './sender.js';
+import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
 /**
  * **The customer list (BO-F1-05): one page of customers, server-side.**
@@ -34,6 +36,25 @@ export const CUSTOMER_SCAN_LIMIT = 500;
 export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 
 /**
+ * Rows of the shared search ceiling reserved for companies
+ * (backlog:7d82fd84, review #678 giro-2 P3): contacts are scanned up to the
+ * ceiling minus this reserve, companies up to the reserve, so a contact
+ * scan that fills its budget never starves the company scan. Past either
+ * bound the answer stays complete:false.
+ */
+export const CUSTOMER_SEARCH_COMPANY_RESERVE = 1000;
+
+/**
+ * Rows of the bounded identity scan behind a phone search (backlog:7d82fd84):
+ * a digit-only query also scans the held identities for the digit
+ * substring, so a phone held beside a customer past the subject scans is
+ * still found. A fixed bound, never the whole table; past it the answer
+ * stays complete:false. A full number (7 or more digits) is also looked up
+ * by exact identity key, complete by construction.
+ */
+export const CUSTOMER_IDENTITY_SCAN_LIMIT = 1000;
+
+/**
  * Bound of the last-contact preview in a list row (prototype "04 Clienti":
  * the Ultimo contatto cell shows the channel mark plus a short message
  * excerpt, never the full body). Single-line: newlines collapse to spaces.
@@ -41,17 +62,22 @@ export const CUSTOMER_SEARCH_SCAN_LIMIT = 5000;
 export const LAST_CONTACT_PREVIEW_CHARS = 140;
 
 /**
- * Short single-line excerpt of the latest message for the list row. Calls
- * carry no text, so a latest call (or no activity) previews as null — the
- * view renders the channel and the date alone, never an invented excerpt.
+ * Short single-line excerpt of the latest message for the list row, read
+ * like a mail client (Dan 10/11): «Oggetto — estratto pulito» for an email
+ * with a stored subject, the cleaned excerpt otherwise — no URLs, HTML
+ * residue, hidden preheaders or service lines (core `messagePreview`). A
+ * body that cleans to nothing falls back to the subject. Calls carry no
+ * text, so a latest call (or no activity) previews as null — the view
+ * renders the channel and the date alone, never an invented excerpt.
  * @param {unknown} value the latest message body, if any
+ * @param {unknown} [subject] the latest message's mail subject, if any
  */
-export function previewLastContactText(value) {
-  if (typeof value !== 'string') return null;
-  const single = value.replace(/\s+/g, ' ').trim();
-  if (single === '') return null;
-  if (single.length <= LAST_CONTACT_PREVIEW_CHARS) return single;
-  return `${single.slice(0, LAST_CONTACT_PREVIEW_CHARS).trimEnd()}…`;
+export function previewLastContactText(value, subject = null) {
+  const preview = messagePreview(typeof value === 'string' ? value : null, {
+    subject: typeof subject === 'string' ? subject : null,
+    max: LAST_CONTACT_PREVIEW_CHARS,
+  });
+  return preview === '' ? null : preview;
 }
 
 /** Server page sizes from the approved prototype ("04 Clienti"). */
@@ -242,38 +268,116 @@ export function searchNeedle(q) {
 export const SEARCH_INFIX_MIN_CHARS = 4;
 
 /**
+ * Digits in a query name a phone number, not words (backlog:7d82fd84,
+ * review #678 giro-2 P3): the numeric words joined match as one substring
+ * of the digits of a held phone, so «333» finds «+39333123456» while «ada»
+ * still never matches inside «Canada». Fewer digits match nothing, so a
+ * one- or two-digit query does not match every phone on the page.
+ */
+export const PHONE_SEARCH_MIN_DIGITS = 3;
+
+/**
  * How a customer's searchable parts match the needle (backlog:d128847d21fc,
  * review #678): 0 when every needle word starts some word of the parts, 1
  * when every needle word matches but some only inside a word, -1 when one
  * does not match. A word of at least SEARCH_INFIX_MIN_CHARS letters may sit
  * inside a word («ovanni» finds «Giovanni», «xample» an «example» mailbox);
  * a shorter one only at the start, so «ada» finds «Ada Rossi» but not
- * «Canada». Case and accents never matter.
+ * «Canada». Case and accents never matter. Digits in the needle are also a
+ * phone search (backlog:7d82fd84): the numeric words joined match inside
+ * the digits of a held phone («333» finds «+39333123456»), ranked 1.
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (the held phone beside
+ *   the row), or nothing when the caller has no phone: the digit rule below
+ *   reads ONLY this value, never name/email/company digits, so «333» never
+ *   matches «user333@example.com» (review agent-crm#707: digit-substring
+ *   false positives).
  */
-export function searchRank(parts, needle) {
+export function searchRank(parts, needle, phone = '') {
   if (!Array.isArray(needle) || needle.length === 0) return 0;
-  const words = parts.filter((part) => typeof part === 'string' && part !== '').flatMap(searchWords);
-  let rank = 0;
-  for (const wanted of needle) {
-    if (words.some((word) => word.startsWith(wanted))) continue;
-    if (wanted.length >= SEARCH_INFIX_MIN_CHARS && words.some((word) => word.includes(wanted))) {
-      rank = 1;
-      continue;
+  // Single digit path (review agent-crm#707 giro-2 P1): a needle of ONLY
+  // digits names a phone, never words — judged below against the digits
+  // of the HELD phone with the PHONE_SEARCH_MIN_DIGITS floor. The
+  // first-pass words also exclude the held phone value itself, so no
+  // digit word ever matches the phone by word start (one source of truth).
+  const phoneValue = typeof phone === 'string' ? phone : String(phone ?? '');
+  const textWords = parts
+    .filter((part) => typeof part === 'string' && part !== '' && part !== phoneValue)
+    .flatMap(searchWords);
+  const numeric = needle.filter((word) => /^[0-9]+$/.test(word));
+  const text = needle.filter((word) => !/^[0-9]+$/.test(word));
+  if (numeric.length === 0) {
+    let rank = 0;
+    for (const wanted of text) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      return -1;
+    }
+    return rank;
+  }
+  // A pure-digit needle names ONLY a phone (review agent-crm#707 giro-2
+  // P1): «39» must not match every Italian phone by word start, and «333»
+  // must not match «333 Studio» or «333@example.com» — digits read ONLY
+  // the held phone, with the floor. Mixed needles (text plus digits, like
+  // «verifica 07/11») still match their digit words by word start below.
+  if (text.length === 0) {
+    const digits = numeric.join('');
+    if (digits.length >= PHONE_SEARCH_MIN_DIGITS
+      && phoneDigitsOf(phoneValue).includes(digits)) {
+      return 1;
     }
     return -1;
   }
-  return rank;
+  // A mixed needle (text plus digits, like «verifica 07/11») first tries
+  // the word rules on every word, digits included, against the non-phone
+  // words — so date fragments still find the row by word start.
+  {
+    let rank = 0;
+    let failed = false;
+    for (const wanted of needle) {
+      if (textWords.some((word) => word.startsWith(wanted))) continue;
+      if (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))) {
+        rank = 1;
+        continue;
+      }
+      failed = true;
+      break;
+    }
+    if (!failed) return rank;
+  }
+  // Otherwise the needle is also a phone search (backlog:7d82fd84): every
+  // non-numeric word must still match by the word rules above, and the
+  // joined digits must sit inside the digits of the HELD phone, so
+  // «Ada 333» finds Ada Rossi by her phone. Ranked like an infix match,
+  // never a word start. Below the digit floor or without a held phone
+  // holding the digits, it matches nothing.
+  const digits = numeric.join('');
+  const textOk = text.every((wanted) => textWords.some((word) => word.startsWith(wanted))
+    || (wanted.length >= SEARCH_INFIX_MIN_CHARS && textWords.some((word) => word.includes(wanted))));
+  if (textOk && digits.length >= PHONE_SEARCH_MIN_DIGITS
+    && phoneDigitsOf(phoneValue).includes(digits)) {
+    return 1;
+  }
+  return -1;
+}
+
+/** The digits of a value, for the phone-substring rule. @param {unknown} value */
+export function phoneDigitsOf(value) {
+  return String(value ?? '').replace(/[^0-9]/g, '');
 }
 
 /**
  * Whether a customer's searchable parts match the needle (see searchRank).
  * @param {Array<unknown>} parts name, email, company, phone
  * @param {Array<string>} needle from searchNeedle
+ * @param {unknown} phone the phone-designated value (see searchRank)
  */
-export function matchesSearch(parts, needle) {
-  return searchRank(parts, needle) >= 0;
+export function matchesSearch(parts, needle, phone = '') {
+  return searchRank(parts, needle, phone) >= 0;
 }
 
 /** The searchable parts of a shaped list row: name, email, company, phone. @param {any} row */
@@ -332,7 +436,7 @@ export function filterCustomerRows(rows, query, view, todayIso) {
     }
     if (query.canale !== 'all' && !(row?.channels ?? []).includes(query.canale)) return false;
     if (channelHits.length > 0 && !channelHits.some((channel) => (row?.channels ?? []).includes(channel))) return false;
-    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle)) return false;
+    if (textNeedle.length > 0 && !matchesSearch(searchPartsOf(row), textNeedle, row?.phone?.value)) return false;
     if (viewExtra.ricontattareOggi === true && row?.nextStep?.dueAt?.slice(0, 10) !== today && !(row?.nextStep?.overdue === true)) return false;
     if (typeof viewExtra.rinnoviGiorni === 'number' && !(row?.renewalWithinDays === true)) return false;
     // «Da leggere»: only rows with unread inbound messages. A null
@@ -383,7 +487,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
   // chosen order holds inside each group (Array#sort is stable).
   const textNeedle = searchNeedle(query.q ?? '');
   if (textNeedle.length > 0) {
-    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle)]));
+    const rankOf = new Map(sorted.map((row) => [row, searchRank(searchPartsOf(row), textNeedle, row?.phone?.value)]));
     sorted.sort((a, b) => rankOf.get(a) - rankOf.get(b));
   }
 
@@ -435,9 +539,10 @@ export function shapeCustomerRow(subject, reads = {}) {
   const id = contact?.id ?? company?.id ?? null;
   if (!id) throw new ValidationError('a customer row needs a contact or a company', { field: 'id' });
   const key = `${resource}:${id}`;
-  const name = contact
-    ? `${contact.firstName ?? ''} ${contact.lastName ?? ''}`.trim() || contact.email
-    : company?.name ?? null;
+  // The one display rule (display-name.js, production 10/11): placeholders
+  // dropped, never an address as a name.
+  const shownCompany = shownCompanyOf(company, contact);
+  const name = contact ? contactDisplayName(contact) : companyDisplayName(company);
   const identities = reads.identitiesBySubject?.get(key) ?? [];
   const observed = reads.observedChannelsBySubject?.get(key) ?? [];
   // Review giro-6 on 826e377c (P1 head f1ed030c): the held side keeps
@@ -477,7 +582,12 @@ export function shapeCustomerRow(subject, reads = {}) {
     name, resource, id,
     // The reserved «no company» behind a contact typed without Azienda
     // reads as no company (production 07/11), never as a company name.
-    company: company && !(contact && isNoCompany(company)) ? Object.freeze({ id: company.id, name: company.name }) : null,
+    // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
+    // A company subject named by a placeholder (`Unknown (…)`) lists no
+    // company line either: the row keeps its id, never the placeholder
+    // (review #739 giro 3).
+    company: shownCompany && companyDisplayName(shownCompany) !== null
+      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
@@ -485,7 +595,7 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
-    lastContactText: previewLastContactText(activity?.text ?? null),
+    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     offerValueCents: offer?.valueCents ?? null,

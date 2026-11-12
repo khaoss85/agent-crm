@@ -1130,7 +1130,7 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(!/\.bo-sync-channels \.bo-sync-table td:nth-child\(2\) \{ position: absolute;/.test(css),
     'the update column (agg. / non collegato) is never clipped away');
-  for (const tone of ['attivo', 'permesso', 'importazione']) {
+  for (const tone of ['attivo', 'permesso', 'importazione', 'attesa']) {
     assert.ok(css.includes(`.bo-sync-pill[data-pill="${tone}"]`), `the ${tone} pill is coloured`);
   }
   const phone = css.slice(css.indexOf('@media (max-width: 700px) {\n  .bo-sync-hero-title'));
@@ -1214,8 +1214,11 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
 });
 
 // Review #680 round 1 — the table, the hero and the shared count must tell
-// one story.
-test('#680 P2-1: profile links counted as connected read Attivo, never «In attesa»', async () => {
+// one story. Voce 1a3a0ba236c0 (C18) narrows P2-1: profile links stay
+// counted as connected, but with no update and no events they wait for
+// the first event like any other quiet row (DECISION to be confirmed:
+// «senza aggiornamento né eventi» covers profile-merged rows too).
+test('#680 P2-1: profile links counted as connected wait for the first event', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
   });
@@ -1223,7 +1226,7 @@ test('#680 P2-1: profile links counted as connected read Attivo, never «In atte
   await flush();
   assert.ok(mount.textContent.includes('2 di 9 collegati'));
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['Attivo', 'Attivo'], 'Email and Google Calendar read Attivo');
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
 });
 
 test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {
@@ -1242,14 +1245,19 @@ test('#680 P2-2: a suspended row alone is not connected — table, hero and coun
   assert.equal(pills.length, 1, 'the suspended row keeps its pill');
 });
 
-// Production 08/11 (3a3e6eaff1c5 C9/C10/C20): the hero said «Tutto
-// sincronizzato» while the WhatsApp row read «In attesa». A linked row with
-// no traffic yet now reads `Attivo` (the spec pill), and the hero still reads
-// the table's own pills: a row that is not `Attivo` means not all synced.
-test('3a3e6eaf C9: the hero agrees with the pills', async () => {
+// Voce 1a3a0ba236c0 (C18, verification 09/11): a linked row with no
+// update and no events reads `in attesa del primo evento`, never
+// `Attivo`, and the hero must not call it synced. Supersedes the
+// production-08/11 rule (3a3e6eaff1c5 C9) that read `Attivo` there.
+test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () => {
   const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
-  assert.equal(syncChannelTable(quiet).find((row) => row.channel === 'whatsapp').pill.text, 'Attivo', 'no traffic yet is still Attivo');
-  assert.equal(syncIndicator(quiet, NOW).title, 'Tutto sincronizzato', 'every pill Attivo, nothing to fix');
+  assert.deepEqual(syncChannelTable(quiet).find((row) => row.channel === 'whatsapp').pill,
+    { text: 'in attesa del primo evento', tone: 'attesa' }, 'no update and no events waits');
+  // backlog:e381c48581fa: waiting is not a fix — grey «In attesa del primo
+  // evento», never the yellow «Quasi tutto sincronizzato» over «Niente da
+  // sistemare».
+  assert.equal(syncIndicator(quiet, NOW).title, 'In attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
+  assert.equal(syncIndicator(quiet, NOW).tone, 'wait');
   // C10: the subtitle keeps the prototype pattern «<aggiornamento> · <n> eventi … in tutto».
   assert.match(syncIndicator(quiet, NOW).detail, / · 0 eventi ricevuti in tutto\.$/);
   // A linked row that broke without a fix card (health only) reads Da sistemare, and the hero says so.
@@ -1263,6 +1271,29 @@ test('3a3e6eaf C9: the hero agrees with the pills', async () => {
   await flush();
   assert.ok(!mount.textContent.includes('Tutto sincronizzato'));
   assert.ok(mount.textContent.includes('Quasi tutto sincronizzato'));
+  assert.ok(!mount.textContent.includes('Niente da sistemare'), 'a row to fix never sits beside «Niente da sistemare»');
+  assert.ok(mount.textContent.includes('Un canale va controllato'));
+});
+
+// backlog:e381c48581fa (giro UX 11/11, punto 32): Stato sync read «Quasi
+// tutto sincronizzato» with a yellow dot and «Niente da sistemare» together,
+// and its Collega was dark grey (it looked disabled) where Profilo's is green.
+test('e381c48581fa: a waiting space never pairs a yellow hero with «Niente da sistemare», Collega is green', async () => {
+  const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: null })], lastActivityAt: null });
+  const { mount, view } = renderView({ client: { activity: quiet } });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('In attesa del primo evento'));
+  assert.ok(!text.includes('Quasi tutto sincronizzato'), 'nothing to fix: not the yellow headline');
+  assert.ok(text.includes('Niente da sistemare'));
+  const dot = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-dot'));
+  assert.match(dot.getAttribute('class'), /bo-sync-hero-dot-wait/, 'grey dot, not yellow');
+  const collega = mount.findAll('a').filter((node) => node.getAttribute('data-action') === 'collega');
+  assert.ok(collega.length > 0, 'unlinked rows offer Collega');
+  for (const link of collega) {
+    assert.match(link.getAttribute('class') ?? '', /\bui-btn-cta\b/, 'the green Collega of every screen');
+  }
 });
 
 // Production 08/11 (3a3e6eaff1c5 C11): in Presti «Sincronizza ora» stayed
@@ -1304,8 +1335,8 @@ test('3a3e6eaf C19/C20: connected rows read only the spec pills, unconnected row
   await view.render();
   await flush();
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['Attivo', 'Attivo'], 'a linked row with no traffic yet reads Attivo');
-  for (const pill of pills) assert.ok(['Attivo', 'Permesso in scadenza', 'Importazione', 'Da sistemare'].includes(pill.textContent));
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'Attivo'], 'a linked row with no traffic yet waits; one with traffic stays Attivo');
+  for (const pill of pills) assert.ok(['Attivo', 'Permesso in scadenza', 'Importazione', 'Da sistemare', 'in attesa del primo evento'].includes(pill.textContent));
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 0, 'no «Non disponibile» outside the spec');
   const stripe = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
   assert.ok(stripe.textContent.includes('non collegato'), 'Stripe reads non collegato');
@@ -1366,6 +1397,10 @@ test('#692 P2: a binding that is not active never reads Attivo', () => {
   const extra = syncChannelTable(activityOf({ connections: [entryOf({ channel: 'sms', status: 'pending', health: 'ok' })] }))
     .find((entry) => entry.channel === 'sms');
   assert.equal(extra.pill.text, 'Da sistemare', 'an extra row follows the same rule');
-  const active = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle' })] }))[0];
-  assert.equal(active.pill.text, 'Attivo', 'an active binding with no traffic yet stays Attivo');
+  // Voce 1a3a0ba236c0 (C18): zero traffic on an active binding now waits
+  // for the first event instead of reading Attivo.
+  const active = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle', inbox: inboxOf({ received: 0, lastReceivedAt: null }) })] }))[0];
+  assert.equal(active.pill.text, 'in attesa del primo evento', 'an active binding with no traffic yet waits');
+  const live = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle' })] }))[0];
+  assert.equal(live.pill.text, 'Attivo', 'traffic keeps the Attivo pill');
 });
