@@ -101,6 +101,25 @@ function safeText(value, field, max) {
   return trimmed;
 }
 
+/**
+ * A note body (backlog:82235e46e3e9 seguito, production 12/11: a note
+ * written on two lines with Maiusc+Invio was refused 400): plain text that
+ * may hold line breaks and tabs. Every line break is stored as `\n`; any
+ * other control character, and the Unicode line/paragraph separators, are
+ * still refused.
+ * @param {unknown} value @param {string} field @param {number} max
+ */
+export function safeNoteText(value, field, max) {
+  if (typeof value !== 'string') throw new ValidationError(`${field} is required`, { field });
+  const trimmed = value.replace(/\r\n?/g, '\n').trim();
+  if (trimmed === '') throw new ValidationError(`${field} is required`, { field });
+  if (trimmed.length > max) throw new ValidationError(`${field} must be at most ${max} characters`, { field });
+  if (CONTROL_RE.test(trimmed.replace(/[\n\t]/g, ''))) {
+    throw new ValidationError(`${field} must not contain control characters`, { field });
+  }
+  return trimmed;
+}
+
 /** @param {unknown} value @param {string} field @param {number} max */
 function optionalSafeText(value, field, max) {
   if (value === undefined || value === null || value === '') return null;
