@@ -19,12 +19,21 @@ import {
   suggestSlotsPath,
 } from './admin-calendario.js';
 import { openSchedaWindow } from './admin-scheda-window.js';
+import { romeDayKey } from './admin-oggi.js';
 
 /** Days ahead the window searches for free slots. */
 export const APPOINTMENT_SEARCH_DAYS = 7;
 /** Free slots shown at most: the first ones inside the working hours. */
 export const APPOINTMENT_SLOTS_SHOWN = 12;
 export const APPOINTMENT_CONFIRM_PATH = '/api/appointments/confirm';
+
+/** «gio 13 nov», the Rome day of an instant. @param {string} iso */
+export function dayLabel(iso) {
+  const ms = Date.parse(String(iso ?? ''));
+  if (!Number.isFinite(ms)) return '';
+  return new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', weekday: 'short', day: 'numeric', month: 'short' })
+    .format(new Date(ms)).replace(/\./g, '');
+}
 
 /** «30 min», «1 ora», «1 ora e 30», «2 ore». @param {number} minutes */
 export function durationLabel(minutes) {
@@ -111,6 +120,11 @@ export function openAppointmentPanel(deps) {
   const slotLine = el('p', 'bo-muted', 'Scegli la persona del team per vedere gli orari liberi.');
   slotLine.setAttribute('aria-live', 'polite');
   slotBox.appendChild(slotLine);
+  // The days with free hours, then the hours of the chosen day.
+  const days = el('div', 'bo-offer-chips');
+  days.setAttribute('data-role', 'slot-days');
+  days.setAttribute('aria-label', 'Giorno');
+  slotBox.appendChild(days);
   const chips = el('div', 'bo-offer-chips');
   slotBox.appendChild(chips);
   body.appendChild(slotBox);
@@ -236,11 +250,13 @@ export function openAppointmentPanel(deps) {
 
   // ---- Slots -------------------------------------------------------------
   const clearChips = () => { while (chips.firstChild) chips.removeChild(chips.firstChild); };
+  const clearDays = () => { while (days.firstChild) days.removeChild(days.firstChild); };
   async function searchSlots() {
     const seq = (searchSeq += 1);
     chosen = null;
     submissionKey = null;
     clearChips();
+    clearDays();
     say(generalError, '');
     const row = people[Number(person.value)] ?? null;
     if (person.value === '' || row === null) {
@@ -258,13 +274,53 @@ export function openAppointmentPanel(deps) {
       const groups = Array.isArray(found?.members) ? found.members : [];
       const free = rankPhraseProposals(filterPhraseProposals(personFreeSlots(groups, row.ids, row.ids[0]), start.getTime()))
         .filter((slot) => slotInGrid(slot.startsAt, slot.endsAt))
-        .slice(0, APPOINTMENT_SLOTS_SHOWN);
+        .sort((left, right) => String(left.startsAt).localeCompare(String(right.startsAt)));
       if (free.length === 0) {
         say(slotLine, `Nessun orario libero nei prossimi ${APPOINTMENT_SEARCH_DAYS} giorni: prova un’altra durata o un’altra persona.`);
         return;
       }
       say(slotLine, '');
+      // Verifica 12/11: the first slots were all today. The free hours are
+      // grouped by Rome day — one chip per day with room, the first day
+      // chosen — and the chosen day shows all its hours.
+      /** @type {Map<string, Array<any>>} */
+      const byDay = new Map();
       for (const slot of free) {
+        const day = romeDayKey(slot.startsAt);
+        if (day === null) continue;
+        const list = byDay.get(day) ?? [];
+        list.push(slot);
+        byDay.set(day, list);
+      }
+      const dayKeys = [...byDay.keys()];
+      const showDay = (day) => {
+        clearChips();
+        chosen = null;
+        submissionKey = null;
+        for (const chip of days.childNodes) chip.setAttribute('aria-pressed', chip.getAttribute('data-day') === day ? 'true' : 'false');
+        paintSlots((byDay.get(day) ?? []).slice(0, APPOINTMENT_SLOTS_SHOWN));
+      };
+      for (const day of dayKeys) {
+        const chip = el('button', 'bo-offer-chip', dayLabel(byDay.get(day)[0].startsAt));
+        chip.setAttribute('type', 'button');
+        chip.setAttribute('data-day', day);
+        chip.setAttribute('aria-pressed', 'false');
+        chip.addEventListener('click', () => showDay(day));
+        days.appendChild(chip);
+      }
+      showDay(dayKeys[0]);
+    } catch (error) {
+      if (gone() || seq !== searchSeq) return;
+      say(slotLine, humanReadError(error, {
+        failed: 'Gli orari liberi non si sono potuti leggere. Riprova tra poco.',
+        notComposed: 'Il calendario non è attivo in questo spazio.',
+      }));
+    }
+  }
+
+  /** The free hours of one day, as chips: a click chooses the slot. @param {Array<any>} list */
+  function paintSlots(list) {
+      for (const slot of list) {
         const chip = el('button', 'bo-offer-chip', slotLabel(slot));
         chip.setAttribute('type', 'button');
         chip.setAttribute('aria-pressed', 'false');
@@ -278,13 +334,6 @@ export function openAppointmentPanel(deps) {
         });
         chips.appendChild(chip);
       }
-    } catch (error) {
-      if (gone() || seq !== searchSeq) return;
-      say(slotLine, humanReadError(error, {
-        failed: 'Gli orari liberi non si sono potuti leggere. Riprova tra poco.',
-        notComposed: 'Il calendario non è attivo in questo spazio.',
-      }));
-    }
   }
 
   // ---- Conferma ----------------------------------------------------------

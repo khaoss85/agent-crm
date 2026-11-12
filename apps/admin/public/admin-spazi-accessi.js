@@ -104,7 +104,9 @@ export const SPAZI_AI_DEFAULTS = Object.freeze({
 export const SPAZI_AI_MASTER = Object.freeze({
   key: 'ai-enabled',
   label: 'AI dello spazio',
-  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, ogni azione diventa una proposta da approvare.',
+  // backlog:cb1a32dc46b2: the switches govern what the AI does on its own;
+  // what a person does (a Conferma, a save) is never held behind them.
+  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è.',
 });
 
 /** Master default, mirrored from the package — a space with no master row runs with the AI on. */
@@ -1124,7 +1126,7 @@ export function createSpaziAccessiView(deps) {
     section.appendChild(el(doc, 'p', {
       text: master
         ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
-        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: ogni azione diventa una proposta da approvare, finch\u00E9 non la riaccendi.`,
+        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
       cls: 'bo-muted',
     }));
     const switches = [
@@ -1178,7 +1180,7 @@ export function createSpaziAccessiView(deps) {
           text: entry.master === true
             ? (pending.to
               ? 'Accendere l\u2019AI dello spazio? Da accesa, i cinque interruttori decidono uno per uno.'
-              : 'Spegnere l\u2019AI dello spazio? Da spenta, ogni azione diventa una proposta da approvare.')
+              : 'Spegnere l\u2019AI dello spazio? Da spenta, le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è.')
             : (pending.to
               ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
               : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`),

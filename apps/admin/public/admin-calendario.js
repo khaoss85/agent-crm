@@ -1281,8 +1281,11 @@ export function createCalendarioView(deps) {
    */
   function trackRetainedDraft() {
     const typedFilter = state.autoTeam === true ? '' : (state.memberFilter ?? '');
-    const manualText = Object.values(state.manual ?? {})
-      .some((value) => String(value ?? '') !== '');
+    // Verifica 12/11: «Hai del testo non salvato» answered even with
+    // nothing typed — the menu default and its price fill the form on
+    // their own. Only what the operator typed counts.
+    const manualText = [...state.manualTyped]
+      .some((name) => String(state.manual?.[name] ?? '') !== '');
     markUnsaved('calendario-draft',
       (state.phrase ?? '') !== ''
       || String(typedFilter) !== ''
@@ -1387,6 +1390,8 @@ export function createCalendarioView(deps) {
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
     manual: null,
+    /** Verifica 12/11: the manual fields the operator typed in — prefilled values (a menu default, its price, a grid selection) are nobody's unsaved text. @type {Set<string>} */
+    manualTyped: new Set(),
     /** The manual form shows once asked for, or once a draft or an edit fills it. */
     manualOpen: false,
     /** The member filter row, painted inside the Team card. @type {any} */
@@ -4191,6 +4196,7 @@ export function createCalendarioView(deps) {
     state.bookingNote = '';
     state.serviceError = '';
     state.manual = null;
+    state.manualTyped.clear();
     state.customerPick = null;
     state.manualOpen = true;
     const day = romeDayKey(appointment?.startsAt);
@@ -4306,6 +4312,7 @@ export function createCalendarioView(deps) {
       }
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
+        state.manualTyped.add('teamMemberId');
       });
       form.appendChild(fieldBox('Persona del team', input, { wide: true }));
       return input;
@@ -4329,6 +4336,8 @@ export function createCalendarioView(deps) {
       if (shown !== '') select.value = shown;
       const track = () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
+        // Review #818 (P2): a person the operator chose is their own work.
+        state.manualTyped.add('teamMemberId');
       };
       select.addEventListener('input', track);
       select.addEventListener('change', track);
@@ -4398,6 +4407,7 @@ export function createCalendarioView(deps) {
       if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
       form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
@@ -4429,6 +4439,7 @@ export function createCalendarioView(deps) {
       state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
       form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
@@ -4449,6 +4460,8 @@ export function createCalendarioView(deps) {
     const track = () => {
       const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
       state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      // Review #818 (P2): a service the operator chose is their own work.
+      state.manualTyped.add('serviceKey');
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };
@@ -4513,6 +4526,7 @@ export function createCalendarioView(deps) {
     if (state.manual?.price != null) priceInput.value = String(state.manual.price);
     priceInput.addEventListener('input', () => {
       state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+      state.manualTyped.add('price');
     });
     // The service is a catalog menu with the default already chosen, never
     // free text (backlog:810ed0bf): the claim sends the menu key the worker
@@ -4535,6 +4549,7 @@ export function createCalendarioView(deps) {
       if (state.manual?.[name] != null) input.value = String(state.manual[name]);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
+        state.manualTyped.add(name);
       });
       inputs[name] = input;
       // Giorno and Note take the row; Inizio and Fine sit side by side, so

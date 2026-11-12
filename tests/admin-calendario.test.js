@@ -5037,3 +5037,56 @@ test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian
   assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
   assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
 });
+
+// Verifica 12/11: «È disponibile una nuova versione · Ricarica» answered
+// «Hai del testo non salvato» with nothing typed — the Calendario form
+// prefills the default service and its price on its own, and that counted
+// as the operator's text after leaving the screen.
+test('verifica 12/11: prefilled form values are nobody\'s unsaved text, typed ones are', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const price = mount.findAll('input').find((node) => node.getAttribute('name') === 'price');
+  assert.equal(price.value, '45.00', 'the price prefilled on its own');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'a prefilled form is not unsaved text');
+  const notes = mount.findAll('input').find((node) => node.getAttribute('name') === 'notes')
+    ?? mount.findAll('textarea').find((node) => node.getAttribute('name') === 'notes');
+  notes.value = 'Porta le scarpe';
+  notes.dispatch('input');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'what the operator typed is');
+  resetVersionWatchState();
+});
+
+// Review #818 (P2): a choice made with a menu is the operator's work too.
+test('review #818: a service or a person chosen in the menus counts as unsaved work', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: 'piega', name: 'Piega', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 2000 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog, memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }] }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the defaults are not unsaved work');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  service.value = 'piega';
+  service.dispatch('change');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'a chosen service is');
+  resetVersionWatchState();
+});
