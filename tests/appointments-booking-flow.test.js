@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   BOOK_APPOINTMENTS_PERMISSION,
-  OPERATOR_BOOKING_ACTION,
   PROPOSE_ACTION_KIND,
   SUGGEST_SLOT_MINUTES,
   bookFromLink,
@@ -123,13 +122,14 @@ function fakeGate({ overrides = [] } = {}) {
 
 const allowGate = () => fakeGate({ overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: true }] }).gate;
 
-const capabilityFor = ({ service, gate = null, phraseLlm = null, calendarSync = null } = {}) => createAppointmentBookCapability({
+const AGENT = { type: 'agent', id: 'agente-agenda' };
+const capabilityFor = ({ service, gate = null, phraseLlm = null, calendarSync = null, actor = ACTOR } = {}) => createAppointmentBookCapability({
   permissionGate: gate,
   phraseLlm,
   calendarSync,
 }).create({
   modules: modulesFor(service),
-  actor: ACTOR,
+  actor,
   now: () => NOW,
   consumer: 'host',
 });
@@ -328,12 +328,12 @@ test('propose fails fast on a held slot, before reading the switch', async () =>
   );
 });
 
-test('propose with the switch off records a space-ai-proposal and writes no appointment', async () => {
+test('an agent propose with the switch off records a space-ai-proposal and writes no appointment', async () => {
   const service = fakeAppointments();
   const { gate, proposalRows } = fakeGate({
     overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
   });
-  const cap = capabilityFor({ service, gate });
+  const cap = capabilityFor({ service, gate, actor: AGENT });
   const proposed = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
   assert.equal(proposed.decision, 'proposal');
   assert.ok(proposed.proposalId, 'the proposal row is named');
@@ -432,12 +432,12 @@ test('a codeless push failure answers a named code and never the provider text',
   assert.deepEqual(failed.pushError, { code: 'APPOINTMENTS_CALENDAR_PUSH_FAILED' });
 });
 
-test('confirm with the switch off stays a proposal: still no appointment row', async () => {
+test('an agent confirm with the switch off stays a proposal: still no appointment row', async () => {
   const service = fakeAppointments();
   const { gate, proposalRows } = fakeGate({
     overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
   });
-  const cap = capabilityFor({ service, gate });
+  const cap = capabilityFor({ service, gate, actor: AGENT });
   const confirmed = await cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
   assert.equal(confirmed.decision, 'proposal');
   assert.ok(confirmed.proposalId);
@@ -445,7 +445,79 @@ test('confirm with the switch off stays a proposal: still no appointment row', a
   assert.equal(proposalRows.length, 1);
 });
 
-test('backlog:cb1a32dc the operator hand bypasses the agent switch in propose and confirm', async () => {
+// P1 12/11 (production, space with the AI off): a person's Conferma came
+// back «proposal» and no appointment existed anywhere. The switch answers
+// «may the agent book on its own»; a person who presses Conferma is the
+// approval, so their confirmation books whatever the switch says.
+test('P1 12/11: a person confirming with the switch off books the appointment', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate });
+  const confirmed = await cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true });
+  assert.equal(confirmed.decision, 'booked', 'the Conferma is the approval');
+  assert.equal(service.rows.length, 1, 'the appointment exists');
+  assert.equal(service.rows[0].status, 'confirmed');
+  assert.equal(proposalRows.length, 0, 'no invisible proposal');
+});
+
+test('P1 12/11: a person proposing with the switch off gets a confirmable draft', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate });
+  const proposed = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'confirm-required');
+  assert.equal(proposalRows.length, 0);
+});
+
+// P0 on #822: `source` rides the request body and is no server-controlled
+// key — an agent or an anonymous caller could send action 'calendar-book'
+// and skip the switch. Only the server-normalized actor decides.
+test('P0: an agent sending source calendar-book stays under the switch', async () => {
+  const service = fakeAppointments();
+  const { gate, proposalRows } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate, actor: AGENT });
+  const claim = () => booking({ source: { package: 'host', action: 'calendar-book' } });
+  const proposed = await cap.proposeBooking({ ...claim(), spaceId: SPACE });
+  assert.equal(proposed.decision, 'proposal', 'the field never lifts the switch for an agent');
+  const confirmed = await cap.confirmBooking({ ...claim(), spaceId: SPACE, confirmed: true });
+  assert.equal(confirmed.decision, 'proposal');
+  assert.equal(service.rows.length, 0, 'no appointment');
+  assert.equal(proposalRows.length, 1);
+});
+
+test('P0: the anonymous actor sending source calendar-book stays under the switch', async () => {
+  const service = fakeAppointments();
+  const { gate } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate, actor: ANONYMOUS_ACTOR });
+  const confirmed = await cap.confirmBooking({
+    ...booking({ source: { package: 'host', action: 'calendar-book' } }), spaceId: SPACE, confirmed: true,
+  });
+  assert.equal(confirmed.decision, 'proposal');
+  assert.equal(service.rows.length, 0);
+});
+
+test('P0: an identified person books with any source', async () => {
+  const service = fakeAppointments();
+  const { gate } = fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  });
+  const cap = capabilityFor({ service, gate, actor: { type: 'user', id: 'google|104938793743317800292' } });
+  const confirmed = await cap.confirmBooking({
+    ...booking({ source: { package: 'host', action: 'book' } }), spaceId: SPACE, confirmed: true,
+  });
+  assert.equal(confirmed.decision, 'booked');
+  assert.equal(service.rows.length, 1);
+});
+
+test('backlog:cb1a32dc a person booking from the /bo books with the switch off', async () => {
   // The /bo scheda «Nuovo appuntamento» window and the Calendario form send
   // source action calendar-book: the person pressing Conferma IS the
   // approval the book-appointments agent switch waits for. With the switch
@@ -457,8 +529,8 @@ test('backlog:cb1a32dc the operator hand bypasses the agent switch in propose an
     overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
   });
   const cap = capabilityFor({ service, gate });
-  const operatorBooking = () => booking({ source: { package: 'host', action: OPERATOR_BOOKING_ACTION } });
-  assert.equal(OPERATOR_BOOKING_ACTION, 'calendar-book', 'the operator hand is the /bo Conferma provenance');
+  // The /bo provenance; what books is the person (the actor), not this field.
+  const operatorBooking = () => booking({ source: { package: 'host', action: 'calendar-book' } });
   const proposed = await cap.proposeBooking({ ...operatorBooking(), spaceId: SPACE });
   assert.equal(proposed.decision, 'confirm-required');
   assert.ok(proposed.draft, 'the operator gets the draft to confirm');
@@ -811,7 +883,7 @@ test('a resubmitted proposal with a changed claim opens a distinct proposal', as
   const { gate, proposalRows } = fakeGate({
     overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
   });
-  const cap = capabilityFor({ service, gate });
+  const cap = capabilityFor({ service, gate, actor: AGENT });
   const first = await cap.proposeBooking({ ...booking(), spaceId: SPACE });
   assert.equal(first.decision, 'proposal');
   assert.equal(first.replayed, false);

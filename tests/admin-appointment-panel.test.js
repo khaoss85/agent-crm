@@ -156,9 +156,17 @@ test('Nuovo appuntamento: the person\'s free slots come from suggest-slots, futu
   assert.equal(url.searchParams.get('slotMinutes'), '30');
   assert.equal(url.searchParams.get('from'), NOW.toISOString());
   assert.equal(url.searchParams.get('to'), '2026-11-19T06:00:00.000Z', 'the next seven days');
+  // Verifica 12/11: one chip per day with free hours, then that day's hours.
+  const dayChips = () => panel.findAll('button').filter((button) => button.getAttribute('data-day') !== null);
+  assert.deepEqual(dayChips().map((chip) => [chip.getAttribute('data-day'), chip.textContent]),
+    [['2026-11-12', 'gio 12 nov'], ['2026-11-13', 'ven 13 nov']], 'the days with room, never only today');
+  assert.equal(dayChips()[0].getAttribute('aria-pressed'), 'true', 'the first day is chosen');
   assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')),
-    ['2026-11-12T09:00:00.000Z', '2026-11-13T13:00:00.000Z'], 'the past and the night are not offered');
+    ['2026-11-12T09:00:00.000Z'], 'the past and the night are not offered');
   assert.equal(chips(panel)[0].textContent, 'gio 12 nov · 10:00–10:30', 'Rome time with the weekday');
+  dayChips()[1].dispatch('click');
+  assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')), ['2026-11-13T13:00:00.000Z'],
+    'another day shows its own hours');
 
   selectNamed(panel, 'duration').value = '60';
   selectNamed(panel, 'duration').dispatch('change');
@@ -513,4 +521,23 @@ test('P1 11/11: the window menu is the served bookable list and the claim books 
   const sent = base.confirms()[0].body;
   assert.equal(sent.serviceKey, 'personal-training');
   assert.equal(sent.priceCents, 4000);
+});
+
+// Verifica 12/11: with a full free day the first twelve hours were all
+// today and the next days could not be chosen.
+test('verifica 12/11: a full free day never hides the next days', async () => {
+  const today = Array.from({ length: 16 }, (_, index) => {
+    const startMs = Date.parse('2026-11-12T08:00:00.000Z') + index * 30 * 60000;
+    return { startsAt: new Date(startMs).toISOString(), endsAt: new Date(startMs + 30 * 60000).toISOString() };
+  });
+  const tomorrow = [{ startsAt: '2026-11-13T09:00:00.000Z', endsAt: '2026-11-13T09:30:00.000Z' }];
+  const { panel, client } = await open({ client: fakeClient({ slots: { members: [{ teamMemberId: 'google|sara', slots: [...today, ...tomorrow] }] } }) });
+  await choose(panel);
+  const dayChips = panel.findAll('button').filter((button) => button.getAttribute('data-day') !== null);
+  assert.deepEqual(dayChips.map((chip) => chip.getAttribute('data-day')), ['2026-11-12', '2026-11-13']);
+  dayChips[1].dispatch('click');
+  assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')), ['2026-11-13T09:00:00.000Z']);
+  chips(panel)[0].dispatch('click');
+  await panel.__submit();
+  assert.equal(client.confirms()[0].body.startsAt, '2026-11-13T09:00:00.000Z', 'a later day books');
 });

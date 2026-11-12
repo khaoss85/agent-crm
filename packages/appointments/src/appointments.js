@@ -1553,16 +1553,14 @@ export async function readTeamWeek({ appointments }, filter) {
  *   held row whose slot cannot be proven fails the suggestion closed, exactly
  *   like it fails the booking — never a silent free slot over a corrupt row.
  * - Nothing is created without confirmation: `proposeBooking` never writes
- *   an appointment row. With the space's `book-appointments` switch on it
- *   answers a draft the caller confirms; with the switch off it records a
- *   `space-ai-proposal` through the permission gate and stops — unless the
- *   claim carries the operator's own hand (`calendar-book`, the /bo scheda
- *   and Calendario provenance), which always answers the draft: the
- *   operator pressing Conferma IS the approval the switch waits for.
- *   `confirmBooking` refuses without `confirmed: true`, re-checks the switch
- *   (except for that same operator provenance, which books whatever the
- *   switch says), then books, advances `booked -> confirmed` and — when the
- *   caller names a calendar — pushes the event through calendar-sync.
+ *   an appointment row. For a person, or with the space's
+ *   `book-appointments` switch on, it answers a draft the caller confirms;
+ *   for an agent with the switch off it records a `space-ai-proposal`
+ *   through the permission gate and stops. `confirmBooking` refuses without
+ *   `confirmed: true`; a person's confirmation books (their Conferma is the
+ *   approval), an agent's re-checks the switch, then books,
+ *   advances `booked -> confirmed` and — when the caller names a calendar —
+ *   pushes the event through calendar-sync.
  * - An online booking link is idempotent by construction: `bookFromLink`
  *   derives the booking source key deterministically from the link token and
  *   the slot, so a retried or doubled submission replays the winner's row
@@ -1583,20 +1581,20 @@ export async function readTeamWeek({ appointments }, filter) {
 /** The BO-F0-06 switch this flow gates agent-initiated bookings on. */
 export const BOOK_APPOINTMENTS_PERMISSION = 'book-appointments';
 
+/**
+ * P1 12/11: whether the booking is a person's own act. The space switch
+ * gates what the agent may do on its own; a human's propose and confirm
+ * never wait behind it — their Conferma is the approval. Agents and the
+ * system stay gated, and so does the public booking link, which reads the
+ * switch itself.
+ * @param {{type: string}} actor
+ */
+function isHumanBooker(actor) {
+  return actor?.type === 'user';
+}
+
 /** The proposal kind recorded when the switch is off. */
 export const PROPOSE_ACTION_KIND = 'book-appointment';
-
-/**
- * The backoffice operator's own hand: the /bo scheda and Calendario forms
- * (apps/admin/public/admin-calendario.js) send this source action, so an
- * explicit confirmation carrying it is the operator's own approval — the
- * approval the `book-appointments` agent switch waits for. The operator
- * path never records an invisible proposal: propose answers the draft and
- * confirm books, whatever the switch says. Any other provenance keeps the
- * gate: an agent-initiated confirmation with the switch off still stops as
- * a proposal a human approves.
- */
-export const OPERATOR_BOOKING_ACTION = 'calendar-book';
 
 /** Step granularities a suggestion window may be cut into, in minutes. */
 export const SUGGEST_SLOT_MINUTES = Object.freeze([15, 30, 45, 60, 90, 120]);
@@ -1853,10 +1851,12 @@ export async function proposeBooking(context, request) {
     );
   }
   const gate = requireFlowPermissionGate(context);
-  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
-  // The operator's own hand never waits on the agent switch: the draft is
-  // the operator's to confirm, not the agent's to gate.
-  if ((verdict && verdict.decision === 'allow') || input.source.action === OPERATOR_BOOKING_ACTION) {
+  // P1 12/11: the switch answers «may the agent book on its own». A person
+  // who books is the approval: their draft is always confirmable.
+  const verdict = isHumanBooker(actor)
+    ? { decision: 'allow' }
+    : await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (verdict && verdict.decision === 'allow') {
     return Object.freeze({
       decision: 'confirm-required',
       draft: publicDraft(input),
@@ -1929,10 +1929,15 @@ export async function confirmBooking(context, request) {
     calendarPush = calendarSync.pushAppointment.bind(calendarSync);
   }
   const gate = requireFlowPermissionGate(context);
-  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
-  // The operator's own confirmation IS the approval the switch waits for:
-  // it books whatever the switch says. Any other provenance keeps the gate.
-  if ((!verdict || verdict.decision !== 'allow') && input.source.action !== OPERATOR_BOOKING_ACTION) {
+  // P1 12/11 (production: every Conferma in a space with the AI off came
+  // back «proposal» and no appointment existed anywhere): the switch
+  // answers «may the agent book on its own». A person who presses Conferma
+  // is the approval, so a human confirmation books; only an agent's (or
+  // the system's) stays a proposal a human approves.
+  const verdict = isHumanBooker(actor)
+    ? { decision: 'allow' }
+    : await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  if (!verdict || verdict.decision !== 'allow') {
     const proposal = await gate.propose({
       spaceId,
       permission: BOOK_APPOINTMENTS_PERMISSION,
