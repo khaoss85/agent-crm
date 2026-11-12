@@ -1246,17 +1246,18 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   assert.equal(hours.length, 10, 'C13: ten hour labels');
   assert.equal(hours[0].textContent, '09:00');
   assert.equal(hours[9].textContent, '18:00');
-  // Blocks sit on their Rome half-hour rows: taglio Thu 18:00–18:30 Rome
-  // clamps to the last row; barba Fri 11:00–11:30 Rome sits on row 5.
+  // Blocks sit on their Rome quarter-hour rows (backlog:7587307d5215):
+  // taglio Thu 18:00–18:30 Rome clamps to the last row (36); barba Fri
+  // 11:00–11:30 Rome covers rows 9 and 10.
   const blocks = mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-event'));
   assert.equal(blocks.length, 2, 'two held events paint two blocks');
   const taglio = blocks.find((node) => /taglio/i.test(node.textContent));
-  assert.ok(taglio.getAttribute('style').includes('grid-row: 18 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
+  assert.ok(taglio.getAttribute('style').includes('grid-row: 36 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
   // The barba row carries hostile notes, which become its title (inert text):
   // find it by its Rome time, Fri 11:00–11:30.
   const barba = blocks.find((node) => node.textContent.includes('11:00–11:30'));
   assert.ok(barba, 'the barba block paints with its Rome time');
-  assert.ok(barba.getAttribute('style').includes('grid-row: 5 / span 1'), `barba sits on its row: ${barba.getAttribute('style')}`);
+  assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
   // Colour and initials come from the opaque member id, never a name.
   assert.match(taglio.getAttribute('class'), /cal-m[0-4]/, 'the block carries its member tint');
   assert.ok(taglio.textContent.includes('MA'), 'the block carries member initials');
@@ -1265,10 +1266,15 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
 
 // Grid placement clamps out-of-hours bookings at the painted edge.
 test('gridRowsFor clamps outside hours and never drops a booking', () => {
-  assert.deepEqual(gridRowsFor('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), { row: 18, span: 1 });
-  assert.deepEqual(gridRowsFor('2026-10-23T07:00:00.000Z', '2026-10-23T07:30:00.000Z'), { row: 1, span: 1 });
-  // 08:00Z–09:00Z is 10:00–11:00 Rome in October: a two-row span mid-grid.
-  assert.deepEqual(gridRowsFor('2026-10-23T08:00:00.000Z', '2026-10-23T09:00:00.000Z'), { row: 3, span: 2 });
+  assert.deepEqual(gridRowsFor('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), { row: 36, span: 1 });
+  assert.deepEqual(gridRowsFor('2026-10-23T07:00:00.000Z', '2026-10-23T07:30:00.000Z'), { row: 1, span: 2 });
+  // 08:00Z–09:00Z is 10:00–11:00 Rome in October: four quarter rows mid-grid.
+  assert.deepEqual(gridRowsFor('2026-10-23T08:00:00.000Z', '2026-10-23T09:00:00.000Z'), { row: 5, span: 4 });
+  // backlog:7587307d5215 (pilota 11/11): 11:00–13:00 Rome covers exactly
+  // 11:00 to 13:00 — rows 9 to 16 — never drawn between 11:25 and 12:35.
+  assert.deepEqual(gridRowsFor('2026-10-23T09:00:00.000Z', '2026-10-23T11:00:00.000Z'), { row: 9, span: 8 });
+  // A quarter-hour booking covers its quarter: 10:15–10:45 Rome.
+  assert.deepEqual(gridRowsFor('2026-10-23T08:15:00.000Z', '2026-10-23T08:45:00.000Z'), { row: 6, span: 2 });
   // 06:00Z–07:00Z is 08:00–09:00 Rome: clamps to the first row, never dropped.
   assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T07:00:00.000Z'), { row: 1, span: 1 });
   assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T06:30:00.000Z'), { row: 1, span: 1 });
@@ -3019,10 +3025,10 @@ test('dragging on a day column chooses the slot and opens the filled form beside
   for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const days = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
   const col = days()[2];
-  // 18 half-hour rows over 360 px: 20 px each, from 09:00.
+  // 36 quarter-hour rows over 360 px: 10 px each, from 09:00.
   col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 200, bottom: 360, height: 360, width: 200 });
   col.dispatch('pointerdown', { button: 0, clientY: 85, target: col, preventDefault() {} }); // 11:00
-  col.dispatch('pointermove', { clientY: 125, target: col }); // 12:00 → 11:00–12:30
+  col.dispatch('pointermove', { clientY: 135, target: col }); // 12:15 → 11:00–12:30
   col.dispatch('pointerup', { target: col });
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.ok(pick, 'the chosen slot stays painted on the grid');
@@ -3505,14 +3511,19 @@ test('a proposal on top of a held booking is never offered (defect 07/11)', asyn
   assert.equal(list.findAll('button').length, 1);
 });
 
-test('lanes follow the painted rows: touching blocks that share a row sit side by side', () => {
-  // 10:00–10:45 and 10:45–11:30 Rome both cover the 10:30 row.
+test('lanes follow the painted rows: blocks that share a row sit side by side', () => {
+  // backlog:7587307d5215: rows are quarter hours, so 10:00–10:45 and
+  // 10:45–11:30 Rome touch without sharing a row and stack in one lane;
+  // 10:00–10:45 and 10:30–11:00 share the 10:30 row and sit side by side.
   const held = { startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' };
-  const ghost = { startsAt: '2026-10-22T08:45:00.000Z', endsAt: '2026-10-22T09:30:00.000Z' };
+  const touching = { startsAt: '2026-10-22T08:45:00.000Z', endsAt: '2026-10-22T09:30:00.000Z' };
+  const overlapping = { startsAt: '2026-10-22T08:30:00.000Z', endsAt: '2026-10-22T09:00:00.000Z' };
   const later = { startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T10:30:00.000Z' };
-  const lanes = lanesFor([held, ghost, later]);
-  assert.notEqual(lanes.get(held).lane, lanes.get(ghost).lane);
-  assert.equal(lanes.get(later).lane, 0, 'a block on free rows takes the first lane');
+  const touch = lanesFor([held, touching]);
+  assert.equal(touch.get(held).lane, touch.get(touching).lane, 'touching blocks stack in one lane');
+  const overlap = lanesFor([held, overlapping, later]);
+  assert.notEqual(overlap.get(held).lane, overlap.get(overlapping).lane, 'blocks sharing a row sit side by side');
+  assert.equal(overlap.get(later).lane, 0, 'a block on free rows takes the first lane');
 });
 
 test('ghosts never paint over a booking or over each other (defect 07/11)', async () => {
@@ -3538,10 +3549,15 @@ test('ghosts never paint over a booking or over each other (defect 07/11)', asyn
   const column = (node) => /grid-column: (\d+)/.exec(node.getAttribute('style') ?? '')?.[1];
   const first = ghosts.find((node) => node.textContent === '✦ Proposta 16:00');
   const second = ghosts.find((node) => node.textContent === '✦ Proposta 16:45');
-  // The 16:00 ghost shares the 16:00 row with piega; the two ghosts share
-  // the 16:30 row: each pair sits in different lanes.
+  // The 16:00 ghost shares its rows with piega (16:00–16:30): it sits
+  // beside it. With quarter rows (backlog:7587307d5215) the two contiguous
+  // ghosts no longer share a row (16:00–16:45, 16:45–17:30), so the second
+  // takes the free first lane under the first, never on top of it.
   assert.notEqual(column(first), column(piega), 'the ghost sits beside the booking');
-  assert.notEqual(column(first), column(second), 'the ghosts sit beside each other');
+  const rowsOfNode = (node) => /grid-row: (\d+) \/ span (\d+)/.exec(node.getAttribute('style') ?? '').slice(1).map(Number);
+  const [firstRow, firstSpan] = rowsOfNode(first);
+  const [secondRow] = rowsOfNode(second);
+  assert.ok(column(first) !== column(second) || secondRow >= firstRow + firstSpan, 'the ghosts never paint over each other');
   assert.ok(ghosts.every((node) => !(node.getAttribute('style') ?? '').includes('1 / -1')), 'no ghost spans the whole day');
 });
 
