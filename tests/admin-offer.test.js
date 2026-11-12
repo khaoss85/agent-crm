@@ -61,10 +61,10 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
       }
       if (path.startsWith('/api/modules/quote/records')) {
         if (failLinked) throw Object.assign(new Error(failLinked.message), failLinked);
-        return { items: quotes };
+        return { items: applyModuleFilter(quotes, path) };
       }
-      if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
-      if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: applyModuleFilter(lines, path) };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: applyModuleFilter(versions, path) };
       if (path.startsWith('/api/audit')) {
         if (failAudit) throw Object.assign(new Error(failAudit.message), failAudit);
         return { items: audit };
@@ -102,10 +102,25 @@ const VERSION = {
   id: 'v1',
   quoteId: 'q1',
   versionNumber: 1,
+  policy: 'standard',
+  policyVersion: 3,
   policyDecision: 'auto_approve',
   totalsJson: QUOTE.totalsJson,
   currency: 'EUR',
 };
+
+/** Full-module rows the stub narrows by the filter.* query, like the server. */
+function applyModuleFilter(rows, path) {
+  const query = path.includes('?') ? path.slice(path.indexOf('?') + 1) : '';
+  const params = new URLSearchParams(query);
+  return rows.filter((row) => {
+    for (const [key, value] of params) {
+      if (!key.startsWith('filter.')) continue;
+      if (String(row?.[key.slice('filter.'.length)] ?? '') !== value) return false;
+    }
+    return true;
+  });
+}
 
 const AUDIT = [
   { action: 'opportunity.created', actorId: 'maria', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z' },
@@ -141,6 +156,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Preventivo'), 'the linked quotes paint');
   assert.ok(text.includes('Bozza') && text.includes('una tantum 5.000 €'), 'the quote state and total paint in Italian');
   assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
+  assert.ok(text.includes('standard@3'), 'the version names the policy that decided it');
   const line = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'quote-line');
   assert.equal(line?.childNodes[0].textContent, 'Pacchetto 10 PT', 'the line names the package, never the SKU');
   assert.equal(line?.childNodes[1].textContent, 'Quantità 2 · sconto 5,00%', 'quantity and an Italian percentage');
@@ -198,6 +214,89 @@ test('a subscription-only quote never paints a zero one-time total', async () =>
   assert.ok(!text.includes('una tantum'), 'no zero one-time group paints beside it');
   const header = mount.findAll('h4').map((node) => node.textContent).join('\n');
   assert.equal(header, '3.200 € ogni 1 mese', 'the header is the recurring group alone');
+});
+
+test('the version row names the deciding policy and honors valued groups', async () => {
+  const recurringVersion = {
+    ...VERSION,
+    id: 'v2',
+    versionNumber: 2,
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+      recurringTotals: [
+        { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320000, discountAmountCents: 0, netAmountCents: 320000 },
+      ],
+    }),
+  };
+  const emptyVersion = {
+    ...VERSION,
+    id: 'v3',
+    versionNumber: 3,
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+      recurringTotals: [],
+    }),
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({
+    doc,
+    mount,
+    client: stubClient({ quotes: [QUOTE], audit: [], versions: [VERSION, recurringVersion, emptyVersion] }),
+  });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('standard@3'), 'the deciding policy paints as name@version');
+  assert.ok(text.includes('3.200 € ogni 1 mese'), 'a recurring version keeps its period');
+  assert.ok(text.includes('Versione 3 · Approvazione automatica · standard@3 · —'), 'a version with no value paints a dash like the header');
+  assert.ok(!text.includes('una tantum 0'), 'no zero one-time total beside a valued group');
+});
+
+test('another parent\u2019s rows never paint: the server-side filter is honored', async () => {
+  const decoyQuote = {
+    ...QUOTE,
+    id: 'qX',
+    opportunityId: 'offX',
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 9900000, discountAmountCents: 0, netAmountCents: 9900000 },
+      recurringTotals: [],
+    }),
+  };
+  const decoyLine = { ...LINE, id: 'lX', quoteId: 'qX', offerName: 'ESCA MAIUSCOLA' };
+  const decoyVersion = { ...VERSION, id: 'vX', quoteId: 'qX', versionNumber: 99 };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({
+    doc,
+    mount,
+    client: stubClient({ quotes: [QUOTE, decoyQuote], lines: [LINE, decoyLine], versions: [VERSION, decoyVersion], audit: [] }),
+  });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('99.000 €'), 'the other deal\u2019s quote never paints');
+  assert.ok(!text.includes('ESCA MAIUSCOLA'), 'the other quote\u2019s lines never paint');
+  assert.ok(!text.includes('Versione 99'), 'the other quote\u2019s versions never paint');
+});
+
+test('a full audit page says it is truncated and hides the author', async () => {
+  const audit = new Array(100).fill(null).map((_, index) => ({
+    action: 'opportunity.updated',
+    actorId: 'maria',
+    actorType: 'user',
+    createdAt: `2026-10-${String((index % 28) + 1).padStart(2, '0')}T09:15:00.000Z`,
+  }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('Mostro solo gli ultimi 100 eventi.'), 'the truncation is disclosed');
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
+  assert.equal(fact('Creata da'), '—', 'no author is read from a partial page');
 });
 
 test('an unreadable audit trail is not an empty one', async () => {
