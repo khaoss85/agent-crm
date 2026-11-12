@@ -1116,6 +1116,8 @@ export function createCalendarioView(deps) {
   let eventDrag = null;
   /** A drag that moved eats the click that follows it: the event keeps its selection. */
   let suppressEventClick = false;
+  /** A queued move's week reread that waits for the move in flight (review #811). */
+  let rereadAfterMove = false;
   /**
    * Drops a pending read (backlog:607f33ee): the view paints into the
    * shell's shared mount, so a late week response must not repaint a
@@ -2531,10 +2533,23 @@ export function createCalendarioView(deps) {
     if (outcome !== null) sayMove(id, outcome.text, outcome.error);
     renderAll();
     const members = parseMemberFilter(state.memberFilter);
-    if (ok && members.length > 0) void loadWeek(members);
+    // A queued reread deferred while this move was in flight (review #811):
+    // the week read happens now, after this move's own outcome.
+    const deferred = rereadAfterMove;
+    rereadAfterMove = false;
+    if ((ok || deferred) && members.length > 0) void loadWeek(members);
     if (queued && members.length > 0) {
       await wait(QUEUED_MOVE_REREAD_MS);
-      if (token === renderToken) void loadWeek(members);
+      if (token !== renderToken) return;
+      // Review #811 (Muse P2): a reread never lands in the middle of another
+      // move — it would repaint the server week over that move's optimistic
+      // block and turn its outcome into a stale answer nobody hears. While a
+      // move is in flight the reread waits for it and runs at its end.
+      if (state.moveBusy) {
+        rereadAfterMove = true;
+        return;
+      }
+      void loadWeek(members);
     }
   }
 

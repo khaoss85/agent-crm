@@ -614,3 +614,67 @@ test('a332dcd0: the Sposta form in the popover still answers inside the popover'
   assert.match(note?.textContent ?? '', /occupata/, 'the refusal reads beside the form');
   assert.equal(toasts.length, 0, 'no toast while the popover shows it');
 });
+
+test('a332dcd0 (review #811): a queued reread waits for a move in flight, never clobbering it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = DRAG_WEEK();
+  const base = stubClient({ week });
+  const bodies = [];
+  let releaseSecond = () => {};
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/reschedule') {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        bodies.push(body);
+        if (bodies.length === 1) {
+          throw Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'r1', claimId: 'c1' });
+        }
+        await new Promise((resolve) => { releaseSecond = resolve; });
+        return { appointment: { id: 'a9', startsAt: body.startsAt, endsAt: body.endsAt } };
+      }
+      return base.request(path, options);
+    },
+  };
+  let releaseWait = () => {};
+  const toasts = [];
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
+    toast: (message, error) => toasts.push({ message, error: error === true }),
+    wait: () => new Promise((resolve) => { releaseWait = resolve; }),
+  });
+  await view.render();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  const drag = async (fromY, toY) => {
+    const button = eventButton(mount, 'a9');
+    const col = button.parentNode;
+    attachClosest(mount);
+    col.getBoundingClientRect = () => ({ top: 0, height: 540 });
+    col.dispatch('pointerdown', { target: button, button: 0, clientY: fromY });
+    col.dispatch('pointermove', { clientY: toY });
+    col.dispatch('pointerup', {});
+    await settle(10);
+  };
+  const weekReads = () => base.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  // Drag A: queued on the worker, its reread scheduled.
+  await drag(330, 390);
+  assert.equal(bodies.length, 1);
+  assert.match(toasts.at(-1).message, /in coda/);
+  // A click eats the drag guard, then drag B: it stays in flight.
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  await drag(390, 450);
+  assert.equal(bodies.length, 2, 'the second move left');
+  const readsBefore = weekReads();
+  // The first move's reread time comes while B is in flight: it waits.
+  releaseWait();
+  await settle(10);
+  assert.equal(weekReads(), readsBefore, 'no week read lands in the middle of the second move');
+  // B lands: its own outcome speaks, then the week is read once.
+  releaseSecond();
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Spostato a') && !toast.error), JSON.stringify(toasts));
+  assert.equal(weekReads(), readsBefore + 1, 'one week read, after the second move');
+});
