@@ -157,6 +157,11 @@ test('form: no service preselected with two services, the price waits for the ch
   service.value = 'taglio';
   service.dispatch('change');
   assert.equal(byName(mount, 'price').value, '45.00');
+  // Review #790 (Muse P2): back on the placeholder, the price empties too.
+  service.value = '';
+  service.dispatch('change');
+  assert.equal(byName(mount, 'price').value, '', 'no price for a service nobody chose any more');
+  assert.equal(byName(mount, 'serviceKey').value, '');
 });
 
 test('form: a listino with one bookable service preselects it, like the scheda window', async () => {

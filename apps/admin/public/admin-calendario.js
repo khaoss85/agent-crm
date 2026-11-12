@@ -4452,6 +4452,11 @@ export function createCalendarioView(deps) {
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };
+      } else if (chosen === null && priceInput) {
+        // Back on «Scegli il servizio» (review #790, Muse P2): no service,
+        // no price — never the price of a service nobody chose any more.
+        priceInput.value = '';
+        state.manual = { ...(state.manual ?? {}), price: '' };
       }
     };
     select.addEventListener('input', track);
