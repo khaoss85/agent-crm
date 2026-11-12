@@ -1211,6 +1211,9 @@ export function createCalendarioView(deps) {
     }
   };
 
+  /** The booking buttons of the current paint, by key (cleared on every repaint). */
+  /** @type {Map<string, Array<{ button: any, label: string }>>} */
+  const bookingButtons = new Map();
   const state = {
     /** @type {string | null} cta-loading: the booking button whose write is in flight */
     bookingBusy: null,
@@ -1762,6 +1765,7 @@ export function createCalendarioView(deps) {
   }
 
   function renderView() {
+    bookingButtons.clear();
     clear();
     const wrap = el(doc, 'div', { className: 'cal-wrap' });
     wrap.appendChild(renderHeader());
@@ -4389,6 +4393,12 @@ export function createCalendarioView(deps) {
   async function busyBooking(key, work) {
     if (state.bookingBusy) return;
     state.bookingBusy = key;
+    // Review Muse #775 giro 2: the buttons on screen go off now, before the
+    // first await, not at the next repaint — no window where a second
+    // booking button looks pressable and drops its click.
+    for (const [shownKey, entries] of bookingButtons) {
+      for (const { button, label } of entries) holdBookingButton(button, shownKey, label, false);
+    }
     try {
       await work();
     } finally {
@@ -4402,7 +4412,8 @@ export function createCalendarioView(deps) {
    * pressable — so no click is ever silently dropped.
    * @param {any} button @param {string} key @param {string} label
    */
-  function holdBookingButton(button, key, label) {
+  function holdBookingButton(button, key, label, remember = true) {
+    if (remember) bookingButtons.set(key, [...(bookingButtons.get(key) ?? []), { button, label }]);
     if (!state.bookingBusy) return;
     if (state.bookingBusy === key) {
       uiMarkBusy(button, label);

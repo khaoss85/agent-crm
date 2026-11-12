@@ -4476,7 +4476,10 @@ test('cta-loading: Conferma reads «Prenoto…» while booking and a second pres
   form.date.value = '2026-10-22';
   form.start.value = '18:00';
   form.end.value = '18:30';
+  const proponiBefore = manualButton(mount, 'Proponi');
   manualButton(mount, 'Conferma').dispatch('click');
+  // Review Muse #775 giro 2: off at once, before the first await.
+  assert.equal(proponiBefore.disabled, true, 'Proponi goes off synchronously with the Conferma press');
   await flushMany();
   const busy = manualButton(mount, 'Prenoto…');
   assert.ok(busy, 'the pressed Conferma says it is booking');

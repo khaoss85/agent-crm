@@ -760,11 +760,14 @@ export function uiHold(button, label) {
   uiMarkBusy(button, label);
   return (keepOff = false) => {
     button.removeAttribute('aria-busy');
-    if (hadElements) {
-      button.textContent = '';
-      for (const node of ownNodes) button.appendChild(node);
-    } else if (button.textContent === label) {
-      button.textContent = ownText;
+    // A label the work wrote itself stays, on text and icon buttons alike.
+    if (button.textContent === label) {
+      if (hadElements) {
+        button.textContent = '';
+        for (const node of ownNodes) button.appendChild(node);
+      } else {
+        button.textContent = ownText;
+      }
     }
     button.disabled = wasDisabled || keepOff === true;
     if (!button.disabled) button.removeAttribute('disabled');

@@ -124,6 +124,11 @@ test('uiBusy: icons come back, a button that was off stays off, LOCKED keeps it 
   assert.equal(uncertain.textContent, 'Conferma');
   assert.equal(uncertain.getAttribute('aria-busy'), null);
 
+  const iconRenamed = doc.createElement('button');
+  iconRenamed.appendChild(uiIcon(doc, 'telefono-piu'));
+  await uiBusy(iconRenamed, 'Salvo…', async () => { iconRenamed.textContent = 'Salvato'; });
+  assert.equal(iconRenamed.textContent, 'Salvato', 'an icon button keeps the label its work wrote too');
+
   const renamed = button(doc, 'Invia');
   await uiBusy(renamed, 'Invio…', async () => { renamed.textContent = 'Inviato'; });
   assert.equal(renamed.textContent, 'Inviato', 'a label the work wrote itself stays');
