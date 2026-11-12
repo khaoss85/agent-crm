@@ -31,6 +31,7 @@
 //   700px like every other backoffice screen.
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
@@ -399,10 +400,15 @@ function channelCta(channel) {
   return OGGI_CHANNEL_CTA[String(channel ?? '').toLowerCase()] ?? null;
 }
 
+/**
+ * The row badge's initials: the one rule every screen reads
+ * (`customerInitials`, admin-core.js — first and last word, «UX Esplorativo
+ * 1111 B» → «UB»), so a customer reads the same in Oggi, Clienti and the
+ * scheda (backlog:bd5e84545021).
+ * @param {unknown} label
+ */
 function badgeInitials(label) {
-  const words = String(label ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
-  const marks = words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase());
-  return marks.join('') || '·';
+  return customerInitials(label);
 }
 
 function followupAction(task, now = new Date()) {

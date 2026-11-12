@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildInbox, buildPreCallBrief, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
+  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
 import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
@@ -719,4 +719,16 @@ test('review #795 P2: «Vedi tutte» opens Clienti on the view alone, without th
   assert.equal(last.get('q'), null, 'no leftover search');
   assert.equal(last.get('sort'), 'recent');
   assert.equal(list.getState().q, '');
+});
+
+test('bd5e84545021: Oggi’s badges read the one initials rule of Clienti and the scheda («UX Esplorativo 1111 B» → «UB»)', async () => {
+  const { customerInitials } = await import('../apps/admin/public/admin-core.js');
+  const name = 'UX Esplorativo 1111 B';
+  assert.equal(customerInitials(name), 'UB');
+  const [action] = buildAdvisorActions({ tasks: [{ ...TASK, channel: null, subjectLabel: name }], now: NOW }).actions;
+  assert.equal(action.mono, 'UB', 'the advisor card');
+  const inbox = buildInbox({ messages: [{ ...PERSON_MSG, channel: 'telegram', subjectLabel: name, remoteHandle: null }], now: NOW });
+  assert.equal(inbox.rows[0].mono, 'UB', 'the Da rispondere row');
+  const server = buildServerReplies({ items: [{ subject: { resource: 'contact', id: 'u1' }, name, awaitingChannel: 'telegram' }], total: 1 }, NOW);
+  assert.equal(server.rows[0].mono, 'UB', 'the server view row');
 });
