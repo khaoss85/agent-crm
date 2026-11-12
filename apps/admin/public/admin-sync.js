@@ -246,8 +246,9 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   // not the empty «Collega il primo canale» either.
   const linked = rows.some((row) => row.connected);
   // The hero reads the table's own pills (production 08/11, 3a3e6eaf C9/
-  // C20): a linked row that is not `Attivo` (Importazione, Da
-  // sistemare…) means not everything is synced, even with nothing to fix.
+  // C20; C18 1a3a0ba236c0): a linked row that is not `Attivo`
+  // (Importazione, `in attesa del primo evento`, Da sistemare…) means
+  // not everything is synced, even with nothing to fix.
   const waiting = rows.some((row) => row.connected && row.pill !== null && row.pill.tone !== 'attivo');
   const bound = linked || rows.some((row) => row.present === true);
   const detail = !bound
@@ -267,8 +268,18 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   if (!linked) {
     return { tone: 'fix', title: 'Nessun canale attivo', detail, count: total };
   }
-  if (total > 0 || waiting) {
+  // backlog:e381c48581fa: «Quasi tutto sincronizzato» (yellow) means
+  // something needs a hand — a fix card or a linked row reading Da
+  // sistemare. A linked row that only waits (its first event, an import
+  // under way) has nothing to fix: the hero names the wait in grey, so it
+  // never sits on «Niente da sistemare».
+  const broken = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'altro');
+  if (total > 0 || broken) {
     return { tone: 'fix', title: 'Quasi tutto sincronizzato', detail, count: total };
+  }
+  if (waiting) {
+    const importing = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'importazione');
+    return { tone: 'wait', title: importing ? 'Importazione in corso' : 'In attesa del primo evento', detail, count: 0 };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }
@@ -530,15 +541,17 @@ export function grantExpiring(iso, nowMs = Date.now()) {
 
 /**
  * The pill of one table row, in the spec's words (C20: `Attivo`,
- * `Permesso in scadenza`, `Importazione`). A binding with no traffic yet
- * (`idle`) is linked and healthy, so it reads `Attivo` — production 08/11
- * showed «In attesa», a word the spec does not have. A binding that really
- * broke (`attention`, `down`) is a state the spec does not list: the
- * closest honest word is `Da sistemare`, the name of the section that
- * says what to do about it. `Attivo` (and `Importazione`) need an active
- * binding (review #692): a suspended, pending or revoked binding reads
- * `Da sistemare` whatever its health says.
- * @param {{ expiringAt: string | null, importing: boolean, worst: string }} agg
+ * `Permesso in scadenza`, `Importazione`). A calm active row that never
+ * moved anything yet — no update instant and zero events (C18, backlog
+ * 1a3a0ba236c0) — reads `in attesa del primo evento`, never `Attivo`:
+ * production 08/11 read `Attivo` there and the hero called it synced. A
+ * binding that really broke (`attention`, `down`) is a state the spec
+ * does not list: the closest honest word is `Da sistemare`, the name of
+ * the section that says what to do about it. `Attivo` (and
+ * `Importazione`) need an active binding (review #692): a suspended,
+ * pending or revoked binding reads `Da sistemare` whatever its health
+ * says.
+ * @param {{ expiringAt: string | null, importing: boolean, worst: string, lastAt: string | null, received: number }} agg
  * @param {number} nowMs
  * @param {boolean} hasActive whether one binding of the row is active
  */
@@ -547,6 +560,7 @@ function channelPill(agg, nowMs, hasActive) {
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
+  if (calm && agg.lastAt === null && agg.received === 0) return { text: 'in attesa del primo evento', tone: 'attesa' };
   if (calm) return { text: 'Attivo', tone: 'attivo' };
   return { text: 'Da sistemare', tone: 'altro' };
 }
@@ -1133,8 +1147,13 @@ export function createSyncView(deps) {
     // (`Da sistemare <n>`); the quiet banner is the prototype wording.
     if (total === 0 && state.candidatesError === null) {
       // Prototype: with nothing open the section hides and the quiet
-      // banner stands alone (C15).
-      box.appendChild(el(doc, 'p', 'bo-sync-note bo-sync-allclear', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
+      // banner stands alone (C15). A linked row reading Da sistemare with
+      // no card of its own still needs a look (backlog:e381c48581fa): the
+      // banner points to it instead of calling everything fine.
+      const broken = syncChannelTable(activity).some((row) => row.connected && row.pill !== null && row.pill.tone === 'altro');
+      box.appendChild(broken
+        ? el(doc, 'p', 'bo-sync-note', 'Un canale va controllato: guarda la tabella Canali qui sotto.')
+        : el(doc, 'p', 'bo-sync-note bo-sync-allclear', '✓ Niente da sistemare. Se qualcosa si blocca, ti avviso io.'));
       return;
     }
     box.appendChild(el(doc, 'h3', undefined, total === 0 ? 'Da sistemare' : `Da sistemare ${total}`));
@@ -1257,7 +1276,9 @@ export function createSyncView(deps) {
         // "Connettore sconosciuto" (P2 Codex su #415).
         const route = typeof row.connectRoute === 'string' ? row.connectRoute : null;
         if (!readOnly() && route !== null) {
-          const link = el(doc, 'a', 'bo-sync-fix-action', 'Collega');
+          // The green Collega of every other screen (backlog:e381c48581fa),
+          // never a dark grey that reads disabled.
+          const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-sync-collega', 'Collega');
           link.setAttribute('href', route);
           link.setAttribute('data-action', 'collega');
           link.setAttribute('data-channel', row.channel);

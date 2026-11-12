@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isSessionLostCode } from './admin-session.js';
+
 // Pure, DOM-free helpers for the generated-module Admin. Everything here is
 // unit-tested under node:test without a browser.
 
@@ -647,7 +649,7 @@ export function italianDay(value) {
  * @param {(message: string, cause: unknown) => void | null} log
  */
 function normalizeFailure(error, log = null) {
-  const record = error !== null && typeof error === 'object' ? error : {};
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : 'UNKNOWN';
   const status = typeof record.status === 'number' ? record.status : null;
   const message = typeof record.message === 'string' && record.message !== ''
@@ -660,12 +662,59 @@ function normalizeFailure(error, log = null) {
     : (typeof console !== 'undefined' && typeof console.error === 'function'
       ? (text, cause) => console.error(text, cause)
       : () => {});
-  return { code, status, message, report };
+  const method = typeof record.method === 'string' ? record.method.toUpperCase() : null;
+  // The path without its query: the words typed in a search (customer
+  // names) stay out of the console.
+  const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
+  return { code, status, message, method, path, report };
+}
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Tag a rejection with the request that caused it (backlog:e7bdcbcc6864):
+ * the log helpers below then name a failed POST as a write, never as
+ * «lettura fallita». A method/path already on the error wins; primitives
+ * pass through untouched.
+ * @template T
+ * @param {T} error
+ * @param {unknown} method
+ * @param {unknown} path
+ * @returns {T}
+ */
+export function tagRequestFailure(error, method, path) {
+  if (error === null || typeof error !== 'object') return error;
+  const record = /** @type {any} */ (error);
+  try {
+    if (typeof record.method !== 'string' && typeof method === 'string') record.method = method.toUpperCase();
+    if (typeof record.path !== 'string' && typeof path === 'string') record.path = path;
+  } catch {
+    // A frozen rejection keeps its shape; the log just names less.
+  }
+  return error;
+}
+
+/**
+ * One readable console line (backlog:e7bdcbcc6864, production 11/11: a 400
+ * on POST /api/customer-hub/phone read «[bo] lettura fallita Object»):
+ * read or write from the method, then the request, the status, the code and
+ * the message as text, so the line says what failed without expanding it.
+ * The object rides along for whoever opens it.
+ * @param {'lettura' | 'scrittura'} fallback what the caller expected
+ * @param {{ code: string, status: number | null, message: string, method: string | null, path: string | null, report: (message: string, cause: unknown) => void }} failure
+ */
+function reportFailure(fallback, { code, status, message, method, path, report }) {
+  const kind = method === null ? fallback : (WRITE_METHODS.has(method) ? 'scrittura' : 'lettura');
+  const request = method !== null && path !== null ? ` ${method} ${path}` : '';
+  const outcome = [status === null ? '' : String(status), code].filter((part) => part !== '').join(' ');
+  report(`[bo] ${kind} fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
+    { code, status, message, method, path });
 }
 
 export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
-  const { code, status, message, report } = normalizeFailure(error, log);
-  report('[bo] lettura fallita', { code, status, message });
+  const failure = normalizeFailure(error, log);
+  const { code, status } = failure;
+  reportFailure('lettura', failure);
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   // B4 wake-up (backlog:5a40c73e54aa): a read that met a waking service is
   // still loading, never failed — name the wait, not the refusal.
@@ -673,6 +722,12 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
   if (wait !== null) return wait;
   return failed;
 }
+
+/** The codes a gateway answers with when the server behind it never did. */
+const GATEWAY_CODES = new Set(['', 'UNKNOWN', 'BAD_GATEWAY', 'SERVICE_UNAVAILABLE', 'GATEWAY_TIMEOUT']);
+
+/** A write the server could not take right now (5xx): what happened, then what to do. */
+export const SERVER_UNAVAILABLE_TEXT = 'Il server non risponde adesso, riprova tra poco.';
 
 /**
  * Whether a failure means the write never got a usable answer from the
@@ -703,7 +758,11 @@ export function isNetworkFailure(error) {
     return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
   }
   if (status !== 502 && status !== 503 && status !== 504) return false;
-  return !/_(FAILED|PENDING|REFUSED|NOT_CONFIGURED)$/.test(code) && !/REFUSALS?$/.test(code);
+  // backlog:7d30fb517785 (production 10/11: a 503 OPERATION_APP_UNAVAILABLE
+  // on the AI switch read «Connessione non riuscita»): at 502/503/504 only a
+  // gateway's own generic code means «no answer». Any other code is a
+  // verdict the server named, never a connection fault.
+  return GATEWAY_CODES.has(code);
 }
 
 /**
@@ -714,14 +773,21 @@ export function isNetworkFailure(error) {
  * validi) hanno un testo proprio; tutto il resto risponde `failed`. Un
  * guasto di rete (backlog:7cc35edab50c) non è un rifiuto: risponde
  * «Connessione non riuscita, riprova.» e il comando resta a schermo per la
- * riprova, mai il testo di un rifiuto.
+ * riprova, mai il testo di un rifiuto. Un 502/503/504 da gateway non è un
+ * guasto di rete (backlog:7d30fb517785): il server non risponde, e il testo
+ * lo dice; un codice applicativo a quegli stati risponde `failed`.
  *
  * @param {unknown} error the rejection from `client.request`
  * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
  */
 export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
-  const { code, status, message, report } = normalizeFailure(error, log);
-  report('[bo] scrittura rifiutata', { code, status, message });
+  const failure = normalizeFailure(error, log);
+  const { code, status } = failure;
+  reportFailure('scrittura', failure);
+  // backlog:7d30fb517785: «Connessione non riuscita» only when the answer
+  // never arrived (fetch rejected, status 0, timeout). A gateway 5xx did
+  // answer: the server is the one not taking the write right now.
+  if (isNetworkFailure(error)) return status !== null && status >= 500 ? SERVER_UNAVAILABLE_TEXT : 'Connessione non riuscita, riprova.';
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   // B4 wake-up (backlog:5a40c73e54aa): a write that met a waking service was
   // never refused — name the wait, not «rifiutata». The explicit starting
@@ -962,6 +1028,23 @@ function isWriteMethod(method) {
 }
 
 /**
+ * Whether the rejection says the session is gone (mirrors sessionLostTarget
+ * in admin-session.js: any 401, a 403 with a session code, a followed
+ * redirect, or a non-JSON answer). A lost session is never a waking service:
+ * the shell already navigates to the space login, and a retry would only
+ * delay the login and navigate twice (review khaoss85/agent-crm#673 giro 3,
+ * backlog:5a40c73e54aa). @param {unknown} error
+ */
+function isLostSession(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  if (record.redirected === true || record.invalidResponse === true) return true;
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 401) return true;
+  const code = typeof record.code === 'string' ? record.code : '';
+  return status === 403 && isSessionLostCode(code);
+}
+
+/**
  * Whether a rejection means «the service is waking» (retry it once while the
  * screen still shows its loading state) rather than «the request was refused»
  * (show it). A bare 503 or a refused connection is only worth one more try
@@ -969,9 +1052,12 @@ function isWriteMethod(method) {
  * an explicit starting signal (the server proves it was not up yet), and an
  * uncertain outcome (`*_OUTCOME_UNKNOWN`, e.g. COMMIT_OUTCOME_UNKNOWN) is
  * never retried here — the reconcile path owns the second attempt (review
- * khaoss85/agent-crm#673). When the retry answers the same, the failure is
- * honest and stays a failure (voce 908f2eb9bbfb pins the section texts for
- * a 503 read). Only an explicit starting signal names the wait in words.
+ * khaoss85/agent-crm#673). A lost session (401, 403 with a session code, a
+ * followed redirect, a non-JSON answer) is never waking either: the shell
+ * navigates once to the space login (review #673 giro 3). When the retry
+ * answers the same, the failure is honest and stays a failure
+ * (voce 908f2eb9bbfb pins the section texts for a 503 read). Only an
+ * explicit starting signal names the wait in words.
  * @param {unknown} error
  * @param {{ method?: unknown }} [options] the request method (`GET` default)
  */
@@ -979,6 +1065,7 @@ export function isWakeTransient(error, { method = 'GET' } = {}) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   const status = typeof record.status === 'number' ? record.status : null;
+  if (isLostSession(error)) return false;
   if (/_OUTCOME_UNKNOWN$/.test(code)) return false;
   if (WAKE_TRANSIENT_CODES.includes(code)) return true;
   if (isWriteMethod(method)) return false;

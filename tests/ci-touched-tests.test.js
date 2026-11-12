@@ -33,6 +33,8 @@ import {
   fallbackPlan,
   hasCodeChange,
   listChangedFiles,
+  resolveDiffBase,
+  describeFallbackCore,
   loadCharacterizationDigests,
   parseArgs,
   planGate,
@@ -1880,17 +1882,132 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
   // The queue the cure builds for an oversized selection: the core first,
   // the dropped remainder behind it. The bound hits mid-bonus with the core
   // finished and green: warn, naming the bonus files that remained.
-  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  // No wall clock decides who is late (backlog:3d560518f3e2): under load a
+  // one-line core file once missed a 3 s bound. The bonus never ends (it
+  // waits on a promise nothing resolves, an interval keeps it alive) and the
+  // injected bound fires the moment the core file has finished — so the
+  // core is done and the bonus remains, whatever the machine's load.
+  const blocked = "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n";
   const dir = scratchTests({
     'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
-    'bonus.test.js': sleeper,
+    'bonus.test.js': blocked,
   });
   try {
-    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    /** @type {() => void} */
+    let fireBound = () => {};
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
+      parts: 2,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fireBound = fire; return () => {}; },
+      onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+    });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
     assert.deepEqual(result.failedFiles, []);
     assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'warn');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the diff base is pinned to the merge-base of the base ref and HEAD, so main moving on adds nothing', () => {
+  // backlog:3d560518f3e2: main moved on after the PR branched (10 files on
+  // a two-dot diff against the new tip for #769's 4). The merge-base keeps
+  // the PR's own files, and the sha is pinned before any diff runs.
+  const directory = mkdtempSync(join(tmpdir(), 'touched-base-'));
+  try {
+    const git = (/** @type {string[]} */ args) => spawnGit(args, { cwd: directory });
+    const write = (/** @type {string} */ path, /** @type {string} */ body) => {
+      const full = join(directory, path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, body);
+    };
+    git(['init', '-b', 'main']);
+    git(['config', 'user.email', 'touched@example.invalid']);
+    git(['config', 'user.name', 'touched']);
+    write('packages/app/src/a.js', 'export const a = 1;\n');
+    git(['add', '.']);
+    git(['commit', '-m', 'root']);
+    const fork = git(['rev-parse', 'HEAD']).stdout.trim();
+    git(['checkout', '-b', 'pr']);
+    write('packages/app/src/a.js', 'export const a = 2;\n');
+    write('tests/a.test.js', "import '../packages/app/src/a.js';\n");
+    git(['add', '.']);
+    git(['commit', '-m', 'pr']);
+    git(['checkout', 'main']);
+    for (const name of ['b', 'c', 'd']) {
+      write(`packages/app/src/${name}.js`, `export const ${name} = 1;\n`);
+      write(`tests/${name}.test.js`, `import '../packages/app/src/${name}.js';\n`);
+    }
+    git(['add', '.']);
+    git(['commit', '-m', 'main moves on']);
+    const tip = git(['rev-parse', 'HEAD']).stdout.trim();
+    git(['checkout', 'pr']);
+
+    const { baseSha, mergeBase } = resolveDiffBase(git, 'main');
+    assert.equal(baseSha, tip);
+    assert.equal(mergeBase, fork);
+    const { allChanged } = listChangedFiles(git, mergeBase);
+    assert.deepEqual([...allChanged].sort(), ['packages/app/src/a.js', 'tests/a.test.js']);
+    // The two-dot diff against the moved tip is what a wrong base looks like.
+    const twoDot = git(['diff', '--name-only', tip, 'HEAD']).stdout.trim().split('\n');
+    assert.equal(twoDot.length, 8);
+    // Moving the ref afterwards changes nothing already pinned.
+    git(['branch', '-f', 'main', 'pr']);
+    assert.deepEqual([...listChangedFiles(git, mergeBase).allChanged].sort(), ['packages/app/src/a.js', 'tests/a.test.js']);
+    assert.throws(() => resolveDiffBase(git, 'no-such-ref'), /base revision no-such-ref is not present/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the fallback core says how many tests the PR changed and how many filled the budget', () => {
+  // #769: 1 changed test plus 25 nearest used to read "26 changed test file(s)".
+  const core = ['tests/own.test.js', ...Array.from({ length: 25 }, (_, k) => `tests/near-${k}.test.js`)];
+  assert.equal(
+    describeFallbackCore(core, ['packages/core/src/x.js', 'tests/own.test.js']),
+    '1 changed test file(s), 25 nearest selected',
+  );
+  assert.equal(describeFallbackCore([], ['docs/x.md']), '0 changed test file(s), 0 nearest selected');
+});
+
+test('an injected bound that fires at once settles timed out, without a TDZ error', async () => {
+  const dir = scratchTests({ 'never.test.js': "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n" });
+  try {
+    let cancelled = 0;
+    const result = await runTestShards(['never.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fire(); return () => { cancelled += 1; }; },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['never.test.js']);
+    assert.equal(cancelled, 1, 'the cancel of an already-fired bound is still called once');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an onJobDone observer that throws never stalls its part', async () => {
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\ntest('a', () => {});\n",
+    'b.test.js': "import test from 'node:test';\ntest('b', () => {});\n",
+  });
+  try {
+    /** @type {string[]} */
+    const seen = [];
+    const result = await runTestShards(['a.test.js', 'b.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      onJobDone: (files) => { seen.push(...files); throw new Error('observer boom'); },
+    });
+    assert.equal(result.timedOut, false);
+    assert.equal(result.status, 0);
+    assert.deepEqual(result.remaining, []);
+    assert.deepEqual(seen.sort(), ['a.test.js', 'b.test.js']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

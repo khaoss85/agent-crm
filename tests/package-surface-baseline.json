@@ -19,15 +19,15 @@
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "5fcabe52dd10f2b2eef51958955ec7d0ca981975c2450dcb7fce9c39765e0072"
+      "version": 3,
+      "fingerprint": "d579f89d91c31237f6001e9762721c22069dc76b7a26fd6ce277dabe8bbfda7b"
     },
     {
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "8336fba211cdcbeb2ca653c723ebede2dc8c9d78491803d627749bb885021512"
+      "version": 3,
+      "fingerprint": "96a5da11fc1ace3aa5fea69326cd9b8b19ac36eb035d97e3fb1507d3a410475f"
     },
     {
       "name": "calendar-sync",
@@ -292,15 +292,15 @@
       "name": "space-permissions",
       "dir": "space-permissions",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "d2fdd631817bf0a345741271b5d67a2fb8cf0ca5f9d66c1516bd4199bbce9f96"
+      "version": 2,
+      "fingerprint": "0c5fdf419f834536c59908e4aa71094b569ea5b1e0f27c81d390a37ca0d27c61"
     },
     {
       "name": "space-permissions",
       "dir": "space-permissions",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "30b7cf14acc43431ba9b9a1a1156e311cd35253dc850a0910c4530fa64d45c43"
+      "version": 2,
+      "fingerprint": "4f3717a04ee62c60e9038f3f03cc1d833e45d359140114e100c9480c26ddb9dc"
     },
     {
       "name": "work",

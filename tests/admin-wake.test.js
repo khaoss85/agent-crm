@@ -149,6 +149,26 @@ test('humanReadError and humanWriteError name the wait on a starting signal', ()
   assert.equal(humanWriteError(refused, { failed: 'Scrittura rifiutata.', ...quiet }), 'Scrittura rifiutata.');
 });
 
+test('isWakeTransient never retries a lost session, even with a wake code (review #673 P1, backlog:5a40c73e54aa)', () => {
+  // A 401 carrying an explicit starting signal is a lost session, not a
+  // waking service: the shell navigates to the space login once, and a
+  // retry would delay the login and navigate twice (giro 3).
+  assert.equal(isWakeTransient({ status: 401, code: 'WORKSPACE_STARTING' }), false);
+  assert.equal(isWakeTransient({ status: 401, code: 'WORKSPACE_STARTING' }, { method: 'POST' }), false);
+  assert.equal(isWakeTransient({ status: 401 }), false);
+  // A 403 with a session code is a lost session too, wake code or not.
+  assert.equal(isWakeTransient({ status: 403, code: 'WORKSPACE_SESSION_REQUIRED' }), false);
+  assert.equal(isWakeTransient({ status: 403, code: 'SESSION_EXPIRED' }), false);
+  // A followed login redirect and a non-JSON answer are the login page, never waking.
+  assert.equal(isWakeTransient(Object.assign(new Error('gone'), { status: 503, redirected: true })), false);
+  assert.equal(
+    isWakeTransient(Object.assign(new Error('Invalid server response'), { status: 200, code: 'INVALID_RESPONSE', invalidResponse: true })),
+    false,
+  );
+  // A plain 403 without a session code keeps the old verdict (never transient on a read either).
+  assert.equal(isWakeTransient({ status: 403, code: 'FORBIDDEN' }), false);
+});
+
 test('humanReadError and humanWriteError keep refusals and 404 as they were', () => {
   assert.equal(
     humanReadError({ status: 400 }, { failed: 'Lettura fallita.', ...quiet }),

@@ -18,7 +18,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { humanWriteError, isNetworkFailure } from '../apps/admin/public/admin-core.js';
+import { SERVER_UNAVAILABLE_TEXT, humanWriteError, isNetworkFailure } from '../apps/admin/public/admin-core.js';
 import { missingBookingFields } from '../apps/admin/public/admin-calendario.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -66,16 +66,35 @@ test('humanWriteError falls back to the caller text otherwise', () => {
 test('humanWriteError names a network fault, never the panel refusal', () => {
   const failed = 'Non riesco a creare la sequenza adesso: riprova più tardi.';
   for (const error of [
-    writeError('Bad Gateway', { code: 'UNKNOWN', status: 502 }),
-    writeError('Bad Gateway', { code: 'BAD_GATEWAY', status: 502 }),
-    writeError('Service Unavailable', { code: 'UNKNOWN', status: 503 }),
-    writeError('gateway', { code: 'UNKNOWN', status: 504 }),
-    writeError('Gateway Timeout', { code: 'GATEWAY_TIMEOUT', status: 504 }),
     new TypeError('fetch failed'),
     Object.assign(new Error('socket hang up'), { status: 0 }),
     Object.assign(new Error('timed out'), { name: 'TimeoutError' }),
   ]) {
     assert.equal(humanWriteError(error, { failed }), 'Connessione non riuscita, riprova.');
+  }
+});
+
+// backlog:7d30fb517785 (production 10/11): a 503 OPERATION_APP_UNAVAILABLE
+// read «Connessione non riuscita, riprova.», which was false — the server
+// answered. A gateway 5xx says the server is not answering; a 5xx with the
+// server's own code is the caller's text. «Connessione non riuscita» stays
+// for the answer that never came.
+test('humanWriteError: a 5xx is a server that cannot answer now, never a connection fault', () => {
+  const failed = 'Non riesco a salvare la modifica adesso, riprova tra poco.';
+  for (const error of [
+    writeError('Bad Gateway', { code: 'UNKNOWN', status: 502 }),
+    writeError('Bad Gateway', { code: 'BAD_GATEWAY', status: 502 }),
+    writeError('Service Unavailable', { code: 'UNKNOWN', status: 503 }),
+    writeError('gateway', { code: 'UNKNOWN', status: 504 }),
+    writeError('Gateway Timeout', { code: 'GATEWAY_TIMEOUT', status: 504 }),
+  ]) {
+    assert.equal(humanWriteError(error, { failed }), SERVER_UNAVAILABLE_TEXT, `${error.code}@${error.status}`);
+  }
+  const named = writeError('Operation app unavailable', { code: 'OPERATION_APP_UNAVAILABLE', status: 503 });
+  assert.equal(isNetworkFailure(named), false, 'a code the server named is an answer');
+  assert.equal(humanWriteError(named, { failed }), failed);
+  for (const error of [named, writeError('down', { code: 'UNKNOWN', status: 502 })]) {
+    assert.ok(!/Connessione/.test(humanWriteError(error, { failed })), 'the server answered: no connection text');
   }
 });
 
@@ -141,6 +160,7 @@ test('isNetworkFailure draws the line between no-answer and refusal', () => {
     writeError('queued', { code: 'BO_PHRASE_PENDING', status: 504 }),
     writeError('refused', { code: 'BO_APPOINTMENT_SERVICE_REFUSED', status: 503 }),
     writeError('no bridge', { code: 'BO_BRIDGE_NOT_CONFIGURED', status: 503 }),
+    writeError('app down', { code: 'OPERATION_APP_UNAVAILABLE', status: 503 }),
     new Error('plain bug, no status'),
   ]) {
     assert.equal(isNetworkFailure(error), false, `refusal or bug: ${String(error?.code ?? error)}`);

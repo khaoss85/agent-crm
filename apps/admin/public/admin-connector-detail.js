@@ -23,7 +23,8 @@
 // carries that row's connectionKey, and the test proves all seven match),
 // and "skill che lo usano" lists only declared dependencies (each row cites
 // the repo file and the verbatim string that declares the use, and the test
-// proves the string is there).
+// proves the string is there); the screen shows them in the CRM reader's
+// Italian, never with edge codes (backlog:a55e4c5336dd).
 //
 // Conventions follow apps/admin/public/admin-core.js: the section builders
 // are pure and DOM-free (unit-tested under node:test without a browser) and
@@ -31,11 +32,12 @@
 // — never innerHTML with data, so a hostile account or adapter label is
 // inert text, never markup.
 
+import { NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { importStateLabel } from './admin-labels.js';
 import { CONNECTOR_CATALOG, connectorStatus, matchAdapters, matchConnections } from './admin-connectors.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
-import { PROFILO_CONNECTORS, googleConnectionsCard } from './admin-profilo.js';
+import { PROFILO_CONNECTORS, googleConnectionsCard, readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { grantExpiring, grantExpiryWording } from './admin-sync.js';
 
@@ -94,153 +96,193 @@ export function directionOf(channel) {
  * @typedef {{ unit: string, kind: 'package' | 'skill', edge: string, via: string, evidence: { file: string, needle: string } }} ConnectorConsumer
  */
 
+/**
+ * Italian display names of the consumer units, checked in here so the
+ * detail speaks Italian even when the space-packages catalog cannot be
+ * read. Mirrors the labels in
+ * packages/space-permissions/src/composition.js; the view prefers the
+ * live catalog label and falls back here, never to a unit code.
+ */
+const UNIT_LABEL_IT = Object.freeze({
+  appointments: 'Appuntamenti',
+  channels: 'Canali',
+  'customer-data': 'Dati clienti',
+  sequences: 'Sequenze',
+  'skill:build-custom-domain-package': 'Pacchetti su misura',
+});
+
+/**
+ * Italian name of a consumer unit for the CRM reader. Pure and DOM-free:
+ * the live catalog label wins when the caller knows it, otherwise the
+ * checked-in Italian name above — never the unit code.
+ * @param {string} unit
+ * @param {string | null} [catalogLabel]
+ */
+export function italianUnitName(unit, catalogLabel = null) {
+  if (typeof catalogLabel === 'string' && catalogLabel !== '') return catalogLabel;
+  const fallback = /** @type {Record<string, string>} */ (UNIT_LABEL_IT)[unit];
+  return typeof fallback === 'string' ? fallback : 'Funzione del prodotto';
+}
+
+/**
+ * One consumer row in the CRM reader's Italian: the unit's Italian name
+ * plus what it does with this channel. The declared `edge` code and its
+ * repo `evidence` stay in the data (the test proves them) and never reach
+ * the screen.
+ * @param {ConnectorConsumer} row
+ * @param {(unit: string) => string} nameOf
+ */
+export function consumerLine(row, nameOf) {
+  return `«${nameOf(row.unit)}»: ${row.via}`;
+}
+
 /** @type {Record<string, ReadonlyArray<ConnectorConsumer>>} */
 const CONSUMERS_BY_CHANNEL = {
   whatsapp: [
     {
       unit: 'appointments', kind: 'package', edge: 'channel-template-send@1',
-      via: 'Promemoria con template WhatsApp (reminderChannel → outbox del canale).',
+      via: 'Promemoria degli appuntamenti con modello approvato: il messaggio al cliente parte da qui.',
       evidence: { file: 'packages/appointments/src/index.js', needle: 'channel-template-send@1' },
     },
     {
       unit: 'sequences', kind: 'package', edge: 'channels outbox (queueTemplate)',
-      via: 'Passi giorno+canale accodati nell\u2019outbox; lo stop alla risposta legge l\u2019inbox.',
+      via: 'Passi giorno e canale preparati per l\u2019invio; se il cliente risponde, la sequenza si ferma.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'queueTemplate' },
     },
     {
       unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
-      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      via: 'Regola dei pacchetti su misura: ogni invio verso canali esterni passa da qui.',
       evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
     {
       unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
-      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      via: 'Risposta preparata da una persona e inviata solo dopo approvazione.',
       evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   instagram: [
     {
       unit: 'sequences', kind: 'package', edge: 'channels outbox (queueTemplate)',
-      via: 'Passi giorno+canale accodati nell\u2019outbox; lo stop alla risposta legge l\u2019inbox.',
+      via: 'Passi giorno e canale preparati per l\u2019invio; se il cliente risponde, la sequenza si ferma.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'queueTemplate' },
     },
     {
       unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
-      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      via: 'Regola dei pacchetti su misura: ogni invio verso canali esterni passa da qui.',
       evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
     {
       unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
-      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      via: 'Risposta preparata da una persona e inviata solo dopo approvazione.',
       evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   facebook: [
     {
       unit: 'sequences', kind: 'package', edge: 'channels outbox (queueTemplate)',
-      via: 'Passi giorno+canale accodati nell\u2019outbox; lo stop alla risposta legge l\u2019inbox.',
+      via: 'Passi giorno e canale preparati per l\u2019invio; se il cliente risponde, la sequenza si ferma.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'queueTemplate' },
     },
     {
       unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
-      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      via: 'Risposta preparata da una persona e inviata solo dopo approvazione.',
       evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   email: [
     {
       unit: 'sequences', kind: 'package', edge: 'channels outbox (queueTemplate)',
-      via: 'Passi giorno+canale accodati nell\u2019outbox; lo stop alla risposta legge l\u2019inbox.',
+      via: 'Passi giorno e canale preparati per l\u2019invio; se il cliente risponde, la sequenza si ferma.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'queueTemplate' },
     },
     {
       unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
-      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      via: 'Regola dei pacchetti su misura: ogni invio verso canali esterni passa da qui.',
       evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
     {
       unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
-      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      via: 'Risposta preparata da una persona e inviata solo dopo approvazione.',
       evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   sms: [
     {
       unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
-      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      via: 'Regola dei pacchetti su misura: ogni invio verso canali esterni passa da qui.',
       evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti con le schede quando l\u2019adattatore esiste.',
+      via: 'Riconosce chi scrive e lo lega alla scheda quando l\u2019adattatore esiste.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   telegram: [
     {
       unit: 'channels', kind: 'package', edge: 'propose-channel-reply',
-      via: 'Risposta multicanale con approvazione (BO-F1-07): proposta umana, invio approvato.',
+      via: 'Risposta preparata da una persona e inviata solo dopo approvazione.',
       evidence: { file: 'packages/channels/README.md', needle: 'propose-channel-reply' },
     },
     {
       unit: 'skill:build-custom-domain-package', kind: 'skill', edge: 'channels outbox',
-      via: 'Regola «Invii verso canali esterni»: ogni invio accodato nell\u2019outbox esistente.',
+      via: 'Regola dei pacchetti su misura: ogni invio verso canali esterni passa da qui.',
       evidence: { file: 'skills/build-custom-domain-package/SKILL.md', needle: 'channels outbox' },
     },
   ],
   tiktok: [
     {
       unit: 'sequences', kind: 'package', edge: 'reply stop (inbox)',
-      via: 'Solo lettura: lo stop alla risposta legge l\u2019inbox; gli invii rifiutano (solo entrata).',
+      via: 'Solo lettura: se il cliente risponde, le sequenze si fermano; inviare da qui non si pu\u00f2.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'reply stop' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   voice: [
     {
       unit: 'sequences', kind: 'package', edge: 'reply stop (inbox)',
-      via: 'Solo lettura: lo stop alla risposta legge l\u2019inbox; gli invii rifiutano (solo entrata).',
+      via: 'Solo lettura: se il cliente risponde, le sequenze si fermano; inviare da qui non si pu\u00f2.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'reply stop' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
   'site-form': [
     {
       unit: 'sequences', kind: 'package', edge: 'reply stop (inbox)',
-      via: 'Solo lettura: lo stop alla risposta legge l\u2019inbox; gli invii rifiutano (solo entrata).',
+      via: 'Solo lettura: se il cliente risponde, le sequenze si fermano; inviare da qui non si pu\u00f2.',
       evidence: { file: 'packages/sequences/src/index.js', needle: 'reply stop' },
     },
     {
       unit: 'customer-data', kind: 'package', edge: 'channel-sender@1',
-      via: 'Riconciliazione dei mittenti importati con le schede (mai unioni silenziose).',
+      via: 'Riconosce chi scrive e lo lega alla scheda giusta, senza unire mai due persone.',
       evidence: { file: 'packages/customer-data/src/sender-capability.js', needle: 'channel-sender@1' },
     },
   ],
@@ -378,7 +420,7 @@ export function detailSections({ entry, connection, spaceId = null }) {
   const consumers = consumersForChannel(channel);
   const skillCheLoUsanoLines = consumers.length === 0
     ? ['Nessun uso dichiarato per questo canale.']
-    : consumers.map((row) => `«${row.unit}» usa «${row.edge}»: ${row.via}`);
+    : consumers.map((row) => consumerLine(row, italianUnitName));
 
   const section = (key, title, lines) => Object.freeze({ key, title, connectionKey, lines: Object.freeze(lines) });
   // The renewal cure for the Stato sync yellow card (P2 Codex su #415):
@@ -492,6 +534,7 @@ export function createConnectorDetailView(deps) {
     loaded: false,
     loadError: null,
     /** @type {any} */ google: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
   };
 
   // The observer role watches without touching: the renewal write below
@@ -545,6 +588,9 @@ export function createConnectorDetailView(deps) {
       state.loadError = errorOf(error);
       return;
     }
+    // The profile links merge like the shared count (review #782 P1): the
+    // Email detail reuses the Google card's read, any other reads it once.
+    state.profile = state.google !== null ? await state.google.answer : await readProfile(deps.client);
     // The provider-stated grant expiries live only in the activity payload
     // (the same one the Stato sync yellow card reads): without them the
     // detail cannot offer a renewal, so they merge onto the rows below.
@@ -571,8 +617,8 @@ export function createConnectorDetailView(deps) {
     const found = (state.units ?? []).find((row) => row && row.name === unit);
     const label = found !== null && found !== undefined && typeof found.label === 'string' && found.label !== ''
       ? found.label
-      : unit;
-    return label;
+      : null;
+    return italianUnitName(unit, label);
   }
 
   function renderSection(box, section) {
@@ -682,14 +728,30 @@ export function createConnectorDetailView(deps) {
       panel.appendChild(el(doc, 'p', 'bo-muted', 'Nessun uso dichiarato per questo canale.'));
     } else {
       panel.appendChild(el(doc, 'p', 'bo-muted',
-        'Dipendenze dichiarate nel repo: ogni voce cita la capacità o la regola che la dichiara.'));
+        'Ogni voce dice cosa fa con questo canale, con parole del prodotto.'));
       const list = el(doc, 'ul', undefined);
       for (const row of rows) {
-        list.appendChild(el(doc, 'li', undefined, `«${labelOfUnit(row.unit)}» usa «${row.edge}»: ${row.via}`));
+        list.appendChild(el(doc, 'li', undefined, consumerLine(row, labelOfUnit)));
       }
       panel.appendChild(list);
     }
     box.appendChild(panel);
+  }
+
+  /**
+   * A theme button that navigates (backlog:e381c48581fa): «Torna ai
+   * connettori» and its siblings wear the /bo button, never the browser's
+   * base link style.
+   * @param {string} label @param {string} route @param {string} [variant]
+   */
+  function routeButton(label, route, variant = 'secondary') {
+    const link = el(doc, 'a', `ui-btn ui-btn-${variant} ui-btn-small`, label);
+    link.setAttribute('href', route);
+    link.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate(route);
+    });
+    return link;
   }
 
   function render(channel, preferredConnectionKey = null) {
@@ -700,13 +762,9 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(el(doc, 'h2', undefined, 'Connettore sconosciuto'));
       mount.appendChild(el(doc, 'p', 'empty',
         'Questo connettore non esiste nel catalogo: niente da mostrare, nessuna richiesta inviata.'));
-      const back = el(doc, 'a', undefined, 'Torna ai connettori');
-      back.setAttribute('href', '#/connettori');
-      back.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      mount.appendChild(back);
+      const row = el(doc, 'p', undefined);
+      row.appendChild(routeButton('Torna ai connettori', '#/connettori'));
+      mount.appendChild(row);
       return;
     }
     mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice · Connettori'));
@@ -726,16 +784,19 @@ export function createConnectorDetailView(deps) {
       mount.appendChild(el(doc, 'p', 'empty', 'Scegli lo spazio per vedere il suo collegamento.'));
       return;
     }
-    // The list's own contract: without a composed adapter the connector is
-    // 'non-disponibile' with no connections, whatever stale rows exist. The
-    // detail mirrors it exactly instead of re-deriving its own answer.
+    // One state per channel (backlog:e381c48581fa): the list and every
+    // other screen read the shared `channelState`, and the detail mirrors
+    // it instead of re-deriving its own answer. A channel linked where this
+    // composition does not configure it (WhatsApp through Profilo's Meta
+    // link) reads «Collegato» with a plain note, never «Non disponibile».
     const mapped = connectorStatus({
       entry,
       adapters: matchAdapters(channel, state.adapters),
       connections: matchConnections(channel, state.entries),
+      profile: state.profile,
     });
-    const available = mapped.status !== 'non-disponibile';
-    const connections = available ? mapped.connections : [];
+    const shared = mapped.shared;
+    const connections = mapped.connections;
     // The Stato sync yellow card names its binding (backlog:3a3e6eaf): the
     // requested row wins over the first active one, so a renewal always
     // lands on the binding whose deadline the operator saw. Unknown keys
@@ -744,32 +805,27 @@ export function createConnectorDetailView(deps) {
       ? connections.find((row) => row !== null && typeof row === 'object'
         && row.connectionKey === preferredConnectionKey) ?? null
       : null;
-    const connection = available
-      ? (preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null)
-      : null;
-    const badge = !available
-      ? 'Non disponibile qui'
-      : connection !== null ? statusLabel(connection.status) : 'Da collegare';
+    const connection = preferred ?? connections.find((row) => row.status === 'active') ?? connections[0] ?? null;
+    const configurable = shared.managedHere === true;
+    const badge = !configurable ? shared.text
+      : connection !== null ? statusLabel(connection.status) : shared.text;
+    const shownAccount = connection !== null && accountOf(connection) !== null ? accountOf(connection) : shared.account;
     mount.appendChild(el(doc, 'p', 'bo-muted',
-      connection !== null && accountOf(connection) !== null
-        ? `${entry.label} · ${accountOf(connection)} · ${badge}`
+      shownAccount !== null
+        ? `${entry.label} · ${shownAccount} · ${badge}`
         : `${entry.label} · ${badge}`));
-    if (!available) {
-      mount.appendChild(el(doc, 'p', 'empty',
-        'Nessun adattatore composto per questo canale: non si può collegare qui.'));
-      // No row, no roster, no row-dependent sections: a stale connection row
-      // must never surface an account, a key, or an outbox promise the list
-      // honestly hides and the wizard cannot create. Declared consumers stay:
-      // they need no row.
+    if (!configurable) {
+      // Nothing to configure here: the plain note, the declared consumers
+      // (they need no row) and the way back. No connection key, no
+      // roster, no outbox promise the composition cannot keep.
+      mount.appendChild(el(doc, 'p', 'empty', shared.note ?? NOT_AVAILABLE_NOTE));
       renderConsumers(mount, channel);
-      const back = el(doc, 'a', undefined, 'Torna ai connettori');
-      back.setAttribute('href', '#/connettori');
-      back.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      const row = el(doc, 'p', undefined);
-      row.appendChild(back);
+      const row = el(doc, 'p', 'bo-connector-actions');
+      if (typeof shared.manageRoute === 'string') row.appendChild(routeButton('Apri il Profilo', shared.manageRoute));
+      else if (shared.state === 'da-collegare' && typeof shared.connectRoute === 'string') {
+        row.appendChild(routeButton('Collega', shared.connectRoute, 'cta'));
+      }
+      row.appendChild(routeButton('Torna ai connettori', '#/connettori'));
       mount.appendChild(row);
       return;
     }
@@ -817,21 +873,11 @@ export function createConnectorDetailView(deps) {
     renderConsumers(mount, channel);
     const row = el(doc, 'p', undefined);
     if (connection === null) {
-      const go = el(doc, 'a', undefined, 'Collega in 3 passi');
-      go.setAttribute('href', '#/connettori');
-      go.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      row.appendChild(go);
+      // Theme buttons, like the list's Collega (ui-btn-cta): never the
+      // browser's base link style (backlog:a55e4c5336dd).
+      row.appendChild(routeButton('Collega in 3 passi', '#/connettori', 'cta'));
     } else {
-      const open = el(doc, 'a', undefined, 'Apri il flusso di collegamento');
-      open.setAttribute('href', '#/connettori');
-      open.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      row.appendChild(open);
+      row.appendChild(routeButton('Apri il flusso di collegamento', '#/connettori'));
     }
     mount.appendChild(row);
   }

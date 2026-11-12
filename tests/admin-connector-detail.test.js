@@ -22,11 +22,13 @@ import { fileURLToPath } from 'node:url';
 import {
   CONNECTOR_DETAIL_CHANNELS,
   catalogFor,
+  consumerLine,
   consumersForChannel,
   createConnectorDetailView,
   detailSections,
   directionOf,
   isConnectorDetailChannel,
+  italianUnitName,
   renewalSection,
   statusLabel,
 } from '../apps/admin/public/admin-connector-detail.js';
@@ -153,7 +155,71 @@ test('"skill che lo usano" shows only declared dependencies', () => {
   // The detail section carries the same record key as the other six.
   const sections = detailSections({ entry: ENTRY, connection: CONNECTION });
   assert.equal(sections.skillCheLoUsano.connectionKey, CONNECTION.connectionKey);
-  assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('appointments')));
+  assert.ok(sections.skillCheLoUsano.lines.some((line) => line.includes('Appuntamenti')));
+});
+
+// backlog:a55e4c5336dd — the connector page speaks the CRM reader's
+// Italian: consumer rows name units in Italian and never print edge codes,
+// and «Collega in 3 passi» wears the theme buttons.
+test('a55e4c53: consumer rows show Italian names, never codes', () => {
+  const banned = [
+    'propose-channel-reply',
+    'BO-F1-07',
+    'channels outbox',
+    'channel-sender@1',
+    'channel-template-send@1',
+    'queueTemplate',
+    'reply stop',
+    'outbox',
+    'inbox',
+    'Dipendenze dichiarate nel repo',
+  ];
+  assert.equal(italianUnitName('appointments'), 'Appuntamenti');
+  assert.equal(italianUnitName('sequences'), 'Sequenze');
+  assert.equal(italianUnitName('channels'), 'Canali');
+  assert.equal(italianUnitName('customer-data'), 'Dati clienti');
+  assert.equal(italianUnitName('skill:build-custom-domain-package'), 'Pacchetti su misura');
+  assert.equal(italianUnitName('appointments', 'Etichetta viva'), 'Etichetta viva');
+  assert.equal(italianUnitName('unknown-unit'), 'Funzione del prodotto');
+  for (const channel of CONNECTOR_DETAIL_CHANNELS) {
+    const entry = CONNECTOR_CATALOG.find((row) => row.channel === channel);
+    if (!entry) continue;
+    const sections = detailSections({
+      entry,
+      connection: { ...CONNECTION, channel, connectionKey: `k:${channel}` },
+    });
+    assert.ok(sections.skillCheLoUsano.lines.length > 0, `${channel}: consumer rows render`);
+    for (const line of sections.skillCheLoUsano.lines) {
+      for (const needle of banned) {
+        assert.ok(!line.includes(needle), `${channel}: no «${needle}» in «${line}»`);
+      }
+    }
+    // The Italian name of every declared unit reaches the line.
+    for (const row of consumersForChannel(channel)) {
+      assert.ok(
+        sections.skillCheLoUsano.lines.some((line) => line.includes(consumerLine(row, italianUnitName))),
+        `${channel}: «${row.unit}» renders its Italian row`,
+      );
+    }
+  }
+});
+
+test('a55e4c53: «Collega in 3 passi» wears the theme buttons', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ connectors: [] }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: () => {},
+  });
+  await view.render('whatsapp');
+  await flush();
+  const go = mount.findAll('a').find((node) => node.textContent === 'Collega in 3 passi');
+  assert.ok(go, 'the 3-step link renders when nothing is connected');
+  const cls = go.getAttribute('class') ?? '';
+  assert.ok(cls.includes('ui-btn-cta'), `the link wears the theme call-to-action («${cls}»)`);
 });
 
 function stubClient({ connectors = [CONNECTION], adapters = [{ channel: 'whatsapp', name: 'whatsapp-cloud', version: 1 }], units = [], calls = [], catalogError = null, profile = null, channels = true, grants = [], renewed = [] } = {}) {
@@ -232,27 +298,67 @@ test('the space comes from the selected space, never from a row field', () => {
 test('without a composed adapter the detail promises no connection', async () => {
   const doc = createFakeDocument();
   const mount = createMount(doc);
-  // A stale channel-connection row exists, but the list hides it as
-  // non-disponibile: the detail must mirror that, not the raw row.
+  // backlog:e381c48581fa: no row, no adapter: nothing here connects it,
+  // said in plain words, never «Nessun adattatore composto».
   const view = createConnectorDetailView({
     doc,
     mount,
-    client: stubClient({ adapters: [], connectors: [CONNECTION] }),
+    client: stubClient({ adapters: [], connectors: [] }),
     storage: { getItem: () => 'presti', setItem: () => {} },
     navigate: () => {},
   });
   await view.render('whatsapp');
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('Non disponibile qui'));
-  assert.ok(text.includes('Nessun adattatore composto'));
+  assert.ok(text.includes('WhatsApp · Non ancora disponibile'));
+  assert.ok(text.includes('Questo canale non si può ancora collegare da Accordo.'));
+  assert.ok(!text.includes('Nessun adattatore'), 'no technical jargon');
+  assert.ok(!text.includes('Non disponibile qui'));
   assert.ok(!text.includes('Collega in 3 passi'));
-  assert.ok(!text.includes('+390200000001'), 'stale account stays hidden');
-  assert.ok(!text.includes('presti:whatsapp'), 'stale connection key stays hidden');
-  assert.ok(!text.includes('outbox del canale con ricevuta'), 'no outbox promise without an adapter');
-  assert.ok(!text.includes('Altri collegamenti'), 'no roster without an adapter');
   // Declared consumers need no row and stay visible.
   assert.ok(text.includes('Skill e pacchetti che lo usano'));
+});
+
+// backlog:e381c48581fa (giro UX 11/11, punto 31): WhatsApp read ✓ in
+// Personalizzazione, «Collegato» on Profilo and «in attesa del primo
+// evento» in Stato sync, but its detail said «Non disponibile qui ·
+// Nessun adattatore composto per questo canale». A linked channel the
+// composition does not configure is «Collegato» here too, with a plain note.
+test('e381c48581fa: a linked channel without an adapter reads Collegato with a plain note', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount(doc);
+  const calls = [];
+  const navigated = [];
+  const profileRow = { connectionKey: 'profile:whatsapp', channel: 'whatsapp', account: '+390200000001', status: 'active' };
+  const view = createConnectorDetailView({
+    doc,
+    mount,
+    client: stubClient({ adapters: [], connectors: [profileRow], calls }),
+    storage: { getItem: () => 'presti', setItem: () => {} },
+    navigate: (hash) => navigated.push(hash),
+  });
+  await view.render('whatsapp');
+  await flush();
+  const text = mount.textContent;
+  assert.ok(text.includes('WhatsApp · +390200000001 · Collegato'), 'the same state as the other screens');
+  assert.ok(text.includes('i messaggi arrivano nelle schede dei clienti'), 'what the link does, in plain words');
+  assert.ok(text.includes('Si gestisce dal Profilo'), 'where it is managed');
+  for (const jargon of ['Non disponibile qui', 'Nessun adattatore', 'adattatore composto']) {
+    assert.ok(!text.includes(jargon), `no «${jargon}» for the user`);
+  }
+  assert.ok(!text.includes('profile:whatsapp'), 'no connection key');
+  assert.ok(!text.includes('outbox del canale con ricevuta'), 'no outbox promise without an adapter');
+  assert.ok(!text.includes('Collega in 3 passi'), 'a linked channel offers no Collega');
+  const buttons = mount.findAll('a');
+  const back = buttons.find((node) => node.textContent === 'Torna ai connettori');
+  assert.ok(back, 'the way back is there');
+  assert.match(back.getAttribute('class') ?? '', /\bui-btn\b/, 'Torna ai connettori wears the /bo button');
+  const profilo = buttons.find((node) => node.textContent === 'Apri il Profilo');
+  assert.ok(profilo, 'a profile link leads to Profilo');
+  profilo.dispatch('click', { preventDefault() {} });
+  back.dispatch('click', { preventDefault() {} });
+  assert.ok(navigated.includes('#/profilo'), 'Apri il Profilo navigates there');
+  assert.ok(navigated.includes('#/connettori'), 'Torna ai connettori navigates back');
 });
 
 test('several accounts on one channel all stay visible', async () => {

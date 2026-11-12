@@ -11,7 +11,9 @@ import { loadFixCount, settingsTabs } from './admin-shell.js';
  * per product with its source, active flag and current prices — plus the
  * Stripe connection state for this space, the enforced price rules read
  * from the schema, a confirm-gated "Aggiungi prodotto" creation over the
- * existing `POST /api/catalog/products` route, and confirm-gated edits of
+ * existing `POST /api/catalog/products` route, a "✦ Aggiungi con l'AI"
+ * voice that drafts the same creation from one sentence (same route, same
+ * confirmation — no new backend surface), and confirm-gated edits of
  * prices and flags over the existing `POST /api/catalog/...` routes (no new
  * backend surface).
  * Rules unchanged from the rest of the Admin: every value renders as text
@@ -86,6 +88,59 @@ export function parseEuroToCents(raw) {
 }
 
 /**
+ * One sentence of backoffice free text becomes one product aisle: the first
+ * euro amount reads as the price, a trailing "a <word>" ("a lezione",
+ * "al mese") reads as the unit, everything else reads as the name. The
+ * code is the upper-cased slug of the name, the currency is always EUR,
+ * the category stays empty (the phrase names none — the manual form owns
+ * corrections). Deterministic and offline: no worker round-trip, so it
+ * works before the OpenAI key arrives and spends nothing.
+ * Fail-closed: anything without a usable name or without a euro amount
+ * reads `{ error }` with the reason in Italian, never a half draft.
+ * @param {unknown} phrase
+ */
+const AI_SENTENCE_MAX_LENGTH = 280;
+
+export function draftProductFromSentence(phrase) {
+  const text = String(phrase ?? '').trim().replace(/\s+/g, ' ');
+  if (text === '') {
+    return { error: 'Scrivi una frase che descriva il prodotto: nome, prezzo in euro e unità, per esempio «Lezione di prova 15 euro a lezione».' };
+  }
+  if (text.length > AI_SENTENCE_MAX_LENGTH) {
+    return { error: 'Una frase sola, non un documento: tienila sotto i 280 caratteri.' };
+  }
+  const priceMatch = /(\d+(?:[.,]\d{1,2})?)\s*(€|euro)\b|€\s*(\d+(?:[.,]\d{1,2})?)/i.exec(text);
+  if (!priceMatch) {
+    return { error: 'Non ho trovato un prezzo: aggiungi un importo in euro, per esempio «15 euro».' };
+  }
+  const cents = parseEuroToCents(priceMatch[1] ?? priceMatch[3]);
+  if (cents === null) {
+    return { error: 'Il prezzo deve essere un numero non negativo con al massimo due decimali.' };
+  }
+  const before = text.slice(0, priceMatch.index);
+  const after = text.slice(priceMatch.index + priceMatch[0].length);
+  const unitMatch = /^\s*(?:all[o']|alla|al|a|per)\s+([A-Za-zà-ÿ][A-Za-zà-ÿ'’]{1,23})/i.exec(after);
+  let unit = null;
+  let rest = after;
+  if (unitMatch) {
+    unit = unitMatch[1].toLowerCase();
+    rest = after.slice(unitMatch[0].length);
+  }
+  let name = `${before} ${rest}`.replace(/\s+/g, ' ').trim()
+    .replace(/^(?:a|al|alla|allo|di|da|per|con|in|su|euro|€)\b[\s.,;:]*/i, '')
+    .replace(/[\s.,;:]*\b(a|al|alla|allo|di|da|per|con|in|su|euro|€)\.?$/i, '')
+    .trim();
+  if (name === '') {
+    return { error: 'Non ho trovato un nome: aggiungi come si chiama il prodotto, per esempio «Lezione di prova 15 euro a lezione».' };
+  }
+  const sku = name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  if (sku === '') {
+    return { error: 'Non riesco a ricavare un codice dal nome: scrivilo con lettere o numeri.' };
+  }
+  return { draft: { name, sku, category: null, currency: 'EUR', unit, cents } };
+}
+
+/**
  * The single one-time flat component body the manual create form posts.
  * One builder, one route, one review shape (MEM_ACC_REUSE).
  */
@@ -109,12 +164,10 @@ export function buildCreateBody({ sku, name, category, currency, unit, cents }) 
   };
 }
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, submissions?: any, storage?: any, toast?: (message: string, error?: boolean) => void, onAskAi?: (screenId: string, description: string) => void}} deps */
+/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, submissions?: any, storage?: any}} deps */
 export function createCatalogView(deps) {
   const { doc, mount } = deps;
   const { client } = deps;
-  const toast = deps.toast ?? (() => {});
-  const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
   const submissions = deps.submissions ?? createSubmissionController({
     storage: deps.storage ?? (typeof globalThis.localStorage === 'undefined' ? memoryStorage() : globalThis.localStorage),
     transport: (path, options) => client.request(path, {
@@ -784,25 +837,94 @@ export function createCatalogView(deps) {
   }
 
   /**
-   * "✦ Aggiungi con l'AI": no sentence parser here (supervisor arbitration
-   * on #516 round 2). The voice opens the BO-F0-04 assistant panel with the
-   * product catalog as its context — the same `onAskAi` seam as «Chiedi
-   * all'AI» on the customer card — and the creation passes through the
-   * assistant's confirmation. Nothing is ever sent from this screen: no
-   * input, no POST, so there is no stale snapshot to confirm.
+   * "✦ Aggiungi con l'AI": one sentence in, one draft out. The voice opens
+   * a text field (this was the 07/11 NON PASSA: the button opened no field
+   * to write in); "Proponi" turns the sentence into a product draft with
+   * `draftProductFromSentence` — deterministic and offline, no worker
+   * round-trip — and the draft shows for confirmation. Only "Conferma"
+   * writes, through the same `buildCreateBody` POST and the same
+   * reconcile-on-uncertain-outcome as the manual form, so the two voices
+   * never disagree about what the server validates; "Annulla" writes
+   * nothing. Nothing is ever sent before Conferma.
+   * DECISION (to be confirmed): deterministic local draft instead of a
+   * worker round-trip — it works before the OpenAI key arrives (none is
+   * configured yet), spends nothing and adds no backend surface; the
+   * assistant bar stays the path for free questions once the key arrives.
    */
-  function renderAiCreateForm() {
-    const wrap = el('div', 'catalog-ai-wrap');
-    const openButton = el('button', 'catalog-ai-open', '\u2726 Aggiungi con l\u2019AI');
-    openButton.setAttribute('title', 'Chiedi all\u2019assistente di creare un prodotto del catalogo (\u2318K)');
+  function renderAiCreateForm(knownProductIds, filters = {}) {
+    const wrap = el('div', 'catalog-create-wrap');
+    const openButton = el('button', 'catalog-ai-open', '✦ Aggiungi con l’AI');
+    openButton.setAttribute('title', 'Descrivi il prodotto in una frase: la bozza si rivede prima di salvare.');
+    const formBox = el('div', 'catalog-create-form');
+    const formError = el('p', 'field-error', '');
     openButton.addEventListener('click', () => {
-      if (onAskAi) {
-        onAskAi('catalogo', 'Catalogo prodotti: voglio creare un prodotto, ti incollo i dettagli.');
-      } else {
-        toast('Apri la barra AI (\u2318K) e descrivi il prodotto che vuoi creare.');
-      }
+      while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+      formBox.appendChild(el('label', 'catalog-create-label', 'Descrivi il prodotto in una frase'));
+      const input = el('input');
+      input.setAttribute('name', 'ai-phrase');
+      input.setAttribute('aria-label', 'Descrivi il prodotto in una frase');
+      input.setAttribute('placeholder', 'Lezione di prova 15 euro a lezione');
+      formBox.appendChild(input);
+      const propose = el('button', undefined, 'Proponi');
+      propose.addEventListener('click', () => {
+        formError.textContent = '';
+        const outcome = draftProductFromSentence(input.value);
+        if (!outcome || outcome.error || !outcome.draft) {
+          formError.textContent = (outcome && outcome.error)
+            ?? 'Non ho capito la frase: riprova con nome, prezzo in euro e unità.';
+          return;
+        }
+        const draft = outcome.draft;
+        const submitted = {
+          sku: draft.sku,
+          name: draft.name,
+          category: draft.category,
+          currency: draft.currency,
+          unit: draft.unit,
+          cents: draft.cents,
+        };
+        while (formBox.firstChild) formBox.removeChild(formBox.firstChild);
+        const review = el('div', 'catalog-review');
+        review.appendChild(el('p', undefined, `Creare ${draft.name} (${draft.sku}) a ${money(draft.cents, draft.currency)}?`));
+        review.appendChild(el('p', 'catalog-change', `Categoria: ${draft.category ?? '—'}`));
+        review.appendChild(el('p', 'catalog-change', `Unità: ${draft.unit ?? '—'}`));
+        review.appendChild(el('p', 'muted', 'Bozza dalla frase: controlla i dati, solo «Conferma» scrive il prodotto.'));
+        const yes = el('button', undefined, 'Conferma');
+        const no = el('button', undefined, 'Annulla');
+        no.addEventListener('click', async () => { await renderTable(); });
+        yes.addEventListener('click', async () => {
+          yes.disabled = true;
+          try {
+            await submissions.submit({
+              path: '/api/catalog/products',
+              method: 'POST',
+              body: buildCreateBody(submitted),
+            });
+            await renderTable();
+          } catch (error) {
+            if (error && typeof error === 'object' && error.code === 'COMMIT_OUTCOME_UNKNOWN') {
+              if (await reconcileUncertainCreation(knownProductIds, filters, submitted)) {
+                await renderTable();
+                return;
+              }
+              formError.textContent = 'Esito incerto: ricarica il catalogo e controlla se il prodotto è stato creato prima di riprovare.';
+              review.appendChild(formError);
+              return;
+            }
+            formError.textContent = error?.message ?? 'Creazione fallita';
+            review.appendChild(formError);
+            yes.disabled = false;
+          }
+        });
+        review.appendChild(yes);
+        review.appendChild(no);
+        formBox.appendChild(review);
+      });
+      formBox.appendChild(propose);
+      formBox.appendChild(formError);
     });
     wrap.appendChild(openButton);
+    wrap.appendChild(formBox);
     return wrap;
   }
 
@@ -907,8 +1029,9 @@ export function createCatalogView(deps) {
     page.appendChild(renderStripeBlock(summary));
     const loaded = table.products;
     const createBar = el('div', 'catalog-create-bar');
-    createBar.appendChild(renderCreateForm(new Set(loaded.map((product) => product?.productId)), { category, active, source }));
-    createBar.appendChild(renderAiCreateForm());
+    const knownProductIds = new Set(loaded.map((product) => product?.productId));
+    createBar.appendChild(renderCreateForm(knownProductIds, { category, active, source }));
+    createBar.appendChild(renderAiCreateForm(knownProductIds, { category, active, source }));
     page.appendChild(createBar);
 
     const filters = el('div', 'catalog-filters');

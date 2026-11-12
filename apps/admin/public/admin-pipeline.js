@@ -10,8 +10,8 @@
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
 // Search plus the Referente, Creata and Stati pills filter both views
-// client-side; "Azzera filtri" resets them. Apri navigates to the offer
-// detail page (#/offerte/<id>) — the card never expands in place. The
+// client-side; "Azzera filtri" resets them. Apri opens the offer panel over
+// the board (Dan 11/11) — the card never expands in place. The
 // summary (count + per-currency totals) and the forecast always describe the
 // filtered set. The forecast is a declared heuristic — won and paid at face
 // value plus 60% of the open ones — labeled as a stima, never a commitment.
@@ -26,18 +26,30 @@
 // to a won or lost stage — from Sposta or a drop — never posts straight:
 // it reveals the card's Conferma panel (Persa adds the mandatory reason
 // input) and only Conferma posts. The Lista rows are read-only; moves
-// happen on Kanban cards. Apri navigates to the offer detail page
-// (#/offerte/<id>), where its three commercial facts (importo, chiusura,
-// referente) are read and edited through PATCH.
+// happen on Kanban cards. Apri opens a side panel over the board (the
+// composer window of the scheda): offer, customer, value, stage, Cambia
+// fase and the links to the scheda cliente and the full offer page
+// (#/offerte/<id>, where importo, chiusura and referente are edited through
+// PATCH). Closing it (×, Esc, a click outside) never re-renders the board,
+// so the scroll stays where it was.
+//
+// Drag placeholder (Dan 11/11): while a card flies, the column under the
+// pointer shows a dashed slot as tall as the card, at the top — where the
+// card really lands: the list reads `updated_at desc` and a move bumps it.
+// There is no stored position yet, so the source column offers no slot (a
+// reorder would not survive a reload). On drop the card moves into the slot
+// at once and waits there (aria-busy); a failure puts it back where it was
+// with the reason. Esc or a release outside a column only fires dragend,
+// which removes the slot: nothing moves.
 //
 // BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
 // C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { offerStageLabel } from './admin-labels.js';
+import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
 /** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
@@ -59,6 +71,24 @@ const MONTHS_IT = [
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
 
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Review #789: the sort key of a date column is the same Rome day the cell
+ * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
+ * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
+ * @param {unknown} value
+ */
+export function romeDayKey(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  return ROME_DAY_KEY.format(new Date(time));
+}
+
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
   if (typeof value !== 'string' || !value) return null;
@@ -77,6 +107,22 @@ function dayOf(value) {
 function ownerInitials(name) {
   const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
+ * The customer an offer is for, as the scheda names it (backlog:fb47ab99b6ee):
+ * the contact, else the company — never a placeholder company standing in
+ * for a contact. Null when the offer names nobody.
+ * @param {Record<string, any>} record
+ */
+export function customerOf(record) {
+  const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+  if (contact !== '') return contact;
+  const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  // «Senza azienda» is the scheda's placeholder company, not a customer —
+  // in any case or spacing (review #789).
+  const placeholder = company.toLocaleLowerCase('it').replace(/\s+/g, ' ') === 'senza azienda';
+  return company !== '' && !placeholder ? company : null;
 }
 
 /**
@@ -191,7 +237,7 @@ export function readStageConfirm(panel, target) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean, options?: {action?: {label: string, run: () => void}}) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -215,8 +261,14 @@ export function createPipelineBoard(deps) {
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
+  /** Lista sort (backlog:fb47ab99b6ee): the clicked header and its direction; null = server order. */
+  const listSort = { key: /** @type {string | null} */ (null), dir: /** @type {'asc' | 'desc'} */ ('asc') };
   /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, pipelines: [], records: [] };
+  /** The team as people (famiglia F5): names the referente, never its id. */
+  let people = [];
+  /** @param {unknown} owner */
+  const ownerText = (owner) => personLabel(owner, people) ?? 'Membro del team';
   /** Name of the pipeline the current filter state belongs to. A filter set
    * on pipeline A must never silently empty pipeline B after a switch. */
   let filteredPipeline = null;
@@ -233,8 +285,46 @@ export function createPipelineBoard(deps) {
     for (const column of columnNodes) toggleHook(column, 'drop-target', false);
   }
 
+  /**
+   * The card in flight (Dan 11/11): its id, source stage and height, set on
+   * dragstart and dropped on dragend. Null while nothing is dragged (or a
+   * drag comes from outside the board): columns then behave as before.
+   * @type {{ id: string, fromStage: string, height: number } | null}
+   */
+  let drag = null;
+  /** Record id → its card's Apri button, where closing the panel hands focus back. */
+  const openButtons = new Map();
+  /** Column → the node the slot sits before: the first card, or the empty line. */
+  const slotAnchors = new Map();
+  /** The dashed placeholder, one for the whole board, built on first use. */
+  let slot = null;
+  function dropSlot() {
+    if (!slot) {
+      slot = el(doc, 'div', { class: 'pipeline-drop-slot', attrs: { 'aria-hidden': 'true', 'data-drop-slot': 'true' } });
+    }
+    return slot;
+  }
+  /** Seat the placeholder at the top of `column`, as tall as the dragged card. */
+  function showSlot(column) {
+    const node = dropSlot();
+    const height = drag && drag.height > 0 ? Math.round(drag.height) : 0;
+    if (height > 0) node.setAttribute('style', `height: ${height}px`);
+    else node.removeAttribute('style');
+    const anchor = slotAnchors.get(column) ?? null;
+    if (node.parentNode === column && (anchor === null ? true : node.nextSibling === anchor)) return;
+    column.insertBefore(node, anchor && anchor.parentNode === column ? anchor : null);
+  }
+  /** Take the placeholder off the board (idempotent: drop and dragend both call it). */
+  function hideSlot() {
+    if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
+  }
+
   function clear() {
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    // The offer panel stays over the board while it reloads (Dan 11/11).
+    const keep = drawer ? drawer.node : null;
+    for (const child of [...mount.childNodes]) {
+      if (child !== keep) mount.removeChild(child);
+    }
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -248,6 +338,88 @@ export function createPipelineBoard(deps) {
       box.appendChild(button);
     }
     mount.appendChild(box);
+  }
+
+  /**
+   * Review #774 (P2): one lock per offer, shared by the card (Sposta, drop)
+   * and the Apri panel, and kept across re-renders and panel reopenings.
+   * 'flight' while the request runs; 'queued' once the server answered
+   * BO_CRM_PENDING, until the next board read says where the card is.
+   * @type {Map<string, 'flight' | 'queued'>}
+   */
+  const moveLocks = new Map();
+
+  /**
+   * The views of one offer that show a move: its card and, when open on the
+   * same offer, the panel. Each answers start / unconfirmed / fail.
+   * @param {string} id
+   */
+  function moveViewsOf(id) {
+    const views = [];
+    const card = cardNodes.get(id)?.view;
+    if (card) views.push(card);
+    if (drawer && drawer.recordId === id && drawer.moveView) views.push(drawer.moveView);
+    return views;
+  }
+
+  /**
+   * Run one stage move for every entry point (review #774, P2): the lock,
+   * «Spostamento in corso…», the bounded «Non ancora confermato» + Riprova
+   * once MOVE_PENDING_MS goes by without an answer, the toast, and the quiet
+   * board re-read. A queued move (BO_CRM_PENDING) stays locked: only a board
+   * read (Riprova) releases it, never a second POST.
+   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+   */
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
+    const id = String(recordId);
+    if (moveLocks.has(id)) return { busy: true };
+    moveLocks.set(id, 'flight');
+    for (const view of moveViewsOf(id)) view.start();
+    let settled = false;
+    void wait(MOVE_PENDING_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
+    });
+    try {
+      await postMove(pipeline, id, fromStage, toStage, reason);
+      settled = true;
+      moveLocks.delete(id);
+      // backlog:7b2203e69826: «Annulla» in the toast, like Trello — only
+      // between working stages: a won or lost offer never reopens (the
+      // server refuses TERMINAL_STAGE), so a closing move offers none.
+      const working = (key) => {
+        const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+        return type === 'open' || type === 'renewal';
+      };
+      const undoable = undo && working(fromStage) && working(toStage);
+      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            void runMove(pipeline, id, toStage, fromStage, undefined, {
+              undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+            });
+          },
+        },
+      } : undefined);
+      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      return { moved: true };
+    } catch (error) {
+      settled = true;
+      if (isMovePending(error)) {
+        // Still queued on the server: the outcome is unknown, never
+        // «non riuscito». The move stays locked (review #657): only
+        // Riprova, a board re-read, is offered — a second POST would
+        // queue a duplicate or meet a stale-stage refusal.
+        console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
+        moveLocks.set(id, 'queued');
+        for (const view of moveViewsOf(id)) view.unconfirmed();
+        return { pending: true };
+      }
+      moveLocks.delete(id);
+      const message = moveFailureText(error);
+      for (const view of moveViewsOf(id)) view.fail(message);
+      return { failed: true, message };
+    }
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
@@ -266,8 +438,15 @@ export function createPipelineBoard(deps) {
    * would 409 SAME_STAGE); drops onto a won or lost stage never post
    * directly — they reveal the card's Conferma panel (with the mandatory
    * reason input for lost), like the Sposta button.
+   *
+   * Dan 11/11: with the column at hand, a direct move seats the card where
+   * the placeholder was (the top of the column) before the write answers,
+   * marked as waiting; a failure puts it back in its old place and says why.
    */
-  async function handleDrop(pipeline, toStage, payload) {
+  async function handleDrop(pipeline, toStage, payload, column = null) {
+    // The slot only previews: whatever happens next, it leaves the board.
+    const slotWasIn = slot && slot.parentNode === column ? column : null;
+    hideSlot();
     let parsed;
     try {
       parsed = JSON.parse(payload);
@@ -299,13 +478,25 @@ export function createPipelineBoard(deps) {
     // as Sposta, so a queued move never reads as a failure.
     const controls = cardNodes.get(recordId);
     if (controls && typeof controls.move === 'function') {
-      await controls.move(toStage);
+      const card = controls.card;
+      const target = column ?? slotWasIn;
+      // Where the card was, to put it back on a failure.
+      const home = card && card.parentNode ? { parent: card.parentNode, next: card.nextSibling ?? null } : null;
+      if (card && target && typeof target.insertBefore === 'function') {
+        const anchor = slotAnchors.get(target) ?? null;
+        target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+      }
+      const outcome = await controls.move(toStage);
+      if ((outcome?.failed || outcome?.busy) && card && home && typeof home.parent.insertBefore === 'function') {
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+        if (outcome.failed) toast(outcome.message, true);
+      }
       return;
     }
     try {
       await postMove(pipeline, recordId, fromStage, toStage);
       toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-      await renderBoard(pipeline.name); // re-render: server state is the truth
+      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
     } catch (error) {
       toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
     }
@@ -315,10 +506,19 @@ export function createPipelineBoard(deps) {
    * @param {string | null} pipelineName null for the bare #/pipeline link
    *   (backlog 2a075e2d9250): the first composed pipeline, the same rule
    *   as the sidebar voice (buildShellNav).
+   * @param {{ quiet?: boolean }} [options] quiet: the re-read after a move —
+   *   the board stays on screen (the moved card already sits in its new place)
+   *   instead of «Caricamento…» for the seconds the read takes (giro UX 11/11:
+   *   on the pilot a read takes 2,5-4 s).
    */
-  async function renderBoard(pipelineName) {
+  async function renderBoard(pipelineName, { quiet = false } = {}) {
     const token = ++renderToken;
-    showMessage('Caricamento…');
+    // A panel the router took off the page (the view was left) never comes
+    // back on its own: only a reload of this same board keeps it.
+    // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
+    // the parent node itself — ask it whether it holds the panel.
+    if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
+    if (!quiet || !mount.firstChild) showMessage('Caricamento…');
     let pipeline;
     let records;
     let composed = [];
@@ -345,12 +545,25 @@ export function createPipelineBoard(deps) {
         ? `/api/opportunities?limit=${BOARD_LIMIT}`
         : `/api/modules/${encodeURIComponent(pipeline.module)}/records?limit=${BOARD_LIMIT}`;
       records = (await client.request(listPath)).items ?? [];
+      try {
+        const team = await client.request('/api/spine/memberships');
+        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
+      } catch (error) {
+        // The board renders without names: the referente reads as the
+        // operator typed it or «Membro del team», never a slug.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] team non leggibile', { code: error?.code ?? null });
+        }
+        people = [];
+      }
     } catch (error) {
       if (token !== renderToken) return;
       showMessage(humanReadError(error, { failed: 'La pipeline non si è potuta leggere. Riprova più tardi.' }), { retry: () => renderBoard(pipelineName) });
       return;
     }
     if (token !== renderToken) return;
+    // An offer panel of another board never survives a switch.
+    if (drawer && drawer.pipelineName !== pipeline.name) closeOfferDrawer({ refocus: false });
     if (filteredPipeline !== pipeline.name) {
       // New pipeline: drop the previous board's filters so a stage, owner
       // or creation interval from pipeline A cannot silently empty pipeline B.
@@ -359,8 +572,13 @@ export function createPipelineBoard(deps) {
       state.owner = '';
       state.stage = '';
       state.created = '';
+      // Review #789: the Lista sort is part of the board's view state too.
+      listSort.key = null;
+      listSort.dir = 'asc';
     }
     cached = { pipeline, pipelines: composed, records };
+    // A fresh read is the truth a queued move waited for: it releases it.
+    for (const [id, lock] of [...moveLocks]) if (lock === 'queued') moveLocks.delete(id);
     // A fresh server read may have moved the records: a pending Conferma
     // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
@@ -372,6 +590,8 @@ export function createPipelineBoard(deps) {
     clear();
     cardNodes.clear();
     columnNodes.length = 0;
+    slotAnchors.clear();
+    openButtons.clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
     const stageKeys = new Set(pipeline.stages.map((stage) => stage.key));
@@ -461,6 +681,17 @@ export function createPipelineBoard(deps) {
       panel.appendChild(drift);
     }
     mount.appendChild(panel);
+    // The offer panel lives over the board: a re-render (a filter, a move)
+    // brings it back with the fresh record, or closes it when the offer
+    // left the board.
+    if (drawer) {
+      const fresh = records.find((candidate) => String(candidate.id) === drawer.recordId);
+      if (!fresh || fresh.pipelineKey !== pipeline.name) closeOfferDrawer({ refocus: false });
+      else {
+        if (!mount.contains(drawer.node)) mount.appendChild(drawer.node);
+        if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
+      }
+    }
     return panel;
   }
 
@@ -681,10 +912,10 @@ export function createPipelineBoard(deps) {
     toolbar.appendChild(renderFilterMenu({
       key: 'owner',
       label: 'Referente',
-      valueText: state.owner || 'Tutti',
+      valueText: state.owner ? ownerText(state.owner) : 'Tutti',
       filterLabel: 'Filtra per referente',
       current: state.owner,
-      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: owner }))],
+      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: ownerText(owner) }))],
       onPick: (picked) => { state.owner = picked; },
     }));
     toolbar.appendChild(renderFilterMenu({
@@ -816,18 +1047,21 @@ export function createPipelineBoard(deps) {
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
     const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
     for (const record of others) {
-      const item = el(doc, 'li');
+      // Backlog 169cd4bc988c: one row per offer in the /bo dress — its name
+      // opens its page, then who it is for (never «Senza azienda») and its
+      // stato capitalised («Proposta», never the bare «proposta»).
+      const item = el(doc, 'li', { class: 'pipeline-off-item' });
       const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
       const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
-      const stage = offerStageLabel(pipelines, record);
-      const text = stage ? `${name} · ${stage}` : name;
       if (id === null) {
-        item.appendChild(el(doc, 'span', { text }));
+        item.appendChild(el(doc, 'span', { class: 'pipeline-off-name', text: name }));
       } else {
-        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
-        link.textContent = text;
-        item.appendChild(link);
+        item.appendChild(el(doc, 'a', { class: 'pipeline-off-name', text: name, attrs: { href: `#/offerte/${encodeURIComponent(id)}` } }));
       }
+      const customer = offerCustomer(record);
+      const stage = upperFirst(offerStageLabel(pipelines, record));
+      const facts = [customer?.name ?? null, stage].filter((part) => typeof part === 'string' && part !== '');
+      if (facts.length > 0) item.appendChild(el(doc, 'span', { class: 'pipeline-off-meta', text: ` · ${facts.join(' · ')}` }));
       list.appendChild(item);
     }
     if (offPipeline > others.length) {
@@ -915,9 +1149,9 @@ export function createPipelineBoard(deps) {
     // without exchange rates, so the risk line shows only when every valued
     // open offer shares one currency (Codex P2 on #467).
     const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
-      ? riskiest.owner
-      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
-        ? riskiest.companyName
+      ? ownerText(riskiest.owner)
+      : openCurrencies.size === 1 && customerName(riskiest)
+        ? customerName(riskiest)
         : null;
     if (riskName) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
@@ -927,27 +1161,50 @@ export function createPipelineBoard(deps) {
 
   /**
    * Read-only Lista table over the same filtered records (moves stay on Kanban).
-   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
-   * state pill with its dot, the value, the stage probability, the expected
-   * close, the creation day and the referente (BO-F6-10 C20). Values are set
-   * through textContent/setAttribute only, never innerHTML.
+   * Headers follow the prototype order (BO-F6-10 C19) plus Cliente
+   * (backlog:fb47ab99b6ee); every row shows the state pill with its dot, the
+   * value, the stage probability, the expected close, the creation day and the
+   * referente by the person's name (BO-F6-10 C20). Dates read «11 nov 2026».
+   * Each header sorts the list (click again to reverse), like a spreadsheet;
+   * the sort lives in the view and survives filters. Values are set through
+   * textContent/setAttribute only, never innerHTML.
    */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
-      headRow.appendChild(el(doc, 'th', { text: label }));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    const stageRank = new Map(pipeline.stages.map((stage, index) => [stage.key, index]));
+    const columns = listColumns(stageOf, stageRank);
+    for (const column of columns) {
+      const active = listSort.key === column.key;
+      const th = el(doc, 'th', {
+        attrs: { 'aria-sort': active ? (listSort.dir === 'asc' ? 'ascending' : 'descending') : 'none', 'data-sort-key': column.key },
+      });
+      const button = el(doc, 'button', {
+        class: 'pipeline-sort',
+        text: column.label,
+        attrs: { type: 'button', 'data-action': 'sort-list', 'data-sort': column.key },
+      });
+      button.addEventListener('click', () => {
+        if (listSort.key === column.key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else {
+          listSort.key = column.key;
+          listSort.dir = 'asc';
+        }
+        renderAll(renderToken);
+      });
+      th.appendChild(button);
+      headRow.appendChild(th);
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
     // card — the name is the link (keyboard, new tab), the whole row clicks.
     const detailed = pipeline.module === 'opportunity';
-    for (const record of visible) {
+    for (const record of sortedForList(visible, columns)) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       const name = String(record.name ?? record.id);
@@ -975,14 +1232,15 @@ export function createPipelineBoard(deps) {
       } else {
         row.appendChild(el(doc, 'td', { text: name }));
       }
+      row.appendChild(el(doc, 'td', { text: customerOf(record) ?? '—' }));
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—' }));
       body.appendChild(row);
     }
     table.appendChild(body);
@@ -993,6 +1251,47 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
+  /**
+   * The Lista columns: label, sort key and the value each one sorts by
+   * (null sorts last whatever the direction, like a spreadsheet's blanks).
+   * @param {Map<string, any>} stageOf @param {Map<string, number>} stageRank
+   */
+  function listColumns(stageOf, stageRank) {
+    const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim().toLocaleLowerCase('it') : null);
+    return [
+      { key: 'name', label: 'Offerta', value: (record) => text(record.name) },
+      { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
+      { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
+      { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
+      { key: 'probability', label: 'Probabilità', value: (record) => stageProbability(stageOf.get(record.pipelineStage)) },
+      { key: 'close', label: 'Chiusura', value: (record) => romeDayKey(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => romeDayKey(record.createdAt) },
+      {
+        key: 'owner', label: 'Referente',
+        value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
+      },
+    ];
+  }
+
+  /** The visible records in the chosen Lista order; the server order without a sort. */
+  function sortedForList(visible, columns) {
+    const column = columns.find((candidate) => candidate.key === listSort.key);
+    if (!column) return visible;
+    const sign = listSort.dir === 'desc' ? -1 : 1;
+    return visible
+      .map((record, index) => ({ record, index, value: column.value(record) }))
+      .sort((left, right) => {
+        if (left.value === null && right.value === null) return left.index - right.index;
+        if (left.value === null) return 1;
+        if (right.value === null) return -1;
+        const order = typeof left.value === 'number' && typeof right.value === 'number'
+          ? left.value - right.value
+          : String(left.value).localeCompare(String(right.value), 'it');
+        return order === 0 ? left.index - right.index : sign * order;
+      })
+      .map((entry) => entry.record);
+  }
+
   /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
   function renderStagePill(stage, stageKey) {
     const pill = el(doc, 'span', { class: 'pill' });
@@ -1001,11 +1300,16 @@ export function createPipelineBoard(deps) {
     return pill;
   }
 
+  /** A stage's probability when it is a real percentage (0-100), else null: one rule for the cell and its sort. */
+  function stageProbability(stage) {
+    const probability = stage?.probability;
+    return typeof probability === 'number' && probability >= 0 && probability <= 100 ? probability : null;
+  }
+
   /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
   function probabilityText(stage) {
-    const probability = stage?.probability;
-    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
-    return `${probability}%`;
+    const probability = stageProbability(stage);
+    return probability === null ? '—' : `${probability}%`;
   }
 
   /**
@@ -1076,30 +1380,40 @@ export function createPipelineBoard(deps) {
     // can paint the dashed outline; the dragged card is attenuated the same way.
     columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
+      // Dan 11/11: the source column takes no drop — a reorder would not
+      // survive a reload (no stored position). Without preventDefault the
+      // browser shows «not allowed» and a release there moves nothing.
+      if (drag && drag.fromStage === stage.key) return;
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
+      if (drag) showSlot(column);
     });
     column.addEventListener('dragleave', (event) => {
       // Entering a child card still hovers this column: only a true exit
       // unmarks it, otherwise the marker flickers while crossing children.
       if (event?.relatedTarget && column.contains(event.relatedTarget)) return;
       toggleHook(column, 'drop-target', false);
+      if (slot && slot.parentNode === column) hideSlot();
     });
     column.addEventListener('drop', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       unmarkDropTargets();
       const payload = event?.dataTransfer?.getData?.('text/plain') ?? '';
-      void handleDrop(pipeline, stage.key, payload);
+      void handleDrop(pipeline, stage.key, payload, column);
     });
     // Test hook: drive a drop without a real DataTransfer.
-    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload);
+    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload, column);
 
     if (!records.length) {
-      column.appendChild(el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" }));
+      const empty = el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" });
+      column.appendChild(empty);
+      slotAnchors.set(column, empty);
       return column;
     }
-    for (const record of records) {
-      column.appendChild(renderCard(pipeline, stage, record, token));
+    for (const [index, record] of records.entries()) {
+      const card = renderCard(pipeline, stage, record, token);
+      if (index === 0) slotAnchors.set(column, card);
+      column.appendChild(card);
     }
     return column;
   }
@@ -1111,15 +1425,20 @@ export function createPipelineBoard(deps) {
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-    card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
+    // backlog:7b2203e69826: the customer the offer is for — the contact,
+    // else the company — never «Senza azienda».
+    card.appendChild(el(doc, 'p', { class: 'card-company', text: customerName(record) ?? '—' }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
+      // backlog:7b2203e69826: the initials name the person — on hover and
+      // for a screen reader («Referente: Guido Presti»).
+      const who = `Referente: ${ownerText(record.owner)}`;
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
-        text: ownerInitials(record.owner),
-        attrs: { title: record.owner },
+        text: ownerInitials(ownerText(record.owner)),
+        attrs: { title: who, 'aria-label': who },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
@@ -1131,16 +1450,28 @@ export function createPipelineBoard(deps) {
       card.appendChild(el(doc, 'p', { class: 'card-reason', text: String(record.closeReason) }));
     }
     card.addEventListener('dragstart', (event) => {
+      // A card whose move is still being written stays put.
+      if (card.getAttribute('aria-busy') === 'true') {
+        if (typeof event?.preventDefault === 'function') event.preventDefault();
+        return;
+      }
       event?.dataTransfer?.setData?.('text/plain', JSON.stringify({ id: record.id, fromStage: stage.key }));
+      if (event?.dataTransfer && 'effectAllowed' in event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+      const height = Number(box?.height ?? card.offsetHeight ?? 0);
+      drag = { id: String(record.id), fromStage: stage.key, height: Number.isFinite(height) ? height : 0 };
       toggleHook(card, 'dragging', true);
     });
     card.addEventListener('dragend', () => {
+      // Drop, Esc or a release outside a column: the slot and the marks go.
+      drag = null;
+      hideSlot();
       toggleHook(card, 'dragging', false);
       unmarkDropTargets();
     });
 
-    // Backlog ef92f728: Apri navigates to the offer detail page
-    // (#/offerte/<id>) — the card never expands in place. Only the
+    // Dan 11/11: Apri opens the offer panel over the board — the card never
+    // expands in place and the board stays where it was. Only the
     // opportunity board offers it: a generated staged module has its own
     // record screen behind its rows.
     const detailed = pipeline.module === 'opportunity';
@@ -1148,14 +1479,25 @@ export function createPipelineBoard(deps) {
       const open = el(doc, 'button', {
         class: 'small secondary',
         text: 'Apri',
-        attrs: { type: 'button', 'data-action': 'open-offer' },
+        attrs: { type: 'button', 'data-action': 'open-offer', 'aria-haspopup': 'dialog' },
       });
-      const go = () => {
-        if (typeof deps.navigate === 'function') deps.navigate(`#/offerte/${encodeURIComponent(String(record.id))}`);
-      };
+      openButtons.set(String(record.id), open);
+      const go = () => openOfferDrawer(pipeline, String(record.id), open);
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
+      // backlog:7b2203e69826: the whole card opens the panel, like a Trello
+      // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
+      // click, and a click that ends a text selection stays on the board.
+      card.setAttribute('data-openable', 'true');
+      card.addEventListener('click', (event) => {
+        const target = event?.target ?? null;
+        if (target && typeof target.closest === 'function'
+          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+        const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+        if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+        go();
+      });
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1195,47 +1537,42 @@ export function createPipelineBoard(deps) {
       yes: confirmYes, no: confirmNo, error: confirmError,
     } = confirmPanel;
 
-    let busy = false;
-    const doPost = async (toStage, reason) => {
-      if (busy) return;
-      busy = true;
-      moveButton.disabled = true;
-      moveButton.setAttribute('aria-busy', 'true');
-      confirmYes.disabled = true;
-      errorNode.textContent = '';
-      errorNode.setAttribute('class', 'field-error hidden');
-      confirmError.textContent = '';
-      confirmError.setAttribute('class', 'field-error hidden');
-      showStatus(MOVE_IN_FLIGHT, false);
-      let settled = false;
-      void wait(MOVE_PENDING_MS).then(() => {
-        if (!settled) showStatus(MOVE_UNCONFIRMED, true);
-      });
-      try {
-        await postMove(pipeline, record.id, stage.key, toStage, reason);
-        settled = true;
-        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-        await renderBoard(pipeline.name); // re-render: server state is the truth
-      } catch (error) {
-        settled = true;
-        if (isMovePending(error)) {
-          // Still queued on the server: the outcome is unknown, never
-          // «non riuscito». The move stays locked (review #657): only
-          // Riprova, a board re-read, is offered — a second POST would
-          // queue a duplicate or meet a stale-stage refusal.
-          console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
-          showStatus(MOVE_UNCONFIRMED, true);
-          return;
-        }
-        busy = false;
-        moveButton.disabled = false;
-        moveButton.setAttribute('aria-busy', 'false');
-        confirmYes.disabled = false;
-        showStatus('', false);
-        errorNode.textContent = moveFailureText(error);
-        errorNode.setAttribute('class', 'field-error');
-      }
+    const id = String(record.id);
+    /** Dan 11/11: the card itself shows the wait, wherever the move began. */
+    const markCardBusy = (on) => {
+      card.setAttribute('aria-busy', on ? 'true' : 'false');
+      moveButton.disabled = on;
+      moveButton.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmYes.disabled = on;
     };
+    const cardView = {
+      start() {
+        markCardBusy(true);
+        errorNode.textContent = '';
+        errorNode.setAttribute('class', 'field-error hidden');
+        confirmError.textContent = '';
+        confirmError.setAttribute('class', 'field-error hidden');
+        showStatus(MOVE_IN_FLIGHT, false);
+      },
+      unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
+      fail(message) {
+        markCardBusy(false);
+        showStatus('', false);
+        errorNode.textContent = message;
+        errorNode.setAttribute('class', 'field-error');
+      },
+    };
+    // A card painted while its offer still has a move running (a filter, a
+    // reopened panel) shows the same wait and stays locked.
+    const lock = moveLocks.get(id);
+    if (lock) {
+      markCardBusy(true);
+      showStatus(lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT, lock === 'queued');
+    }
+    /**
+     * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+     */
+    const doPost = (toStage, reason) => runMove(pipeline, record.id, stage.key, toStage, reason);
     const confirm = async () => {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
@@ -1251,7 +1588,7 @@ export function createPipelineBoard(deps) {
       renderAll(renderToken);
     };
     const submit = async () => {
-      if (busy) return;
+      if (moveLocks.has(id)) return;
       errorNode.textContent = '';
       errorNode.setAttribute('class', 'field-error hidden');
       const toStage = select.value;
@@ -1268,13 +1605,17 @@ export function createPipelineBoard(deps) {
     controls.appendChild(label);
     controls.appendChild(select);
     controls.appendChild(moveButton);
-    controls.appendChild(errorNode);
-    controls.appendChild(statusNode);
-    controls.appendChild(retryButton);
     card.appendChild(controls);
+    // Dan 11/11: the wait, the failure and Riprova sit on the card itself,
+    // outside the keyboard-only «Sposta in» row (visually hidden to the
+    // mouse), so a dropped card shows them too.
+    card.appendChild(errorNode);
+    card.appendChild(statusNode);
+    card.appendChild(retryButton);
     card.appendChild(confirmBox);
     cardNodes.set(String(record.id), {
-      select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      card, select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      view: cardView,
       move: (toStage) => doPost(toStage, undefined),
     });
     card.__move = submit; // test hook
@@ -1303,6 +1644,257 @@ export function createPipelineBoard(deps) {
     controls.select.value = toStage;
     showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
+  }
+
+  /**
+   * The open offer panel (Dan 11/11): the composer window of the scheda
+   * (`bo-scheda-composer`, dark head, ✕) over the board. One at a time.
+   * @type {null | { node: any, body: any, title: any, close: any, recordId: string, pipelineName: string, opener: any, paintedFrom: any, moveView?: any, detach: () => void }}
+   */
+  let drawer = null;
+
+  /** Scheda cliente of the offer: the contact when named, else its company. */
+  function customerHref(record) {
+    const contactId = typeof record?.contactId === 'string' && record.contactId !== '' ? record.contactId : null;
+    if (contactId) return `#/customer-card/contact/${encodeURIComponent(contactId)}`;
+    const companyId = typeof record?.companyId === 'string' && record.companyId !== '' ? record.companyId : null;
+    return companyId ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null;
+  }
+
+  /** The customer's name as the scheda shows it: the contact, else the company. */
+  function customerName(record) {
+    const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+    if (contact !== '') return contact;
+    const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+    // «Senza azienda» is the scheda's placeholder company, not a customer.
+    return company !== '' && company !== 'Senza azienda' ? company : null;
+  }
+
+  /**
+   * Apri on a card: the offer panel over the board. Opening never
+   * re-renders the board, closing never does either, so the scroll stays.
+   * @param {any} pipeline @param {string} recordId @param {any} opener
+   */
+  function openOfferDrawer(pipeline, recordId, opener) {
+    const record = cached.records.find((candidate) => String(candidate.id) === recordId);
+    if (!record) return;
+    closeOfferDrawer({ refocus: false });
+    const node = el(doc, 'div', {
+      class: 'bo-scheda-composer bo-pipeline-offer',
+      attrs: { role: 'dialog', 'aria-modal': 'false', 'data-offer-drawer': recordId },
+    });
+    const head = el(doc, 'div', { class: 'bo-composer-head' });
+    const title = el(doc, 'h4', { class: 'bo-composer-title' });
+    head.appendChild(title);
+    const close = el(doc, 'button', {
+      class: 'bo-composer-icon',
+      text: '✕',
+      attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'offer-drawer-close' },
+    });
+    close.addEventListener('click', () => closeOfferDrawer({ refocus: true }));
+    head.appendChild(close);
+    node.appendChild(head);
+    const body = el(doc, 'div', { class: 'bo-composer-body bo-pipeline-offer-body' });
+    node.appendChild(body);
+
+    const onKey = (event) => {
+      if (event?.key !== 'Escape' || !drawer || drawer.node !== node) return;
+      // Esc inside an open Conferma or a select is still a close: the panel
+      // is the only layer the pipeline opens over the board.
+      closeOfferDrawer({ refocus: true });
+    };
+    const onPointer = (event) => {
+      if (!drawer || drawer.node !== node) return;
+      // A panel the router took off the page only lets go of its listeners.
+      if (!node.parentNode) { closeOfferDrawer({ refocus: false }); return; }
+      const target = event?.target ?? null;
+      if (target && node.contains(target)) return;
+      closeOfferDrawer({ refocus: false });
+    };
+    node.addEventListener('keydown', onKey);
+    const docListens = typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function';
+    // pointerdown, not click: the click that opened the panel has already
+    // gone by, so it can never close it on the way up.
+    if (docListens) {
+      doc.addEventListener('keydown', onKey);
+      doc.addEventListener('pointerdown', onPointer);
+    }
+    drawer = {
+      node, body, recordId, pipelineName: pipeline.name, opener, paintedFrom: null,
+      title, close,
+      detach: () => {
+        if (docListens) {
+          doc.removeEventListener('keydown', onKey);
+          doc.removeEventListener('pointerdown', onPointer);
+        }
+      },
+    };
+    paintOfferDrawer(pipeline, record);
+    mount.appendChild(node);
+    if (typeof close.focus === 'function') close.focus();
+    node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
+  }
+
+  /** Close the offer panel; with `refocus`, focus goes back to its Apri. */
+  function closeOfferDrawer({ refocus }) {
+    if (!drawer) return;
+    const { node, opener, recordId, detach } = drawer;
+    drawer = null;
+    detach();
+    if (node.parentNode) node.parentNode.removeChild(node);
+    if (!refocus) return;
+    const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
+    if (live && typeof live.focus === 'function') live.focus();
+  }
+
+  /**
+   * The panel's content from one record: who, how much, which stage, the
+   * stage change (open stages only, the same move-stage action and Conferma
+   * as the card) and the way to the scheda cliente and the full offer.
+   * @param {any} pipeline @param {Record<string, any>} record
+   */
+  function paintOfferDrawer(pipeline, record) {
+    if (!drawer) return;
+    const { body, title, node } = drawer;
+    drawer.paintedFrom = record;
+    // A closed stage paints no Cambia fase: no stale move view either.
+    drawer.moveView = null;
+    const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
+    const customer = customerName(record);
+    title.textContent = name;
+    if (customer) title.appendChild(el(doc, 'span', { class: 'bo-composer-to-name', text: ` · ${customer}` }));
+    node.setAttribute('aria-label', `Offerta ${name}`);
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    const stage = pipeline.stages.find((candidate) => candidate.key === record.pipelineStage);
+    const facts = el(doc, 'div', { class: 'offer-facts' });
+    for (const [label, value] of [
+      ['Cliente', customer ?? '—'],
+      ['Valore', Number.isSafeInteger(record.valueCents) ? formatAmount(record.valueCents, record.currency) : '—'],
+      ['Fase', stageLabel(pipeline, record.pipelineStage)],
+      ['Chiusura prevista', dayOf(record.expectedCloseDate) ?? '—'],
+      ['Referente', typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—'],
+    ]) {
+      const cell = el(doc, 'p', { class: 'offer-fact' });
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-label', text: label }));
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-value', text: value }));
+      facts.appendChild(cell);
+    }
+    body.appendChild(facts);
+
+    if (stage && stage.type === 'open') body.appendChild(drawerStageChange(pipeline, record, stage));
+
+    const links = el(doc, 'div', { class: 'bo-pipeline-offer-links' });
+    const href = customerHref(record);
+    if (href) {
+      links.appendChild(el(doc, 'a', {
+        class: 'ui-btn ui-btn-primary ui-btn-small',
+        text: 'Apri scheda cliente',
+        attrs: { href, 'data-action': 'open-customer-card' },
+      }));
+    }
+    links.appendChild(el(doc, 'a', {
+      class: 'ui-btn ui-btn-secondary ui-btn-small',
+      text: 'Vedi tutta l’offerta',
+      attrs: { href: `#/offerte/${encodeURIComponent(String(record.id))}`, 'data-action': 'open-offer-page' },
+    }));
+    body.appendChild(links);
+  }
+
+  /** «Cambia fase» in the panel: the card's move, with its Conferma for won and lost. */
+  function drawerStageChange(pipeline, record, stage) {
+    const box = el(doc, 'div', { class: 'bo-pipeline-offer-move', attrs: { 'data-drawer-move': 'true' } });
+    const selectId = `drawer-move-${record.id}`;
+    box.appendChild(el(doc, 'label', { text: 'Cambia fase', attrs: { for: selectId } }));
+    const row = el(doc, 'div', { class: 'bo-pipeline-offer-move-row' });
+    const select = el(doc, 'select', { attrs: { id: selectId } });
+    for (const target of pipeline.stages) {
+      if (target.key === stage.key) continue;
+      select.appendChild(el(doc, 'option', { text: target.label ?? target.key, attrs: { value: target.key } }));
+    }
+    const go = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button', 'data-action': 'drawer-move' } });
+    row.appendChild(select);
+    row.appendChild(go);
+    box.appendChild(row);
+    const status = el(doc, 'small', { class: 'card-status hidden', attrs: { role: 'status', 'aria-live': 'polite' } });
+    const error = el(doc, 'small', { class: 'field-error hidden', attrs: { role: 'alert' } });
+    box.appendChild(status);
+    box.appendChild(error);
+    const confirmPanel = createStageConfirm(doc);
+    box.appendChild(confirmPanel.box);
+    const retry = el(doc, 'button', {
+      class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'drawer-move-retry' },
+    });
+    // Riprova re-reads the board, never a second POST (review #657).
+    retry.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    box.appendChild(retry);
+    let pending = null;
+    const id = String(record.id);
+    const say = (node, text) => {
+      node.textContent = text;
+      const base = node === status ? 'card-status' : 'field-error';
+      node.setAttribute('class', text ? base : `${base} hidden`);
+    };
+    const lockControls = (on) => {
+      go.disabled = on;
+      go.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmPanel.yes.disabled = on;
+    };
+    // Review #774 (P2): the panel shows the same move as the card — one lock
+    // per offer, the bounded «Non ancora confermato» with Riprova.
+    drawer.moveView = {
+      start() {
+        lockControls(true);
+        say(error, '');
+        say(status, MOVE_IN_FLIGHT);
+        retry.setAttribute('class', 'small secondary hidden');
+      },
+      unconfirmed() {
+        say(status, MOVE_UNCONFIRMED);
+        retry.setAttribute('class', 'small secondary');
+      },
+      fail(message) {
+        lockControls(false);
+        say(status, '');
+        retry.setAttribute('class', 'small secondary hidden');
+        say(error, message);
+      },
+    };
+    const lock = moveLocks.get(id);
+    if (lock) {
+      lockControls(true);
+      say(status, lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT);
+      if (lock === 'queued') retry.setAttribute('class', 'small secondary');
+    }
+    const post = async (toStage, reason) => {
+      const outcome = await runMove(pipeline, record.id, record.pipelineStage, toStage, reason);
+      // The board re-read repaints this panel; focus, whose button the
+      // repaint replaced, lands on its ✕.
+      if (outcome.moved && drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
+    };
+    go.addEventListener('click', () => {
+      if (moveLocks.has(id)) return;
+      const toStage = select.value;
+      const target = pipeline.stages.find((candidate) => candidate.key === toStage);
+      if (!target) return;
+      if (stageNeedsConfirm(target)) {
+        pending = target;
+        showStageConfirm(confirmPanel, String(record.name ?? 'questa offerta'), target);
+        return;
+      }
+      void post(toStage, undefined);
+    });
+    confirmPanel.yes.addEventListener('click', () => {
+      if (!pending) return;
+      const answer = readStageConfirm(confirmPanel, pending);
+      if (!answer.ok) return;
+      void post(pending.key, answer.reason);
+    });
+    confirmPanel.no.addEventListener('click', () => {
+      pending = null;
+      confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+    });
+    return box;
   }
 
   return { renderBoard };

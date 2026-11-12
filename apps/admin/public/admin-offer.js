@@ -10,10 +10,12 @@
 // same three commercial facts as the old card editor through
 // `/api/opportunities/:id`.
 
-import { elFor } from './admin-ui.js';
-import { formatAmount, humanReadError, italianDay } from './admin-core.js';
-import { parseEuroToCents } from './admin-catalog.js';
-import { auditActorLabel, offerStageLabel, stageMoveLabels, stageMoveOf } from './admin-labels.js';
+import { elFor, uiSelect } from './admin-ui.js';
+import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
+import { centsToField, euroToCents } from './admin-offer-panel.js';
+import { auditActorLabel, offerCustomer, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { offerStageMenu } from './admin-customer-card.js';
+import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -29,25 +31,26 @@ function dayOf(value) {
 function auditActionLabel(action) {
   if (action === 'opportunity.created') return 'Creata';
   if (action === 'opportunity.updated') return 'Offerta aggiornata';
-  if (action === 'opportunity.stage_changed') return 'Cambio di fase';
+  if (action === 'opportunity.stage_changed') return 'Cambio di stato';
   return 'Variazione registrata';
 }
 
 /**
  * Backlog c1649d1d: the history line of one audit entry — who, from which
  * stage to which, when. A state move reads `da <from> a <to>` in the
- * operator's Italian (a pipeline move `Cambio di stato`, a core move `Cambio
- * di fase`); a side without a label falls back to the generic line, never a
- * raw key. Anything that is not a move keeps the action label with the actor.
+ * operator's Italian; a side without a label falls back to the generic
+ * line, never a raw key. Anything that is not a move keeps the action label
+ * with the actor. Backlog 169cd4bc988c: one word for every move, the one
+ * the «Cambia stato» button uses — «Cambio di stato», never «di fase» —
+ * and states read capitalised («Proposta»).
  */
-function historyLine(entry, schema, record) {
+function historyLine(entry, schema, record, people = []) {
   const when = italianDay(entry?.createdAt) ?? '—';
-  const who = auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
+  const who = actorLabel(entry, record, people);
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
   if (move !== null && words !== null) {
-    const what = move.kind === 'pipeline' ? 'Cambio di stato' : 'Cambio di fase';
-    return { when, what: `${what} · da ${words.from} a ${words.to} · da ${who}` };
+    return { when, what: `Cambio di stato · da ${upperFirst(words.from)} a ${upperFirst(words.to)} · da ${who}` };
   }
   return { when, what: `${auditActionLabel(entry?.action)} · da ${who}` };
 }
@@ -97,14 +100,36 @@ const LIST_LIMIT = 200;
  * (backlog c1649d1d), corroborated by this deal's human display values (the
  * referente, the contact or the company the deal stores).
  */
-function actorLabel(entry, record) {
-  return auditActorLabel(entry, [record?.owner, record?.contactName, record?.companyName]);
+function actorLabel(entry, record, people = []) {
+  // A team member reads their profile name (famiglia F5): the roster first,
+  // then the deal's own display values — never a slug like «coach-guido».
+  const owner = personLabel(record?.owner, people);
+  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
+  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
 }
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void}} deps */
+/** The commercial schema block (same seam as the quote screen). */
+function commercialBlock(schema) {
+  return schema?.commercial ?? schema?.domains?.commercial;
+}
+
+/**
+ * Backlog 169cd4bc988c: «← Pipeline» goes back to the board the offer sits
+ * on; an offer outside any composed pipeline goes to the first board.
+ * @param {any} schema @param {any} record
+ */
+function pipelineHref(schema, record) {
+  const key = typeof record?.pipelineKey === 'string' ? record.pipelineKey : '';
+  const composed = Array.isArray(schema?.pipelines) && schema.pipelines.some((pipeline) => pipeline?.name === key);
+  return composed && /^[a-z][a-z0-9-]*$/.test(key) ? `#/pipelines/${key}` : '#/pipeline';
+}
+
+/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void}} deps */
 export function createOfferDetail(deps) {
   const { doc, mount, navigate = () => {} } = deps;
-  const { client } = bindAdminMutations(deps.client, deps);
+  const { client, submissions } = bindAdminMutations(deps.client, deps);
+  const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
 
   const el = elFor(doc);
   let renderToken = 0;
@@ -123,7 +148,7 @@ export function createOfferDetail(deps) {
    * (offerStageLabel in admin-labels.js).
    */
   function stageLabel(schema, record) {
-    return offerStageLabel(schema?.pipelines, record) ?? '—';
+    return upperFirst(offerStageLabel(schema?.pipelines, record)) ?? '—';
   }
 
   /**
@@ -179,6 +204,8 @@ export function createOfferDetail(deps) {
     let quotes;
     let auditItems;
     let auditUnreadable = false;
+    /** @type {Array<any>} */
+    let people = [];
     try {
       schema = await client.request('/api/schema');
       record = await readOffer(offerId);
@@ -196,6 +223,15 @@ export function createOfferDetail(deps) {
         auditItems = [];
         auditUnreadable = true;
       }
+      try {
+        // The team names the referente and the authors by their profile
+        // name (backlog:ddf7f416ad22); without it the deal still renders.
+        const team = await client.request('/api/spine/memberships');
+        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
+      } catch (error) {
+        logReadFailure('team', error);
+        people = [];
+      }
     } catch (error) {
       if (token !== renderToken) return;
       status.textContent = humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' });
@@ -204,14 +240,17 @@ export function createOfferDetail(deps) {
     if (token !== renderToken || !record || typeof record !== 'object') return;
     clear();
 
-    const customer = typeof record.contactName === 'string' && record.contactName !== ''
-      ? record.contactName
-      : (typeof record.companyName === 'string' && record.companyName !== '' ? record.companyName : null);
+    const customer = offerCustomer(record);
 
     // Design (Dan 06/11): the deal reads like the quote — a card with who it
     // is for, the stage and the value up front, the facts in one strip, the
     // quotes as cards and the history as a timeline.
     const page = el('div', 'bo-offer');
+    // Backlog 169cd4bc988c: never a dead end — the way back to the board.
+    const back = el('a', 'quote-back', '← Pipeline');
+    back.setAttribute('href', pipelineHref(schema, record));
+    back.setAttribute('data-action', 'offer-back');
+    page.appendChild(back);
     const sheet = el('article', 'bo-offer-sheet');
     page.appendChild(sheet);
     const hero = el('header', 'bo-offer-hero');
@@ -219,7 +258,18 @@ export function createOfferDetail(deps) {
     words.appendChild(el('p', 'kicker', 'Offerta'));
     words.appendChild(el('h2', 'bo-offer-title', String(record.name ?? 'Offerta')));
     const meta = el('p', 'bo-offer-meta');
-    if (customer) meta.appendChild(el('span', 'bo-offer-for', `Per ${customer}`));
+    if (customer !== null) {
+      // The customer opens their scheda; text only, a hostile name stays inert.
+      const forLine = el('span', 'bo-offer-for', 'Per ');
+      if (customer.href !== null) {
+        const link = el('a', 'bo-offer-customer', customer.name);
+        link.setAttribute('href', customer.href);
+        forLine.appendChild(link);
+      } else {
+        forLine.appendChild(el('span', undefined, customer.name));
+      }
+      meta.appendChild(forLine);
+    }
     meta.appendChild(el('span', 'bo-offer-stage', stageLabel(schema, record)));
     words.appendChild(meta);
     hero.appendChild(words);
@@ -235,10 +285,10 @@ export function createOfferDetail(deps) {
     const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
-      ['Referente', typeof record.owner === 'string' && record.owner !== '' ? record.owner : '—'],
-      ['Fase', stageLabel(schema, record)],
+      ['Referente', personLabel(record.owner, people) ?? '—'],
+      ['Stato', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
-      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record) : '—'],
+      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record, people) : '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {
@@ -250,17 +300,25 @@ export function createOfferDetail(deps) {
     sheet.appendChild(facts);
 
     // The three editable commercial facts (same PATCH contract as the
-    // pipeline card editor): importo, chiusura, referente.
+    // pipeline card editor): importo, chiusura, referente. Backlog
+    // 169cd4bc988c: beside them, «Cambia stato» on the same writes as the
+    // board and the scheda.
+    const actions = el('div', 'bo-offer-actions');
+    sheet.appendChild(actions);
+    paintStageMenu(actions, page, schema, record, offerId, token);
     const editWrap = el('div', 'offer-edit');
-    sheet.appendChild(editWrap);
-    paintEdit(editWrap, record, offerId, token);
+    actions.appendChild(editWrap);
+    paintEdit(editWrap, record, offerId, token, people);
     mount.appendChild(page);
 
     const quotesPanel = el('div', 'offer-quotes');
-    quotesPanel.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
+    const quotesHead = el('div', 'offer-quotes-head');
+    quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
+    quotesPanel.appendChild(quotesHead);
     if (quotes.rows.length === 0) {
       quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
     }
+    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token);
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
@@ -278,7 +336,7 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
     }
     for (const entry of auditItems) {
-      const line = historyLine(entry, schema, record);
+      const line = historyLine(entry, schema, record, people);
       const row = el('p', 'history-event');
       row.appendChild(el('span', 'history-when', line.when));
       row.appendChild(el('span', 'history-what', line.what));
@@ -287,8 +345,38 @@ export function createOfferDetail(deps) {
     page.appendChild(historyPanel);
   }
 
+  /**
+   * Backlog 169cd4bc988c: the referente is picked from the team — one
+   * option per person under their profile name, never free text. The stored
+   * id is kept when it belongs to that person; an id the team does not know
+   * stays the first option, so Salva never remaps it in silence. Without a
+   * readable team the field stays a text field and the form still works.
+   * @param {string} current @param {Array<any>} people @param {string} inputId
+   */
+  function ownerControl(current, people, inputId) {
+    if (people.length === 0) {
+      const input = el('input');
+      input.setAttribute('type', 'text');
+      input.value = current;
+      return { node: input, control: input };
+    }
+    const mine = personOf(current, people);
+    const options = [];
+    if (current === '') options.push({ value: '', label: 'Scegli una persona…' });
+    else if (mine === null) options.push({ value: current, label: personLabel(current, people) ?? 'Referente attuale' });
+    for (const person of people) {
+      const value = mine === person ? current : String(person.subjects[0] ?? '');
+      if (value !== '') options.push({ value, label: person.label });
+    }
+    const node = uiSelect(doc, { name: 'owner', value: current, options });
+    const control = node.querySelector('select');
+    control.setAttribute('id', inputId);
+    control.value = current;
+    return { node, control };
+  }
+
   /** Edit form (or its opener) for the three commercial facts. */
-  function paintEdit(wrap, record, offerId, token) {
+  function paintEdit(wrap, record, offerId, token, people = []) {
     while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
     const id = String(record.id);
     if (!editing) {
@@ -296,7 +384,7 @@ export function createOfferDetail(deps) {
       edit.setAttribute('type', 'button');
       const startEdit = () => {
         editing = true;
-        paintEdit(wrap, record, offerId, token);
+        paintEdit(wrap, record, offerId, token, people);
       };
       edit.addEventListener('click', startEdit);
       wrap.appendChild(edit);
@@ -315,6 +403,14 @@ export function createOfferDetail(deps) {
       const labelNode = el('label', undefined, label);
       labelNode.setAttribute('for', inputId);
       fieldRow.appendChild(labelNode);
+      if (name === 'owner') {
+        const { node, control } = ownerControl(value, people, inputId);
+        control.setAttribute('name', name);
+        fieldRow.appendChild(node);
+        form.appendChild(fieldRow);
+        inputs[name] = control;
+        return;
+      }
       const input = el('input');
       input.setAttribute('id', inputId);
       input.setAttribute('name', name);
@@ -324,8 +420,9 @@ export function createOfferDetail(deps) {
       form.appendChild(fieldRow);
       inputs[name] = input;
     };
+    // Backlog 169cd4bc988c: the amount reads in Italian («27.500,00»).
     addField('value', 'Valore EUR', {
-      value: Number.isSafeInteger(record.valueCents) ? (record.valueCents / 100).toFixed(2) : '',
+      value: Number.isSafeInteger(record.valueCents) && record.valueCents >= 0 ? centsToField(record.valueCents) : '',
     });
     addField('expiry', 'Chiusura', { type: 'date', value: dayOf(record.expectedCloseDate) ?? '' });
     addField('owner', 'Referente', { value: typeof record.owner === 'string' ? record.owner : '' });
@@ -334,12 +431,12 @@ export function createOfferDetail(deps) {
     const save = async (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       if (busy) return;
-      const cents = parseEuroToCents(inputs.value.value);
+      const cents = euroToCents(inputs.value.value);
       const owner = String(inputs.owner.value ?? '').trim();
       const expiry = String(inputs.expiry.value ?? '').trim();
       /** @type {Record<string, string>} */
       const failures = {};
-      if (cents === null) failures.value = "Il valore è obbligatorio, in euro (es. 250.00).";
+      if (cents === null) failures.value = 'Il valore è obbligatorio, in euro (es. 250,00).';
       if (owner === '') failures.owner = 'Il referente è obbligatorio.';
       if (expiry !== '' && Number.isNaN(Date.parse(expiry))) failures.expiry = 'La scadenza non è una data valida.';
       if (Object.keys(failures).length > 0) {
@@ -363,7 +460,7 @@ export function createOfferDetail(deps) {
     };
     const cancelEdit = () => {
       editing = false;
-      paintEdit(wrap, record, offerId, token);
+      paintEdit(wrap, record, offerId, token, people);
     };
     form.addEventListener('submit', save);
     const saveButton = el('button', undefined, 'Salva');
@@ -378,6 +475,232 @@ export function createOfferDetail(deps) {
     wrap.__cancelEdit = cancelEdit;
     wrap.__editInputs = inputs;
     wrap.__editError = errorNode;
+  }
+
+  /**
+   * Backlog 169cd4bc988c: «Cambia stato» on the offer page — the same menu
+   * as the scheda (offerStageMenu) and the same writes: a placed offer posts
+   * its pipeline's `move-stage`, an offer outside any pipeline the governed
+   * core workflow. Won and lost ask the board's own Conferma (a lost move
+   * needs its reason). Esc or a click elsewhere closes the menu; a refused
+   * move keeps the server's Italian error on screen; a move the server still
+   * holds reads neutral; a completed move re-reads the page.
+   * Review #786: an answer that lands after the page changed (another
+   * offer opened) never toasts, re-reads or navigates.
+   * @param {any} box @param {any} page @param {any} schema @param {any} record @param {string} offerId @param {number} token
+   */
+  function paintStageMenu(box, page, schema, record, offerId, token) {
+    const stageMenu = offerStageMenu(record, false, null, schema?.pipelines);
+    if (stageMenu === null) return;
+    const wrap = el('div', 'bo-offer-stage-menu');
+    const button = el('button', 'secondary', 'Cambia stato');
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-haspopup', 'menu');
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('data-action', 'change-offer-stage');
+    const menu = el('div', 'bo-offer-stage-voices hidden');
+    menu.setAttribute('role', 'menu');
+    const isClosed = () => String(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+    const setOpen = (open) => {
+      menu.setAttribute('class', open ? 'bo-offer-stage-voices' : 'bo-offer-stage-voices hidden');
+      button.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+    const close = (refocus = false) => {
+      if (isClosed()) return;
+      setOpen(false);
+      if (refocus && typeof button.focus === 'function') button.focus();
+    };
+    button.addEventListener('click', () => setOpen(isClosed()));
+    const onKey = (event) => {
+      if (event?.key !== 'Escape') return;
+      event.preventDefault?.();
+      close(true);
+    };
+    button.addEventListener('keydown', onKey);
+    menu.addEventListener('keydown', onKey);
+    page.addEventListener('click', (event) => {
+      const target = event?.target ?? null;
+      if (target !== null && typeof wrap.contains === 'function' && wrap.contains(target)) return;
+      close();
+    });
+    const stageError = el('small', 'field-error', '');
+    stageError.setAttribute('role', 'alert');
+    const stageStatus = el('small', 'bo-muted', '');
+    stageStatus.setAttribute('role', 'status');
+    let busy = false;
+    const move = async (voice, reason = null) => {
+      if (busy) return;
+      busy = true;
+      stageError.textContent = '';
+      stageStatus.textContent = '';
+      button.setAttribute('aria-busy', 'true');
+      try {
+        if (stageMenu.kind === 'pipeline') {
+          const input = { toStage: voice.key, fromStage: stageMenu.current };
+          if (reason) input.reason = reason;
+          await client.request(
+            `/api/modules/${encodeURIComponent(stageMenu.pipeline.module)}/records/${encodeURIComponent(stageMenu.id)}/actions/move-stage`,
+            { method: 'POST', body: JSON.stringify(input) },
+          );
+          if (token !== renderToken) return;
+          close();
+          toast(`Spostata in ${upperFirst(voice.label)}.`);
+        } else {
+          const result = await client.request(
+            `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
+            { method: 'POST', body: JSON.stringify({ targetStage: voice.key }) },
+          );
+          if (token !== renderToken) return;
+          close();
+          toast(result?.output?.outcome === 'approval_required'
+            ? 'Stato aggiornato: serve un\u2019approvazione'
+            : 'Stato aggiornato');
+        }
+        await renderOfferDetail(offerId);
+      } catch (error) {
+        if (token !== renderToken) return;
+        if (error?.code === 'BO_CRM_PENDING') {
+          close();
+          stageStatus.textContent = 'Non ancora confermato: ricarica la pagina tra poco.';
+          return;
+        }
+        const text = humanWriteError(error, { failed: 'Stato non aggiornato. Riprova più tardi.' });
+        stageError.textContent = text;
+        toast(text, true);
+      } finally {
+        busy = false;
+        button.setAttribute('aria-busy', 'false');
+      }
+    };
+    const confirmPanel = createStageConfirm(doc);
+    let confirmVoice = null;
+    const offerName = String(record.name ?? 'Offerta');
+    confirmPanel.yes.addEventListener('click', () => {
+      if (!confirmVoice) return;
+      const answer = readStageConfirm(confirmPanel, confirmVoice);
+      if (!answer.ok) return;
+      void move(confirmVoice, answer.reason ?? null);
+    });
+    confirmPanel.no.addEventListener('click', () => {
+      confirmVoice = null;
+      confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+    });
+    for (const voiceDef of stageMenu.voices) {
+      const label = upperFirst(voiceDef.label) ?? voiceDef.key;
+      const voice = el('button', 'bo-offer-stage-voice', label);
+      voice.setAttribute('type', 'button');
+      voice.setAttribute('role', 'menuitem');
+      voice.setAttribute('data-stage', voiceDef.key);
+      // Review #786: won and lost ask Conferma on every offer. A core move
+      // (outside any pipeline) asks it too; its governed workflow records
+      // no closing reason, so its Conferma asks none — never a reason that
+      // would be collected and then dropped.
+      const coreClosing = stageMenu.kind === 'core' && (voiceDef.key === 'won' || voiceDef.key === 'lost');
+      voice.addEventListener('click', () => {
+        if ((stageMenu.kind === 'pipeline' && stageNeedsConfirm(voiceDef)) || coreClosing) {
+          confirmVoice = coreClosing ? { ...voiceDef, type: 'core' } : voiceDef;
+          close();
+          showStageConfirm(confirmPanel, offerName, { ...confirmVoice, label });
+          return;
+        }
+        void move(voiceDef);
+      });
+      menu.appendChild(voice);
+    }
+    wrap.appendChild(button);
+    wrap.appendChild(menu);
+    wrap.appendChild(confirmPanel.box);
+    wrap.appendChild(stageStatus);
+    wrap.appendChild(stageError);
+    box.appendChild(wrap);
+  }
+
+  /**
+   * Backlog 169cd4bc988c: «Crea preventivo» on the offer — the same
+   * `create-quote` action as the quotes screen, on an active price book
+   * (the one in the offer's currency first). One book is one button; more
+   * books are a menu beside it; none is one honest line, never a dead
+   * button. The new quote opens where its lines are added.
+   * @param {any} head @param {any} panel @param {any} record @param {number} token
+   */
+  function paintCreateQuote(head, panel, record, token) {
+    const line = el('p', 'bo-muted offer-quote-create-line', '');
+    line.setAttribute('role', 'status');
+    void client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then((answer) => {
+      if (token !== renderToken) return;
+      const books = (Array.isArray(answer?.items) ? answer.items : [])
+        .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
+        .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
+      if (books.length === 0) {
+        line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
+        panel.appendChild(line);
+        return;
+      }
+      const bar = el('div', 'offer-quote-create');
+      let pickBook = () => books[0].id;
+      if (books.length > 1) {
+        const node = uiSelect(doc, {
+          name: 'priceBookId',
+          value: books[0].id,
+          options: books.map((book) => ({ value: book.id, label: `${String(book.name ?? 'Listino')} (${String(book.currency ?? '')})` })),
+        });
+        const select = node.querySelector('select');
+        select.setAttribute('aria-label', 'Listino del preventivo');
+        select.value = books[0].id;
+        pickBook = () => String(select.value ?? books[0].id);
+        bar.appendChild(node);
+      }
+      const create = el('button', 'primary', 'Crea preventivo');
+      create.setAttribute('type', 'button');
+      create.setAttribute('data-action', 'offer-create-quote');
+      let busy = false;
+      // One key per quote being created: a retry after an uncertain failure
+      // never opens a second quote; a refusal or another book frees it.
+      /** @type {null | {key: string, book: string}} */
+      let pending = null;
+      const offerId = String(record.id);
+      create.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        const book = pickBook();
+        if (pending === null || pending.book !== book) pending = { key: submissions.issueKey(), book };
+        create.setAttribute('disabled', 'disabled');
+        create.setAttribute('aria-busy', 'true');
+        line.textContent = '';
+        try {
+          const created = await client.request(
+            `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
+            { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
+          );
+          pending = null;
+          // Review #786: the page changed meanwhile — never pull the person
+          // away from the offer they opened since.
+          if (token !== renderToken) return;
+          const quoteId = created?.result?.quote?.id;
+          if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
+          toast('Preventivo creato: aggiungi le righe.');
+          navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
+        } catch (error) {
+          const status = typeof error?.status === 'number' ? error.status : 0;
+          if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+          if (token !== renderToken) return;
+          line.setAttribute('class', 'field-error offer-quote-create-line');
+          line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+        } finally {
+          busy = false;
+          create.removeAttribute('disabled');
+          create.setAttribute('aria-busy', 'false');
+        }
+      });
+      bar.appendChild(create);
+      head.appendChild(bar);
+      panel.appendChild(line);
+    }, (error) => {
+      if (token !== renderToken) return;
+      logReadFailure('price-books', error);
+      line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
+      panel.appendChild(line);
+    });
   }
 
   /**

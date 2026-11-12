@@ -43,6 +43,19 @@ export const SEQUENCE_STATUS_LABEL = Object.freeze({
   paused: 'In pausa',
 });
 
+/**
+ * The state chip the elenco and the dettaglio share (supervisor
+ * 2026-11-07.md:46, backlog:05e53e77: one class on both sides). The tint
+ * follows the state (backlog:bd9ae1482194, verifica 11/11): a Bozza is
+ * neutral ink, `ui-chip-plain`, never the WhatsApp green it wore before —
+ * the styles.css note on Sequenze says «draft is ink». Active and paused
+ * keep the accent tint they had.
+ * @param {unknown} status
+ */
+export function sequenceStatusChipClass(status) {
+  return `bo-seq-status ui-chip ${status === 'draft' ? 'ui-chip-plain' : 'ui-chip-wa'}`;
+}
+
 /** Enrollment states in the order the package publishes them. */
 export const ENROLLMENT_STATUS_LABEL = Object.freeze({
   active: 'Attiva',
@@ -432,7 +445,8 @@ export function buildSequenzaDettaglio({ sequence = null, steps = [], stepsFaile
   // The prototype's 3 KPI cards: `In corso` (active enrollments) and
   // `Risposte` (stopped at the first reply) counted from the rows just
   // read; `Call fissate` belongs to the appointments package, which this
-  // view cannot read, so it stays an honest dash — never invented.
+  // view cannot read, so it stays null and the dettaglio leaves that
+  // card out (backlog:bd9ae1482194) — never invented.
   const kpi = Object.freeze({
     inCorso: byStatus.get('active') ?? 0,
     risposte: byStatus.get('stopped-replied') ?? 0,
@@ -564,7 +578,21 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
       ? {}
       : { spaceId };
     const page = await readModulePage(client, 'sequence-step', { sequenceSourceKey, ...scoped });
-    return { rows: page.rows, failed: false };
+    if (page.rows.length > 0 || Object.keys(scoped).length === 0) {
+      return { rows: page.rows, failed: false };
+    }
+    // Pre-space rows (sequence-step revision 1 had no spaceId, so live steps
+    // created before space scoping carry spaceId null): the space-scoped read
+    // above misses them while the sequence itself is space-scoped. The
+    // sequenceSourceKey is globally unique, so a key-only retry is still
+    // space-safe and recovers those rows instead of painting a genuine zero.
+    try {
+      const retry = await readModulePage(client, 'sequence-step', { sequenceSourceKey });
+      return { rows: retry.rows, failed: false };
+    } catch (retryError) {
+      console.warn('bo-sequenze steps key-only retry unreadable:', retryError instanceof Error ? retryError.name : 'unknown', spaceId ?? '');
+      return { rows: page.rows, failed: true };
+    }
   } catch (error) {
     console.warn('bo-sequenze steps unreadable:', error instanceof Error ? error.name : 'unknown');
     return { rows: [], failed: true };
@@ -582,7 +610,9 @@ export async function loadSequenzaSteps(client, sequenceSourceKey, spaceId = nul
  * @param {unknown} status
  */
 export function sequenzaOfferedAction(status) {
-  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Attiva', confirm: 'Attivare questa sequenza? I passi dovuti possono partire.' });
+  // backlog:bd9ae1482194: a Bozza offers «Avvia la sequenza», not «Attiva»
+  // — beside the Bozza chip the bare word read as a second state.
+  if (status === 'draft') return Object.freeze({ action: 'activate', button: 'Avvia la sequenza', confirm: 'Avviare questa sequenza? I passi dovuti possono partire.' });
   if (status === 'paused') return Object.freeze({ action: 'activate', button: 'Riattiva', confirm: 'Riattivare questa sequenza? I passi dovuti possono partire.' });
   if (status === 'active') return Object.freeze({ action: 'pause', button: 'Metti in pausa', confirm: 'Mettere in pausa? Non parte più niente finché non la riattivi.' });
   return null;
@@ -622,7 +652,7 @@ export function renderSequenzeElenco(doc, sequences, enrollments, sends, selecte
     if (row.sourceKey !== '' && row.sourceKey === selectedKey) item.setAttribute('data-selected', 'true');
     const head = el(doc, 'div', 'bo-seq-head');
     head.appendChild(el(doc, 'p', 'bo-seq-name', row.name));
-    head.appendChild(el(doc, 'p', 'bo-seq-status', row.statusLabel));
+    head.appendChild(el(doc, 'p', sequenceStatusChipClass(row.status), row.statusLabel));
     item.appendChild(head);
     item.appendChild(el(doc, 'p', 'bo-seq-quando', row.quando));
     item.appendChild(el(doc, 'p', 'bo-seq-stats', row.stats));
@@ -656,7 +686,7 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
   const headCard = el(doc, 'div', 'bo-seq-card bo-seq-headcard');
   const headText = el(doc, 'div', 'bo-seq-headtext');
   headText.appendChild(el(doc, 'h3', undefined, detail.name));
-  headText.appendChild(el(doc, 'p', 'bo-seq-status', detail.statusLabel));
+  headText.appendChild(el(doc, 'p', sequenceStatusChipClass(detail.status), detail.statusLabel));
   const pills = el(doc, 'div', 'bo-seq-pills');
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-trigger', detail.pills.trigger));
   pills.appendChild(el(doc, 'p', 'bo-seq-pill bo-seq-pill-stop', detail.pills.stop));
@@ -687,20 +717,21 @@ export function renderSequenzaDettaglio(doc, detail, confirming, onAsk, onCancel
       headActions.appendChild(button);
     }
   }
-  // The prototype's 3 KPI cards under the detail, dressed like Reporting
+  // The prototype's KPI cards under the detail, dressed like Reporting
   // (owner 31/10): the same `metrics`/`metric` classes, the big number and a
-  // line below. `Call fissate` has no appointments read behind it, so it
-  // stays a dash with the reason said out loud — never invented.
+  // line below. A card with no read behind it is left out
+  // (backlog:bd9ae1482194): `Call fissate` has no appointments read yet, so
+  // it does not show — never a dash with a technical reason, never invented.
   const kpi = el(doc, 'div', 'metrics');
   const kpiCards = [
     ['In corso', detail.metrics.kpi.inCorso, 'persone dentro adesso'],
     ['Risposte', detail.metrics.kpi.risposte, 'ferme alla prima risposta'],
-    ['Call fissate', detail.metrics.kpi.callFissate, 'non lette in questa vista'],
-  ];
+    ['Call fissate', detail.metrics.kpi.callFissate, 'nate da questa sequenza'],
+  ].filter(([, value]) => value !== null && value !== undefined);
   for (const [label, value, sub] of kpiCards) {
     const card = el(doc, 'div', 'metric');
     card.appendChild(el(doc, 'span', undefined, label));
-    card.appendChild(el(doc, 'strong', undefined, value === null || value === undefined ? '—' : String(value)));
+    card.appendChild(el(doc, 'strong', undefined, String(value)));
     card.appendChild(el(doc, 'span', undefined, sub));
     kpi.appendChild(card);
   }
@@ -864,18 +895,27 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
    */
   function renderManualPanel() {
     const form = state.creating;
+    // backlog:c6759700e359: each field reads its own label above it (the
+    // system ui-field-row + ui-label), tied by for/id — never a label text
+    // beside the neighbouring menu, never a field without one.
+    const fieldRow = (text, id, control, wrap = control) => {
+      const row = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', text);
+      label.setAttribute('for', id);
+      control.setAttribute('id', id);
+      row.appendChild(label);
+      row.appendChild(wrap);
+      return row;
+    };
     const panel = el(documentNode, 'section', 'bo-seq-panel');
     panel.appendChild(el(documentNode, 'h3', undefined, 'Nuova sequenza'));
     if (form.error !== '') panel.appendChild(el(documentNode, 'p', 'bo-seq-create-error', form.error));
-    const nameLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Nome');
     const name = el(documentNode, 'input', 'ui-field', undefined);
     name.setAttribute('type', 'text');
     name.setAttribute('name', 'seq-name');
     name.value = form.name;
     name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
-    nameLabel.appendChild(name);
-    panel.appendChild(nameLabel);
-    const triggerLabel = el(documentNode, 'label', 'bo-seq-field-label', 'Quando parte');
+    panel.appendChild(fieldRow('Nome', 'bo-seq-new-name', name));
     const triggerWrap = uiSelect(documentNode, {
       name: 'seq-trigger',
       value: form.trigger,
@@ -883,11 +923,11 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     });
     const trigger = triggerWrap.querySelector('select');
     if (trigger) trigger.addEventListener('change', () => { form.trigger = String(trigger.value ?? ''); });
-    triggerLabel.appendChild(triggerWrap);
-    panel.appendChild(triggerLabel);
+    panel.appendChild(trigger ? fieldRow('Quando parte', 'bo-seq-new-trigger', trigger, triggerWrap) : triggerWrap);
     panel.appendChild(el(documentNode, 'h4', undefined, 'Passi'));
     form.steps.forEach((step, index) => {
       const row = el(documentNode, 'div', 'bo-seq-step-edit');
+      row.appendChild(el(documentNode, 'p', 'bo-seq-step-title', `Passo ${index + 1}`));
       const channelWrap = uiSelect(documentNode, {
         name: `seq-step-${index}-channel`,
         value: step.channel,
@@ -898,11 +938,10 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         channel.setAttribute('aria-label', `Passo ${index + 1}: canale`);
         channel.addEventListener('change', () => { step.channel = String(channel.value ?? ''); });
       }
-      row.appendChild(channelWrap);
+      row.appendChild(channel ? fieldRow('Canale', `bo-seq-new-step-${index}-channel`, channel, channelWrap) : channelWrap);
       // The wait reads labelled with its unit: a bare number («0») says
       // nothing about what it counts, so the label names both — attesa in
       // giorni — in plain sight, not only in the aria-label.
-      const waitLabel = el(documentNode, 'label', 'bo-seq-field-label', `Passo ${index + 1}: attesa (giorni)`);
       const wait = el(documentNode, 'input', 'ui-field', undefined);
       wait.setAttribute('type', 'number');
       wait.setAttribute('name', `seq-step-${index}-wait`);
@@ -914,15 +953,14 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
         const parsed = Number(String(wait.value ?? ''));
         step.wait = Number.isInteger(parsed) ? parsed : String(wait.value ?? '');
       });
-      waitLabel.appendChild(wait);
-      row.appendChild(waitLabel);
+      row.appendChild(fieldRow('Attesa (giorni)', `bo-seq-new-step-${index}-wait`, wait));
       const template = el(documentNode, 'input', 'ui-field', undefined);
       template.setAttribute('type', 'text');
       template.setAttribute('name', `seq-step-${index}-template`);
       template.setAttribute('aria-label', `Passo ${index + 1}: nome del messaggio`);
       template.value = step.template;
       template.addEventListener('input', () => { step.template = String(template.value ?? ''); });
-      row.appendChild(template);
+      row.appendChild(fieldRow('Messaggio', `bo-seq-new-step-${index}-template`, template));
       if (form.steps.length > 1) {
         const remove = uiButton(documentNode, {
           variant: 'secondary', label: 'Togli', attrs: { 'data-action': 'step-remove', 'data-index': String(index) },
@@ -1248,6 +1286,16 @@ export function createSequenzeView({ doc = null, mount, client, submissions, sto
     state.capped = data.capped;
     state.unavailable = data.unavailable;
     state.loaded = true;
+    // The prototype opens with a sequence already selected: with no explicit
+    // choice the first elenco row is selected, like the creation flows do
+    // (select-before-reload). The key reuses buildSequenzeElenco's rule —
+    // sourceKey, else the record id — never an invented key.
+    if (state.selectedKey === '' && state.available && state.sequences.length > 0) {
+      const first = state.sequences[0];
+      const firstKey = nonEmptyText(first?.sourceKey)
+        ?? (first?.id !== undefined && first?.id !== null ? String(first.id) : '');
+      if (firstKey !== '') state.selectedKey = firstKey;
+    }
     if (state.selectedKey !== '' && state.available) {
       const outcome = await loadSequenzaSteps(client, state.selectedKey, state.space);
       if (token !== renderToken) return;
