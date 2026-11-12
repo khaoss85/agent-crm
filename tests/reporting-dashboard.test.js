@@ -217,8 +217,8 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   const october = model.monthly.find((entry) => entry.month === '2026-10');
   assert.deepEqual([october.openCount, october.expectedMinor], [2, 14000]);
   assert.deepEqual([october.wonCount, october.wonMinor], [2, 14000]);
-  const september = model.monthly.find((entry) => entry.month === '2026-09');
-  assert.deepEqual([september.openCount, september.expectedMinor], [1, 2500]);
+  const november = model.monthly.find((entry) => entry.month === '2026-11');
+  assert.deepEqual([november.openCount, november.expectedMinor], [1, 6000]);
   assert.equal(model.monthly.length, 6);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   const alice = model.team.find((entry) => entry.owner === 'alice');
@@ -229,6 +229,22 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   assert.deepEqual([bob.openCount, bob.openMinor], [0, 0]);
   assert.deepEqual([bob.wonCount, bob.wonMinor], [1, 5000]);
   assert.equal(bob.winRateDisplay, '100%');
+});
+
+test('expected closures run from the selected period onward, never the past (backlog:b3d88f6e38ef)', (t) => {
+  const database = fixtureDatabase(t);
+  const model = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
+  assert.deepEqual(model.monthly.map((entry) => entry.month), [
+    '2026-10', '2026-11', '2026-12', '2027-01', '2027-02', '2027-03',
+  ]);
+  for (const entry of model.monthly) {
+    assert.ok(entry.month >= '2026-10', `no past bucket, found ${entry.month}`);
+  }
+  const november = model.monthly.find((entry) => entry.month === '2026-11');
+  assert.deepEqual([november.openCount, november.expectedMinor], [1, 6000]);
+  const october = model.monthly.find((entry) => entry.month === '2026-10');
+  assert.deepEqual([october.openCount, october.expectedMinor], [2, 14000]);
+  assert.deepEqual([october.wonCount, october.wonMinor], [2, 14000]);
 });
 
 test('team table recalculates with periodo: September differs from October', (t) => {

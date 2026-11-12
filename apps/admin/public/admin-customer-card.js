@@ -725,6 +725,77 @@ export function shownCompanyName(card) {
   return name;
 }
 
+/**
+ * backlog:2a214b66fe12 — the write applied to what the scheda shows, so
+ * the screen changes the moment the toast speaks. Each helper returns a new
+ * `loaded` object and never touches the one it reads; the re-read of the
+ * touched part replaces the copy with the server's answer right after.
+ */
+
+/** A just-saved note at the top of the cronologia. @param {any} loaded @param {any} saved @param {string} body */
+export function withNote(loaded, saved, body) {
+  const entries = loaded?.timeline?.entries;
+  if (!entries || !Array.isArray(entries.items)) return loaded;
+  const note = {
+    entry: 'note',
+    id: typeof saved?.id === 'string' && saved.id !== '' ? saved.id : `nota-${Date.now().toString(36)}`,
+    conversationId: null,
+    channel: null,
+    direction: null,
+    sync: null,
+    body: typeof saved?.body === 'string' ? saved.body : body,
+    teamAuthorId: typeof saved?.actorId === 'string' ? saved.actorId : null,
+    remoteHandle: null,
+    errorCode: null,
+    occurredAt: typeof saved?.occurredAt === 'string' ? saved.occurredAt : new Date().toISOString(),
+  };
+  return { ...loaded, timeline: { ...loaded.timeline, entries: { ...entries, items: [note, ...entries.items] } } };
+}
+
+/** The saved Nome, Cognome and Email on the card, the header and Dettagli. @param {any} loaded @param {{firstName: string, lastName: string, email: string}} typed */
+export function withContactDetails(loaded, typed) {
+  const name = [typed.firstName, typed.lastName].map((part) => String(part ?? '').trim()).filter(Boolean).join(' ');
+  const email = String(typed.email ?? '').trim();
+  const card = loaded?.card ? { ...loaded.card, ...(name !== '' ? { name } : {}), email: email === '' ? null : email } : loaded?.card;
+  const contact = loaded?.profile?.identity?.contact;
+  const profile = contact
+    ? { ...loaded.profile, identity: { ...loaded.profile.identity, contact: { ...contact, ...typed } } }
+    : loaded?.profile;
+  return { ...loaded, card, profile };
+}
+
+/** A just-created offer first among the profile's offers. @param {any} loaded @param {any} created */
+export function withOpportunity(loaded, created) {
+  const opportunities = loaded?.profile?.opportunities;
+  if (!created || typeof created !== 'object' || typeof created.id !== 'string'
+    || !opportunities || !Array.isArray(opportunities.items)) return loaded;
+  const items = [created, ...opportunities.items.filter((row) => row?.id !== created.id)];
+  return { ...loaded, profile: { ...loaded.profile, opportunities: { ...opportunities, available: true, items } } };
+}
+
+/**
+ * The moved stage on the offer and on the quotes made for it.
+ * @param {any} loaded @param {string} opportunityId @param {'pipeline' | 'core'} kind @param {string} stage
+ */
+export function withOfferStage(loaded, opportunityId, kind, stage) {
+  const profile = loaded?.profile;
+  if (!profile) return loaded;
+  const own = kind === 'pipeline' ? { pipelineStage: stage } : { stage };
+  const joined = kind === 'pipeline' ? { opportunityPipelineStage: stage } : { opportunityStage: stage };
+  const mapItems = (section, match, change) => (section && Array.isArray(section.items)
+    ? { ...section, items: section.items.map((row) => (match(row) ? { ...row, ...change } : row)) }
+    : section);
+  return {
+    ...loaded,
+    profile: {
+      ...profile,
+      opportunities: mapItems(profile.opportunities, (row) => row?.id === opportunityId, own),
+      quotes: mapItems(profile.quotes, (row) => row?.opportunityId === opportunityId
+        && (row.opportunityStage != null || row.opportunityPipelineStage != null), joined),
+    },
+  };
+}
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -875,13 +946,21 @@ export function createCustomerCardView(deps) {
     ? { value: null, error: null }
     : settled);
 
+  // backlog:2a214b66fe12: the reads one write can re-read alone. `load`
+  // uses the same three, so a section re-read is exactly the full read's.
+  const PART_READS = Object.freeze({
+    card: (encoded) => settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
+    timeline: (encoded) => settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
+    profile: (encoded) => settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
+  });
+
   async function load(resource, id) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
     const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw, schemaRaw] = await Promise.all([
-      settle(() => client.request(`/api/customer-hub/card/${encoded}`)),
-      settle(() => client.request(`/api/customer-hub/timeline/${encoded}`)),
-      settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
+      PART_READS.card(encoded),
+      PART_READS.timeline(encoded),
+      PART_READS.profile(encoded),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
@@ -2151,7 +2230,11 @@ export function createCustomerCardView(deps) {
         company: pick.company,
         spaceId: activeSpaceId(),
         toast,
-        onCreated: () => { renderCard(navCtx.resource, navCtx.id); },
+        // backlog:2a214b66fe12: the new offer shows at once, then only the
+        // profile (where the offer section reads) is read again.
+        onCreated: (created) => {
+          void refreshParts(navCtx.resource, navCtx.id, ['profile'], (loaded) => withOpportunity(loaded, created));
+        },
       });
     });
     row.appendChild(offer);
@@ -2177,7 +2260,9 @@ export function createCustomerCardView(deps) {
         toast,
         // Review #776 (P2): only while this customer is still on screen.
         onBooked: () => {
-          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void renderCard(navCtx.resource, navCtx.id);
+          // backlog:2a214b66fe12: the booking reads in the cronologia
+          // («Prossimo appuntamento»): only the cronologia is read again.
+          if (shownKey === `${navCtx.resource}/${navCtx.id}`) void refreshParts(navCtx.resource, navCtx.id, ['timeline']);
         },
       });
     });
@@ -2472,9 +2557,14 @@ export function createCustomerCardView(deps) {
           }),
         });
         detailsInFlight.delete(flightKey);
-        toast('Dati salvati');
         if (typeof restore === 'function') restore();
-        await renderCard(editCtx.resource, editCtx.id);
+        // backlog:2a214b66fe12: the new name and email show at once; then
+        // only the card and the profile are read again.
+        const typed = { firstName: firstInput.value, lastName: lastInput.value, email: emailInput.value };
+        const refreshed = refreshParts(editCtx.resource, editCtx.id, ['card', 'profile'],
+          (loaded) => withContactDetails(loaded, typed));
+        toast('Dati salvati');
+        await refreshed;
       } catch (err) {
         const refusal = detailsRefusalText(err);
         error.textContent = refusal;
@@ -2490,7 +2580,8 @@ export function createCustomerCardView(deps) {
         restore();
         return;
       }
-      await renderCard(editCtx.resource, editCtx.id);
+      // Nothing was written: the scheda comes back from what it shows.
+      await repaintShown(editCtx.resource, editCtx.id);
     });
     void card;
   }
@@ -2985,13 +3076,19 @@ export function createCustomerCardView(deps) {
         noteBusy = true;
         noteError.textContent = '';
         try {
-          await client.request('/api/customer-hub/notes', {
+          const written = noteInput.value;
+          const saved = await client.request('/api/customer-hub/notes', {
             method: 'POST',
-            body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: noteInput.value }),
+            body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body: written }),
           });
-          toast('Nota aggiunta');
           noteInput.value = '';
-          await renderCard(noteCtx.resource, noteCtx.id);
+          // backlog:2a214b66fe12: the note is in the cronologia the moment
+          // the toast says so; then only the cronologia is read again.
+          const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+            (loaded) => withNote(loaded, saved, written));
+          toast('Nota aggiunta');
+          mount.querySelector('input[name="noteBody"]')?.focus?.();
+          await refreshed;
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
           toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
@@ -3206,7 +3303,13 @@ export function createCustomerCardView(deps) {
               { method: 'POST', body: JSON.stringify(input) },
             );
             close();
+            // backlog:2a214b66fe12: the pill moves the moment the toast
+            // says so; then only card and profile are read again.
+            historyReads.delete(stageMenu.id);
+            const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
+              (loaded) => withOfferStage(loaded, stageMenu.id, 'pipeline', voice.key));
             toast(`Spostata in ${voice.label}.`);
+            await refreshed;
           } else {
             const result = await client.request(
               `/api/opportunities/${encodeURIComponent(stageMenu.id)}/stage`,
@@ -3215,12 +3318,17 @@ export function createCustomerCardView(deps) {
             close();
             // The stage route returns the workflow envelope
             // { runId, status, output }: the approval gate reads in
-            // output.outcome, never in a top-level outcome.
-            toast(result?.output?.outcome === 'approval_required'
+            // output.outcome, never in a top-level outcome. A move waiting
+            // for approval did not happen yet: nothing moves on screen.
+            const waiting = result?.output?.outcome === 'approval_required';
+            historyReads.delete(stageMenu.id);
+            const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
+              waiting ? null : (loaded) => withOfferStage(loaded, stageMenu.id, 'core', voice.key));
+            toast(waiting
               ? 'Stato aggiornato: serve un\u2019approvazione'
               : 'Stato aggiornato');
+            await refreshed;
           }
-          await renderCard(offerCtx.resource, offerCtx.id);
         } catch (error) {
           // Review #683: a move the server still holds (the pilot queue) is
           // not a failure — it reads neutral, like «Non ancora confermato»
@@ -3359,14 +3467,23 @@ export function createCustomerCardView(deps) {
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
     const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
-    void client.request('/api/spine/memberships').then(
-      (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
-      (error) => {
-        logHistoryFailure(error, 'scheda-stati-roster');
-        return [];
-      },
-    ).then((people) => client.request(auditPath).then(
-      (answer) => fill(answer?.items, people),
+    // backlog:2a214b66fe12: a repaint after a note or a Dettagli save reuses
+    // the history already read; a full re-read or a stage move reads it again.
+    let read = historyReads.get(targetId);
+    if (read === undefined) {
+      read = client.request('/api/spine/memberships').then(
+        (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
+        (error) => {
+          logHistoryFailure(error, 'scheda-stati-roster');
+          return [];
+        },
+      ).then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
+      historyReads.set(targetId, read);
+      // A failed read is not kept: the next paint asks again.
+      read.catch(() => { if (historyReads.get(targetId) === read) historyReads.delete(targetId); });
+    }
+    void read.then(
+      ({ items, people }) => fill(items, people),
       (error) => {
         // Review giro 1 (P2): the rejection cause reaches on-call, like the
         // detail does — area, code, name, space and status only, never
@@ -3374,7 +3491,7 @@ export function createCustomerCardView(deps) {
         logHistoryFailure(error);
         if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
       },
-    ));
+    );
   }
 
   // Terminal booking states, mirroring APPOINTMENT_TERMINAL in
@@ -3576,6 +3693,13 @@ export function createCustomerCardView(deps) {
   async function renderCard(resource, id) {
     const key = `${resource}/${id}`;
     const renderToken = ++cardRenderToken;
+    // A section re-read that starts while this full read is in flight is
+    // newer for its part: the full answer never paints over it.
+    // Review #787 (P2): a section re-read already in flight is older than
+    // this full read: it never paints over it.
+    for (const part of Object.keys(partSeq)) partSeq[part] += 1;
+    const startSeq = { ...partSeq };
+    historyReads.clear();
     if (key !== shownKey) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
@@ -3619,6 +3743,24 @@ export function createCustomerCardView(deps) {
       show(panel, key === shownKey ? key : null);
       return;
     }
+    if (lastShown !== null && lastShown.key === key) {
+      for (const part of Object.keys(partSeq)) {
+        if (partSeq[part] !== startSeq[part]) {
+          loaded = { ...loaded, [part]: lastShown.loaded[part], [`${part}Error`]: lastShown.loaded[`${part}Error`] };
+        }
+      }
+    }
+    lastShown = { key, resource, id, loaded };
+    paint(key, resource, id, loaded);
+    markRead(resource, id, loaded.timeline);
+  }
+
+  /**
+   * Builds the scheda from what was read (renderCard) or from what the
+   * scheda already shows plus one write (refreshParts): the typing in
+   * progress, the open windows, the filters and the scroll stay.
+   */
+  function paint(key, resource, id, loaded) {
     const {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
@@ -3631,6 +3773,13 @@ export function createCustomerCardView(deps) {
     const reloadEnrichment = () => client.request(enrichedPath).catch((error) => {
       if (error && error.status === 404) return null;
       throw error;
+    }).then((fresh) => {
+      // Review #787 (P2): what Aggiorna read is what the scheda now shows —
+      // a later repaint after a write keeps it, never the older copy.
+      if (lastShown !== null && lastShown.key === key) {
+        lastShown = { ...lastShown, loaded: { ...lastShown.loaded, enrichment: fresh, enrichmentError: null } };
+      }
+      return fresh;
     });
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
     if (key === shownKey && retainedDrafts !== null) {
@@ -3647,7 +3796,77 @@ export function createCustomerCardView(deps) {
     } finally {
       pendingDrafts = null;
     }
-    markRead(resource, id, timeline);
+  }
+
+  /** The «Storia stati» reads by offer id, shared by the repaints of one read. @type {Map<string, Promise<any>>} */
+  const historyReads = new Map();
+
+  /** What the scheda on screen was built from (backlog:2a214b66fe12). */
+  /** @type {{key: string, resource: string, id: string, loaded: any} | null} */
+  let lastShown = null;
+  /** One counter per part: only the newest re-read of a part paints. */
+  const partSeq = { card: 0, timeline: 0, profile: 0 };
+
+  /**
+   * backlog:2a214b66fe12 — after a write the scheda changes at once and
+   * re-reads only what the write touched. `patch` applies the write to what
+   * is on screen (the same moment the toast says it), then the named parts
+   * are read again — one or two reads instead of the eight of a full
+   * re-read — and the server's answer replaces the local copy. A failed
+   * re-read keeps the screen as it is: the write itself went through. With
+   * nothing on screen for this customer it falls back to the full re-read.
+   * @param {string} resource @param {string} id
+   * @param {Array<'card' | 'timeline' | 'profile'>} parts
+   * @param {((loaded: any) => any) | null} [patch]
+   */
+  async function refreshParts(resource, id, parts, patch = null) {
+    const key = `${resource}/${id}`;
+    if (lastShown === null || lastShown.key !== key || shownKey !== key) {
+      await renderCard(resource, id);
+      return;
+    }
+    if (typeof patch === 'function') {
+      lastShown = { ...lastShown, loaded: patch(lastShown.loaded) };
+      paint(key, resource, id, lastShown.loaded);
+    }
+    const asked = parts.map((part) => ({ part, seq: ++partSeq[part] }));
+    const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
+    const answers = await Promise.all(asked.map(({ part }) => PART_READS[part](encoded)));
+    if (lastShown === null || lastShown.key !== key || shownKey !== key) return;
+    let loaded = lastShown.loaded;
+    let changed = false;
+    asked.forEach(({ part, seq }, index) => {
+      if (seq !== partSeq[part]) return;
+      const answer = part === 'card' ? answers[index] : nullOn404(answers[index]);
+      if (answer.error) {
+        // Review #787 (P2): the write went through, the screen keeps it;
+        // the failed re-read is logged with its cause, never its payload.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          const error = answer.error;
+          console.error('[bo] scheda non riletta', {
+            area: `scheda-${part}`,
+            code: error?.code ?? null,
+            name: typeof error?.name === 'string' ? error.name : null,
+            spaceId: activeSpaceId(),
+            status: Number(error?.status ?? 0) || null,
+          });
+        }
+        return;
+      }
+      loaded = { ...loaded, [part]: answer.value, [`${part}Error`]: null };
+      changed = true;
+    });
+    if (!changed) return;
+    lastShown = { ...lastShown, loaded };
+    paint(key, resource, id, loaded);
+  }
+
+  /** The scheda again from what it shows, with no read (Annulla of a form). */
+  function repaintShown(resource, id) {
+    const key = `${resource}/${id}`;
+    if (lastShown === null || lastShown.key !== key || shownKey !== key) return renderCard(resource, id);
+    paint(key, resource, id, lastShown.loaded);
+    return Promise.resolve();
   }
 
   function buildAndShow(key, resource, id, {
