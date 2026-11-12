@@ -228,3 +228,30 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   assert.equal(byName(mount, 'start').value, '', 'the old slot never comes back');
   assert.equal(byName(mount, 'date').value, '');
 });
+
+// backlog:b0788e62ace6: the «Cliente» label stays once a customer is picked.
+test('form: the picked customer keeps its «Cliente» label, the search field too', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const storage = new Map();
+  const store = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) };
+  store.setItem('accordo.bo.customer-pick.appointment', JSON.stringify({ resource: 'contact', id: 'c1', name: 'Guido Presti' }));
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient(), storage: store, now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  const field = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-field');
+  assert.ok(field, 'the picked customer sits in a labelled field');
+  assert.equal(field.getAttribute('role'), 'group');
+  const label = field.findAll('span').find((node) => node.getAttribute('id') === field.getAttribute('aria-labelledby'));
+  assert.equal(label?.textContent, 'Cliente', 'the group is named «Cliente»');
+  assert.equal(field.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick')?.textContent, 'Guido Presti');
+  assert.ok(field.findAll('button').some((node) => node.textContent === 'Cambia cliente'), '«Cambia cliente» sits in the same field');
+  // «Cambia cliente» brings back the search field, still labelled.
+  field.findAll('button').find((node) => node.textContent === 'Cambia cliente').dispatch('click');
+  const search = byName(mount, 'customerSearch');
+  let node = search;
+  while (node && node.tagName !== 'LABEL') node = node.parentNode;
+  assert.equal(node?.findAll('span').find((span) => (span.getAttribute('class') ?? '').includes('cal-field-label'))?.textContent, 'Cliente');
+});

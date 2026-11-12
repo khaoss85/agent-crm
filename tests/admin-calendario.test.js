@@ -816,7 +816,7 @@ test('unsubmitted manual edits survive a week reload', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the pick survives the reload');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Bo'), 'the pick survives the reload');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 1);
 });
 
@@ -1057,13 +1057,13 @@ test('picking a customer names them and «Cambia cliente» searches again', asyn
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await pickCustomerByName(mount, 'Ada');
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Ada'), 'the pick names the customer');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Ada'), 'the pick names the customer');
   assert.equal(mount.querySelector('input[name="customerSearch"]'), null, 'no search field over a pick');
   clickButton(mount, 'Cambia cliente');
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(mount.querySelector('input[name="customerSearch"]'), 'the search returns after «Cambia cliente»');
   await pickCustomerByName(mount, 'Bo');
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the second pick wins');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Bo'), 'the second pick wins');
 });
 
 // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome.
@@ -2990,8 +2990,8 @@ test('a stashed appointment pick opens the manual form with the customer', async
   const mount = createMount();
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), storage, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
-  assert.ok(mount.textContent.includes('Cliente: Guido Presti'),
-    'the manual form starts with the picked customer named');
+  const picked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick');
+  assert.equal(picked?.textContent, 'Guido Presti', 'the manual form starts with the picked customer named');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'the pick is read once, never kept');
   // Without a pick the form stays closed with the name search, never a ghost.
@@ -3001,7 +3001,8 @@ test('a stashed appointment pick opens the manual form with the customer', async
     now: () => new Date('2026-10-23T06:00:00Z'),
   });
   await plainView.render();
-  assert.ok(!plain.textContent.includes('Cliente: Guido Presti'), 'no pick, no named customer');
+  assert.ok(!plain.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick'), 'no pick, no named customer');
+  assert.ok(!plain.textContent.includes('Guido Presti'), 'no pick, no named customer');
 });
 
 // Supervisor design pass (Dan 03/11): press-and-drag on an empty part of a

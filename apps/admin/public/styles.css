@@ -1580,6 +1580,9 @@ select.bo-spazi-input { flex: none; }
 .cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
 .cal-form .cal-field-wide { flex-basis: 100%; }
 .cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+/* backlog:b0788e62ace6: the picked customer under its «Cliente» label. */
+.cal-customer-picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-customer-picked p { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }

@@ -4239,7 +4239,18 @@ export function createCalendarioView(deps) {
   function renderCustomerPick(form) {
     const pick = state.customerPick;
     if (pick && typeof pick?.name === 'string') {
-      form.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: `Cliente: ${pick.name}` }));
+      // backlog:b0788e62ace6: the picked customer keeps the «Cliente» label
+      // the search field carries, so the form reads its eight labels in
+      // every state; the name sits under it, «Cambia cliente» beside.
+      const field = el(doc, 'div', {
+        className: 'cal-field cal-field-wide',
+        attrs: { role: 'group', 'aria-labelledby': 'cal-customer-label', 'data-role': 'customer-field' },
+      });
+      field.appendChild(el(doc, 'span', { className: 'cal-field-label', attrs: { id: 'cal-customer-label' }, text: 'Cliente' }));
+      const picked = el(doc, 'div', { className: 'cal-customer-picked' });
+      picked.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: pick.name }));
+      field.appendChild(picked);
+      form.appendChild(field);
       const change = uiSecondaryButton(doc, 'Cambia cliente');
       change.addEventListener('click', () => {
         // Review #690 (P2): a search still pending never lands after the reset.
@@ -4250,7 +4261,7 @@ export function createCalendarioView(deps) {
         state.customerError = null;
         renderAll();
       });
-      form.appendChild(change);
+      picked.appendChild(change);
       state.manualFirst = change;
       return;
     }
