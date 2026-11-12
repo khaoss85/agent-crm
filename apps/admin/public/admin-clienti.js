@@ -22,7 +22,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
-import { customerInitials, humanReadError } from './admin-core.js';
+import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -931,8 +931,8 @@ export function createCustomerListView(deps) {
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
-        const amount = (Number(row.offerValueCents) / 100).toLocaleString('it-IT', { minimumFractionDigits: 2 });
-        return el('span', undefined, `${amount} ${row.offerCurrency ?? ''}`.trim());
+        // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
+        return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
       }
       case 'budget': {
         if (row.budget?.available !== true) return el('span', 'bo-muted', row.budget?.reason ?? 'non disponibile');
