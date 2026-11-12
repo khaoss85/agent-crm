@@ -296,6 +296,67 @@ export function createPipelineBoard(deps) {
   let drag = null;
   /** Record id → its card's Apri button, where closing the panel hands focus back. */
   const openButtons = new Map();
+  /**
+   * backlog:07d29c0d1b06: each column's count and per-currency totals, kept
+   * with the records they describe, so a card that moves before the server
+   * answers (a drop, an Annulla) takes its count and value along — and a
+   * failure brings both back together.
+   * @type {Map<string, { records: Array<Record<string, any>>, count: any, totals: any }>}
+   */
+  const columnSummaries = new Map();
+
+  /** Repaint one column's count and totals from its records. */
+  function paintColumnSummary(stageKey) {
+    const summary = columnSummaries.get(stageKey);
+    if (!summary) return;
+    summary.count.textContent = String(summary.records.length);
+    while (summary.totals.firstChild) summary.totals.removeChild(summary.totals.firstChild);
+    /** @type {Map<string, number>} */
+    const totals = new Map();
+    for (const record of summary.records) {
+      if (!Number.isSafeInteger(record.valueCents)) continue;
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
+    }
+    for (const [currency, total] of [...totals.entries()].sort()) {
+      summary.totals.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
+    }
+  }
+
+  /**
+   * Move one card on screen, before the server answers: the card to the top
+   * of the target column and its record from one column's count and totals
+   * to the other's. Returns `undo` that puts card and numbers back together,
+   * or null when the card is not on the board (a filter hides it).
+   * @param {string} id @param {string} fromStage @param {string} toStage
+   */
+  function placeCardNow(id, fromStage, toStage) {
+    const card = cardNodes.get(id)?.card ?? null;
+    const from = columnSummaries.get(fromStage);
+    const to = columnSummaries.get(toStage);
+    const target = columnNodes.find((node) => node.getAttribute('data-stage') === toStage) ?? null;
+    if (!card || !card.parentNode || !from || !to || !target || typeof target.insertBefore !== 'function') return null;
+    const record = from.records.find((candidate) => String(candidate.id) === id);
+    if (!record) return null;
+    const home = { parent: card.parentNode, next: card.nextSibling ?? null };
+    const anchor = slotAnchors.get(target) ?? null;
+    target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+    const at = from.records.indexOf(record);
+    from.records.splice(at, 1);
+    to.records.unshift(record);
+    paintColumnSummary(fromStage);
+    paintColumnSummary(toStage);
+    return () => {
+      if (typeof home.parent.insertBefore === 'function') {
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+      }
+      const back = to.records.indexOf(record);
+      if (back >= 0) to.records.splice(back, 1);
+      from.records.splice(Math.min(at, from.records.length), 0, record);
+      paintColumnSummary(fromStage);
+      paintColumnSummary(toStage);
+    };
+  }
+
   /** Column → the node the slot sits before: the first card, or the empty line. */
   const slotAnchors = new Map();
   /** The dashed placeholder, one for the whole board, built on first use. */
@@ -448,9 +509,13 @@ export function createPipelineBoard(deps) {
       return;
     }
     if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
+    // backlog:07d29c0d1b06: the card and its column numbers go back together
+    // at once; a refused undo puts both where the server says they are.
+    const restore = placeCardNow(id, toStage, fromStage);
     const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
       undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
     });
+    if ((back.failed || back.busy) && restore) restore();
     if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
     // Review Muse #809: a queued undo is announced whether or not its card is on screen.
     if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
@@ -520,19 +585,11 @@ export function createPipelineBoard(deps) {
     // as Sposta, so a queued move never reads as a failure.
     const controls = cardNodes.get(recordId);
     if (controls && typeof controls.move === 'function') {
-      const card = controls.card;
-      const target = column ?? slotWasIn;
-      // Where the card was, to put it back on a failure.
-      const home = card && card.parentNode ? { parent: card.parentNode, next: card.nextSibling ?? null } : null;
-      if (card && target && typeof target.insertBefore === 'function') {
-        const anchor = slotAnchors.get(target) ?? null;
-        target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
-      }
+      // backlog:07d29c0d1b06: card, count and totals move together now,
+      // and come back together on a failure (runMove's toast names it).
+      const restore = placeCardNow(recordId, fromStage, toStage);
       const outcome = await controls.move(toStage);
-      if ((outcome?.failed || outcome?.busy) && card && home && typeof home.parent.insertBefore === 'function') {
-        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
-        // runMove's own toast already named the failure.
-      }
+      if ((outcome?.failed || outcome?.busy) && restore) restore();
       return;
     }
     try {
@@ -633,6 +690,7 @@ export function createPipelineBoard(deps) {
     cardNodes.clear();
     columnNodes.length = 0;
     slotAnchors.clear();
+    columnSummaries.clear();
     openButtons.clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
@@ -1421,19 +1479,16 @@ export function createPipelineBoard(deps) {
     header.appendChild(el(doc, 'span', { class: `stage-dot type-${stage.type}` }));
     header.appendChild(el(doc, 'h3', { text: stage.label }));
     header.appendChild(el(doc, 'span', { class: `stage-type stage-${stage.type}`, text: badge }));
-    header.appendChild(el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } }));
+    const count = el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } });
+    header.appendChild(count);
     column.appendChild(header);
 
-    // Per-currency totals — deliberately one line per currency.
-    /** @type {Map<string, number>} */
-    const totals = new Map();
-    for (const record of records) {
-      if (!Number.isSafeInteger(record.valueCents)) continue;
-      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
-    }
-    for (const [currency, total] of [...totals.entries()].sort()) {
-      column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
-    }
+    // Per-currency totals — deliberately one line per currency — in a box
+    // the column repaints when a card moves before the server answers.
+    const totalsBox = el(doc, 'div', { class: 'stage-totals', attrs: { 'data-totals': stage.key } });
+    column.appendChild(totalsBox);
+    columnSummaries.set(stage.key, { records: [...records], count, totals: totalsBox });
+    paintColumnSummary(stage.key);
 
     // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
     // can paint the dashed outline; the dragged card is attenuated the same way.
