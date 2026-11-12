@@ -3902,11 +3902,28 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
   }
 
-  function callsBox(box, calls) {
+  function callsBox(box, calls, timeline = null) {
     // BO-F1-08, ref "05 Scheda cliente": signals (budget/tempi/interesse/
     // dubbi) with their transcript source, and the openable transcript.
     box.appendChild(el('h4', undefined, 'Chiamate'));
     const items = Array.isArray(calls?.calls) ? calls.calls : [];
+    // backlog:619b477c0464: one source for the calls. A call the cronologia
+    // shows (a missed one has no recording) is a call here too — never
+    // «nessuna chiamata» beside «chiamata in entrata · persa».
+    const logged = items.length === 0 && Array.isArray(timeline?.entries?.items)
+      ? timeline.entries.items.filter((entry) => entry?.entry === 'call')
+      : [];
+    if (logged.length > 0) {
+      const [last, ...before] = logged;
+      const when = dateParts(last?.occurredAt);
+      const direction = last?.direction === 'outbound' ? 'in uscita' : last?.direction === 'inbound' ? 'in entrata' : null;
+      const outcome = typeof last?.sync === 'string' && last.sync !== '' ? syncLabel(last.sync).toLowerCase() : null;
+      box.appendChild(el('p', 'bo-scheda-call-head',
+        ['ultima chiamata', direction, when, outcome].filter(Boolean).join(' · ')));
+      box.appendChild(el('p', 'bo-muted', 'nessuna registrazione per questa chiamata'));
+      if (before.length > 0) box.appendChild(el('p', 'bo-muted', `+ ${before.length} chiamate precedenti`));
+      return;
+    }
     if (items.length === 0) {
       box.appendChild(el('p', 'bo-muted',
         calls === null || calls === undefined
@@ -4452,7 +4469,7 @@ export function createCustomerCardView(deps) {
       });
     } else {
       section(right, 'bo-scheda-ai', aiSummary, calls);
-      section(right, '', callsBox, calls);
+      section(right, '', callsBox, calls, timeline);
     }
     if (waits('profile')) skeleton(right, '', 'Prossimi passi');
     else section(right, '', nextSteps, profile, profileError, { resource, id });
