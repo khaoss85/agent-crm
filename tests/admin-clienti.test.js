@@ -1136,3 +1136,13 @@ test('ff8bb60f417f: the unfiltered list total feeds the sidebar badge, a filtere
   await flush();
   assert.equal(totals.length, 1, 'a filtered page never moves the badge');
 });
+
+test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200,00 EUR»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const { mount } = await render(stubClient());
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [marco, anna] = facts(mount);
+  assert.ok(marco.textContent.endsWith('1.200 €'), `got «${marco.textContent}»`);
+  assert.ok(!mount.textContent.includes('EUR'), 'the euro reads as €, never as its code');
+  assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
+});

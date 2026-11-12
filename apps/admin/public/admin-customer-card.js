@@ -2,6 +2,7 @@
 
 import { elFor, uiBusy, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -9,7 +10,7 @@ import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, o
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
-import { cleanMessageBody, cleanPreviewText, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
+import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -414,6 +415,17 @@ export function failedSendReason(errorCode) {
  * Clienti, Pipeline and Reporting views): the «✦ Chiedi all'AI» voice opens
  * the panel with this customer in the context instead of navigating away.
  */
+/**
+ * The counted channel (admin-channels-count.js) of one identity system the
+ * scheda reads: phone numbers are the Telefono channel, web forms the Form
+ * sito, any mailbox is Email; the shared aliases cover the rest.
+ * @param {string} system
+ */
+function cardCountedChannel(system) {
+  const local = { phone: 'voice', tel: 'voice', mobile: 'voice', web: 'site-form', form: 'site-form', outlook: 'email' };
+  return Object.hasOwn(local, system) ? local[system] : countedChannel(system);
+}
+
 const CARD_CHANNEL_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', outlook: '@', phone: 'TEL', tel: 'TEL', mobile: 'TEL', voice: 'TEL', sms: 'SMS', web: 'WEB', form: 'WEB', calendar: 'CAL', messenger: 'FB' });
 
 /** Identity systems whose handle is a phone number once display separators are stripped. */
@@ -570,7 +582,6 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
-const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
 /** What a passage reads when neither its text nor its subject says anything. */
 export const PASSAGE_NO_TEXT = '(nessun testo)';
 
@@ -634,15 +645,10 @@ export function collapseDuplicatePassages(entries) {
  * @param {string} value
  */
 export function readableText(value) {
-  return String(value ?? '')
-    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name) => {
-      if (name[0] === '#') {
-        const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
-        return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : whole;
-      }
-      return Object.hasOwn(NAMED_ENTITIES, name.toLowerCase()) ? NAMED_ENTITIES[name.toLowerCase()] : whole;
-    })
-    .replace(/[\u034f\u200b-\u200d\u2060\ufeff\u00ad]/g, '')
+  // The shared decoder (Dan 12/11): «&zwnj;», «&lrm;» and the other
+  // padding entities decode, then every format character goes.
+  return decodeHtmlEntities(String(value ?? ''))
+    .replace(/[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff\u00ad]/g, '')
     .replace(/[ \t\u00a0]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -855,6 +861,40 @@ export function createCustomerCardView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  // backlog:e381c48581fa: the space's channel state, read once per space
+  // (GET /api/connectors plus GET /api/profile, the same pair Connettori
+  // reads) and kept a minute, so «↔ sincronizzato» is claimed only for a
+  // channel `channelState` calls collegato. Never one of the scheda's own
+  // reads: the identities paint at once and the claim lands when known.
+  /** @type {{ spaceId: string, at: number, promise: Promise<{ rows: Array<any>, profile: unknown, profileRead: boolean } | null> } | null} */
+  let spaceChannelsRead = null;
+  const readSpaceChannels = () => {
+    const spaceId = activeSpaceId();
+    if (spaceId === null) return Promise.resolve(null);
+    if (spaceChannelsRead !== null && spaceChannelsRead.spaceId === spaceId
+      && Date.now() - spaceChannelsRead.at < 60000) return spaceChannelsRead.promise;
+    // A failed read is logged with its safe fields (name/code/status and
+    // the space, never a message) and kept only as «unknown» (review #819
+    // P2): an unread state never downgrades a line, it only claims nothing.
+    const warn = (what, error) => {
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn(`bo-scheda ${what} unreadable:`,
+          error instanceof Error ? error.name : 'unknown',
+          typeof error?.code === 'string' ? error.code : '',
+          Number.isFinite(error?.status) ? error.status : '', `spaceId=${spaceId}`);
+      }
+    };
+    const promise = Promise.all([
+      readProfile(client, (_label, status) => warn('profile', { code: 'PROFILE_UNREADABLE', status })),
+      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`)
+        .then((sync) => (Array.isArray(sync?.connectors) ? sync.connectors : []), (error) => {
+          warn('channels', error);
+          return null;
+        }),
+    ]).then(([profile, rows]) => (rows === null ? null : { rows, profile, profileRead: profile !== null }));
+    spaceChannelsRead = { spaceId, at: Date.now(), promise };
+    return promise;
+  };
   // Azioni rapide: the prototype's stroke icon above the label, drawn as a
   // real SVG element. A CSS data: mask is blocked by the host CSP
   // (default-src 'self'), so the icons of #627 never painted in production.
@@ -2333,6 +2373,8 @@ export function createCustomerCardView(deps) {
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
     const directions = observedDirections(timeline);
+    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    const syncLines = [];
     for (const row of merged.rows) {
       const { system } = row;
       const line = el('p', 'bo-scheda-identity');
@@ -2353,10 +2395,31 @@ export function createCustomerCardView(deps) {
       // names the partial list, the same honesty standard as the count.
       const seen = directions.get(system);
       const partial = merged.complete !== true ? ' (elenco parziale)' : '';
-      const sync = seen?.in && seen?.out ? '↔ sincronizzato'
+      // backlog:e381c48581fa: both directions seen prove traffic, not a
+      // sync. «↔ sincronizzato» needs the channel linked in the space (the
+      // shared `channelState`); until that is known the line says what was
+      // seen, and a channel known unlinked says so.
+      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
         : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) line.appendChild(el('span', 'bo-scheda-identity-sync', sync));
+      if (sync) {
+        const node = el('span', 'bo-scheda-identity-sync', sync);
+        line.appendChild(node);
+        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+      }
       box.appendChild(line);
+    }
+    if (syncLines.length > 0) {
+      void readSpaceChannels().then((space) => {
+        if (space === null) return;
+        for (const entry of syncLines) {
+          const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
+          if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
+          // «non collegato» only when known (review #819 P2): with the
+          // profile unread a Profilo link cannot be ruled out, so the line
+          // keeps the traffic it saw and claims nothing more.
+          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+        }
+      });
     }
     // Voce 785428ec3de0: a customer with no union reads nothing here — no
     // technical line, no lone «scheda principale» row. The union block shows

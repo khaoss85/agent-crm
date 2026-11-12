@@ -1,5 +1,6 @@
 // @ts-check
 
+import { takePendingClientiView } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -21,7 +22,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
-import { customerInitials, humanReadError } from './admin-core.js';
+import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -78,6 +79,8 @@ export const SEARCH_DEBOUNCE_MS = 300;
 export const LIST_REFRESH_MS = 60_000;
 /** The server's view of customers with unread inbound messages. */
 const UNREAD_VIEW = 'da-leggere';
+/** «Da rispondere» (backlog:c2bf6b206d96): lit like «Da leggere» when someone waits. */
+const AWAITING_VIEW = 'da-rispondere';
 /**
  * Grid track per column id: [minimum px, flexible share]. Optional and custom
  * columns get a readable 120px minimum (review #600 P2: never a 0px track).
@@ -256,6 +259,15 @@ export function createCustomerListView(deps) {
   function render() {
     // A keystroke read left pending by the previous frame dies here.
     searchSeq += 1;
+    // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
+    // the view alone, never a search or filter left from an earlier visit
+    // (review Muse #795).
+    const askedView = takePendingClientiView(store);
+    if (askedView !== null) {
+      Object.assign(state, {
+        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    }
     drawShell();
     return load();
   }
@@ -639,7 +651,7 @@ export function createCustomerListView(deps) {
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
-      if (view.id === UNREAD_VIEW && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
+      if ((view.id === UNREAD_VIEW || view.id === AWAITING_VIEW) && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
       if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
@@ -919,8 +931,8 @@ export function createCustomerListView(deps) {
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
-        const amount = (Number(row.offerValueCents) / 100).toLocaleString('it-IT', { minimumFractionDigits: 2 });
-        return el('span', undefined, `${amount} ${row.offerCurrency ?? ''}`.trim());
+        // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
+        return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
       }
       case 'budget': {
         if (row.budget?.available !== true) return el('span', 'bo-muted', row.budget?.reason ?? 'non disponibile');
