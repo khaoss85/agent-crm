@@ -52,7 +52,7 @@ const PERIOD_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
 export const DASHBOARD_DEFAULT_CURRENCY = 'EUR';
-/** Monthly chart depth: the selected period plus the five before it. */
+/** Monthly chart depth: the selected period plus the five after it — expected closings only, never the past (backlog:b3d88f6e38ef). */
 export const DASHBOARD_MONTHS = 6;
 /** Weekly bars on the channel card: the four weeks opening the period month. */
 export const DASHBOARD_CHANNEL_WEEKS = 4;
@@ -492,8 +492,11 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     return Object.freeze({ stage, label: nameOf(stage), count: found.count, minor: found.minor });
   }));
 
+  // «Chiusure attese per mese» (backlog:b3d88f6e38ef): expected closings run
+  // from the selected period onward — a past month is never "atteso", it is
+  // either won or stale (stale stays visible in the KPIs and insights).
   const monthly = Object.freeze(
-    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index - DASHBOARD_MONTHS + 1))
+    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index))
       .map((month) => {
         const expected = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === month);
         const closedRows = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && monthOf(row['opportunity.expectedCloseDate']) === month);
