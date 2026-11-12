@@ -3088,7 +3088,11 @@ export function createCalendarioView(deps) {
         },
       });
       edit.appendChild(uiIcon(doc, 'matita'));
+      // Review #790 (Muse P2): while a cancellation is in flight the move
+      // form stays shut, so the cancellation's outcome always has its place.
+      if (state.cancelBusy) edit.setAttribute('disabled', 'true');
       edit.addEventListener('click', () => {
+        if (state.cancelBusy) return;
         state.moveOpen = !state.moveOpen;
         state.cancelAsk = false;
         renderAll();
@@ -3350,6 +3354,10 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // The refusal always paints in the question it answers (review #790):
+    // the question comes back open even if something folded it meanwhile.
+    state.cancelAsk = true;
+    state.moveOpen = false;
     state.cancelNote = failure;
     renderAll();
     const retry = paintedPop?.querySelector?.('button[data-action="cancel-yes"]');

@@ -94,6 +94,7 @@ function stubClient({ cancel = null } = {}) {
       if (path === '/api/appointments/cancel') {
         if (cancel === 'hold') await new Promise((resolve) => held.push(() => resolve(undefined)));
         if (cancel instanceof Error) throw cancel;
+        if (this.failNext) throw this.failNext;
         week = JSON.parse(JSON.stringify(week));
         const row = week.members[0].appointments.find((entry) => entry.id === body.id);
         row.status = 'cancelled';
@@ -331,4 +332,23 @@ test('annulla: leaving the Calendario during the cancel never repaints the next 
   await settle();
   assert.equal(mount.firstChild, other, 'the next screen stays mounted');
   assert.deepEqual(toasts, [], 'no toast for a screen the operator left');
+});
+
+test('annulla (review #790): the move form stays shut while the cancel runs, and a refusal always paints', async () => {
+  const refused = Object.assign(new Error('refused'), { code: 'APPOINTMENTS_INVALID_STATE', status: 409 });
+  const { mount, client } = await openWeek({ cancel: 'hold' });
+  const box = await askCancel(mount, 'p1');
+  action(box, 'cancel-yes').dispatch('click');
+  await settle(2);
+  const edit = action(popover(mount), 'event-edit');
+  assert.equal(edit.getAttribute('disabled'), 'true', 'the edit tool waits for the cancellation');
+  edit.dispatch('click');
+  assert.equal(mount.querySelector('div[data-role="move-form"]'), null, 'no move form opens mid-cancel');
+  // The write fails: its sentence paints in the question, never silent.
+  client.failNext = refused;
+  client.held.forEach((release) => release());
+  await settle();
+  const note = confirmBox(mount)?.findAll('p').find((node) => node.getAttribute('data-role') === 'cancel-note');
+  assert.ok(note, 'the refusal is painted');
+  assert.match(note.textContent, /già chiuso/);
 });
