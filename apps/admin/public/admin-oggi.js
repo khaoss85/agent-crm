@@ -33,8 +33,9 @@
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { memberLabel, nameFromProfile, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
+import { writePendingCalendarEvent } from './admin-prefill.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -297,6 +298,29 @@ export function recordDetailHref(module, id) {
   return `#/modules/${module}/${segment(id)}`;
 }
 
+/** The Calendario route an appointment opens on when no scheda resolves. */
+export const CALENDAR_ROUTE = '#/calendario';
+
+/**
+ * The event the Calendario opens for one appointment (backlog:bd5e84545021,
+ * production 11/11: «Fonti: Appuntamento delle 12:00» opened the technical
+ * record page `#/modules/appointment/<id>`, in English, with a Save button
+ * on a read-only module): its id and its Rome day, so the calendar shows
+ * that week with the event selected. Null when the row has no id or no
+ * readable start.
+ * @param {Record<string, any> | null | undefined} appointment
+ * @returns {{ id: string, day: string, member?: string } | null}
+ */
+export function calendarEventOf(appointment) {
+  const id = nonEmptyText(appointment?.id);
+  const day = romeDayKey(appointment?.startsAt);
+  if (!id || !day) return null;
+  // The member holding the slot rides along (review Muse #792): the
+  // calendar loads and shows them even when its filters left them out.
+  const member = nonEmptyText(appointment?.teamMemberId);
+  return Object.freeze(member ? { id, day, member } : { id, day });
+}
+
 /**
  * Label shown for the cited record: the stored snapshot label when present,
  * otherwise a generic Italian name — never a technical `resource · id`
@@ -419,13 +443,15 @@ function followupAction(task, now = new Date()) {
  * @param {Record<string, any>} appointment a booked/confirmed appointment row
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-function appointmentPrepAction(appointment, names = {}) {
+function appointmentPrepAction(appointment, names = {}, pendingNames = false) {
   const id = nonEmptyText(appointment?.id);
   if (!id) return null;
   const time = romeTime(appointment?.startsAt);
   if (!time) return null;
   const label = appointmentGuestName(appointment, names) ?? APPOINTMENT_GUEST_LABEL;
-  const href = cardHrefForSubject(appointment) ?? recordDetailHref('appointment', id);
+  const card = cardHrefForSubject(appointment);
+  const calendarEvent = card === null ? calendarEventOf(appointment) : null;
+  const href = card ?? CALENDAR_ROUTE;
   return Object.freeze({
     id: `bo04:appointment:${id}`,
     kind: 'appointment-prep',
@@ -433,9 +459,13 @@ function appointmentPrepAction(appointment, names = {}) {
     channel: 'calendar',
     title: `Prepara la call con ${label}`,
     why: `Appuntamento oggi alle ${time} con ${label}.`,
-    cta: 'Apri scheda',
+    cta: card !== null ? 'Apri scheda' : 'Apri evento',
     run: 'open',
     href,
+    calendarEvent,
+    // backlog:bd5e84545021: the customer name arrives with the profile
+    // reads; until then the card shows a grey bar, never a stand-in.
+    namePending: pendingNames && inboxSubjectKey(appointment) !== null,
     record: Object.freeze({
       module: 'appointment', id, label: `Appuntamento delle ${time} con ${label}`, href,
     }),
@@ -450,9 +480,11 @@ function appointmentPrepAction(appointment, names = {}) {
  * Deterministic advisor list: open follow-ups due (overdue first), then the
  * preparation of today's next appointment. Capped — the screen says so when
  * the cap hides actions.
- * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null> }} input
+ * `pendingNames` (backlog:bd5e84545021): the profile names are still being
+ * read — a card whose words depend on them says so (`namePending`).
+ * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {} } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {}, pendingNames = false } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -474,7 +506,7 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
       && isTodayInRome(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   if (today.length > 0) {
-    const prep = appointmentPrepAction(today[0], names);
+    const prep = appointmentPrepAction(today[0], names, pendingNames === true);
     if (prep) actions.push(prep);
   }
   const capped = actions.length > ADVISOR_ACTION_LIMIT;
@@ -685,7 +717,7 @@ function buildTodayAgendaRows(appointments = [], now = new Date()) {
  * @param {Date} [now]
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
-export function buildTodayAgenda(appointments = [], now = new Date(), names = {}, members = []) {
+export function buildTodayAgenda(appointments = [], now = new Date(), names = {}, members = [], { pendingNames = false } = {}) {
   const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
@@ -698,14 +730,22 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
+    const card = cardHrefForSubject(row);
+    const calendarEvent = card === null ? calendarEventOf(row) : null;
     return Object.freeze({
       id,
       time: romeTime(row.startsAt),
       title: subjectDisplayLabel(row, names),
       who: cue,
+      // backlog:bd5e84545021 (production 11/11): before the profile names
+      // and the team roster land, the stored label and the notes cue stood
+      // in for seconds and read as real data — grey bars instead.
+      titlePending: pendingNames === true && inboxSubjectKey(row) !== null,
+      whoPending: pendingNames === true && nonEmptyText(row?.teamMemberId) !== null,
       status: row.status,
       past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
-      href: cardHrefForSubject(row) ?? (id !== '' ? recordDetailHref('appointment', id) : null),
+      href: card ?? (calendarEvent !== null ? CALENDAR_ROUTE : null),
+      calendarEvent,
     });
   });
 }
@@ -798,9 +838,9 @@ function briefSource(label, href) {
  * Pre-call brief for one appointment: what the appointment itself says plus
  * the latest messages and calls with the same subject. Sources are the
  * records behind every line, each clickable.
- * @param {{ appointment?: Record<string, any>, messages?: Array<Record<string, any>>, calls?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null> }} input
+ * @param {{ appointment?: Record<string, any>, messages?: Array<Record<string, any>>, calls?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildPreCallBrief({ appointment = null, messages = [], calls = [], now = new Date(), names = {} } = {}) {
+export function buildPreCallBrief({ appointment = null, messages = [], calls = [], now = new Date(), names = {}, pendingNames = false } = {}) {
   if (appointment == null) return null;
   const id = nonEmptyText(appointment?.id) ?? '';
   const time = romeTime(appointment?.startsAt) ?? '—';
@@ -819,9 +859,11 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
     ? `${opening} con ${who}: ${notes}`
     : `${opening} con ${who}.`);
   const sources = [];
-  if (id !== '') {
-    const source = briefSource(`Appuntamento delle ${time}`, recordDetailHref('appointment', id));
-    if (source) sources.push(source);
+  // backlog:bd5e84545021: the appointment source opens the event in the
+  // Calendario (its week, the event selected), never the record page.
+  const calendarEvent = calendarEventOf(appointment);
+  if (calendarEvent !== null) {
+    sources.push(Object.freeze({ label: `Appuntamento delle ${time}`, href: CALENDAR_ROUTE, calendarEvent }));
   }
   const inbound = (Array.isArray(messages) ? messages : [])
     .filter((row) => row != null && nonEmptyText(row?.id) !== null)
@@ -870,6 +912,7 @@ export function buildPreCallBrief({ appointment = null, messages = [], calls = [
   }
   return Object.freeze({
     title: who,
+    titlePending: pendingNames === true && inboxSubjectKey(appointment) !== null,
     when,
     bullets: Object.freeze(bullets),
     sources: Object.freeze(sources.slice(0, 6)),
@@ -941,9 +984,18 @@ function realLabel(value) {
  * name, else the stored subject snapshot, else the sender handle the
  * message kept (e-mail, number, @handle) — never an id and never the
  * generic «Cliente».
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null> }} input
+ *
+ * Machine mail is not a conversation waiting for the team
+ * (backlog:bab63e32acdb, production 11/11: PayPal receipts, Google Docs
+ * comments, PEC copies offered «Rispondi»): a message the general rule
+ * calls a notification (`isNotificationMessage`: automated senders, PEC
+ * mailboxes, the owner writing to themselves; a contact form never) goes to
+ * `notifications`, apart, and never counts as waiting. `ownAddresses` are
+ * the space's own mailboxes (`ownMailboxes`). `pendingNames` marks the rows
+ * whose name a profile read still has to bring (backlog:bd5e84545021).
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string> }} input
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {} } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [] } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -960,6 +1012,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     if (!seen || at > seen.at) latest.set(key, { at, message });
   }
   const waiting = [];
+  const automated = [];
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -971,17 +1024,26 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectId: message.subjectId ?? conversation?.subjectId,
     };
     const subjectKey = inboxSubjectKey(subject);
+    const machine = isNotificationMessage({
+      ...message,
+      channel,
+      remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle),
+    }, { ownAddresses, labels: [conversation?.subjectLabel] });
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)
       ?? realLabel(message.subjectLabel)
       ?? nonEmptyText(message.remoteHandle)
       ?? nonEmptyText(conversation?.remoteHandle)
       ?? 'Contatto senza nome';
-    waiting.push({
+    (machine ? automated : waiting).push({
       id: conversationId,
       at,
       channel,
       subjectKey,
+      // Only the waiting rows read profile names (readInboxNames): a
+      // notification keeps its stored label, never a grey bar for good.
+      namePending: !machine && pendingNames === true && subjectKey !== null
+        && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
       mono: channelTile(channel) ?? badgeInitials(name),
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
@@ -992,7 +1054,31 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     });
   }
   waiting.sort((a, b) => b.at - a.at);
-  return { total: waiting.length, rows: waiting.slice(0, Math.max(0, limit)) };
+  automated.sort((a, b) => b.at - a.at);
+  return {
+    total: waiting.length,
+    rows: waiting.slice(0, Math.max(0, limit)),
+    notifications: { total: automated.length, rows: automated.slice(0, Math.max(0, limit)) },
+  };
+}
+
+/**
+ * The space's own mailboxes from a GET /api/profile answer: the accounts
+ * of its linked connectors and the member's own e-mail (backlog:bab63e32acdb:
+ * a message the owner sent themselves is a notification). Empty when the
+ * profile is unreadable.
+ * @param {unknown} profile
+ * @returns {Array<string>}
+ */
+export function ownMailboxes(profile) {
+  const out = [];
+  const add = (value) => {
+    if (typeof value === 'string' && value.includes('@') && !out.includes(value.trim().toLowerCase())) out.push(value.trim().toLowerCase());
+  };
+  const items = /** @type {any} */ (profile)?.connections?.items;
+  if (Array.isArray(items)) for (const item of items) add(item?.account);
+  add(/** @type {any} */ (profile)?.member?.email);
+  return out;
 }
 
 export const OGGI_TOTAL_CHANNELS = 9;
@@ -1170,8 +1256,8 @@ async function readModulePage(client, module, filters = {}) {
  * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
  * @returns {Promise<Record<string, string>>}
  */
-export async function readInboxNames(client, messages, conversations, now) {
-  const { rows } = buildInbox({ messages, conversations, now });
+export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
+  const { rows } = buildInbox({ messages, conversations, now, ownAddresses });
   const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
   /** @type {Record<string, string>} */
   const names = {};
@@ -1225,7 +1311,7 @@ export async function readAppointmentNames(client, appointments, next, now) {
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Date} [now]
  */
-export async function loadOggiData(client, now = new Date(), { onEssentials = null } = {}) {
+export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null } = {}) {
   const outcome = {
     workAvailable: false,
     appointmentsAvailable: false,
@@ -1324,9 +1410,27 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
     : null;
   const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
+  // review Muse #792: the call recap reads apart, so a slow brief never
+  // keeps the actions waiting once the names are in.
+  const briefRead = (async () => {
+    if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
+    try {
+      const [briefMessages, calls] = await Promise.all([
+        readModulePage(client, 'interaction-message', subject),
+        readModulePage(client, 'interaction-call', subject),
+      ]);
+      outcome.briefMessages = briefMessages;
+      outcome.briefCalls = calls;
+      outcome.interactionsAvailable = true;
+    } catch (error) {
+      noteReadFailure('interactions', error);
+      outcome.briefMessages = [];
+      outcome.briefCalls = [];
+    }
+  })();
   const [inboxNames, appointmentNames, members] = await Promise.all([
     outcome.inboxAvailable
-      ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now)
+      ? readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile) })
       : Promise.resolve({}),
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
     // The roster names the member holding each slot: read only when a slot
@@ -1337,26 +1441,20 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
         (error) => { noteReadFailure('memberships', error); return []; },
       )
       : Promise.resolve([]),
-    (async () => {
-      if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
-      try {
-        const [briefMessages, calls] = await Promise.all([
-          readModulePage(client, 'interaction-message', subject),
-          readModulePage(client, 'interaction-call', subject),
-        ]);
-        outcome.briefMessages = briefMessages;
-        outcome.briefCalls = calls;
-        outcome.interactionsAvailable = true;
-      } catch (error) {
-        noteReadFailure('interactions', error);
-        outcome.briefMessages = [];
-        outcome.briefCalls = [];
-      }
-    })(),
   ]);
   outcome.inboxNames = inboxNames;
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
+  // backlog:bd5e84545021: the names are in — the actions wake up now; only
+  // the call recap may still be reading.
+  if (typeof onNames === 'function') {
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+  }
+  await briefRead;
   return outcome;
 }
 
@@ -1372,7 +1470,84 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
  * @param {string} [className]
  * @param {string} [text]
  */
-import { el, uiButton, uiEmpty, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiButton, uiEmpty, uiLoading, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/**
+ * Open a target Oggi links to: the Calendario with one event selected when
+ * the target names one and the view can hand it over (backlog:bd5e84545021),
+ * else the route.
+ * @param {{ navigate?: (hash: string) => void, openCalendarEvent?: (event: any) => void }} events
+ * @param {unknown} href
+ * @param {unknown} calendarEvent
+ */
+function openTarget(events, href, calendarEvent) {
+  if (calendarEvent != null && typeof events?.openCalendarEvent === 'function') {
+    events.openCalendarEvent(calendarEvent);
+    return;
+  }
+  if (typeof events?.navigate === 'function' && typeof href === 'string' && href !== '') events.navigate(href);
+}
+
+/**
+ * A text slot that may still be arriving: a grey bar while `pending`, the
+ * text after (backlog:bd5e84545021 — never a stand-in that reads as data).
+ * @param {object} doc @param {string} tag @param {string | undefined} className
+ * @param {unknown} text @param {boolean} pending @param {string} [width]
+ */
+function pendingText(doc, tag, className, text, pending, width = '55%') {
+  if (!pending) return el(doc, tag, className, String(text ?? ''));
+  const node = el(doc, tag, className);
+  node.setAttribute('data-pending', 'true');
+  node.appendChild(uiSkeleton(doc, { width }));
+  return node;
+}
+
+/**
+ * The day's skeleton while the first reads are pending (backlog:bd5e84545021,
+ * production 11/11): grey bars where the recap, the advisor cards and the
+ * agenda will be, no button to press and no word that could pass for data.
+ * The wait is announced once, politely, for assistive tech.
+ * @param {object} doc
+ * @param {object} page
+ */
+function renderOggiSkeleton(doc, page) {
+  const status = el(doc, 'p', 'sr-only', 'Carico la tua giornata…');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  page.appendChild(status);
+  const box = el(doc, 'div', 'bo-oggi-skeleton');
+  box.setAttribute('aria-busy', 'true');
+  box.setAttribute('aria-hidden', 'true');
+  box.setAttribute('data-oggi-skeleton', 'true');
+  const recap = el(doc, 'p', 'bo-oggi-recap');
+  recap.appendChild(uiSkeleton(doc, { width: '70%' }));
+  box.appendChild(recap);
+  const advisor = el(doc, 'section', 'bo-oggi-section');
+  const list = el(doc, 'div', 'bo-oggi-actions');
+  for (const width of ['45%', '60%', '38%']) {
+    const row = el(doc, 'div', 'bo-oggi-row');
+    row.appendChild(el(doc, 'span', 'bo-oggi-mono'));
+    const body = el(doc, 'div', 'bo-oggi-body');
+    const title = el(doc, 'p', 'bo-oggi-title');
+    title.appendChild(uiSkeleton(doc, { width }));
+    body.appendChild(title);
+    const why = el(doc, 'p', 'bo-oggi-why');
+    why.appendChild(uiSkeleton(doc, { width: '80%' }));
+    body.appendChild(why);
+    row.appendChild(body);
+    list.appendChild(row);
+  }
+  advisor.appendChild(list);
+  box.appendChild(advisor);
+  const pair = el(doc, 'div', 'bo-oggi-pair');
+  for (let card = 0; card < 2; card += 1) {
+    const section = el(doc, 'section', 'bo-oggi-card');
+    for (const width of ['40%', '85%', '70%', '78%']) section.appendChild(uiSkeleton(doc, { width, block: true }));
+    pair.appendChild(section);
+  }
+  box.appendChild(pair);
+  page.appendChild(box);
+}
 
 /**
  * One advisor row: record tag, title, motive, the Domani and CTA buttons
@@ -1384,28 +1559,31 @@ import { el, uiButton, uiEmpty, uiLoading } from './admin-ui.js'; // BO-F6-02: t
  * @param {'open' | 'done' | 'postponed'} state
  * @param {{ onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void }} [events]
  * @param {boolean} [disabled]
+ * @param {{ id: unknown, kind: string } | null} [pressed] cta-loading: the button whose write is in flight
  */
-function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
+function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pressed = null) {
   const row = el(doc, 'div', 'bo-oggi-row');
   row.setAttribute('data-action', String(action?.id ?? ''));
   if (state !== 'open') row.setAttribute('data-state', state);
+  if (disabled) row.setAttribute('aria-busy', 'true');
   row.appendChild(el(doc, 'span', `bo-oggi-mono${action?.channel ? ` bo-tile-${String(action.channel).toLowerCase()}` : ''}`, String(action?.mono ?? '')));
   const body = el(doc, 'div', 'bo-oggi-body');
   // The prototype's title opens the record the suggestion is about, through
   // the shell router like every other in-app anchor.
   const href = typeof action?.href === 'string' && action.href !== '' ? action.href : null;
-  const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(action?.title ?? ''));
-  if (href) {
+  // backlog:bd5e84545021: a card whose name is still being read shows grey
+  // bars, not «un ospite da confermare» — and no link to follow yet.
+  const namePending = action?.namePending === true;
+  const title = pendingText(doc, href && !namePending ? 'a' : 'p', 'bo-oggi-title', action?.title, namePending, '50%');
+  if (href && !namePending) {
     title.setAttribute('href', href);
-    if (typeof events?.navigate === 'function') {
-      title.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        events.navigate(href);
-      });
-    }
+    title.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      openTarget(events, href, action?.calendarEvent ?? null);
+    });
   }
   body.appendChild(title);
-  body.appendChild(el(doc, 'p', 'bo-oggi-why', String(action?.why ?? '')));
+  body.appendChild(pendingText(doc, 'p', 'bo-oggi-why', action?.why, namePending, '75%'));
   // The prototype's violet third line: the AI's prepared next step, only
   // when the action carries one — never an invented suggestion. The note
   // renders verbatim: prototype notes already carry their own ✦ when they
@@ -1417,10 +1595,12 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
     const postpone = el(doc, 'button', 'small ghost', 'Domani');
     postpone.setAttribute('data-triage', 'postpone');
     postpone.disabled = disabled;
+    if (disabled && pressed?.id === action?.id && pressed?.kind === 'postpone') uiMarkBusy(postpone, 'Sposto…');
     postpone.addEventListener('click', () => events.onPostpone?.(action.id));
     const execute = el(doc, 'button', 'small primary', String(action?.cta ?? 'Apri'));
     execute.setAttribute('data-triage', 'execute');
     execute.disabled = disabled;
+    if (disabled && pressed?.id === action?.id && pressed?.kind === 'execute') uiMarkBusy(execute, 'Salvo…');
     execute.addEventListener('click', () => events.onExecute?.(action));
     controls.appendChild(postpone);
     controls.appendChild(execute);
@@ -1478,8 +1658,12 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false) {
  *     profile?: unknown,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
- *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void },
+ *     events?: { onExecute?: (action: any) => void, onPostpone?: (id: string) => void, onUndo?: (id: string) => void, navigate?: (hash: string) => void, openCalendarEvent?: (event: { id: string, day: string }) => void, onToggleNotifications?: (open: boolean) => void },
  *     disabled?: boolean,
+ *     namesPending?: boolean,
+ *     notificationsOpen?: boolean,
+ *     inbox?: { available?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
+ *     pressed?: { id: unknown, kind: string } | null,
  *   },
  * }} options
  */
@@ -1523,9 +1707,9 @@ export function renderOggi({
   }
 
   if (home == null && loading === true) {
-    // Reads pending (production 07/11): a neutral loading line under the
-    // greeting, never the shortcut list that looked like the real home.
-    page.appendChild(uiLoading(doc, { label: 'la tua giornata' }));
+    // Reads pending (production 07/11): never the shortcut list that looked
+    // like the real home; since backlog:bd5e84545021 the day's skeleton.
+    renderOggiSkeleton(doc, page);
     return;
   }
 
@@ -1540,8 +1724,11 @@ export function renderOggi({
     return;
   }
 
-  const events = home.events ?? {};
-  const disabled = home.disabled === true;
+  const events = { ...(home.events ?? {}), navigate };
+  // backlog:bd5e84545021: while the names are still being read every action
+  // waits too — a click that does nothing is worse than a grey button.
+  const namesPending = home.namesPending === true;
+  const disabled = home.disabled === true || namesPending;
   const triage = home.triage ?? {};
   const actions = Array.isArray(home.actions) ? home.actions : [];
 
@@ -1574,7 +1761,7 @@ export function renderOggi({
   if (actions.length > 0) {
     const list = el(doc, 'div', 'bo-oggi-actions');
     for (const action of actions) {
-      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), { ...events, navigate }, disabled));
+      list.appendChild(renderAdvisorRow(doc, action, triageState(triage, action?.id), events, disabled, home.pressed ?? null));
     }
     advisor.appendChild(list);
     if (home.capped === true) {
@@ -1599,44 +1786,79 @@ export function renderOggi({
     inboxHead.appendChild(el(doc, 'p', 'bo-oggi-progress', waitingCount === 1 ? '1 in attesa' : `${waitingCount} in attesa`));
     inbox.appendChild(inboxHead);
     const inboxRows = Array.isArray(home.inbox.rows) ? home.inbox.rows : [];
+    /** One inbox row; `reply` adds the «Rispondi» button (people only). */
+    const inboxRow = (entry, reply) => {
+      const row = el(doc, 'div', 'bo-oggi-row bo-oggi-inbox-row');
+      row.setAttribute('data-conversation', String(entry.id ?? ''));
+      row.appendChild(el(doc, 'span', `bo-oggi-mono${entry.channel ? ` bo-tile-${entry.channel}` : ''}`, String(entry.mono ?? '')));
+      const body = el(doc, 'div', 'bo-oggi-body');
+      const href = typeof entry.href === 'string' && entry.href !== '' ? entry.href : null;
+      const namePending = entry.namePending === true;
+      const title = pendingText(doc, href && !namePending ? 'a' : 'p', 'bo-oggi-title', entry.name, namePending, '35%');
+      if (href && !namePending) {
+        title.setAttribute('href', href);
+        title.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate(href);
+        });
+      }
+      body.appendChild(title);
+      body.appendChild(el(doc, 'p', 'bo-oggi-why', String(entry.preview ?? '')));
+      if (entry.when) body.appendChild(el(doc, 'p', 'bo-oggi-note', String(entry.when)));
+      row.appendChild(body);
+      if (href && reply) {
+        const controls = el(doc, 'div', 'bo-oggi-btns');
+        const button = el(doc, 'button', 'small primary', 'Rispondi');
+        button.setAttribute('data-action', 'inbox-reply');
+        button.disabled = disabled;
+        button.addEventListener('click', () => navigate(href));
+        controls.appendChild(button);
+        row.appendChild(controls);
+      }
+      return row;
+    };
     if (home.inbox.available === false) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'I messaggi non si sono potuti leggere. Riprova più tardi.'));
     } else if (inboxRows.length === 0) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'Nessun messaggio aspetta una risposta.'));
     } else {
       const list = el(doc, 'div', 'bo-oggi-actions');
-      for (const entry of inboxRows) {
-        const row = el(doc, 'div', 'bo-oggi-row bo-oggi-inbox-row');
-        row.setAttribute('data-conversation', String(entry.id ?? ''));
-        row.appendChild(el(doc, 'span', `bo-oggi-mono${entry.channel ? ` bo-tile-${entry.channel}` : ''}`, String(entry.mono ?? '')));
-        const body = el(doc, 'div', 'bo-oggi-body');
-        const href = typeof entry.href === 'string' && entry.href !== '' ? entry.href : null;
-        const title = el(doc, href ? 'a' : 'p', 'bo-oggi-title', String(entry.name ?? ''));
-        if (href) {
-          title.setAttribute('href', href);
-          title.addEventListener('click', (event) => {
-            if (event && typeof event.preventDefault === 'function') event.preventDefault();
-            navigate(href);
-          });
-        }
-        body.appendChild(title);
-        body.appendChild(el(doc, 'p', 'bo-oggi-why', String(entry.preview ?? '')));
-        if (entry.when) body.appendChild(el(doc, 'p', 'bo-oggi-note', String(entry.when)));
-        row.appendChild(body);
-        if (href) {
-          const controls = el(doc, 'div', 'bo-oggi-btns');
-          const reply = el(doc, 'button', 'small primary', 'Rispondi');
-          reply.setAttribute('data-action', 'inbox-reply');
-          reply.addEventListener('click', () => navigate(href));
-          controls.appendChild(reply);
-          row.appendChild(controls);
-        }
-        list.appendChild(row);
-      }
+      for (const entry of inboxRows) list.appendChild(inboxRow(entry, true));
       inbox.appendChild(list);
       if (waitingCount > inboxRows.length) {
         inbox.appendChild(el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} conversazioni più recenti su ${waitingCount}.`));
       }
+    }
+    // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
+    // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
+    const notifications = home.inbox.available === false ? null : home.inbox.notifications;
+    const notificationRows = Array.isArray(notifications?.rows) ? notifications.rows : [];
+    const notificationCount = Number(notifications?.total ?? 0);
+    if (notificationCount > 0 && notificationRows.length > 0) {
+      const group = el(doc, 'div', 'bo-oggi-notifications');
+      group.setAttribute('data-oggi-notifications', 'true');
+      const open = home.notificationsOpen === true;
+      const toggle = el(doc, 'button', 'small ghost bo-oggi-notifications-toggle',
+        `${open ? '▾' : '▸'} Notifiche automatiche (${notificationCount})`);
+      toggle.setAttribute('type', 'button');
+      toggle.setAttribute('data-action', 'inbox-notifications');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      const list = el(doc, 'div', `bo-oggi-actions${open ? '' : ' hidden'}`);
+      list.setAttribute('data-oggi-notifications-list', 'true');
+      for (const entry of notificationRows) list.appendChild(inboxRow(entry, false));
+      if (notificationCount > notificationRows.length) {
+        list.appendChild(el(doc, 'p', 'bo-muted', `Mostro le ${notificationRows.length} più recenti su ${notificationCount}.`));
+      }
+      toggle.addEventListener('click', () => {
+        const opened = toggle.getAttribute('aria-expanded') !== 'true';
+        toggle.setAttribute('aria-expanded', opened ? 'true' : 'false');
+        toggle.textContent = `${opened ? '▾' : '▸'} Notifiche automatiche (${notificationCount})`;
+        list.setAttribute('class', opened ? 'bo-oggi-actions' : 'bo-oggi-actions hidden');
+        if (typeof events.onToggleNotifications === 'function') events.onToggleNotifications(opened);
+      });
+      group.appendChild(toggle);
+      group.appendChild(list);
+      inbox.appendChild(group);
     }
     page.appendChild(inbox);
   }
@@ -1659,7 +1881,10 @@ export function renderOggi({
       if (entry?.past === true) item.setAttribute('data-state', 'past');
       item.appendChild(el(doc, 'span', 'bo-oggi-time', String(entry?.time ?? '')));
       const cell = el(doc, 'div');
-      if (typeof entry?.href === 'string' && entry.href !== '') {
+      if (entry?.titlePending === true) {
+        // backlog:bd5e84545021: the name is still being read — a grey bar.
+        cell.appendChild(pendingText(doc, 'span', 'bo-oggi-title', '', true, '60%'));
+      } else if (typeof entry?.href === 'string' && entry.href !== '') {
         // The prototype's agenda title is dark ink, not a green underlined
         // link: the same `bo-oggi-title` hook the advisor titles use (ink,
         // underline on hover only). Navigation stays — a click still opens
@@ -1668,7 +1893,7 @@ export function renderOggi({
         anchor.setAttribute('href', entry.href);
         anchor.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
-          navigate(entry.href);
+          openTarget(events, entry.href, entry?.calendarEvent ?? null);
         });
         cell.appendChild(anchor);
       } else {
@@ -1677,7 +1902,9 @@ export function renderOggi({
       // The prototype's "chi" line under every appointment: who holds the
       // slot or what the appointment is about. A shared muted token (no new
       // stylesheet); the supervisor dresses the exact spacing.
-      if (typeof entry?.who === 'string' && entry.who !== '') {
+      if (entry?.whoPending === true) {
+        cell.appendChild(pendingText(doc, 'div', 'bo-muted', '', true, '45%'));
+      } else if (typeof entry?.who === 'string' && entry.who !== '') {
         cell.appendChild(el(doc, 'div', 'bo-muted', entry.who));
       }
       item.appendChild(cell);
@@ -1706,7 +1933,15 @@ export function renderOggi({
   if (home.briefPending === true && home.brief != null) {
     // Backlog 2a075e2d9250: the day paints before the call's messages are
     // read; the card says it is still reading instead of an empty recap.
-    brief.appendChild(el(doc, 'p', 'bo-oggi-brief-who', `${String(home.brief.title ?? '')} · ${String(home.brief.when ?? '')}`));
+    const who = el(doc, 'p', 'bo-oggi-brief-who');
+    if (home.brief.titlePending === true) {
+      // backlog:bd5e84545021: the guest's name is still being read.
+      who.appendChild(uiSkeleton(doc, { width: '40%' }));
+      who.appendChild(el(doc, 'span', undefined, ` · ${String(home.brief.when ?? '')}`));
+    } else {
+      who.textContent = `${String(home.brief.title ?? '')} · ${String(home.brief.when ?? '')}`;
+    }
+    brief.appendChild(who);
     brief.appendChild(uiLoading(doc, { label: 'messaggi e chiamate da ripassare' }));
   } else if (home.availability?.appointments === false) {
     brief.appendChild(el(doc, 'p', 'bo-muted', 'Il calendario non è attivo in questo spazio: qui comparirà il ripasso prima di ogni call.'));
@@ -1732,7 +1967,7 @@ export function renderOggi({
         anchor.setAttribute('href', String(source?.href ?? ''));
         anchor.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
-          navigate(String(source?.href ?? ''));
+          openTarget(events, String(source?.href ?? ''), source?.calendarEvent ?? null);
         });
         sources.appendChild(anchor);
       });
@@ -1797,6 +2032,20 @@ export function renderOggi({
     page.appendChild(el(doc, 'p', 'field-error', home.error));
   }
 
+}
+
+/**
+ * Put `fresh` where `stale` is under `parent`, the siblings untouched.
+ * @param {any} parent @param {any} stale @param {any} fresh
+ */
+function swapChild(parent, stale, fresh) {
+  if (typeof parent.replaceChild === 'function') {
+    parent.replaceChild(fresh, stale);
+    return;
+  }
+  const kids = Array.from(parent.childNodes);
+  for (const kid of kids) parent.removeChild(kid);
+  for (const kid of kids) parent.appendChild(kid === stale ? fresh : kid);
 }
 
 /**
@@ -1913,11 +2162,27 @@ export function createOggiView(deps) {
   let lastMeta = { spaceName: '', userName: '', links: [], now: new Date() };
   let error = '';
   let busy = false;
+  /** «Notifiche automatiche» open or closed (backlog:bab63e32acdb): closed by default, kept across repaints. */
+  let notificationsOpen = false;
+  /**
+   * backlog:bd5e84545021: an appointment with no scheda opens in the
+   * Calendario — its week, the event selected — through the shared shell
+   * storage, the same one-time handoff the scheda uses for its picks.
+   * @param {{ id: string, day: string }} calendarEvent
+   */
+  function openCalendarEvent(calendarEvent) {
+    writePendingCalendarEvent(deps.storage ?? null, calendarEvent);
+    navigate(CALENDAR_ROUTE);
+  }
+  /** @type {{ id: unknown, kind: string } | null} */
+  let pressed = null;
 
   /** @param {any} [target] where to paint: the live mount, or a detached box for fill() */
   function paint(target = mount) {
     if (!last) return;
-    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {} });
+    // backlog:bd5e84545021: the essentials are on screen, the names not yet.
+    const pendingNames = last.pending === true;
+    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames });
     lastBuilt = built;
     const merged = [...built.actions];
     const today = romeDayKey(lastMeta.now);
@@ -1934,9 +2199,9 @@ export function createOggiView(deps) {
     const actions = merged.slice(0, ADVISOR_ACTION_LIMIT);
     const capped = built.capped || merged.length > ADVISOR_ACTION_LIMIT;
     lastActions = actions;
-    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {}, last.members ?? []);
+    const agenda = buildTodayAgenda(last.appointments, lastMeta.now, last.appointmentNames ?? {}, last.members ?? [], { pendingNames });
     const brief = last.next
-      ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {} })
+      ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
     renderOggi({
@@ -1954,11 +2219,11 @@ export function createOggiView(deps) {
         capped,
         agenda,
         brief,
-        briefPending: last.pending === true,
+        briefPending: last.pending === true || last.briefPending === true,
         inbox: !last.inboxComposed
           ? null
           : last.inboxAvailable
-            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now }) }
+            ? { available: true, ...buildInbox({ messages: last.inboxMessages, conversations: last.inboxConversations, names: last.inboxNames ?? {}, now: lastMeta.now, pendingNames, ownAddresses: ownMailboxes(last.profile) }) }
             : { available: false, total: 0, rows: [] },
         missing,
         connections: last.connections,
@@ -1970,7 +2235,14 @@ export function createOggiView(deps) {
         },
         error,
         disabled: busy,
+        namesPending: pendingNames,
+        notificationsOpen,
+        pressed: busy ? pressed : null,
         events: {
+          openCalendarEvent,
+          onToggleNotifications: (open) => {
+            notificationsOpen = open === true;
+          },
           onPostpone: (actionId) => {
             void postpone(actionId);
           },
@@ -1997,6 +2269,8 @@ export function createOggiView(deps) {
    * @param {unknown} actionId
    */
   async function postpone(actionId) {
+    // backlog:bd5e84545021: no decision on a card still waiting for its data.
+    if (last?.pending === true) return;
     const action = (lastBuilt?.actions ?? []).find((candidate) => candidate?.id === actionId);
     if (!action) return;
     if (action?.run !== 'complete-task') {
@@ -2007,6 +2281,7 @@ export function createOggiView(deps) {
     }
     if (busy) return;
     busy = true;
+    pressed = { id: action.id, kind: 'postpone' };
     error = '';
     paint();
     try {
@@ -2030,8 +2305,9 @@ export function createOggiView(deps) {
   }
 
   async function execute(action) {
-    if (busy) return;
+    if (busy || last?.pending === true) return;
     busy = true;
+    pressed = { id: action?.id, kind: 'execute' };
     error = '';
     paint();
     try {
@@ -2044,7 +2320,8 @@ export function createOggiView(deps) {
         const index = lastActions.findIndex((candidate) => candidate?.id === action.id);
         completed.set(action.id, { action, index: index === -1 ? 0 : index, day: romeDayKey(lastMeta.now) });
       } else {
-        if (typeof action?.href === 'string' && action.href !== '') navigate(action.href);
+        if (action?.calendarEvent != null) openCalendarEvent(action.calendarEvent);
+        else if (typeof action?.href === 'string' && action.href !== '') navigate(action.href);
         triage = applyTriageDecision(triage, action?.id, 'done');
       }
     } catch (failure) {
@@ -2090,19 +2367,38 @@ export function createOggiView(deps) {
     // Neri): the customer names land after the advisor painted. Its rows
     // stay (buttons, focus); only their words take the names the agenda
     // just took, from the same map.
+    // backlog:bd5e84545021: a card painted with grey bars takes its words
+    // (and its link) now, and every button waiting on the names wakes up —
+    // the same buttons, so a focus stays where it was.
     for (const action of lastActions) {
       const id = String(action?.id ?? '');
       if (id === '' || id.includes('"')) continue;
       const liveRow = mount.querySelector(`div[data-action="${id}"]`);
       const freshRow = scratch.querySelector(`div[data-action="${id}"]`);
       if (liveRow === null || freshRow === null) continue;
-      for (const cls of ['.bo-oggi-title', '.bo-oggi-why']) {
-        const liveText = liveRow.querySelector(cls);
-        const freshText = freshRow.querySelector(cls);
-        if (liveText !== null && freshText !== null && liveText.textContent !== freshText.textContent) {
-          liveText.textContent = freshText.textContent;
+      const liveBody = liveRow.querySelector('.bo-oggi-body');
+      const freshBody = freshRow.querySelector('.bo-oggi-body');
+      if (liveBody !== null && freshBody !== null) {
+        const waited = liveBody.querySelector('[data-pending="true"]') !== null;
+        if (waited) {
+          swapChild(liveRow, liveBody, freshBody);
+        } else {
+          for (const cls of ['.bo-oggi-title', '.bo-oggi-why']) {
+            const liveText = liveBody.querySelector(cls);
+            const freshText = freshBody.querySelector(cls);
+            if (liveText !== null && freshText !== null && liveText.textContent !== freshText.textContent) {
+              liveText.textContent = freshText.textContent;
+            }
+          }
         }
       }
+      for (const kind of ['postpone', 'execute', 'undo']) {
+        const liveButton = liveRow.querySelector(`button[data-triage="${kind}"]`);
+        const freshButton = freshRow.querySelector(`button[data-triage="${kind}"]`);
+        if (liveButton !== null && freshButton !== null) liveButton.disabled = freshButton.disabled;
+      }
+      if (freshRow.getAttribute('aria-busy') === 'true') liveRow.setAttribute('aria-busy', 'true');
+      else liveRow.removeAttribute('aria-busy');
     }
   }
 
@@ -2162,12 +2458,20 @@ export function createOggiView(deps) {
             last = partial;
             paint();
           },
+          // The names (and the team) are in: the grey bars take their
+          // words and every action wakes up, in place.
+          onNames: (named) => {
+            if (round !== current || current.essentials === null) return;
+            current.essentials = named;
+            last = named;
+            fill();
+          },
         })).catch(() => null);
       }
       const data = await current.load;
       if (token !== renderToken) return;
       endRound();
-      const partialShown = last?.pending === true;
+      const partialShown = last?.pending === true || last?.briefPending === true;
       if (data && partialShown) {
         last = data;
         fill();

@@ -24,6 +24,7 @@
  * and says, in Italian, that the connections cannot be read now.
  */
 
+import { CHANNEL_STATE_LABELS } from './admin-channels-count.js';
 import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { sessionRoleLabel } from './admin-session.js';
 
@@ -50,9 +51,11 @@ export const META_CONNECTORS = Object.freeze([
 /** Google connectors only: a Meta account is a number or a page, not the person. */
 const GOOGLE_IDS = new Set(PROFILO_CONNECTORS.map((entry) => entry.connector));
 
+// Connected and not connected read the one shared channel words
+// (backlog:e381c48581fa), the same as Connettori and Personalizzazione.
 const STATUS_LABELS = Object.freeze({
-  connected: { text: 'Collegato', tone: 'ok' },
-  disconnected: { text: 'Da collegare', tone: 'muted' },
+  connected: CHANNEL_STATE_LABELS.collegato,
+  disconnected: CHANNEL_STATE_LABELS['da-collegare'],
   revoked: { text: 'Scollegato', tone: 'muted' },
   error: { text: 'Da ricollegare', tone: 'warn' },
 });

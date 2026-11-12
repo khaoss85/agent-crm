@@ -40,12 +40,14 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
+import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { memberText } from './admin-labels.js';
+import { subjectText, teamPeople } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -160,14 +162,17 @@ export function formatSpaceStat({ channels = null, members = null, customers = n
  * suspended connection is not "collegato". No `connectors` array means the
  * package is not composed here, never zero.
  * @param {unknown} answer
+ * @param {unknown} [profile] the /api/profile answer: only for the space it describes
  */
-export function countSpaceChannels(answer) {
+export function countSpaceChannels(answer, profile = null) {
   const entries = answer !== null && typeof answer === 'object'
     ? /** @type {{connectors?: unknown}} */ (answer).connectors
     : null;
   if (!Array.isArray(entries)) return null;
-  return entries.filter((entry) => entry !== null && typeof entry === 'object'
-    && /** @type {{status?: unknown}} */ (entry).status === 'active').length;
+  // The shared count (backlog:e381c48581fa): linked channels, not active
+  // rows — two accounts on one channel are one channel — with the profile
+  // links merged, like «2 di 9» on Oggi and Stato sync (review #782 P1).
+  return channelConnectionCount(mergeProfileConnections(entries, profile)).connected;
 }
 
 /**
@@ -311,22 +316,6 @@ function nameInitials(name) {
 }
 
 /**
- * backlog:810ed0bfd505 AC-2 — the control-plane same-person key of a roster
- * row (`operatorAccountId`, one per human), or null when the roster carries
- * none. The same union the Calendario team reads (`personRows` there): this
- * key unites one member's identities (broker, github, google) even when
- * they carry different mailboxes. Only this documented key merges —
- * generic `personKey`/`userId`-style fields have no producer contract here,
- * and two unrelated humans sharing one would fold into a single row.
- * @param {unknown} member
- */
-function rosterPersonKey(member) {
-  if (!member || typeof member !== 'object') return null;
-  const value = /** @type {{operatorAccountId?: unknown}} */ (member).operatorAccountId;
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
-}
-
-/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
  * carry, beside each opaque subject, the control-plane displayName, email
  * and `operatorAccountId` the pilot enriches it with — the same fields the
@@ -354,61 +343,23 @@ function rosterPersonKey(member) {
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
 export function buildTeamRows(members = []) {
-  const list = Array.isArray(members) ? members : [];
-  /** @type {Array<{subjects: string[], live: string[], displayName: string|null, email: string|null, key: string|null, roles: unknown[], statuses: unknown[]}>} */
-  const people = [];
-  const byIdentity = new Map();
-  const byPersonKey = new Map();
-  const seen = new Set();
-  for (const member of list) {
-    if (!member || typeof member !== 'object' || typeof member.subject !== 'string' || member.subject === '') continue;
-    if (seen.has(member.subject)) continue;
-    seen.add(member.subject);
-    // Never a technical identity on screen (production 10/11: the team read
-    // «broker+…@accordo.invalid»): the shared member filter drops a broker
-    // mailbox or a provider id the enrichment carried as name or email.
-    const email = memberText(member.email);
-    const displayName = memberText(member.displayName);
-    const personKey = rosterPersonKey(member);
-    const key = email === null || displayName === null
-      ? null
-      : `${email.toLowerCase()}\u0000${displayName.replace(/\s+/g, ' ').toLowerCase()}`;
-    let person = (personKey !== null && byPersonKey.get(personKey)) || null;
-    if (person === null && key !== null) {
-      const candidate = byIdentity.get(key) ?? null;
-      // Two explicit operator keys never fold into one row: the mailbox
-      // fallback only joins a group with no key of its own, or the same
-      // key — otherwise a shared mailbox would bridge two operator
-      // accounts and «Rimuovi» would suspend a stranger (Codex P2 on
-      // backlog:ed0552dc1933).
-      if (candidate !== null && (personKey === null || candidate.key === null || candidate.key === personKey)) {
-        person = candidate;
-      }
-    }
-    if (person === null) {
-      person = { subjects: [], live: [], displayName: null, email: null, key: null, roles: [], statuses: [] };
-      people.push(person);
-    }
-    if (person.key === null) person.key = personKey;
-    if (personKey !== null && !byPersonKey.has(personKey)) byPersonKey.set(personKey, person);
-    if (key !== null && !byIdentity.has(key)) byIdentity.set(key, person);
-    person.subjects.push(member.subject);
-    if (member.status !== 'suspended') person.live.push(member.subject);
-    person.roles.push(member.role);
-    person.statuses.push(member.status);
-    if (person.displayName === null) person.displayName = displayName;
-    // The row shows a real mailbox only (`memberText` already dropped the
-    // broker/technical ones), so the first real mailbox of the person wins
-    // whatever the store order.
-    if (person.email === null) person.email = email;
-  }
+  // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
+  // teamPeople (admin-labels.js), the same rows the Calendario team reads.
+  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
+    subjects: row.subjects,
+    live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
+    displayName: row.name,
+    email: row.email,
+    roles: row.members.map((member) => member.role),
+    statuses: row.members.map((member) => member.status),
+  }));
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
       // No readable name or mailbox: the subject when it reads as a word,
       // else a generic label — never a technical subject (`google|…`,
       // `broker+…`), the same fallback the Calendario team uses.
-      const readable = person.displayName ?? person.email ?? memberText(subject);
+      const readable = person.displayName ?? person.email ?? subjectText(subject);
       const name = readable ?? 'Membro del team';
       const known = person.roles.filter((role) => typeof role === 'string' && ROLE_RANK.includes(role));
       const role = known.length > 0
@@ -485,7 +436,7 @@ export function masterEnabled(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
@@ -636,8 +587,9 @@ export function createSpaziAccessiView(deps) {
    * missing enhancement, never a page error, so it stays silent.
    * @param {string} spaceId
    * @param {number|null} memberCount
+   * @param {unknown} [profile] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCount) {
+  async function loadSpaceStat(spaceId, memberCount, profile = null) {
     if (memberCount === null) return null;
     try {
       const [channelsSettled, customersSettled] = await Promise.allSettled([
@@ -661,7 +613,7 @@ export function createSpaziAccessiView(deps) {
       if (customersSettled.status === 'rejected') throw customersSettled.reason;
       const customersAnswer = customersSettled.value;
       return formatSpaceStat({
-        channels: countSpaceChannels(channelsAnswer),
+        channels: countSpaceChannels(channelsAnswer, profile),
         members: memberCount,
         customers: countSpaceCustomers(customersAnswer),
       });
@@ -761,14 +713,19 @@ export function createSpaziAccessiView(deps) {
         && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
         && /** @type {{id?: unknown}} */ (entry).id !== '')
       .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    // The profile describes the session's own space: its links count on
+    // that card only, never on another space's (review #782 P1).
+    const profile = ids.length > 0 ? await readProfile(client) : null;
+    const current = readActiveSpace().trim();
     await Promise.all(ids.map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCount);
+      const stat = await loadSpaceStat(id, memberCount, id === current ? profile : null);
       if (stat !== null) state.stats.set(id, stat);
     }));
   }
 
   async function mutate(path, body) {
     state.busy = true;
+    busyPath = path; // cta-loading: the button that wrote reads «…» on the re-render
     render();
     try {
       return await client.request(path, { method: 'POST', body });
@@ -776,6 +733,8 @@ export function createSpaziAccessiView(deps) {
       state.busy = false;
     }
   }
+  let busyPath = '';
+  const busyOn = (test) => state.busy && test(busyPath);
 
   function activeSpace() {
     const spaces = readSpaces();
@@ -1022,6 +981,7 @@ export function createSpaziAccessiView(deps) {
           attrs: { type: 'button' },
         });
         yes.disabled = state.busy;
+        if (busyOn((path) => path.endsWith('/suspend'))) uiMarkBusy(yes, 'Rimuovo…');
         yes.addEventListener('click', async () => {
           const motive = String(reason.value ?? '').trim();
           if (motive === '') {
@@ -1111,6 +1071,7 @@ export function createSpaziAccessiView(deps) {
     invite.appendChild(reason);
     const send = el(doc, 'button', { text: 'Invita', cls: 'bo-spazi-open', attrs: { type: 'button' } });
     send.disabled = state.busy;
+    if (busyOn((path) => path === '/api/spine/memberships')) uiMarkBusy(send, 'Invito…');
     send.addEventListener('click', async () => {
       const who = String(subject.value ?? '').trim();
       const picked = String(role.value ?? '').trim() || 'operator';
@@ -1187,8 +1148,20 @@ export function createSpaziAccessiView(deps) {
         cls: 'bo-spazi-toggle',
         attrs: { type: 'button', role: 'switch', 'aria-checked': entry.enabled ? 'true' : 'false', 'aria-label': entry.label },
       });
-      toggle.setAttribute('data-on', entry.enabled ? 'true' : 'false');
-      toggle.disabled = state.busy || (master === false && entry.master !== true);
+      // backlog:1cfc68175ab7: with the space AI off the five decide
+      // nothing, so none of them reads on (green): each shows off and «in
+      // pausa», and keeps its own value for when the AI is back on.
+      const paused = master === false && entry.master !== true;
+      if (paused) {
+        toggle.setAttribute('aria-checked', 'false');
+        toggle.setAttribute('data-paused', 'true');
+        texts.appendChild(el(doc, 'div', {
+          text: entry.enabled ? 'In pausa: riparte acceso quando riaccendi l\u2019AI.' : 'In pausa finch\u00E9 l\u2019AI dello spazio \u00E8 spenta.',
+          cls: 'bo-spazi-paused',
+        }));
+      }
+      toggle.setAttribute('data-on', entry.enabled && !paused ? 'true' : 'false');
+      toggle.disabled = state.busy || paused;
       toggle.addEventListener('click', () => {
         state.confirmFlip = { key: entry.key, to: !entry.enabled };
         state.switchRefusal = null;
@@ -1213,6 +1186,7 @@ export function createSpaziAccessiView(deps) {
         }));
         const yes = el(doc, 'button', { text: 'Conferma', cls: 'bo-spazi-open', attrs: { type: 'button' } });
         yes.disabled = state.busy;
+        if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
           try {
             await mutate('/api/space-permissions/set-permission', {

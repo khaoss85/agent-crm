@@ -473,7 +473,7 @@ test('recap follows the prototype sentence with real counts', () => {
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
 
-test('agenda rows link the scheda when it resolves, the record otherwise', () => {
+test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
   assert.equal(agenda[0].time, '10:00');
@@ -481,7 +481,9 @@ test('agenda rows link the scheda when it resolves, the record otherwise', () =>
   const packaged = buildTodayAgenda([{
     ...APPT_TODAY, subjectOwner: 'package', subjectOwnerPackage: 'lifecycle', subjectLabel: 'Seq-9',
   }], OGGI_NOW);
-  assert.equal(packaged[0].href, '#/modules/appointment/appt-1', 'package subjects fall back to the record');
+  // backlog:bd5e84545021: never the technical record page.
+  assert.equal(packaged[0].href, '#/calendario', 'package subjects fall back to the calendar');
+  assert.deepEqual(packaged[0].calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'on the event, in its week');
 });
 
 test('next appointment is the upcoming one, null when the day holds nothing else', () => {
@@ -495,7 +497,10 @@ test('brief quotes records and every source opens its record', () => {
   assert.ok(brief.bullets.some((line) => line.includes('Ciao, posso passare giovedì')), 'message quoted');
   assert.ok(brief.bullets.some((line) => line.includes('Interessata')), 'call quoted');
   const hrefs = brief.sources.map((source) => source.href);
-  assert.ok(hrefs.includes('#/modules/appointment/appt-1'), 'appointment source');
+  assert.ok(!hrefs.includes('#/modules/appointment/appt-1'), 'never the technical appointment page (bd5e84545021)');
+  const appointmentSource = brief.sources.find((source) => source.label === 'Appuntamento delle 10:00');
+  assert.equal(appointmentSource?.href, '#/calendario', 'the appointment source opens the calendar');
+  assert.deepEqual(appointmentSource?.calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'with the event selected');
   assert.ok(hrefs.includes('#/modules/interaction-message/msg-1'), 'message source');
   assert.ok(hrefs.includes('#/modules/interaction-call/call-1'), 'call source');
   assert.ok(hrefs.includes('#/customer-card/lead/lead-1'), 'card source');
@@ -503,7 +508,7 @@ test('brief quotes records and every source opens its record', () => {
 
   const bare = buildPreCallBrief({ appointment: APPT_TODAY, messages: [], calls: [] });
   assert.ok(bare.bullets.some((line) => line.includes('Nessun messaggio o chiamata registrati')));
-  assert.ok(bare.sources.some((source) => source.href === '#/modules/appointment/appt-1'));
+  assert.ok(bare.sources.some((source) => source.href === '#/calendario' && source.calendarEvent?.id === 'appt-1'));
   assert.equal(buildPreCallBrief({ appointment: null }), null);
 });
 
@@ -567,7 +572,7 @@ test('full home renders every section with clickable sources', () => {
   }
 
   const byHref = (href) => mount.findAll('a').find((node) => node.getAttribute('href') === href);
-  for (const href of ['#/modules/appointment/appt-1', '#/modules/interaction-message/msg-1',
+  for (const href of ['#/calendario', '#/modules/interaction-message/msg-1',
     '#/customer-card/lead/lead-1', '#/connettori']) {
     assert.ok(byHref(href), `source opens its record: ${href}`);
   }
@@ -1891,9 +1896,14 @@ test('7d30fb517785: the advisor names the linked customer once the names land, w
   await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
   const row = () => mount.querySelector('div[data-action="bo04:appointment:appt-1"]');
   assert.ok(row(), 'the prep card is on screen');
-  assert.ok(row().textContent.includes('ospite da confermare'), 'before the names land, the neutral wait');
+  // backlog:bd5e84545021 (production 11/11): before the names land the card
+  // shows grey bars — never «un ospite da confermare» passing for data —
+  // and its buttons wait.
+  assert.ok(!row().textContent.includes('ospite da confermare'), 'no stand-in before the names land');
+  assert.ok(row().querySelector('span[data-skeleton="true"]'), 'a grey bar where the name goes');
   const advisor = mount.findAll('section')[0];
   const execute = row().querySelector('button[data-triage="execute"]');
+  assert.equal(execute.disabled, true, 'the action waits for the names');
   execute.focus();
 
   await clock.runUntil(() => rendered);
@@ -1906,6 +1916,9 @@ test('7d30fb517785: the advisor names the linked customer once the names land, w
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
   assert.equal(row().querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
   assert.equal(execute.__focused, true);
+  assert.equal(execute.disabled, false, 'the action is live once the names are in');
+  assert.equal(row().querySelector('span[data-skeleton="true"]'), null, 'no grey bar left');
+  assert.ok(row().querySelector('a[href="#/customer-card/lead/lead-1"]'), 'the title links the scheda again');
 });
 
 // Review #746 (P2): «oggi/ieri/domani» compare Rome calendar days, never

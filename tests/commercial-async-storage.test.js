@@ -33,7 +33,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { project, boot } from './helpers/contracts-project.js';
+import { project, boot } from './helpers/contracts-project-cache.js';
 
 /**
  * Wrap a record service so every method settles through a Promise, like the

@@ -57,6 +57,23 @@ export const PIPELINE_SEMANTIC_MODEL = Object.freeze({
       description: 'Pipeline stage key as stored (persistent identifier, ADR-014).',
       validate: requireStageKey,
     }),
+    // Backlog 099c41c32355 (Reporting like the Pipeline board): the board
+    // reads the per-pipeline placement (`pipelineKey`/`pipelineStage` from
+    // /api/schema plus /api/opportunities), never the legacy core `stage`
+    // column — a move-stage touches only the placement, so the core stage
+    // stays `qualification` forever while the board moves on. These two
+    // fields let the registry read the same placement the board shows.
+    'opportunity.pipelineStage': Object.freeze({
+      column: 'pipeline_stage',
+      kind: 'stage',
+      description: 'Per-pipeline stage key as stored (persistent identifier, ADR-014); null when never placed.',
+      validate: requireStageKey,
+    }),
+    'opportunity.pipelineKey': Object.freeze({
+      column: 'pipeline_key',
+      kind: 'pipeline',
+      description: 'Name of the composed pipeline the offer is placed on; null when never placed.',
+    }),
     'opportunity.type': Object.freeze({
       column: 'type',
       kind: 'opportunity_type',

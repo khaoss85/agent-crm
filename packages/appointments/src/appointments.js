@@ -1258,6 +1258,125 @@ export async function rescheduleAppointment(context, request) {
 }
 
 /**
+ * Cancel one booking (backlog:5346ab531538): the governed write behind
+ * «Annulla appuntamento» in the calendar popover. The caller names the row
+ * by exactly one of `id` / `sourceKey` and gives the `reason` the lifecycle
+ * requires (a cancelled slot nobody can explain is not evidence); the
+ * cancellation itself is the lifecycle's own `-> cancelled` advance, so it
+ * keeps every rule of advanceAppointment: only `booked` or `confirmed` rows
+ * cancel, `done` and `no-show` are refused 409 (a happened visit is never
+ * rewritten), and the re-read and the write run serialized per
+ * appointment. The cancelled row stays stored with its status and reason —
+ * the customer's history still shows it — and frees the slot.
+ *
+ * Idempotent: a row already cancelled answers itself with
+ * `cancelled: false` and writes nothing — a retry after a lost answer, a
+ * double click, or a cancel racing another cancel never errors on the
+ * winner's row.
+ *
+ * Google Calendar follows calendar-sync's rule «cancellation wins»: when
+ * the request names `calendar` (and the `spaceId` the push is gated on),
+ * the linked Google event is cancelled through the injected
+ * `calendarSync.pushAppointment` handle after the commit, exactly like the
+ * reschedule path — validated before any write, answered as data (`push` /
+ * `pushError`), never a throw past the commit. Without `calendar` the next
+ * two-way sync converges the linked event the same way.
+ */
+export async function cancelAppointment(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const appointments = appointmentService({ modules: context.modules, names });
+  // Evidence names its author: an anonymous cancellation frees a customer's
+  // slot with nobody accountable for it.
+  const who = requireActor(context.actor);
+  const record = request && typeof request === 'object' ? request : {};
+  const named = [record.id, record.sourceKey]
+    .filter((value) => value !== undefined && value !== null);
+  if (named.length !== 1) {
+    throw new ValidationError('cancel needs exactly one of id or sourceKey', {
+      field: named.length === 0 ? 'id' : 'id/sourceKey',
+    });
+  }
+  const reason = safeText(record.reason, 'reason', MAX_REASON);
+  let calendarId = null;
+  let spaceId = null;
+  let calendarPush = null;
+  if (record.calendar !== undefined && record.calendar !== null) {
+    if (typeof record.spaceId !== 'string' || record.spaceId.trim() === '') {
+      throw new ValidationError('spaceId is required: a calendar cancellation is gated on the space switch', { field: 'spaceId' });
+    }
+    spaceId = record.spaceId;
+    calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
+    const calendarSync = context?.calendarSync ?? null;
+    if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
+      throw new AppError(
+        'The cancellation names a calendar but the appointments package is composed without a calendar-sync push handle, '
+        + 'so the event cannot be cancelled there: cancel without a calendar, or compose the push handle.',
+        { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+      );
+    }
+    calendarPush = calendarSync.pushAppointment.bind(calendarSync);
+  }
+  if (!appointments?.get || !appointments?.applyManaged || typeof appointments?.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without a managed "appointment" record module', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const lookup = async () => {
+    if (record.id !== undefined && record.id !== null) {
+      const rowId = safeText(record.id, 'id', MAX_ID);
+      try {
+        return await appointments.get(rowId);
+      } catch (error) {
+        if (error instanceof NotFoundError) {
+          throw new NotFoundError(`no appointment with id "${rowId}"`);
+        }
+        throw error;
+      }
+    }
+    const key = validateSourceKey(record.sourceKey, 'sourceKey');
+    const row = (await appointments.listWhere({ sourceKey: key }))[0] ?? null;
+    if (!row) throw new NotFoundError(`no appointment with sourceKey "${key}"`);
+    return row;
+  };
+  const first = await lookup();
+  let appointment = first;
+  let cancelled = false;
+  if (first.status !== CANCELLED_STATE) {
+    try {
+      appointment = await advanceAppointment(
+        { appointments, actor: who, now: context.now },
+        first,
+        CANCELLED_STATE,
+        reason,
+      );
+      cancelled = true;
+    } catch (error) {
+      // Another cancellation won the race between the read and the write:
+      // its row is the answer, never a 409 on the operator's own intent.
+      if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
+        throw error;
+      }
+      appointment = await lookup();
+    }
+  }
+  // The push rides the idempotent path on a replay too: a first attempt
+  // whose push failed converges Google on the retry.
+  let push = null;
+  let pushError = null;
+  if (calendarPush !== null) {
+    try {
+      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
+  }
+  return Object.freeze({ appointment, cancelled, push, pushError });
+}
+
+/**
  * Exact read of one appointment by row id — a primary-key lookup, never a
  * scan. Only the expected miss becomes absence: a storage or connection
  * failure is the caller's outage to see, never a quiet unknown appointment.
@@ -1315,6 +1434,10 @@ export async function readSchedule({ appointments }, subject) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    // backlog:5346ab531538: a cancelled slot keeps its reason and the
+    // instant of the decision, so the scheda's history reads it.
+    cancelReason: row.cancelReason ?? null,
+    decidedAt: row.decidedAt ?? null,
   })));
 }
 
@@ -1556,6 +1679,17 @@ function validateSuggestFilter(filter) {
 }
 
 /**
+ * The first round instant at or after `fromMs` a proposal may start on
+ * (backlog:c2f21b5debdd): half hours for steps that are multiples of 30
+ * minutes, quarters for the 15- and 45-minute ones.
+ * @param {number} fromMs @param {number} slotMinutes
+ */
+export function alignedSlotStart(fromMs, slotMinutes) {
+  const gridMs = (slotMinutes % 30 === 0 ? 30 : 15) * 60 * 1000;
+  return Math.ceil(fromMs / gridMs) * gridMs;
+}
+
+/**
  * Suggest free slots from real availability (BO-F3-02): the named window cut
  * into `slotMinutes` steps, minus every step a held booking overlaps. Read
  * only: no row is written, no slot is invented. Cancelled bookings hold
@@ -1572,11 +1706,17 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
   const appointments = flowAppointments({ modules }, names);
   const checked = validateSuggestFilter(filter);
   const slotMs = checked.slotMinutes * 60 * 1000;
+  // backlog:c2f21b5debdd: a proposal starts on a round time — the hour, the
+  // half hour, or the quarter for the 15- and 45-minute services — never
+  // at the window's own odd instant (a draft «ora» at 09:14 used to offer
+  // 09:14, 09:44, …). Rome is a whole-hour offset from UTC, so aligning
+  // the epoch aligns the Rome clock too.
+  const firstStart = alignedSlotStart(checked.fromMs, checked.slotMinutes);
   const groups = [];
   for (const teamMemberId of checked.members) {
     const held = await appointments.listWhere({ teamMemberId });
     const slots = [];
-    for (let start = checked.fromMs; start + slotMs <= checked.toMs; start += slotMs) {
+    for (let start = firstStart; start + slotMs <= checked.toMs; start += slotMs) {
       // A proposal must be fully ahead: a step already begun cannot be
       // booked whole, so with a reference instant named it is cut silently —
       // an empty answer, never an invented one.
@@ -2439,6 +2579,8 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         ),
         /** @param {unknown} request */
         rescheduleAppointment: (request) => rescheduleAppointment(scope, request),
+        /** @param {unknown} request */
+        cancelAppointment: (request) => cancelAppointment(scope, request),
         /** @param {unknown} id */
         appointment: (id) => readAppointment({ appointments: storage() }, id),
         /**

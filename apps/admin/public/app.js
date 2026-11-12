@@ -63,14 +63,28 @@ async function api(path, options = {}) {
   if (isMutation(method)) {
     requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
   }
-  const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
-  const body = await response.json();
-  if (!response.ok) {
-    const error = new Error(body?.error?.message || `Request failed (${response.status})`);
-    Object.assign(error, { status: response.status, code: body?.error?.code, details: body?.error?.details ?? null });
-    throw error;
-  }
-  return body;
+  // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first answer
+  // may be a waking service — one retry, same key, instead of an error.
+  // The body is read as text first (review khaoss85/agent-crm#673): a waking
+  // host may answer non-JSON (e.g. 503 HTML), and response.json() would throw
+  // a bare SyntaxError the wake verdict never sees.
+  return withWakeRetry(async () => {
+    const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
+    const text = await response.text();
+    let body;
+    try {
+      body = text === '' ? null : JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    if (!response.ok) {
+      throw apiFailure(response.status, body ?? null);
+    }
+    if (body === undefined) {
+      throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
+    }
+    return body;
+  }, { method, onWaking: wakingNotice });
 }
 
 const submissions = createSubmissionController({
@@ -128,8 +142,12 @@ function leaveForSpaceLogin(target) {
 // local-development-only until a deployment supplies an identity verifier.
 const moduleClient = {
   // One schema read per open, shared by every view (admin-schema-cache.js).
+  // backlog:e7bdcbcc6864: every rejection names its request, so the log
+  // helpers tell a failed POST from a failed read.
   request(path, options = {}) {
-    return schemaCachedRequest(path, options);
+    return schemaCachedRequest(path, options).catch((error) => {
+      throw tagRequestFailure(error, options.method ?? 'GET', path);
+    });
   },
   async rawRequest(path, options = {}) {
     const method = options.method ?? 'GET';
@@ -143,57 +161,80 @@ const moduleClient = {
     if (isMutation(method)) {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
-    const response = await fetch(`${ADMIN_BASE}${path}`, {
-      ...options,
-      headers: requestHeaders,
-    });
-    // fetch followed the host's login redirect (the mount emits no other
-    // redirect for API paths): the session is gone. Navigated once here;
-    // the branches below skip a second navigation for the same answer.
-    const followedLogin = MOUNTED && response.redirected === true;
-    if (followedLogin) {
-      leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
-    }
-    const text = await response.text();
-    let payload;
-    try {
-      payload = text === '' ? null : JSON.parse(text);
-    } catch {
-      payload = undefined;
-    }
-    if (!response.ok) {
-      // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
-      // and claimId on the error, so the composer reads it back.
-      const error = apiFailure(response.status, payload);
-      // A followed login redirect still throws: carry the signal so the
-      // calling view can tell a lost session from a refused write.
-      if (followedLogin) Object.assign(error, { redirected: true });
-      if (MOUNTED && !followedLogin) {
-        leaveForSpaceLogin(sessionLostTarget({
-          status: response.status,
-          code: /** @type {any} */ (error).code,
-          adminBase: ADMIN_BASE,
-        }));
+    // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
+    // answer may be a waking service — one retry, same key, while the
+    // screen still shows its loading state, instead of an error. A lost
+    // session is never a retry: it leaves for the login at once and only
+    // once (review #673 giro 3: isWakeTransient excludes it).
+    const once = async () => {
+      const response = await fetch(`${ADMIN_BASE}${path}`, {
+        ...options,
+        headers: requestHeaders,
+      });
+      // fetch followed the host's login redirect (the mount emits no other
+      // redirect for API paths): the session is gone. Navigated once here;
+      // the branches below skip a second navigation for the same answer.
+      const followedLogin = MOUNTED && response.redirected === true;
+      if (followedLogin) {
+        leaveForSpaceLogin(sessionLostTarget({ redirected: true, adminBase: ADMIN_BASE }));
       }
-      throw error;
-    }
-    if (payload === undefined) {
-      if (MOUNTED && !followedLogin) {
-        // A 200 that is not JSON under a mount is the followed login page
-        // fetch no longer flags (or a host that answered HTML directly).
-        leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text === '' ? null : JSON.parse(text);
+      } catch {
+        payload = undefined;
       }
-      // A 200 that is not JSON still throws: carry which login-page shape
-      // it was, so the calling view reads it like the shell just did.
-      const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
-      if (followedLogin) Object.assign(invalid, { redirected: true });
-      else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
-      throw invalid;
-    }
-    return payload;
+      if (!response.ok) {
+        // apiFailure (admin-core.js): a 504 BO_SEND_PENDING keeps requestId
+        // and claimId on the error, so the composer reads it back.
+        const error = apiFailure(response.status, payload);
+        // A followed login redirect still throws: carry the signal so the
+        // calling view can tell a lost session from a refused write.
+        if (followedLogin) Object.assign(error, { redirected: true });
+        if (MOUNTED && !followedLogin) {
+          leaveForSpaceLogin(sessionLostTarget({
+            status: response.status,
+            code: /** @type {any} */ (error).code,
+            adminBase: ADMIN_BASE,
+          }));
+        }
+        throw error;
+      }
+      if (payload === undefined) {
+        if (MOUNTED && !followedLogin) {
+          // A 200 that is not JSON under a mount is the followed login page
+          // fetch no longer flags (or a host that answered HTML directly).
+          leaveForSpaceLogin(sessionLostTarget({ invalidResponse: true, adminBase: ADMIN_BASE }));
+        }
+        // A 200 that is not JSON still throws: carry which login-page shape
+        // it was, so the calling view reads it like the shell just did.
+        const invalid = Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
+        if (followedLogin) Object.assign(invalid, { redirected: true });
+        else if (MOUNTED) Object.assign(invalid, { invalidResponse: true });
+        throw invalid;
+      }
+      return payload;
+    };
+    return withWakeRetry(once, { method, onWaking: wakingNotice });
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
+
+/**
+ * backlog:2b62c771f1f9: while reads wait for the host to wake, the shell
+ * says so once — «Il server si sta svegliando…» — and the screen keeps its
+ * loading state; the scheda's parallel reads share one notice.
+ */
+let wakingReads = 0;
+function wakingNotice(waking) {
+  if (!waking) {
+    wakingReads = Math.max(0, wakingReads - 1);
+    return;
+  }
+  wakingReads += 1;
+  if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
@@ -404,15 +445,20 @@ function duration(start, end) {
 function toggleBusy(element, busy) {
   if (!element) return;
   element.disabled = busy;
+  element.setAttribute?.('aria-busy', busy ? 'true' : 'false');
 }
 
-let toastTimer;
-function toast(message, error = false) {
-  clearTimeout(toastTimer);
-  elements.toast.textContent = message;
-  elements.toast.classList.toggle('error', error);
-  elements.toast.classList.remove('hidden');
-  toastTimer = setTimeout(() => elements.toast.classList.add('hidden'), 3200);
+/** The shell toast and its clock (backlog:2f72000d4a4d), built on first use. */
+let toaster = null;
+/**
+ * @param {string} message @param {boolean} [error]
+ * @param {{ action?: { label: string, run: () => void }, duration?: number }} [options] one action
+ *   button (backlog:7b2203e69826: «Annulla» after a Pipeline move); a toast
+ *   with an action stays at least 10 s, and never hides under the pointer.
+ */
+function toast(message, error = false, options = {}) {
+  if (toaster === null) toaster = createToastController(document, elements.toast);
+  toaster.show(message, error, options ?? {});
 }
 
 function escapeHtml(value) {
@@ -436,6 +482,7 @@ import {
   ACTIVE_SPACE_KEY,
   buildShellNav,
   createShellView,
+  keepSettingsTabs,
   loadClientCount,
   loadFixCount,
   readSpaces,
@@ -469,10 +516,11 @@ import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
+import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput } from './admin-core.js';
+import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -537,6 +585,7 @@ const offerDetail = createOfferDetail({
   mount: mountGate.owned('offer-detail'),
   client: moduleClient,
   submissions,
+  toast,
   navigate: (hash) => { window.location.hash = hash; },
 });
 
@@ -625,10 +674,13 @@ const customerCardView = createCustomerCardView({
 // itself never writes. The import stays a separate tool on #/import-clienti.
 const clientiListView = createCustomerListView({
   doc: document,
-  mount: mountGate.owned('customer-data'),
+  // backlog:ff8bb60f417f: the list stays under the Nuovo cliente window.
+  mount: mountGate.owned(['customer-data', 'customer-new']),
   client: moduleClient,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
+  // The unfiltered total is the sidebar badge: it never lags the list.
+  onTotal: ({ count, exact }) => { shellView?.update({ clientCount: count, clientCountExact: exact }); },
   // BO-F1-05: the space the calls read stays space-explicit, and the AI
   // filter entry opens the BO-F0-04 assistant on the Clienti screen (its
   // dry-run answers the key notice when no LLM backend is present).
@@ -646,7 +698,12 @@ const clientiListView = createCustomerListView({
 // governed import-apply operation as the tool, then lands on the scheda.
 const customerFormView = createCustomerFormView({
   doc: document,
-  mount: mountGate.owned('customer-new'),
+  // backlog:ff8bb60f417f: a window over the list, like the scheda's panels.
+  // It lives in the shared screen mount beside the list frame (the list
+  // repaints only inside its own frame), so the session-loss keep/restore,
+  // which reads moduleView, keeps its text too (review #791 giro 1). The
+  // router closes it on every other route (invalidate).
+  mount: moduleView,
   client: moduleClient,
   submissions,
   navigate: (hash) => { window.location.hash = hash; },
@@ -872,6 +929,10 @@ if (boAssistant) {
     notify: (message) => toast(message),
     // backlog:33782ba68747: «@Agente …» in the bar reads this space's agents.
     spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+    // backlog:1968c3320cd3: Esc closes the panel; the titolare is never
+    // told to ask the titolare.
+    role: () => shellUser?.role ?? null,
+    win: window,
   });
 }
 
@@ -914,6 +975,23 @@ if (boSidebar && boTopbar) {
     onAiSubmit: (text) => {
       if (assistantPanel) void assistantPanel.open(currentScreenId, undefined, undefined, text);
     },
+    // backlog:be99004b06e4: ⌘K lists customers and offers while typing,
+    // from the reads Clienti and Pipeline already make — never the AI.
+    commandSearch: {
+      async customers(query) {
+        if (!shellItems.some((item) => item.id === 'clienti' && item.available === true)) return null;
+        const params = new URLSearchParams({ q: query, pageSize: '10' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('spaceId', spaceId);
+        const answer = await moduleClient.request(`/api/customer-data/customers?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
+      async offers() {
+        if (!shellItems.some((item) => item.id === 'pipeline' && item.available === true)) return null;
+        const answer = await moduleClient.request('/api/opportunities?limit=100');
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
+    },
     onPickSpace: (id) => {
       shellActiveSpace = id;
       try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
@@ -942,6 +1020,9 @@ let oggiView = null;
 let sequenzeView = null;
 /** Navigation sequence: a render that settles after a newer navigation is stale. */
 let navSeq = 0;
+/** The last routed view, so the Clienti list survives its Nuovo cliente window. @type {string | null} */
+let lastRoutedView = null;
+const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 /** The Agenti screen (backlog:33782ba68747), created once per session. */
 let agentiView = null;
 let shellFixCount = null;
@@ -1164,11 +1245,17 @@ async function route() {
   }
   const hash = window.location.hash || '#/';
   const navToken = ++navSeq;
+  // backlog:ff8bb60f417f: opening or closing the Nuovo cliente window keeps
+  // the list under it as it was — no reload, no loading frame.
+  const previousView = lastRoutedView;
+  lastRoutedView = targetForHash(hash).view;
+  const keepClienti = CLIENTI_PAIR.has(lastRoutedView) && CLIENTI_PAIR.has(previousView ?? '');
   if (targetForHash(hash).view === 'settings') {
     // The panel paints synchronously on the real mount: no view handle
     // may paint over it.
     mountGate.activate(null);
     clientiListView.invalidate();
+    customerFormView.invalidate();
     customerCardView.invalidate();
     // backlog:607f33ee: same shared-mount race as below — a late async
     // view must not repaint the settings panel just opened.
@@ -1207,13 +1294,21 @@ async function route() {
   const routedView = target.view === 'invalid' || target.view === 'componenti' ? null : target.view;
   mountGate.activate(routedView);
   const screenLabel = shellScreenFor(target)?.label;
-  const loadingLine = routedView !== null && (routedView !== 'dashboard' || MOUNTED)
+  const loadingLine = routedView !== null && !keepClienti && (routedView !== 'dashboard' || MOUNTED)
     ? paintScreenLoading({ doc: document, mount: moduleView, label: screenLabel })
     : null;
+  // backlog:1cfc68175ab7: a settings tab keeps the tab row while it loads.
+  keepSettingsTabs(document, {
+    mount: moduleView,
+    loading: loadingLine,
+    view: routedView,
+    fixCount: shellFixCount,
+    navigate: (next) => { window.location.hash = next; },
+  });
   // backlog:80b25fb0: the list paints straight into the shared mount, so a
   // list read still in flight must die when the operator leaves the list —
   // otherwise its late response clears the screen just opened.
-  if (target.view !== 'customer-data') clientiListView.invalidate();
+  if (!CLIENTI_PAIR.has(target.view)) clientiListView.invalidate();
   // backlog:273de560: the form paints straight into the shared mount, so a
   // save still in flight must die when the operator leaves the form —
   // otherwise its late response clears the screen just opened.
@@ -1245,6 +1340,9 @@ async function route() {
         mount: mountGate.owned('dashboard'),
         client: moduleClient,
         navigate: (next) => { window.location.hash = next; },
+        // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
+        // the Calendario through the shared shell storage.
+        storage: shellStorage,
       });
     }
     await oggiView.render({
@@ -1288,9 +1386,15 @@ async function route() {
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
     else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId);
     else if (target.view === 'spine') await spineView.render();
-    else if (target.view === 'customer-data') await clientiListView.render();
+    else if (target.view === 'customer-data') {
+      if (!keepClienti) await clientiListView.render();
+    }
     else if (target.view === 'customer-import') await customerDataView.render();
-    else if (target.view === 'customer-new') await customerFormView.render();
+    else if (target.view === 'customer-new') {
+      const list = keepClienti ? null : clientiListView.render();
+      await customerFormView.render();
+      if (list) await list;
+    }
     else if (target.view === 'connectors') await connectorsView.render();
     else if (target.view === 'connector-detail') await connectorDetailView.render(target.channel, target.binding ?? null);
     else if (target.view === 'sync') await syncView.render();

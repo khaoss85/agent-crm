@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -215,7 +215,7 @@ export function createMarketingView(deps) {
       if (proposal.status === 'proposed') {
         const approveButton = el('button', 'marketing-approve', 'Approve campaign');
         const approveError = el('small', 'field-error', '');
-        approveButton.addEventListener('click', () => withBusy([approveButton], async () => {
+        approveButton.addEventListener('click', () => uiBusy(approveButton, 'Approvo…', () => withBusy([approveButton], async () => {
           approveError.textContent = '';
           try {
             await client.request(
@@ -232,7 +232,7 @@ export function createMarketingView(deps) {
             approveError.textContent = error.message;
             throw error;
           }
-        }));
+        })));
         panel.appendChild(approveButton);
         panel.appendChild(approveError);
         panel.appendChild(el('p', 'muted',
