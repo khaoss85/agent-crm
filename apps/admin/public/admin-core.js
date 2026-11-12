@@ -1008,7 +1008,6 @@ function transientReadFailure(error) {
  */
 export const WAKE_TRANSIENT_CODES = Object.freeze([
   'WORKSPACE_STARTING',
-  'OPERATION_APP_UNAVAILABLE',
   'BRIDGE_UNREACHABLE',
   'CHANNEL_UNREACHABLE',
   'BO_CRM_DEPOSIT_UNAVAILABLE',
@@ -1017,6 +1016,11 @@ export const WAKE_TRANSIENT_CODES = Object.freeze([
 // is a state, and the Aggiungi telefono test pins its generic failure text
 // for a 503 carrying it. A 503 still earns one retry through the status
 // branch of isWakeTransient; only the words stay honest.
+// NB: OPERATION_APP_UNAVAILABLE is NOT a starting signal either — production
+// 10/11 (backlog:7d30fb517785) met it on the AI switch as a server that
+// cannot save right now, and pins «Non riesco a salvare la modifica adesso,
+// riprova tra poco.» for it. A 503 carrying it earns the same single read
+// retry through the status branch; the words stay the pinned ones.
 
 /**
  * Whether a request method carries a body that may have committed server
