@@ -21,7 +21,7 @@ import {
  * filters, free-text search with channel-word detection, sorting and
  * server-side pagination over exact page sizes.
  *
- * What it must prove: the seven quick views are saved filter descriptors (no
+ * What it must prove: the six quick views are saved filter descriptors (no
  * row snapshots); filters combine and clear to `all`; unknown query values
  * refuse fail-closed; pages slice server-side with an exact total; the
  * shared status rule promotes only on signed business; the AI budget column
@@ -138,10 +138,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the seven quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 7);
+test('the six quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 6);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
