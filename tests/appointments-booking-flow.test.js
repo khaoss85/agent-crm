@@ -157,6 +157,33 @@ test('suggested slots come from real availability: held rows carve the window', 
   );
 });
 
+// backlog:c2f21b5debdd: a free slot starts on a round time — never 09:14.
+test('suggested slots start on round times, never on the window’s odd instant', async () => {
+  const service = fakeAppointments([]);
+  const read = async (from, slotMinutes, nowIso = undefined) => (await suggestSlots({ modules: modulesFor(service) }, {
+    teamMemberIds: ['coach-guido'],
+    from,
+    to: '2026-11-12T11:00:00.000Z',
+    slotMinutes,
+    ...(nowIso ? { nowIso } : {}),
+  })).members[0].slots.map((slot) => slot.startsAt);
+  // A draft «ora» at 09:14 Rome (08:14Z): half hours for 30 and 60 minutes.
+  assert.deepEqual(await read('2026-11-12T08:14:00.000Z', 30),
+    ['2026-11-12T08:30:00.000Z', '2026-11-12T09:00:00.000Z', '2026-11-12T09:30:00.000Z', '2026-11-12T10:00:00.000Z', '2026-11-12T10:30:00.000Z']);
+  assert.deepEqual(await read('2026-11-12T08:14:00.000Z', 60),
+    ['2026-11-12T08:30:00.000Z', '2026-11-12T09:30:00.000Z']);
+  // Quarters for the 15- and 45-minute services.
+  assert.deepEqual((await read('2026-11-12T08:14:00.000Z', 45)).slice(0, 2),
+    ['2026-11-12T08:15:00.000Z', '2026-11-12T09:00:00.000Z']);
+  // An already round window starts where it is.
+  assert.equal((await read('2026-11-12T08:00:00.000Z', 30))[0], '2026-11-12T08:00:00.000Z');
+  // The reference instant still cuts the begun steps, on the same grid.
+  assert.equal((await read('2026-11-12T08:14:00.000Z', 30, '2026-11-12T08:40:00.000Z'))[0], '2026-11-12T09:00:00.000Z');
+  for (const start of await read('2026-11-12T08:07:00.000Z', 15)) {
+    assert.equal(new Date(start).getUTCMinutes() % 15, 0, start);
+  }
+});
+
 test('back-to-back slots share the endpoint and a cancelled booking frees its slot', async () => {
   const service = fakeAppointments([{
     sourceKey: 'gym:cancelled:1',

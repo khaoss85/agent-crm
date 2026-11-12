@@ -767,6 +767,34 @@ export function catalogBookingServices(payload) {
 }
 
 /**
+ * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
+ * the name and the price as Italian money («Lezione di prova · 1,00 €»,
+ * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. A price that is not whole cents, or not in euros, reads as the
+ * name alone.
+ * @param {{name: string, priceCents: number, currency?: string}} entry
+ */
+export function serviceOptionLabel(entry) {
+  const cents = entry?.priceCents;
+  const currency = entry?.currency === undefined ? 'EUR' : entry.currency;
+  // The menu books euros only (catalogBookingServices keeps EUR singles):
+  // any other or unknown currency reads as the name alone, never a throw.
+  if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
+  return `${entry.name} · ${italianEuros(cents)}`;
+}
+
+/**
+ * Italian money with the grouping pinned (review #813): «1.080,00 €», the
+ * same thousands dot as the rest of the /bo, never left to the runtime's
+ * locale data.
+ * @param {number} cents
+ */
+function italianEuros(cents) {
+  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
+}
+
+/**
  * backlog:810ed0bf — minor units to the price text the manual form paints
  * (`4500` → `'45.00'`), two decimals, dot separator like the form hint.
  * Null when the amount is no integer of cents.
@@ -4141,7 +4169,7 @@ export function createCalendarioView(deps) {
     const priceText = (entry) => formatPriceCents(entry.priceCents) ?? '';
     const options = bookable.map((entry) => ({
       value: entry.key,
-      label: `${entry.name} · ${priceText(entry)} €`,
+      label: serviceOptionLabel(entry),
     }));
     const wrap = uiSelect(doc, { name: 'serviceKey', value: match.key, options });
     const select = wrap.querySelector('select') ?? wrap;

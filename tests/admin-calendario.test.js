@@ -13,6 +13,7 @@ import {
   servicePresendError,
   dayHead,
   formatPriceCents,
+  serviceOptionLabel,
   displayKeys,
   draftDayKey,
   draftDayOnly,
@@ -3910,6 +3911,10 @@ test('the manual form offers the catalog menu with the default and price prefill
   const labels = service.findAll('option').map((node) => node.textContent);
   assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
   assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
+  // backlog:c2f21b5debdd: the prices read as Italian money, never «45.00 €».
+  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Lezione prova · 15,00 €'), labels.join(' | '));
+  assert.ok(!labels.some((text) => /\d\.\d{2} €/.test(text)), 'no dotted decimals in the menu');
   assert.equal(service.value, 'taglio', 'the first entry is preselected like the worker default');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
   assert.equal(byName().price.value, '45.00', 'the price prefills from the default');
@@ -4933,4 +4938,29 @@ test('a block with a server-attached customer label reads service · customer wi
   // The label paints at once; a background profile read may warm the cache
   // for the detail card — the block never waits for it.
   assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
+});
+
+test('c2f21b5d: a service option reads its price as Italian money', () => {
+  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1,00 €');
+  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Pacchetto', priceCents: 123456789 }), 'Pacchetto · 1.234.567,89 €');
+  assert.equal(serviceOptionLabel({ name: 'Dollari', priceCents: 100, currency: 'USD' }), 'Dollari', 'never a currency the menu does not book');
+  assert.equal(serviceOptionLabel({ name: 'Strano', priceCents: 100, currency: 'XYZ!' }), 'Strano', 'an unknown code never throws');
+  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Senza prezzo', priceCents: 1.5 }), 'Senza prezzo');
+});
+
+test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian thousands dot', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'pacchetto', name: 'Pacchetto annuale', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 108000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 9; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
+  assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
 });

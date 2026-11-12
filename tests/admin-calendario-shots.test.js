@@ -196,7 +196,27 @@ await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 // No Conferma click here: booking belongs to the operator, and the demo
 // client answers no confirm endpoint — the PNG proves rows and ghosts.
+// backlog:c2f21b5debdd: the customer search in the form — the magnifier
+// never covers the text and the placeholder reads whole.
+const customerProbe = (() => {
+  const input = document.querySelector('input[name="customerSearch"]');
+  if (!input) return null;
+  const icon = input.parentNode.querySelector('.ui-icon');
+  const style = getComputedStyle(input);
+  const textLeft = input.getBoundingClientRect().left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth);
+  const ctx = document.createElement('canvas').getContext('2d');
+  ctx.font = style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily;
+  const room = input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  return {
+    iconRight: icon ? Math.round(icon.getBoundingClientRect().right) : null,
+    textLeft: Math.round(textLeft),
+    placeholder: input.placeholder,
+    placeholderWidth: Math.ceil(ctx.measureText(input.placeholder).width),
+    room: Math.floor(room),
+  };
+})();
 const probe = {
+  customer: customerProbe,
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
@@ -358,6 +378,9 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(probe.lede?.includes('19 ott'), `the painted nav names the pinned week (${probe.lede})`);
   assert.equal(probe.compact.length, 0, 'desktop keeps every empty day as its timeline');
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the desktop render lists the week events');
+  assert.ok(probe.customer, 'the customer search paints in the form');
+  assert.ok(probe.customer.iconRight <= probe.customer.textLeft, `the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
+  assert.ok(probe.customer.placeholderWidth <= probe.customer.room, `the placeholder reads whole: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.pop, 'the event popover opens in the browser');
   assert.equal(probe.pop.role, 'dialog');
   assert.equal(probe.pop.focused, true, 'focus moves into the popover');
@@ -380,6 +403,8 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.ok(dom.includes('<title>calendario-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the phone render lists the week events');
+  assert.ok(probe.customer && probe.customer.iconRight <= probe.customer.textLeft, `phone: the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
+  assert.ok(probe.customer.placeholderWidth <= probe.customer.room, `phone: the placeholder reads whole: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.pop, 'the event popover opens on the phone');
   assert.ok(probe.pop.left >= 0 && probe.pop.right <= 390, `the sheet stays on screen sideways: ${JSON.stringify(probe.pop)}`);
   assert.ok(probe.pop.top >= 0 && probe.pop.bottom <= probe.pop.innerHeight, `the sheet stays on screen: ${JSON.stringify(probe.pop)}`);
