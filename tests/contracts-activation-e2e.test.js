@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   DOMAIN_MANIFESTS, DOMAIN_MODULES, POLICY, TERM, boot, project, signedOrder,
-} from './helpers/contracts-project.js';
+} from './helpers/contracts-project-cache.js';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 

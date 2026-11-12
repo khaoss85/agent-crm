@@ -40,6 +40,12 @@
 # ACCORDO_FULL_SHELL_ORACLE. If a slice ever outgrows it, slice smaller,
 # never cap one piece higher.
 #
+# Inside a piece every test file has its own ceiling (MEASURE_FILE_MAX_SEC,
+# default 600 s, scripts/measure-piece-runner.js): each finished file is logged,
+# the files still running are named every 60 s, and a file that never ends is
+# killed and named — the piece fails in minutes instead of holding the lock
+# silent until PIECE_MAX_SEC (run 42754208151, backlog:3d560518f3e2).
+#
 # Usage: bash scripts/measure-pieces.sh [--apply]
 #   without --apply prints the { measuredAgainst } block (CI redirects it
 #   into the measurement artifact); with --apply writes site/claims.json.

@@ -647,7 +647,7 @@ export function italianDay(value) {
  * @param {(message: string, cause: unknown) => void | null} log
  */
 function normalizeFailure(error, log = null) {
-  const record = error !== null && typeof error === 'object' ? error : {};
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : 'UNKNOWN';
   const status = typeof record.status === 'number' ? record.status : null;
   const message = typeof record.message === 'string' && record.message !== ''
@@ -660,14 +660,103 @@ function normalizeFailure(error, log = null) {
     : (typeof console !== 'undefined' && typeof console.error === 'function'
       ? (text, cause) => console.error(text, cause)
       : () => {});
-  return { code, status, message, report };
+  const method = typeof record.method === 'string' ? record.method.toUpperCase() : null;
+  // The path without its query: the words typed in a search (customer
+  // names) stay out of the console.
+  const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
+  return { code, status, message, method, path, report };
+}
+
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Tag a rejection with the request that caused it (backlog:e7bdcbcc6864):
+ * the log helpers below then name a failed POST as a write, never as
+ * «lettura fallita». A method/path already on the error wins; primitives
+ * pass through untouched.
+ * @template T
+ * @param {T} error
+ * @param {unknown} method
+ * @param {unknown} path
+ * @returns {T}
+ */
+export function tagRequestFailure(error, method, path) {
+  if (error === null || typeof error !== 'object') return error;
+  const record = /** @type {any} */ (error);
+  try {
+    if (typeof record.method !== 'string' && typeof method === 'string') record.method = method.toUpperCase();
+    if (typeof record.path !== 'string' && typeof path === 'string') record.path = path;
+  } catch {
+    // A frozen rejection keeps its shape; the log just names less.
+  }
+  return error;
+}
+
+/**
+ * One readable console line (backlog:e7bdcbcc6864, production 11/11: a 400
+ * on POST /api/customer-hub/phone read «[bo] lettura fallita Object»):
+ * read or write from the method, then the request, the status, the code and
+ * the message as text, so the line says what failed without expanding it.
+ * The object rides along for whoever opens it.
+ * @param {'lettura' | 'scrittura'} fallback what the caller expected
+ * @param {{ code: string, status: number | null, message: string, method: string | null, path: string | null, report: (message: string, cause: unknown) => void }} failure
+ */
+function reportFailure(fallback, { code, status, message, method, path, report }) {
+  const kind = method === null ? fallback : (WRITE_METHODS.has(method) ? 'scrittura' : 'lettura');
+  const request = method !== null && path !== null ? ` ${method} ${path}` : '';
+  const outcome = [status === null ? '' : String(status), code].filter((part) => part !== '').join(' ');
+  report(`[bo] ${kind} fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
+    { code, status, message, method, path });
 }
 
 export function humanReadError(error, { failed, notComposed = null, log = null } = {}) {
-  const { code, status, message, report } = normalizeFailure(error, log);
-  report('[bo] lettura fallita', { code, status, message });
+  const failure = normalizeFailure(error, log);
+  const { code, status } = failure;
+  reportFailure('lettura', failure);
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   return failed;
+}
+
+/** The codes a gateway answers with when the server behind it never did. */
+const GATEWAY_CODES = new Set(['', 'UNKNOWN', 'BAD_GATEWAY', 'SERVICE_UNAVAILABLE', 'GATEWAY_TIMEOUT']);
+
+/** A write the server could not take right now (5xx): what happened, then what to do. */
+export const SERVER_UNAVAILABLE_TEXT = 'Il server non risponde adesso, riprova tra poco.';
+
+/**
+ * Whether a failure means the write never got a usable answer from the
+ * server (backlog:7cc35edab50c, production 07/11: a 502 from the /bo edge
+ * read «Scrittura del pannello rifiutata», as if the panel had refused):
+ * fetch rejected (a TypeError, status 0), a timeout, or a 502/503/504
+ * gateway hiccup. A refusal the server really named — an LLM_* code (the
+ * pilot forwards AI-off at 502), a *_CANCELLED or *_OUTCOME_UNKNOWN outcome —
+ * stays a refusal, never a connection fault. So does a verdict the server
+ * already named at 502/503/504 (review agent-crm#696): a failed BO write
+ * (BO_SEND_FAILED, answered 502) ends the owning wait as «non inviato» and
+ * a queued one (BO_*_PENDING, answered 504) is read back under its
+ * requestId — neither must print «Connessione non riuscita, riprova.» and
+ * invite the same POST again. The same holds for a refused body and an
+ * unconfigured bridge at those statuses, and for the transient read miss
+ * (BO_SEND_STATUS_FAILED): the owning flow keeps reading it back, it never
+ * re-POSTs. The queued re-read (review #664) shares this line through
+ * transientReadFailure, so the two cannot drift apart.
+ * @param {unknown} error the rejection from `client.request`
+ */
+export function isNetworkFailure(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (status === 0) return true;
+  if (status === null) {
+    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
+  }
+  if (status !== 502 && status !== 503 && status !== 504) return false;
+  // backlog:7d30fb517785 (production 10/11: a 503 OPERATION_APP_UNAVAILABLE
+  // on the AI switch read «Connessione non riuscita»): at 502/503/504 only a
+  // gateway's own generic code means «no answer». Any other code is a
+  // verdict the server named, never a connection fault.
+  return GATEWAY_CODES.has(code);
 }
 
 /**
@@ -675,14 +764,24 @@ export function humanReadError(error, { failed, notComposed = null, log = null }
  * resta mai in silenzio — vicino al comando compare un testo italiano che
  * dice cosa è successo e cosa fare. Il dettaglio tecnico va solo nel log,
  * mai nel DOM. Lo stato 405 (operazione non permessa) e il 422 (dati non
- * validi) hanno un testo proprio; tutto il resto risponde `failed`.
+ * validi) hanno un testo proprio; tutto il resto risponde `failed`. Un
+ * guasto di rete (backlog:7cc35edab50c) non è un rifiuto: risponde
+ * «Connessione non riuscita, riprova.» e il comando resta a schermo per la
+ * riprova, mai il testo di un rifiuto. Un 502/503/504 da gateway non è un
+ * guasto di rete (backlog:7d30fb517785): il server non risponde, e il testo
+ * lo dice; un codice applicativo a quegli stati risponde `failed`.
  *
  * @param {unknown} error the rejection from `client.request`
  * @param {{ failed: string, notComposed?: string|null, log?: (message: string, cause: unknown) => void }} options
  */
 export function humanWriteError(error, { failed, notComposed = null, log = null } = {}) {
-  const { code, status, message, report } = normalizeFailure(error, log);
-  report('[bo] scrittura rifiutata', { code, status, message });
+  const failure = normalizeFailure(error, log);
+  const { code, status } = failure;
+  reportFailure('scrittura', failure);
+  // backlog:7d30fb517785: «Connessione non riuscita» only when the answer
+  // never arrived (fetch rejected, status 0, timeout). A gateway 5xx did
+  // answer: the server is the one not taking the write right now.
+  if (isNetworkFailure(error)) return status !== null && status >= 500 ? SERVER_UNAVAILABLE_TEXT : 'Connessione non riuscita, riprova.';
   if ((code === 'NOT_FOUND' || status === 404) && typeof notComposed === 'string') return notComposed;
   if (status === 405 || code === 'METHOD_NOT_ALLOWED') {
     return 'Il server non permette questa operazione qui. Chiedi a un operatore di abilitare la funzione e riprova.';
@@ -863,11 +962,11 @@ function transientReadFailure(error) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   if (/^LLM_/.test(code) || /_CANCELLED$/.test(code) || /_OUTCOME_UNKNOWN$/.test(code)) return false;
+  // The network line lives in isNetworkFailure (backlog:7cc35edab50c);
+  // here stay the server hiccups worth one more read.
+  if (isNetworkFailure(error)) return true;
   const status = typeof record.status === 'number' ? record.status : null;
-  if (status === 0) return true;
-  if (status === null) {
-    return error instanceof TypeError || /^(NETWORK|TIMEOUT|FETCH)/.test(code) || record.name === 'TimeoutError';
-  }
+  if (status === null) return false;
   return status >= 500 || status === 408 || status === 425 || status === 429;
 }
 

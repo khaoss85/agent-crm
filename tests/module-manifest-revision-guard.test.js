@@ -89,6 +89,7 @@ const RECORDED = Object.freeze({
   "custom-field-value": { revision: 1, sqlite: "d1d49296dd5fd4cab7e582e4488df1f0de659dc4a8f14187f449ab1f188b9a55", pg: "15242327f9a2afb0686b0c603d2b8d4599ce488acc9eb7650407bd1f4a9f9711" },
   "customer-bulk-item": { revision: 1, sqlite: "080d90a523699c840cc416a07bd214081129a1dd2b26a8f45ac34833680b53ab", pg: "bf38935f0a56949c3a564e6bd03379ef7e2748e016b87308ff1ead62853dc33f" },
   "customer-bulk-run": { revision: 1, sqlite: "99a8e63e719c4a16483f7bd124b7137ddbe325e3ee6619b90e270625f622f650", pg: "a5ee383090ba95b39eb664f51e4252b5117adb995e6572d04946b9add0219e9e" },
+  "customer-erasure-log": { revision: 1, sqlite: "082d59f92fc08ec54d682dd962ed5060b3e8a8b1889ffdf846c77a8ae0981a80", pg: "65d638fcf55298769fe2b84ce627071aa13089ae62f104b82bcb6054153b4f29" },
   "customer-import-row": { revision: 1, sqlite: "1fd036ec93f7524f3c3649513de7cea9121975fa9a8e838492084443e81d0a95", pg: "fd3b433c861e4e0230951538a0fc4b5ac2c1f13cbaef6df298ced5f66ba21521" },
   "customer-import-run": { revision: 1, sqlite: "862a20a5645c9d0e76025994e1b36c03cb78d1ad7549458c850c7c59287db518", pg: "4a9f9bb2229938861a1481fc56b2f42eedcea9f2b8d078576133be30bb7a5832" },
   "data-quality-issue": { revision: 2, sqlite: "b08c6b8c1e2182fc432cdb77417541416a44b7301e3c01f01a88a99b230de656", pg: "44aec90d03eb7f00803870bf7b18201100e008d6be97ef8153918100c6a565cf" },

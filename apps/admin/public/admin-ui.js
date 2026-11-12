@@ -546,6 +546,26 @@ export function uiLoading(doc, options = {}) {
 }
 
 /**
+ * A grey placeholder bar where a value is still arriving (backlog:bd5e84545021,
+ * production 11/11: Oggi showed «un ospite da confermare» and stored labels
+ * for seconds, and they read as real data). It carries no text and is
+ * hidden from assistive tech; the screen announces the wait once, with
+ * its own status line. `width` is a CSS length («60%», «8em»).
+ *
+ * @param {any} doc
+ * @param {{ width?: unknown, block?: boolean }} [options]
+ */
+export function uiSkeleton(doc, options = {}) {
+  const bar = doc.createElement('span');
+  bar.setAttribute('class', options.block === true ? 'ui-skeleton ui-skeleton-block' : 'ui-skeleton');
+  bar.setAttribute('aria-hidden', 'true');
+  bar.setAttribute('data-skeleton', 'true');
+  const width = typeof options.width === 'string' && /^\d{1,3}(?:%|em|px)$/.test(options.width) ? options.width : '60%';
+  bar.setAttribute('style', `width: ${width}`);
+  return bar;
+}
+
+/**
  * @param {any} doc
  * @param {{ text?: unknown, error?: boolean }} [options]
  */
@@ -554,6 +574,36 @@ export function uiToast(doc, options = {}) {
   toast.setAttribute('class', `ui-toast${options.error ? ' error' : ''}`);
   toast.textContent = String(options.text ?? '');
   return toast;
+}
+
+/**
+ * Fill the shell toast (backlog:7b2203e69826): the message and, when given,
+ * one action button after it — «Annulla» after a Pipeline move, like
+ * Trello. The action runs once; `onDone` lets the shell hide the toast.
+ * Text only, never HTML.
+ * @param {any} doc @param {any} node
+ * @param {unknown} message
+ * @param {{ error?: boolean, action?: { label: string, run: () => void } | null, onDone?: () => void }} [options]
+ */
+export function paintToast(doc, node, message, options = {}) {
+  node.textContent = String(message ?? '');
+  if (node.classList && typeof node.classList.toggle === 'function') node.classList.toggle('error', Boolean(options.error));
+  const action = options.action;
+  if (!action || typeof action.run !== 'function' || typeof action.label !== 'string' || action.label === '') return;
+  const button = doc.createElement('button');
+  button.setAttribute('type', 'button');
+  button.setAttribute('class', 'ui-toast-action');
+  button.setAttribute('data-action', 'toast-action');
+  button.textContent = action.label;
+  let used = false;
+  button.addEventListener('click', () => {
+    if (used) return;
+    used = true;
+    if (typeof options.onDone === 'function') options.onDone();
+    action.run();
+  });
+  node.appendChild(el(doc, 'span', { text: ' ' }));
+  node.appendChild(button);
 }
 
 /**

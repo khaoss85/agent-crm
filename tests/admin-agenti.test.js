@@ -4,9 +4,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import * as agentiMod from '../apps/admin/public/admin-agenti.js';
 import {
   AGENT_AUTONOMY_LABEL,
-  DA_FARE_DISABLED_NOTE,
+  AGENTS_IDLE_NOTE,
+  DA_FARE_PENDING_NOTE,
+  DA_FARE_UNAVAILABLE_NOTE,
+  assignmentStatusLabel,
   PHRASE_UNCLEAR_NOTE,
   buildAgentCards,
   buildCatalogItems,
@@ -17,6 +21,8 @@ import {
   renderTeamAgentRows,
   spentThisMonthCents,
   isDaFareRun,
+  lastRunLine,
+  isDecisionUnavailable,
 } from '../apps/admin/public/admin-agenti.js';
 import { rerendersOnSpaceSwitch } from '../apps/admin/public/admin-shell.js';
 import { createAssistantPanel, ASSISTANT_STATUS_PATH } from '../apps/admin/public/admin-assistant.js';
@@ -99,11 +105,14 @@ test('Da fare lists only proposed runs, newest first, and flags unreadable propo
     agents: [RIAGGANCIO],
     assignments: [{ sourceKey: 'a-1', phrase: 'occupati dei lead' }],
     runs: [
-      { sourceKey: 'r-old', agentSourceKey: RIAGGANCIO.sourceKey, assignmentSourceKey: 'a-1', outcome: 'proposed', startedAt: '2026-11-05T08:00:00.000Z', proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'WhatsApp a Giulia' } }, { action: 'tag-customer', payload: {} }]) },
-      { sourceKey: 'r-new', agentSourceKey: 'agent:sconosciuto', outcome: 'proposed', startedAt: '2026-11-06T08:00:00.000Z', proposals: '{not json' },
+      { id: 'run-old', sourceKey: 'r-old', agentSourceKey: RIAGGANCIO.sourceKey, assignmentSourceKey: 'a-1', outcome: 'proposed', startedAt: '2026-11-05T08:00:00.000Z', proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'WhatsApp a Giulia' } }, { action: 'tag-customer', payload: {} }]) },
+      { id: 'run-new', sourceKey: 'r-new', agentSourceKey: 'agent:sconosciuto', outcome: 'proposed', startedAt: '2026-11-06T08:00:00.000Z', proposals: '{not json' },
       { sourceKey: 'r-done', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'applied', startedAt: '2026-11-07T08:00:00.000Z' },
     ],
   });
+  // backlog:31a76b6f19a3: the item carries the run's id, never its source key.
+  assert.deepEqual(items.map((item) => item.runId), ['run-new', 'run-old']);
+  // The source key stays beside the id (agent-crm#684 reads it).
   assert.deepEqual(items.map((item) => item.runSourceKey), ['r-new', 'r-old']);
   assert.equal(items[0].unreadable, true);
   assert.equal(items[0].agentName, 'Agente sconosciuto');
@@ -145,11 +154,12 @@ test('the #/agenti route resolves to the Agenti screen; anything under it is inv
 });
 
 /** A drive over the three reads and the two writes, like the server. */
-function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = false, rows = null } = {}) {
+function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = false, rows = null, onApprove = null, onReject = null, onRevise = null } = {}) {
   const calls = [];
   const agents = [{ ...RIAGGANCIO }];
   const assignments = [];
   const runs = [{
+    id: '5f0c2a4e-1b2c-4d3e-8f9a-0b1c2d3e4f50',
     sourceKey: 'r-1', agentSourceKey: RIAGGANCIO.sourceKey, assignmentSourceKey: 'a-0', outcome: 'proposed',
     startedAt: '2026-11-06T09:01:00.000Z', decidedAt: '2026-11-06T09:01:00.000Z', costCents: 42,
     proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'WhatsApp a Giulia Romano' } }]),
@@ -199,6 +209,26 @@ function driveClient({ composed = true, unclearFirst = false, loseFirstAnswer = 
         }
         return { duplicate: false, assignment };
       }
+      if (path === '/api/agents/approve' && method === 'POST') {
+        if (typeof onApprove === 'function') return onApprove(body, runs);
+        const run = runs.find((row) => row.id === body.runId);
+        if (run) run.outcome = 'applied';
+        return { duplicate: false, run: { id: body.runId, outcome: 'applied' } };
+      }
+      if (path === '/api/agents/reject' && method === 'POST') {
+        if (typeof onReject === 'function') return onReject(body, runs);
+        const run = runs.find((row) => row.id === body.runId);
+        if (run) run.outcome = 'rejected';
+        return { duplicate: false, run: { id: body.runId, outcome: 'rejected' } };
+      }
+      if (path === '/api/agents/revise' && method === 'POST') {
+        if (typeof onRevise === 'function') return onRevise(body, runs);
+        const run = runs.find((row) => row.id === body.runId);
+        const proposals = JSON.parse(run.proposals);
+        proposals[body.index] = { ...proposals[body.index], payload: { ...proposals[body.index].payload, ...body.payload } };
+        run.proposals = JSON.stringify(proposals);
+        return { run: { id: body.runId, outcome: 'proposed' }, proposal: proposals[body.index] };
+      }
       throw new Error(`unexpected request ${method} ${path}`);
     },
   };
@@ -208,7 +238,7 @@ function findButton(mount, action) {
   return mount.querySelector(`button[data-action="${action}"]`);
 }
 
-test('the screen paints I tuoi agenti, Da fare with honest disabled controls, and the catalogue', async () => {
+test('the screen paints I tuoi agenti, Da fare with Approva Modifica Rifiuta live, and the catalogue', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = driveClient();
@@ -221,11 +251,10 @@ test('the screen paints I tuoi agenti, Da fare with honest disabled controls, an
   assert.ok(text.includes(AGENT_AUTONOMY_LABEL));
   assert.ok(text.includes('0,42 €'), 'the spend comes from the run rows');
   assert.ok(text.includes('WhatsApp a Giulia Romano'));
-  assert.ok(text.includes(DA_FARE_DISABLED_NOTE));
   for (const action of ['approve', 'edit', 'reject']) {
     const button = findButton(mount, action);
     assert.ok(button, action);
-    assert.equal(button.disabled, true, `${action} stays disabled: no operation is wired`);
+    assert.equal(button.disabled, false, `${action} is live (backlog:31a76b6f19a3)`);
   }
   assert.ok(text.includes('Nel tuo team'), 'the catalogue marks the agent already added');
   assert.ok(mount.querySelector('a[href="#/sequenze"]'), 'the old Sequenze stay reachable');
@@ -386,7 +415,9 @@ test('review #661 P1: a retry after a lost answer reuses the same sourceKey and 
   input.dispatch('input', {});
   mount.querySelector('form').dispatch('submit', {});
   await flush();
-  assert.ok(textOf(mount).includes('Non riesco a dare l’incarico adesso'));
+  // backlog:7cc35edab50c: the lost answer is a network fault (code NETWORK,
+  // status 0), so it reads as a connection failure, never as a refusal.
+  assert.ok(textOf(mount).includes('Connessione non riuscita, riprova.'));
   mount.querySelector('form').dispatch('submit', {});
   await flush();
   const posts = client.calls.filter((call) => call.path === '/api/agents/assign');
@@ -519,4 +550,428 @@ test('review #661 giro 2 P3: out-of-range times, a bare «@» and parsed proposa
   });
   assert.deepEqual(parsed.lines, ['Ciao Giulia']);
   assert.equal(odd.unreadable, true);
+});
+
+const RUN_ID = '5f0c2a4e-1b2c-4d3e-8f9a-0b1c2d3e4f50';
+
+test('31a76b6f19a3: Approva sends the run id once, shows «Approvo…», then the Italian outcome', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  /** @type {null | ((value: any) => void)} */
+  let answer = null;
+  const client = driveClient({
+    onApprove: (body, runs) => new Promise((resolve) => {
+      answer = (value) => { runs[0].outcome = 'applied'; resolve(value); };
+    }),
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const row = mount.querySelector(`article[data-run="${RUN_ID}"]`);
+  assert.ok(row, 'the Da fare row names the run id');
+  findButton(mount, 'approve').dispatch('click');
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'a double click sends one request');
+  assert.equal(posts[0].path, '/api/agents/approve');
+  assert.deepEqual(posts[0].body, { spaceId: 'presti', runId: RUN_ID }, 'the run id, never r-1');
+  assert.ok(posts[0].key, 'the write carries a submission key');
+  const busy = findButton(mount, 'approve');
+  assert.equal(busy.textContent, 'Approvo…');
+  assert.equal(busy.disabled, true, 'in corso: locked');
+  answer({ duplicate: false, run: { id: RUN_ID, outcome: 'applied' } });
+  await flush();
+  assert.ok(mount.textContent.includes('Approvato: la proposta di Riaggancio è applicata.'));
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null, 'the applied run leaves Da fare');
+});
+
+test('31a76b6f19a3: a queued approval reads neutral («Non ancora confermato»), never as an error, and stays locked', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onApprove: () => { throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 }); },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE), 'the neutral line');
+  assert.equal(mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error')).length, 0,
+    'no error line');
+  assert.equal(findButton(mount, 'approve').disabled, true, 'locked: a second click would queue a second approval');
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1);
+  assert.ok(findButton(mount, 'reload-dafare'), 'Ricarica reads the list again');
+});
+
+test('31a76b6f19a3: a refused approval says why in Italian and lets the operator try again', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let refuse = true;
+  const client = driveClient({
+    onApprove: (body, runs) => {
+      if (refuse) throw Object.assign(new Error('Agent write refused'), { code: 'BO_AGENT_RUN_REFUSED', status: 400 });
+      runs[0].outcome = 'applied';
+      return { duplicate: true, run: { id: body.runId, outcome: 'applied' } };
+    },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  const error = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error'));
+  assert.ok(error && error.textContent !== '', 'an Italian error line');
+  assert.ok(!/BO_|AGENT_/.test(error.textContent), 'never a raw code');
+  assert.equal(findButton(mount, 'approve').disabled, false, 'free to try again');
+  refuse = false;
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('La proposta di Riaggancio era già approvata.'));
+});
+
+test('31a76b6f19a3: Da fare no longer says the agents do not start, and a «niente da proporre» run shows on its assignment', async () => {
+  assert.ok(!/non partono/.test(AGENTS_IDLE_NOTE), 'the old false sentence is gone');
+  const runs = [
+    { assignmentSourceKey: 'a-1', outcome: 'proposed', startedAt: '2026-11-06T08:00:00.000Z', decidedAt: '2026-11-06T08:00:00.000Z' },
+    { assignmentSourceKey: 'a-1', outcome: 'artifact', startedAt: '2026-11-07T13:30:00.000Z', decidedAt: '2026-11-07T13:30:00.000Z' },
+    { assignmentSourceKey: 'a-2', outcome: 'failed', startedAt: '2026-11-07T09:00:00.000Z' },
+  ];
+  assert.equal(lastRunLine(runs, 'a-1'), 'Ultimo giro: niente da proporre, 7 nov, 14:30');
+  assert.equal(lastRunLine(runs, 'a-2'), 'Ultimo giro: non riuscito, 7 nov, 10:00');
+  assert.equal(lastRunLine(runs, 'a-3'), null, 'an assignment that never ran says nothing');
+  const cards = buildAgentCards({
+    agents: [RIAGGANCIO],
+    assignments: [{ sourceKey: 'a-1', agentSourceKey: RIAGGANCIO.sourceKey, phrase: 'occupati dei lead', cadence: 'daily', status: 'active' }],
+    runs: runs.map((run) => ({ ...run, agentSourceKey: RIAGGANCIO.sourceKey })),
+    nowIso: NOW,
+  });
+  assert.equal(cards[0].assignments[0].lastRun, 'Ultimo giro: niente da proporre, 7 nov, 14:30');
+});
+
+test('31a76b6f19a3: Rifiuta asks an optional reason, sends one request with the run id, then says it in Italian', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  /** @type {null | ((value: any) => void)} */
+  let answer = null;
+  const client = driveClient({
+    onReject: (body, runs) => new Promise((resolve) => { answer = (value) => { runs[0].outcome = 'rejected'; resolve(value); }; }),
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'reject').dispatch('click');
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'Rifiuta first asks, never posts blind');
+  const reason = mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo del rifiuto (facoltativo)');
+  reason.value = 'Cliente già contattato';
+  reason.dispatch('input');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'a double click sends one request');
+  assert.equal(posts[0].path, '/api/agents/reject');
+  assert.deepEqual(posts[0].body, { spaceId: 'presti', runId: RUN_ID, reason: 'Cliente già contattato' });
+  assert.equal(findButton(mount, 'confirm-reject').textContent, 'Rifiuto…', 'in corso');
+  answer({ duplicate: false, run: { id: RUN_ID, outcome: 'rejected' } });
+  await flush();
+  assert.ok(mount.textContent.includes('Rifiutata: la proposta di Riaggancio non sarà applicata.'));
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null, 'the refused run leaves Da fare');
+});
+
+test('31a76b6f19a3: Modifica edits the proposal text and sends index and payload; the run keeps waiting', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'edit').dispatch('click');
+  const area = mount.findAll('textarea').find((node) => node.getAttribute('data-proposal') === '0');
+  assert.equal(area.value, 'WhatsApp a Giulia Romano', 'the editor starts from the proposal text');
+  area.value = 'WhatsApp a Giulia: ti va di riprovare giovedì?';
+  area.dispatch('input');
+  findButton(mount, 'save-edit').dispatch('click');
+  findButton(mount, 'save-edit').dispatch('click');
+  await flush();
+  const posts = client.calls.filter((call) => call.method === 'POST');
+  assert.equal(posts.length, 1, 'one request');
+  assert.equal(posts[0].path, '/api/agents/revise');
+  assert.deepEqual(posts[0].body, { spaceId: 'presti', runId: RUN_ID, index: 0, payload: { summary: 'WhatsApp a Giulia: ti va di riprovare giovedì?' } });
+  assert.ok(mount.textContent.includes('Modifica salvata: la proposta di Riaggancio aspetta ancora il tuo ok.'));
+  assert.ok(mount.querySelector(`article[data-run="${RUN_ID}"]`), 'the run stays in Da fare');
+  assert.ok(mount.textContent.includes('WhatsApp a Giulia: ti va di riprovare giovedì?'), 'with the edited text');
+});
+
+test('31a76b6f19a3: a deployment without the route (405 or 404) reads «Non ancora disponibile», never a technical error', async () => {
+  for (const [kind, status] of [['reject', 405], ['revise', 404], ['approve', 405]]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    // What the routers answer for a route they do not have (review #688).
+    const refuse = () => {
+      throw status === 404
+        ? Object.assign(new Error('Route not found'), { status, code: 'NOT_FOUND' })
+        : Object.assign(new Error('Method POST is not mounted here'), { status, code: 'ADMIN_METHOD_NOT_ALLOWED' });
+    };
+    const client = driveClient({ onApprove: refuse, onReject: refuse, onRevise: refuse });
+    const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+    await view.render();
+    await flush();
+    if (kind === 'approve') {
+      findButton(mount, 'approve').dispatch('click');
+    } else if (kind === 'reject') {
+      findButton(mount, 'reject').dispatch('click');
+      findButton(mount, 'confirm-reject').dispatch('click');
+    } else {
+      findButton(mount, 'edit').dispatch('click');
+      findButton(mount, 'save-edit').dispatch('click');
+    }
+    await flush();
+    assert.ok(mount.textContent.includes(DA_FARE_UNAVAILABLE_NOTE), `${kind}: the neutral line`);
+    assert.equal(mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error')).length, 0,
+      `${kind}: no error line`);
+    assert.ok(!/405|404|METHOD|NOT_FOUND/.test(mount.textContent), `${kind}: no technical text`);
+  }
+});
+
+test('31a76b6f19a3: a queued refusal reads neutral and stays locked', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onReject: () => { throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 }); },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'reject').dispatch('click');
+  findButton(mount, 'confirm-reject').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE));
+  for (const action of ['approve', 'edit', 'reject']) assert.equal(findButton(mount, action).disabled, true, `${action} locked`);
+});
+
+test('31a76b6f19a3, narrowed by 43e8e7c563c3: an assignment reads «Attivo» only once it ran; a recurring one that never ran waits for its first run', () => {
+  const runs = [{ assignmentSourceKey: 'a-ran', outcome: 'artifact' }];
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran', status: 'active', cadence: 'once' }, runs), 'Attivo', 'it ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-ran-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' },
+    [{ assignmentSourceKey: 'a-ran-weekly', outcome: 'artifact' }]), 'Attivo', 'recurring, ran once');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-weekly', status: 'active', cadence: 'weekly', nextRunAt: '2026-11-13T08:00:00.000Z' }, runs),
+    'In attesa del primo giro, 13 nov, 09:00', 'recurring with its next run scheduled, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-once', status: 'active', cadence: 'once', nextRunAt: '2026-11-10T07:00:00.000Z' }, runs),
+    'In attesa di partire', 'a one-off that never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-new', status: 'active', cadence: 'weekly' }, runs), 'In attesa di partire', 'nothing scheduled, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-bad', status: 'active', cadence: 'weekly', nextRunAt: 'not-a-date' }, runs),
+    'In attesa di partire', 'unreadable next run, never ran');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-done', status: 'completed' }, runs), 'Fatto');
+  assert.equal(assignmentStatusLabel({ sourceKey: 'a-p', status: 'paused' }, runs), 'In pausa');
+});
+
+test('43e8e7c563c3: a weekly «ogni venerdì» assignment that never ran shows «In attesa del primo giro» with the next date, never «Attivo»', () => {
+  const friday = { sourceKey: 'a-friday', status: 'active', cadence: 'weekly', weekday: 5, timeOfDay: '09:00', nextRunAt: '2026-11-13T08:00:00.000Z' };
+  assert.equal(describeSchedule(friday), 'Ogni venerdì alle 09:00');
+  const label = assignmentStatusLabel(friday, []);
+  assert.ok(label.startsWith('In attesa del primo giro'), `waits for the first run, got ${label}`);
+  assert.ok(label.includes('13 nov'), `names the next date, got ${label}`);
+  assert.ok(!label.includes('Attivo'), `never reads «Attivo» before the first run, got ${label}`);
+});
+
+test('review #688 P1: an answer that lands after a space switch is dropped, never painted on the space now shown', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let space = 'presti';
+  /** @type {null | ((value: any) => void)} */
+  let answer = null;
+  const client = driveClient({ onApprove: () => new Promise((resolve) => { answer = resolve; }) });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => space, now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(answer, 'the approval is in flight');
+  space = 'altro';
+  answer({ duplicate: false, run: { id: RUN_ID, outcome: 'applied' } });
+  await flush();
+  assert.equal(view.state.space, 'altro', 'the active space is painted');
+  assert.ok(!mount.textContent.includes('Approvato'), 'the outcome of presti never lands on altro');
+  assert.equal(view.state.notice, '');
+  assert.ok([...view.state.decisions.values()].every((decision) => decision.busy === null && !decision.pending && decision.error === ''),
+    'no decision state of presti is carried over');
+});
+
+test('review #688 P1: a queued decision stays locked across Ricarica until its run leaves «proposed», with no second request', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onApprove: () => { throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 }); },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  const firstKey = client.calls.find((call) => call.method === 'POST').key;
+  findButton(mount, 'reload-dafare').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE), 'still «Non ancora confermato» after the reload');
+  assert.equal(findButton(mount, 'approve').disabled, true, 'still locked');
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 1, 'no second approval while the first is queued');
+  assert.equal(view.state.queued.get(RUN_ID)?.keys.get('approve'), firstKey, 'its key is kept');
+  // The worker applied it: the next read finds the run applied and forgets the queue.
+  const { items: runs } = await client.request('/api/modules/teammate-run/records?filter.spaceId=presti', {});
+  runs[0].outcome = 'applied';
+  await view.render();
+  await flush();
+  assert.equal(view.state.queued.size, 0, 'a settled run leaves the queue');
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null);
+});
+
+test('review #688 P2: Modifica edits the very field the row shows', async () => {
+  const items = buildDaFare({
+    agents: [RIAGGANCIO],
+    runs: [{ id: 'run-x', sourceKey: 'r-x', agentSourceKey: RIAGGANCIO.sourceKey, outcome: 'proposed', startedAt: NOW,
+      proposals: JSON.stringify([{ action: 'invia', payload: { summary: 'WhatsApp a Giulia', text: 'Ciao Giulia, ti va giovedì?' } }]) }],
+  });
+  assert.equal(items[0].lines[0], 'WhatsApp a Giulia');
+  assert.deepEqual(items[0].edits[0], { index: 0, field: 'summary', value: 'WhatsApp a Giulia' }, 'the editor opens the shown field');
+});
+
+test('review #688 P2: only a missing route reads «Non ancora disponibile»; a gone run is said and the list is read again', async () => {
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'ADMIN_METHOD_NOT_ALLOWED' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'NOT_FOUND', message: 'Route not found' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404 }), true, 'no domain code');
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'BO_AGENT_ROUTE_UNKNOWN' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'BO_AGENT_DECISION_UNAVAILABLE' }), true);
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'AGENT_RUN_UNKNOWN' }), false, 'an AGENT_ refusal is never hidden');
+  assert.equal(isDecisionUnavailable({ status: 404, code: 'NOT_FOUND', message: 'teammate-run not found' }), false, 'a gone record is not a missing route');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({
+    onApprove: (body, runs) => {
+      runs.splice(0, runs.length);
+      throw Object.assign(new Error('Agent write refused'), { status: 404, code: 'AGENT_RUN_UNKNOWN' });
+    },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'approve').dispatch('click');
+  await flush();
+  assert.ok(!mount.textContent.includes(DA_FARE_UNAVAILABLE_NOTE), 'not hidden as «non disponibile»');
+  const error = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '').includes('bo-seq-error'));
+  assert.ok(error && error.textContent !== '' && !/AGENT_|404/.test(error.textContent), 'an Italian line, no code');
+  assert.equal(mount.querySelector(`article[data-run="${RUN_ID}"]`), null, 'the list was read again: the stale row is gone');
+});
+
+test('review #688 P3: Modifica shows «Salvo…» while its edit flies', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient({ onRevise: () => new Promise(() => {}) });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  findButton(mount, 'edit').dispatch('click');
+  findButton(mount, 'save-edit').dispatch('click');
+  await flush();
+  assert.equal(findButton(mount, 'edit').textContent, 'Salvo…');
+  assert.equal(findButton(mount, 'edit').getAttribute('aria-busy'), 'true');
+});
+
+test('review #688 giro 2 P1: a queued edit unlocks after Ricarica and a re-save of the same text reuses its key', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let queue = true;
+  const client = driveClient({
+    onRevise: (body, runs) => {
+      if (queue) throw Object.assign(new Error('Agent write pending'), { code: 'BO_AGENT_PENDING', status: 504 });
+      return { run: { id: body.runId, outcome: 'proposed' } };
+    },
+  });
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW });
+  await view.render();
+  await flush();
+  const save = async (text) => {
+    findButton(mount, 'edit').dispatch('click');
+    const area = mount.findAll('textarea').find((node) => node.getAttribute('data-proposal') === '0');
+    area.value = text;
+    area.dispatch('input');
+    findButton(mount, 'save-edit').dispatch('click');
+    await flush();
+  };
+  await save('Ciao Giulia, giovedì alle 18?');
+  assert.ok(mount.textContent.includes(DA_FARE_PENDING_NOTE), 'the edit is queued');
+  assert.equal(findButton(mount, 'approve').disabled, true, 'locked while it flies');
+  findButton(mount, 'reload-dafare').dispatch('click');
+  await flush();
+  for (const action of ['approve', 'edit', 'reject']) {
+    assert.equal(findButton(mount, action).disabled, false, `${action} unlocked after Ricarica: an edit never leaves «proposed»`);
+  }
+  queue = false;
+  await save('Ciao Giulia, giovedì alle 18?');
+  const posts = client.calls.filter((call) => call.method === 'POST' && call.path === '/api/agents/revise');
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].key, posts[0].key, 'the same text goes again under the same key');
+  assert.ok(mount.textContent.includes('Modifica salvata'));
+});
+
+test('review #688 giro 2 P2: a 405 with a domain code is a real refusal, not «Non ancora disponibile»', () => {
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'AGENT_RUN_UNKNOWN' }), false);
+  assert.equal(isDecisionUnavailable({ status: 405, code: 'BO_AGENT_RUN_REFUSED' }), false);
+  for (const code of [undefined, 'ADMIN_METHOD_NOT_ALLOWED', 'NOT_FOUND', 'BO_AGENT_ROUTE_UNKNOWN', 'BO_AGENT_DECISION_UNAVAILABLE']) {
+    assert.equal(isDecisionUnavailable({ status: 405, code }), true, String(code));
+  }
+});
+
+test('backlog 2df6a513cc4d: dopo Affida la pagina rilegge da sola e lascia «In attesa di partire»', async () => {
+  const POLL_MS = agentiMod.AGENTI_POLL_MS;
+  const FOLLOWUP_MS = agentiMod.AGENTI_FOLLOWUP_MS;
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient();
+  const timers = [];
+  const setTimer = (fn, ms) => { const handle = { fn, ms }; timers.push(handle); return handle; };
+  const clearTimer = (handle) => { const at = timers.indexOf(handle); if (at >= 0) timers.splice(at, 1); };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer, clearTimer });
+  await view.render();
+  await flush();
+  assert.equal(timers.length, 1, 'una lettura periodica mentre la pagina è mostrata');
+  assert.ok(Number.isInteger(POLL_MS) && POLL_MS > 0 && POLL_MS <= 60_000, 'poll sotto il minuto');
+  assert.ok(Array.isArray(FOLLOWUP_MS) && FOLLOWUP_MS.length > 0, 'riletture dopo Affida');
+  assert.equal(timers[0].ms, POLL_MS);
+  const input = mount.querySelector(`input[name="talk-${RIAGGANCIO.sourceKey}"]`);
+  input.value = 'ogni lunedì occupati dei lead';
+  input.dispatch('input', {});
+  mount.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.ok(textOf(mount).includes('Incarico dato a Riaggancio'), 'l’esito di Affida resta');
+  assert.ok(textOf(mount).includes('Ogni lunedì alle 08:00 · In attesa di partire'), 'il giro non è ancora arrivato');
+  assert.equal(timers.length, 1 + FOLLOWUP_MS.length, 'Affida riuscita arma le riletture');
+  // Il giro del worker arriva dopo la risposta: una proposta per il nuovo incarico.
+  const assignment = client.assignments[0];
+  assert.ok(assignment && typeof assignment.sourceKey === 'string');
+  const { items: serverRuns } = await client.request('/api/modules/teammate-run/records?filter.spaceId=presti', {});
+  serverRuns.push({
+    id: 'run-affida', sourceKey: 'r-affida', agentSourceKey: RIAGGANCIO.sourceKey,
+    assignmentSourceKey: assignment.sourceKey, outcome: 'proposed', startedAt: NOW,
+    proposals: JSON.stringify([{ action: 'send-message', payload: { summary: 'Bozza per i lead' } }]),
+  });
+  const readsBefore = client.calls.filter((call) => call.method === 'GET').length;
+  // La prima rilettura dopo Affida, senza toccare Ricarica.
+  const followup = timers.find((handle) => handle.ms === FOLLOWUP_MS[0]);
+  assert.ok(followup, 'la prima rilettura è armata');
+  clearTimer(followup);
+  await followup.fn();
+  await flush();
+  assert.ok(client.calls.filter((call) => call.method === 'GET').length > readsBefore, 'ha riletto da sola');
+  const text = textOf(mount);
+  assert.ok(!text.includes('In attesa di partire'), 'lo stato nuovo senza ricaricare');
+  assert.ok(text.includes('Ogni lunedì alle 08:00 · Attivo'), 'il giro è arrivato');
+  assert.ok(text.includes('Bozza per i lead'), 'la proposta è in «Da fare»');
+  view.invalidate();
+  assert.equal(timers.length, 0, 'fuori dalla pagina niente letture');
 });

@@ -111,8 +111,11 @@ jobs:
           # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
           # Loopback only: the cluster trusts every connection. A container a
           # cancelled run left behind would refuse the name: removed first.
+          # A throwaway test database: data on tmpfs, no fsync, no synchronous
+          # commit, no full-page writes (backlog:3d560518f3e2, the server is
+          # disk-bound and the suite never needs the data after the run).
           docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
-          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test --tmpfs /var/lib/postgresql/data -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16 postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - run: npm ci
@@ -248,8 +251,11 @@ jobs:
           # container and port in its .env (ACCORDO_PG_NAME, ACCORDO_PG_PORT).
           # Loopback only: the cluster trusts every connection. A container a
           # cancelled run left behind would refuse the name: removed first.
+          # A throwaway test database: data on tmpfs, no fsync, no synchronous
+          # commit, no full-page writes (backlog:3d560518f3e2, the server is
+          # disk-bound and the suite never needs the data after the run).
           docker rm -f "${ACCORDO_PG_NAME:-accordo-pg}" >/dev/null 2>&1 || true
-          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16
+          docker run -d --name "${ACCORDO_PG_NAME:-accordo-pg}" -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_USER=postgres -e POSTGRES_DB=accordo_test --tmpfs /var/lib/postgresql/data -p "127.0.0.1:${ACCORDO_PG_PORT:-5432}:5432" postgres:16 postgres -c fsync=off -c synchronous_commit=off -c full_page_writes=off
           for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p "${ACCORDO_PG_PORT:-5432}" -U postgres && break; sleep 2; done
           echo "ACCORDO_PG_TEST_URL=postgres://postgres@127.0.0.1:${ACCORDO_PG_PORT:-5432}/accordo_test" >> "$GITHUB_ENV"
       - name: Install and verify PostgreSQL 16 backup client (Linux)

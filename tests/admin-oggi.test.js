@@ -27,9 +27,12 @@ import {
   nextAppointment,
   upcomingAppointment,
   readAppointmentNames,
+  buildChannelInvite,
   oggiDateLine,
   renderOggi,
   romeDayKey,
+  romeDayPhrase,
+  romeDayKeyShift,
   romeTime,
   staleFields,
   triageState,
@@ -449,18 +452,28 @@ test('recap follows the prototype sentence with real counts', () => {
     buildTodayRecap({ appointments: [APPT_TODAY], openTasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-9' }], now: OGGI_NOW }),
     'Oggi hai 2 cose da fare e 1 appuntamento. Ti servono circa 6 minuti.',
   );
+  // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
+  // the verb agrees with the count, and zero reads as a person says it.
   assert.equal(
     buildTodayRecap({ appointments: [], openTasks: [], now: OGGI_NOW }),
-    'Niente in sospeso. Ti restano 0 appuntamenti.',
+    'Niente in sospeso e nessun appuntamento per oggi.',
   );
   assert.equal(
     buildTodayRecap({ appointments: [APPT_TODAY, APPT_TOMORROW], openTasks: [], now: OGGI_NOW }),
-    'Niente in sospeso. Ti restano 1 appuntamento.',
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [APPT_TODAY, { ...APPT_TODAY, id: 'appt-9' }], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso. Ti restano 2 appuntamenti.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [TASK_OPEN], now: OGGI_NOW }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti.',
   );
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
 
-test('agenda rows link the scheda when it resolves, the record otherwise', () => {
+test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
   assert.equal(agenda[0].time, '10:00');
@@ -468,7 +481,9 @@ test('agenda rows link the scheda when it resolves, the record otherwise', () =>
   const packaged = buildTodayAgenda([{
     ...APPT_TODAY, subjectOwner: 'package', subjectOwnerPackage: 'lifecycle', subjectLabel: 'Seq-9',
   }], OGGI_NOW);
-  assert.equal(packaged[0].href, '#/modules/appointment/appt-1', 'package subjects fall back to the record');
+  // backlog:bd5e84545021: never the technical record page.
+  assert.equal(packaged[0].href, '#/calendario', 'package subjects fall back to the calendar');
+  assert.deepEqual(packaged[0].calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'on the event, in its week');
 });
 
 test('next appointment is the upcoming one, null when the day holds nothing else', () => {
@@ -482,7 +497,10 @@ test('brief quotes records and every source opens its record', () => {
   assert.ok(brief.bullets.some((line) => line.includes('Ciao, posso passare giovedì')), 'message quoted');
   assert.ok(brief.bullets.some((line) => line.includes('Interessata')), 'call quoted');
   const hrefs = brief.sources.map((source) => source.href);
-  assert.ok(hrefs.includes('#/modules/appointment/appt-1'), 'appointment source');
+  assert.ok(!hrefs.includes('#/modules/appointment/appt-1'), 'never the technical appointment page (bd5e84545021)');
+  const appointmentSource = brief.sources.find((source) => source.label === 'Appuntamento delle 10:00');
+  assert.equal(appointmentSource?.href, '#/calendario', 'the appointment source opens the calendar');
+  assert.deepEqual(appointmentSource?.calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'with the event selected');
   assert.ok(hrefs.includes('#/modules/interaction-message/msg-1'), 'message source');
   assert.ok(hrefs.includes('#/modules/interaction-call/call-1'), 'call source');
   assert.ok(hrefs.includes('#/customer-card/lead/lead-1'), 'card source');
@@ -490,7 +508,7 @@ test('brief quotes records and every source opens its record', () => {
 
   const bare = buildPreCallBrief({ appointment: APPT_TODAY, messages: [], calls: [] });
   assert.ok(bare.bullets.some((line) => line.includes('Nessun messaggio o chiamata registrati')));
-  assert.ok(bare.sources.some((source) => source.href === '#/modules/appointment/appt-1'));
+  assert.ok(bare.sources.some((source) => source.href === '#/calendario' && source.calendarEvent?.id === 'appt-1'));
   assert.equal(buildPreCallBrief({ appointment: null }), null);
 });
 
@@ -554,7 +572,7 @@ test('full home renders every section with clickable sources', () => {
   }
 
   const byHref = (href) => mount.findAll('a').find((node) => node.getAttribute('href') === href);
-  for (const href of ['#/modules/appointment/appt-1', '#/modules/interaction-message/msg-1',
+  for (const href of ['#/calendario', '#/modules/interaction-message/msg-1',
     '#/customer-card/lead/lead-1', '#/connettori']) {
     assert.ok(byHref(href), `source opens its record: ${href}`);
   }
@@ -808,8 +826,8 @@ test('Oggi strip with Gmail and Calendar connected counts them and links Connett
       availability: { work: true, appointments: true, channels: true },
     },
   });
-  // Stripe cannot be connected here, so it is not in the denominator (08/11).
-  assert.ok(mount.textContent.includes('2 di 8 collegati'), 'Gmail plus Calendar read as two connected');
+  // The prototype count: «x di 9», Stripe included (9c7d1477a8d4).
+  assert.ok(mount.textContent.includes('2 di 9 collegati'), 'Gmail plus Calendar read as two connected');
   assert.ok(!mount.textContent.includes('Collega Email'), 'Email is not invited once Gmail is connected');
   const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
   assert.ok(strip, 'the strip renders');
@@ -1412,11 +1430,13 @@ test('5083e7a77c26: the strip count equals the list it names', () => {
   assert.ok(strip, 'the strip renders');
   const count = /(\d+) di (\d+) collegati/.exec(strip.textContent);
   assert.ok(count, 'the strip carries a count');
-  const named = /Collega (.+) per (?:non perdere|avere)/.exec(strip.textContent);
+  const named = /Collega (.+) per non perdere nessun lead(?: \((.+)\))?/.exec(strip.textContent);
   assert.ok(named, 'the strip names the channels to connect');
   const names = named[1].split(', ');
-  assert.equal(Number(count[1]) + names.length, Number(count[2]), `«${count[0]}» and ${names.length} names tell one story`);
-  assert.equal(count[0], '2 di 8 collegati', 'Stripe, which nothing here connects, is not counted');
+  // The aside names the missing channels that are not leads to connect here.
+  const aside = named[2] ? named[2].split('; ').flatMap((part) => part.replace(/ (dal Profilo|non ancora disponibil[ei])$/, '').split(/, | e /)) : [];
+  assert.equal(Number(count[1]) + names.length + aside.length, Number(count[2]), `«${count[0]}», ${names.length} names and ${aside.length} apart tell one story`);
+  assert.equal(count[0], '2 di 9 collegati', 'the prototype count, Stripe included');
   assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
 });
 
@@ -1457,7 +1477,7 @@ test('5083e7a77c26: with no more calls today the card prepares the next one ahea
   assert.equal(brief.when, 'domani alle 10:00');
   assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00 con Giulia Romano'), brief.bullets[0]);
   const later = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-10-23T08:00:00.000Z' }, now: lateToday });
-  assert.equal(later.when, '23 ott alle 10:00');
+  assert.equal(later.when, '23 ottobre alle 10:00', 'the month in full (7d30fb517785)');
   const today = buildPreCallBrief({ appointment: APPT_TODAY, now: OGGI_NOW });
   assert.equal(today.when, 'oggi alle 10:00', 'today keeps its wording');
 });
@@ -1474,47 +1494,6 @@ test('5083e7a77c26: a stored channel alias counts as its channel, never as a ten
   assert.ok(!count.missing.some((entry) => entry.channel === 'calendar' || entry.channel === 'email'));
   assert.ok(count.missing.some((entry) => entry.channel === 'facebook'), 'a pending Messenger row leaves Facebook to connect');
   assert.equal(countConnectedNine([{ channel: 'google-calendar', status: 'active' }]), 1);
-});
-
-const NINE_STRIPE_MISSING = ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form', 'calendar'];
-
-// Owner decision 08/11 on #680: the lead promise only when every name is a
-// lead channel; with Google Calendar or Stripe in the list, a neutral line.
-test('#680: the invite promises leads only when it names lead channels only', () => {
-  const render = (connections) => {
-    const doc = createFakeDocument();
-    const mount = createMount();
-    renderOggi({
-      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
-      home: {
-        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections,
-        availability: { work: true, appointments: true, channels: true },
-      },
-    });
-    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
-  };
-  const leadsOnly = render(['whatsapp', 'instagram', 'email', 'voice', 'site-form', 'calendar', 'stripe']
-    .map((channel) => ({ channel, status: 'active' })));
-  assert.ok(leadsOnly.includes('Collega Facebook, TikTok per non perdere nessun lead'), leadsOnly);
-  // Stripe is never invited (production 08/11): nothing here connects it.
-  const withStripe = render(NINE_STRIPE_MISSING.map((channel) => ({ channel, status: 'active' })));
-  assert.equal(withStripe, '', 'only Stripe left: no invite at all');
-  // Google Calendar is invited when the profile offers it: no lead promise then.
-  const offered = { connections: { available: true, items: [{ connector: 'calendar', status: 'not_connected' }] } };
-  const doc = createFakeDocument();
-  const mount = createMount();
-  renderOggi({
-    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
-    home: {
-      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], profile: offered,
-      connections: ['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form'].map((channel) => ({ channel, status: 'active' })),
-      availability: { work: true, appointments: true, channels: true },
-    },
-  });
-  const calendar = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
-  assert.ok(calendar.includes('7 di 8 collegati'), calendar);
-  assert.ok(calendar.includes('Collega Google Calendar per avere tutto in un posto'), calendar);
-  assert.ok(!calendar.includes('Stripe'), 'never Stripe');
 });
 
 test('#680 P2-3: an inactive extra channel never widens the count', async () => {
@@ -1638,8 +1617,8 @@ test('5083e7a77c26: the next-call card names the customer from the profile', asy
   const brief = buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Fio Neri' } });
   assert.equal(brief.title, 'Fio Neri');
   assert.ok(brief.bullets[0].includes('con Fio Neri'));
-  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday }).title, 'il cliente', 'only when no name exists');
-  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Unknown' } }).title, 'il cliente',
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday }).title, 'un ospite da confermare', 'only when no name exists: a neutral wait, never «il cliente» (1a3a0ba236c0)');
+  assert.equal(buildPreCallBrief({ appointment: appt, now: lateToday, names: { 'contact:fio': 'Unknown' } }).title, 'un ospite da confermare',
     'a placeholder is not a name');
   const seen = [];
   const names = await readAppointmentNames({
@@ -1656,4 +1635,316 @@ test('5083e7a77c26: the next-call card names the customer from the profile', asy
   assert.ok(seen.includes('/api/customer-data/profile/contact/fio'));
   const agenda = buildTodayAgenda([{ ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' }], OGGI_NOW, names);
   assert.equal(agenda[0].title, 'Fio Neri', 'the agenda row reads the same name');
+});
+
+// Voce 1a3a0ba236c0 (verification 09/11): the next-call card never prints
+// «il cliente» before the name — with no name it waits with a neutral
+// placeholder, never a presumed customer.
+test('1a3a0ba236c0: the next-call card waits for the name, never «il cliente»', () => {
+  const nameless = { ...APPT_TODAY, subjectLabel: null };
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW }).actions;
+  assert.ok(prep, 'the prep action still exists without a name');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no presumed customer on the prep card');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare');
+  const brief = buildPreCallBrief({ appointment: nameless, messages: [], calls: [], now: OGGI_NOW });
+  assert.ok(!`${brief.title} ${brief.bullets.join(' ')}`.includes('il cliente'), 'no presumed customer on the brief card');
+  assert.equal(brief.title, 'un ospite da confermare');
+  const [named] = buildAdvisorActions({ tasks: [], appointments: [APPT_TODAY], now: OGGI_NOW }).actions;
+  assert.equal(named.title, 'Prepara la call con Giulia Romano', 'a known name still prints');
+  const profileOnly = { ...APPT_TODAY, subjectLabel: null, subjectResource: 'contact', subjectId: 'fio' };
+  const [fromProfile] = buildAdvisorActions({ tasks: [], appointments: [profileOnly], now: OGGI_NOW, names: { 'contact:fio': 'Fio Neri' } }).actions;
+  assert.equal(fromProfile.title, 'Prepara la call con Fio Neri', 'a profile-only name prints on the prep card, like the brief (1a3a0ba236c0 P1)');
+});
+
+/**
+ * Backlog 2a075e2d9250 (production fc3fa62: the day at 8–20 s cold, every
+ * read once but one after the other). A virtual clock: every read but the
+ * schema (cached by the shell) answers after `ms`; the clock jumps to the
+ * next answer only when nothing else can move.
+ */
+function virtualClock() {
+  let now = 0;
+  /** @type {Array<{ at: number, resolve: () => void }>} */
+  const timers = [];
+  const flush = async () => { for (let i = 0; i < 30; i += 1) await new Promise((resolve) => { setImmediate(resolve); }); };
+  return {
+    get now() { return now; },
+    delay(ms) { return new Promise((resolve) => { timers.push({ at: now + ms, resolve }); }); },
+    /** Move time until `until()` holds; answers the virtual instant it held at. */
+    async runUntil(until) {
+      for (let guard = 0; guard < 200; guard += 1) {
+        await flush();
+        if (until()) return now;
+        timers.sort((a, b) => a.at - b.at);
+        if (timers.length === 0) throw new Error('nothing left to wait for');
+        now = timers[0].at;
+        for (const timer of timers.filter((entry) => entry.at <= now)) {
+          timers.splice(timers.indexOf(timer), 1);
+          timer.resolve();
+        }
+      }
+      throw new Error('the clock ran out');
+    },
+  };
+}
+
+function slowOggiClient(clock, ms, appointment = APPT_TODAY) {
+  /** @type {Array<string>} */
+  const asked = [];
+  const answer = (path) => {
+    if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+    if (path === '/api/profile') return {};
+    if (path.startsWith('/api/customer-data/profile/')) return { identity: { contact: { firstName: 'Giulia', lastName: 'Romano' } } };
+    if (path.startsWith('/api/modules/work-task/records')) return { items: [TASK_OPEN] };
+    if (path.startsWith('/api/modules/appointment/records')) return { items: [appointment] };
+    if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+    if (path.startsWith('/api/modules/conversation/records')) return { items: [{ id: 'conv-1', status: 'open' }] };
+    if (path.startsWith('/api/modules/interaction-message/records')) {
+      return { items: [{ ...MESSAGE_IN, direction: 'inbound', conversationId: 'conv-1' }] };
+    }
+    if (path.startsWith('/api/modules/interaction-call/records')) return { items: [CALL_MADE] };
+    throw new Error(`unexpected read: ${path}`);
+  };
+  return {
+    asked,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      asked.push(path);
+      if (path !== '/api/schema') await clock.delay(ms);
+      return answer(path);
+    },
+  };
+}
+
+test('2a075e2d9250 (production fc3fa62): the independent reads start together — reads of 2 s each finish in about 2 s, not N×2', async () => {
+  const clock = virtualClock();
+  const client = slowOggiClient(clock, 2000);
+  let essentialsAt = null;
+  let done = false;
+  let data = null;
+  void loadOggiData(client, OGGI_NOW, { onEssentials: () => { essentialsAt = clock.now; } }).then((value) => { data = value; done = true; });
+  const finishedAt = await clock.runUntil(() => done);
+  // Six independent reads (open tasks, appointments, channels, profile,
+  // inbox messages, conversations): one wave of 2 s, then one wave for what
+  // depends on them (customer names, the call recap). Before: one after the
+  // other, 16 s on this client.
+  assert.equal(essentialsAt, 2000, 'agenda and Da rispondere are in after one read time');
+  assert.equal(finishedAt, 4000, 'everything is in after two read times');
+  assert.equal(data.appointmentsAvailable, true);
+  assert.equal(data.inboxAvailable, true);
+  assert.equal(data.interactionsAvailable, true, 'the call recap is read');
+  assert.deepEqual(data.briefCalls, [CALL_MADE]);
+  assert.equal(data.inboxNames['lead:lead-1'], 'Giulia Romano');
+  const counts = new Map();
+  for (const path of client.asked) counts.set(path, (counts.get(path) ?? 0) + 1);
+  assert.equal(counts.get('/api/modules/appointment/records?limit=50') ?? [...counts.keys()].filter((key) => key.includes('/appointment/')).length, 1,
+    'each read still runs once');
+});
+
+test('2a075e2d9250: the day paints on the essentials; names and the call recap fill their sections without repainting the rest', async () => {
+  const clock = virtualClock();
+  const client = slowOggiClient(clock, 2000);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW }).then(() => { rendered = true; });
+  const paintedAt = await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
+  assert.equal(paintedAt, 2000, 'the day is on screen after one read time');
+  assert.ok(!mount.textContent.includes('Carico la tua giornata'), 'no loading line over the day');
+  const brief = () => mount.querySelector('section[data-oggi-section="brief"]');
+  assert.ok(brief().textContent.includes('Carico messaggi e chiamate da ripassare'), 'the call recap says it is still reading');
+  const advisor = mount.findAll('section')[0];
+  const execute = mount.querySelector('button[data-triage="execute"]');
+  execute.focus();
+
+  const filledAt = await clock.runUntil(() => rendered);
+  assert.equal(filledAt, 4000);
+  assert.ok(brief().textContent.includes('Interessata, richiama dopo il preventivo'), 'the recap filled in');
+  assert.ok(!brief().textContent.includes('Carico'), 'no loading line left');
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('Giulia Romano'), 'the inbox names the customer');
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+  assert.equal(mount.querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
+  assert.equal(execute.__focused, true);
+});
+
+// Production 08/11 after #687 (9c7d1477a8d4): the prototype wins — «x di 9»
+// always, the prototype line «per non perdere nessun lead» always, and the
+// names are the connectable lead channels missing; a missing channel that
+// is not a lead channel to connect here is named apart, so the promise
+// adds up with the count.
+test('9c7d1477a8d4: the invite counts of 9, keeps the prototype line and names only connectable lead channels', () => {
+  const strip = (connections, profile = null) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections, profile,
+        availability: { work: true, appointments: true, channels: true },
+      },
+    });
+    return mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  };
+  const presti = {
+    connections: {
+      available: true,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'op@presti.it' },
+        { connector: 'calendar', status: 'connected', account: 'op@presti.it' },
+      ],
+    },
+  };
+  const live = strip([{ channel: 'whatsapp', status: 'active' }], presti);
+  assert.ok(live.includes('3 di 9 collegati'), live);
+  assert.ok(live.includes('Collega Instagram, Facebook, TikTok, Telefono, Form sito per non perdere nessun lead (Stripe non ancora disponibile) →'), live);
+  const demo = strip([]);
+  assert.ok(demo.includes('0 di 9 collegati'), demo);
+  assert.ok(demo.includes('per non perdere nessun lead'), demo);
+  assert.ok(demo.includes('(Google Calendar e Stripe non ancora disponibili)'), demo);
+  const offered = strip([], { connections: { available: true, items: [{ connector: 'calendar', status: 'not_connected' }] } });
+  assert.ok(offered.includes('(Google Calendar dal Profilo; Stripe non ancora disponibile)'), offered);
+  for (const text of [live, demo, offered]) {
+    assert.ok(!text.includes('avere tutto in un posto'), 'no other line than the prototype one');
+    assert.ok(!/Collega [^(]*Stripe/.test(text) && !/Collega [^(]*Google Calendar/.test(text), 'Calendar and Stripe are never invited');
+  }
+});
+
+// Review #692 P2: Oggi stays on the spec's nine — a linked channel outside
+// the nine (SMS) never turns the strip into «1 di 10».
+test('#692 P2: Oggi counts of the nine only, an active SMS included', () => {
+  const invite = buildChannelInvite({ connections: [{ channel: 'sms', status: 'active' }] });
+  assert.equal(invite.connected, 0);
+  assert.equal(invite.total, 9);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio di prova', links: [], now: new Date(2026, 9, 19, 9),
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [],
+      connections: [{ channel: 'sms', status: 'active' }],
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite')?.textContent ?? '';
+  assert.ok(strip.includes('0 di 9 collegati'), strip);
+  assert.ok(!strip.includes('di 10'), 'never «di 10» on Oggi');
+});
+
+// backlog:7d30fb517785 (production 10/11, Oggi): «Appuntamento di 12 nov
+// alle 10:00» — the brief writes the day as a person does: the right
+// article, the month in full, «oggi»/«domani»/«ieri» when it is one of them.
+test('7d30fb517785: Oggi writes days with the right article and the month in full', () => {
+  const lateToday = new Date('2026-10-19T16:00:00.000Z');
+  const twelfth = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-11-12T09:00:00.000Z' }, now: lateToday });
+  assert.ok(twelfth.bullets[0].startsWith('Appuntamento del 12 novembre alle 10:00 con Giulia Romano'), twelfth.bullets[0]);
+  assert.equal(twelfth.when, '12 novembre alle 10:00');
+  const eighth = buildPreCallBrief({ appointment: { ...APPT_TOMORROW, startsAt: '2026-11-08T09:00:00.000Z' }, now: lateToday });
+  assert.ok(eighth.bullets[0].startsWith('Appuntamento dell\u20198 novembre alle 10:00'), eighth.bullets[0]);
+  const tomorrow = buildPreCallBrief({ appointment: APPT_TOMORROW, now: lateToday });
+  assert.ok(tomorrow.bullets[0].startsWith('Appuntamento di domani alle 10:00'), tomorrow.bullets[0]);
+
+  assert.equal(romeDayPhrase('2026-10-11T10:00:00.000Z', OGGI_NOW, 'il'), 'l\u201911 ottobre');
+  assert.equal(romeDayPhrase('2026-10-01T10:00:00.000Z', OGGI_NOW, 'del'), 'dell\u20191 ottobre');
+  assert.equal(romeDayPhrase('2026-10-12T10:00:00.000Z', OGGI_NOW, 'il'), 'il 12 ottobre');
+  assert.equal(romeDayPhrase('2026-10-18T10:00:00.000Z', OGGI_NOW, 'del'), 'di ieri');
+  assert.equal(romeDayPhrase('not a date', OGGI_NOW, 'del'), null);
+
+  // The brief's messages and calls, and the follow-up motive, read alike.
+  const brief = buildPreCallBrief({
+    appointment: APPT_TODAY,
+    messages: [MESSAGE_IN, { ...MESSAGE_IN, id: 'msg-2', occurredAt: '2026-10-12T09:00:00.000Z' }, { ...MESSAGE_IN, id: 'msg-3', occurredAt: null, channel: 'email' }],
+    calls: [CALL_MADE],
+    now: OGGI_NOW,
+  });
+  const lines = brief.bullets.join('\n');
+  assert.ok(lines.includes('Messaggio WhatsApp di ieri: “Ciao'), lines);
+  assert.ok(lines.includes('Messaggio WhatsApp del 12 ottobre: “Ciao'), lines);
+  assert.ok(lines.includes('Email senza data: “Ciao'), lines);
+  assert.ok(lines.includes('Chiamata del 17 ottobre: Interessata'), lines);
+  assert.ok(brief.sources.some((source) => source.label === 'Messaggio WhatsApp di ieri'), 'the source label reads the same');
+  assert.ok(!/\b(gen|feb|mar|apr|mag|giu|lug|ago|set|ott|nov|dic)\b/.test(lines), `no short month: ${lines}`);
+  assert.ok(!/ di \d/.test(lines) && !lines.includes('del data'), 'never «di 12», never «del data non registrata»');
+
+  const [followup] = buildAdvisorActions({
+    tasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-8', openedAt: '2026-10-08T08:00:00.000Z', dueAt: '2026-10-20T00:00:00.000Z' }],
+    appointments: [],
+    now: OGGI_NOW,
+  }).actions;
+  assert.equal(followup.why, 'Follow-up aperto ieri: Giulia Romano.');
+  const [, older] = buildAdvisorActions({
+    tasks: [TASK_OPEN, { ...TASK_OPEN, id: 'task-8', openedAt: '2026-10-08T08:00:00.000Z', dueAt: '2026-10-20T00:00:00.000Z' }],
+    appointments: [],
+    now: OGGI_NOW,
+  }).actions;
+  assert.equal(older.why, 'Follow-up aperto l\u20198 ottobre: Giulia Romano.');
+});
+
+// backlog:7d30fb517785 (production 10/11, Oggi): the advisor read
+// «Appuntamento oggi alle 11:00 con un ospite da confermare» while the
+// agenda, at the same hour, named the linked customer. The names land after
+// the advisor painted: its row takes the same name, in place.
+test('7d30fb517785: the advisor names the linked customer once the names land, with the agenda, keeping its buttons', async () => {
+  const clock = virtualClock();
+  const synced = { ...APPT_TODAY, subjectLabel: null };
+  const client = slowOggiClient(clock, 2000, synced);
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: OGGI_NOW }).then(() => { rendered = true; });
+  await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
+  const row = () => mount.querySelector('div[data-action="bo04:appointment:appt-1"]');
+  assert.ok(row(), 'the prep card is on screen');
+  // backlog:bd5e84545021 (production 11/11): before the names land the card
+  // shows grey bars — never «un ospite da confermare» passing for data —
+  // and its buttons wait.
+  assert.ok(!row().textContent.includes('ospite da confermare'), 'no stand-in before the names land');
+  assert.ok(row().querySelector('span[data-skeleton="true"]'), 'a grey bar where the name goes');
+  const advisor = mount.findAll('section')[0];
+  const execute = row().querySelector('button[data-triage="execute"]');
+  assert.equal(execute.disabled, true, 'the action waits for the names');
+  execute.focus();
+
+  await clock.runUntil(() => rendered);
+  const agenda = mount.querySelector('section[data-oggi-section="agenda"]').textContent;
+  assert.ok(agenda.includes('Giulia Romano'), 'the agenda names the linked customer');
+  const prep = row().textContent;
+  assert.ok(prep.includes('Prepara la call con Giulia Romano'), prep);
+  assert.ok(prep.includes('Appuntamento oggi alle 10:00 con Giulia Romano.'), prep);
+  assert.ok(!mount.findAll('section')[0].textContent.includes('ospite da confermare'), 'no stand-in left in the advisor');
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+  assert.equal(row().querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
+  assert.equal(execute.__focused, true);
+  assert.equal(execute.disabled, false, 'the action is live once the names are in');
+  assert.equal(row().querySelector('span[data-skeleton="true"]'), null, 'no grey bar left');
+  assert.ok(row().querySelector('a[href="#/customer-card/lead/lead-1"]'), 'the title links the scheda again');
+});
+
+// Review #746 (P2): «oggi/ieri/domani» compare Rome calendar days, never
+// now ± 24 h — the 23 h day of 29/03 and the 25 h day of 25/10 would skip
+// or repeat a day.
+test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 25/10)', () => {
+  // 28/03/2026 23:30 in Rome (CET): tomorrow is the 23 h day of 29/03 —
+  // now + 24 h would land on 30/03 00:30 and call 29/03 neither.
+  const springEve = new Date('2026-03-28T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springEve, 1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springEve, 'del'), 'di domani');
+  // 30/03/2026 00:30 in Rome (CEST): yesterday is 29/03 — now − 24 h
+  // would land on 28/03 23:30.
+  const springAfter = new Date('2026-03-29T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(springAfter, 0), '2026-03-30');
+  assert.equal(romeDayKeyShift(springAfter, -1), '2026-03-29');
+  assert.equal(romeDayPhrase('2026-03-29T08:00:00.000Z', springAfter, 'il'), 'ieri');
+  // 25/10/2026 00:30 in Rome (CEST, the 25 h day): tomorrow is 26/10 —
+  // now + 24 h would land on 25/10 23:30, today again.
+  const autumn = new Date('2026-10-24T22:30:00.000Z');
+  assert.equal(romeDayKeyShift(autumn, 0), '2026-10-25');
+  assert.equal(romeDayKeyShift(autumn, 1), '2026-10-26');
+  assert.equal(romeDayPhrase('2026-10-25T20:00:00.000Z', autumn, 'del'), 'di oggi', '25/10 21:00 in Rome is today');
+  assert.equal(romeDayPhrase('2026-10-26T08:00:00.000Z', autumn, 'del'), 'di domani');
+  const brief = buildPreCallBrief({ appointment: { ...APPT_TODAY, startsAt: '2026-10-26T09:00:00.000Z' }, now: autumn });
+  assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
+  assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
+  assert.equal(romeDayKeyShift('not a date', 1), null);
 });

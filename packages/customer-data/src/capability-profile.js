@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { isErased } from './erasure.js';
 import { coalescedProfileFor } from './profile.js';
 import { resolvedNames } from './store.js';
 
@@ -53,6 +54,13 @@ export function createCustomerProfileCapability(config) {
           const id = subject?.id;
           if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
             throw new ValidationError('a profile read needs a subject resource and id', { field: 'id' });
+          }
+          // The same erasure registry the operation gates on
+          // (backlog:d271d723): the hub card and timeline read through
+          // this capability, so an erased company — whose row is kept by
+          // design — must read as gone here too, never with full PII.
+          if (await isErased({ modules, names }, resource, id)) {
+            throw new AppError('cliente non trovato', { code: 'CUSTOMER_ERASED', status: 404 });
           }
           return await coalescedProfileFor({ modules, core, names, subject: { resource, id } });
         },

@@ -3,7 +3,7 @@
 import { definePackage, selectPackageGraph } from '../../core/index.js';
 import { buildSpacePermissionActions } from './actions.js';
 import { createSpacePermissionGateCapability } from './capability.js';
-import { SPACE_AI_PERMISSIONS } from './permissions.js';
+import { SPACE_AI_MASTER_KEY, SPACE_AI_PERMISSIONS } from './permissions.js';
 import {
   SPACE_PACKAGE_CATALOG,
   createEffectiveSpaceAiPermissionsOperation,
@@ -58,7 +58,9 @@ export function createSpacePermissionsDomain(options = {}) {
     name: SPACE_PERMISSIONS_DOMAIN,
     // 1: BO-F0-06 — five AI switches per space with send-without-approval off
     // by default, switched-off actions recorded as human-decided proposals.
-    version: 1,
+    // 2: backlog:2c3156a47f8e — the ai-enabled master switch of the space
+    // (flippable, read back as aiEnabled, gating every action while off).
+    version: 2,
     label: 'Space AI permissions',
     description:
       'Per-space AI switches with human approval: five permission keys with effective defaults, per-space overrides, and proposals a switched-off action becomes instead of running. Stores no spaces, members or invitations.',
@@ -124,7 +126,7 @@ export function createSpacePermissionsDomain(options = {}) {
         name: 'effective-space-ai-permissions',
         label: 'Effective space AI permissions',
         appMethod: 'effectiveSpaceAiPermissions',
-        description: 'Read the five AI switches of one space with their effective values: the only HTTP-reachable read path (BO-F0-06). The generic records surface cannot filter this module by space, so this operation scopes server-side and resolves through the same defaults the gate uses.',
+        description: 'Read the five AI switches of one space with their effective values, plus the aiEnabled master: the only HTTP-reachable read path (BO-F0-06, master backlog:2c3156a47f8e). The generic records surface cannot filter this module by space, so this operation scopes server-side and resolves through the same defaults the gate uses.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
         ],
@@ -138,10 +140,10 @@ export function createSpacePermissionsDomain(options = {}) {
         name: 'set-space-ai-permission',
         label: 'Set space AI permission',
         appMethod: 'setSpaceAiPermission',
-        description: 'Flip one of the five AI switches of one space: the only HTTP-reachable flip path (BO-F0-06). Human user actor only; anonymous, agent and system flips are refused with the same codes as the record action.',
+        description: 'Flip one AI switch of one space (one of the five, or the ai-enabled master): the only HTTP-reachable flip path (BO-F0-06, master backlog:2c3156a47f8e). Human user actor only; anonymous, agent and system flips are refused with the same codes as the record action.',
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'Opaque space id issued by the control plane.' },
-          { name: 'permission', type: 'string', required: true, hint: `One of: ${SPACE_AI_PERMISSIONS.join(', ')}.` },
+          { name: 'permission', type: 'string', required: true, hint: `One of: ${SPACE_AI_PERMISSIONS.join(', ')}, ${SPACE_AI_MASTER_KEY} (the master AI switch).` },
           { name: 'enabled', type: 'string', required: true, hint: 'on lets the agent act alone; off turns the action into a proposal.' },
         ],
         create(runtime) {
@@ -169,12 +171,17 @@ export function createSpacePermissionsDomain(options = {}) {
 }
 
 export {
+  SPACE_AI_MASTER_DEFAULT,
+  SPACE_AI_MASTER_KEY,
   SPACE_AI_PERMISSIONS,
   SPACE_AI_PERMISSION_DEFAULTS,
+  checkFlippableKey,
   checkPermissionKey,
   checkSpaceId,
   effectivePermission,
   evaluateAiPermission,
+  isAiActionAllowed,
+  isAiEnabled,
   resolveSpacePermissions,
 } from './permissions.js';
 export { RESPONSE_CHANNELS, SPACE_ROLES, reviewSpaceInvite } from './invites.js';

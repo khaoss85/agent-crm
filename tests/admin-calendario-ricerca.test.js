@@ -26,7 +26,7 @@ function client(answer) {
 async function search(answer, text) {
   const doc = createFakeDocument();
   const mount = createMount();
-  const view = createCalendarioView({ doc, mount, client: client(answer), now: () => new Date('2026-10-23T06:00:00Z') });
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: client(answer), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   const field = mount.querySelector('input[name="customerSearch"]');
   field.value = text;
@@ -43,4 +43,22 @@ test('d128847d21fc: an empty answer over a partial list says the list is partial
 test('d128847d21fc: an empty answer over a complete list keeps the plain sentence', async () => {
   const text = await search({ items: [], total: 0, complete: true }, 'Zzz');
   assert.match(text, /Nessun cliente corrisponde\. Prova con un altro nome\./, text);
+});
+
+test('7d82fd84: items over a partial list still say the list is partial', async () => {
+  const text = await search(
+    { items: [{ name: 'Ada Rossi', resource: 'contact', id: 'c1' }], total: 1, complete: false },
+    'Ada',
+  );
+  assert.match(text, /Ada Rossi/, text);
+  assert.match(text, /L’elenco è parziale/, text);
+});
+
+test('7d82fd84: items over a complete list say nothing about partial', async () => {
+  const text = await search(
+    { items: [{ name: 'Ada Rossi', resource: 'contact', id: 'c1' }], total: 1, complete: true },
+    'Ada',
+  );
+  assert.match(text, /Ada Rossi/, text);
+  assert.doesNotMatch(text, /parziale/, text);
 });

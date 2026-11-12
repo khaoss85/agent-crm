@@ -217,12 +217,16 @@ export function createAppointmentsPackage(options = {}) {
     // propose/confirmBooking and the phrase-to-draft parse, attached
     // generically as `app.readAppointmentTeamWeek` and siblings. Additive:
     // capabilities, records and the booking contract are untouched.
-    // 3: owner holds with no guest (backlog:af190faf): owner commitments
-    // from the composed calendar-sync handle (`listOwnerBlocks`) hold on
-    // team-week, suggest, propose, confirm, link and reschedule — shown as
-    // Occupato (`busy`, required on every member group) and never offered
-    // as free. Server seam only: no caller/request input carries blocks, so
-    // nothing to forge and nothing to omit. Old callers unchanged.
+    // 3 (backlog:3d0fbe7dc8d1): reschedule-appointment moves one booking to
+    // a new slot through `app.rescheduleAppointmentBooking` (409 on overlap,
+    // terminal states and stranded reminders). Additive: reads, capabilities
+    // and the booking contract are untouched.
+    // 3 (backlog:af190faf): owner holds with no guest from the composed
+    // calendar-sync handle (`listOwnerBlocks`) hold on team-week, suggest,
+    // propose, confirm, link and reschedule — shown as Occupato (`busy`,
+    // required on every member group) and never offered as free. Server
+    // seam only: no caller/request input carries blocks, so nothing to
+    // forge and nothing to omit. Old callers unchanged.
     version: 3,
     label: 'Appointments',
     description:
@@ -340,6 +344,23 @@ export function createAppointmentsPackage(options = {}) {
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).parseBookingPhrase(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'reschedule-appointment',
+        label: 'Reschedule appointment',
+        appMethod: 'rescheduleAppointmentBooking',
+        description:
+          'Move one booking to a new slot (backlog:3d0fbe7dc8d1): the row named by exactly one of id/sourceKey takes the new startsAt/endsAt when its member holds no overlapping booking — refused 409 on overlap, terminal states and stranded reminders, never moved silently.',
+        input: [
+          { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
+          { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
+          { name: 'startsAt', type: 'string', required: true, hint: 'New slot start, ISO instant.' },
+          { name: 'endsAt', type: 'string', required: true, hint: 'New slot end, ISO instant.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
         },
       },
     ],

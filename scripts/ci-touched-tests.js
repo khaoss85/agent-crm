@@ -67,12 +67,24 @@
  *   fast suite instead of failing for the timeout;
  * - a selection bigger than `--max-selected` (default 50: that run executed
  *   ~65 of 100 selected files in the full 270 s, so 50 leaves margin for
- *   the slowest files) never starts the run it cannot finish: the gate
- *   warns and runs the default fast suite instead. The cap counts the
- *   joined total, not the mapped selection alone: the always-run guards
- *   join after the cap, and a mapped set that fits can still outgrow the
- *   step once they join (seen: ~47 mapped + 14 guards needing ~900 s
- *   against a 270 s bound) — past the cap the same warned fallback runs.
+ *   the slowest files) never starts the run it cannot finish as one
+ *   selection: the gate warns and runs the default fast suite instead. The
+ *   cap counts the joined total, not the mapped selection alone: the
+ *   always-run guards join after the cap, and a mapped set that fits can
+ *   still outgrow the step once they join (seen: ~47 mapped + 14 guards
+ *   needing ~900 s against a 270 s bound) — past the cap the same warned
+ *   fallback runs.
+ *
+ * The fallback never drops the remainder quietly: every selected test the
+ * core suite leaves out drains behind it in the same shared queue, nearest
+ * first (`bonusQueue`), while the run bound allows — backlog:3335fd28, an
+ * oversized selection whose ~198 dropped tests never ran. A bound that
+ * expires with only bonus files unrun (the core green, nothing failed)
+ * warns naming them instead of failing red over coverage the step could
+ * not fit; an unfinished core file, or any failure, still fails red. The
+ * full suite on `main` stays the safety net behind whatever the bound does
+ * not reach: the 540 s gate this phase shares (`scripts/ci-fast.sh`) could
+ * never run a core-wide fan-in whole.
  *
  * The run itself splits past a dozen files into up to four parallel parts
  * (see `shardCountFor`/`testJobs`/`runTestShards`): agent-crm#621 (an
@@ -83,10 +95,10 @@
  * from one shared queue, so a core-wide fan-in still fits the bound. Fixed
  * round-robin slices did not: #621 then timed out again with "2 of 4
  * parts" done — two slices held most of the slow files while the other
- * two parts had finished and sat idle. The timeout still fails red — never
- * green without running — and names the files that remained; each file's,
- * each part's and the run's elapsed time are logged, so the cause reads
- * from the log.
+ * two parts had finished and sat idle. A timeout with core files unfinished
+ * still fails red — never green without the core having run — and names
+ * the core and bonus files that remained; each file's, each part's and the
+ * run's elapsed time are logged, so the cause reads from the log.
  *
  * The default fast suite is the PR's own changed test files — always
  * relevant, self-maintaining, and small by construction. It is not the
@@ -112,14 +124,16 @@
  * select-plus-run always fits its share of the total.
  *
  * Exit codes: 0 the tests that ran passed (the selection plus the
- * repo-wide guards, or the fallback suite plus the guards after a warned
- * fallback; an empty diff runs nothing — and a warned fallback runs the
- * guards, so an uncovered source file never exits 0 with nothing run),
- * 1 the selection failed, a test failed, the fallback run failed or timed
- * out (a timeout names the files that remained), a listed
- * guard is missing from `tests/`, or the refusal (an oversized selection
- * the PR carries no test file of its own for — the only fail-closed case
- * left), 2 unusable input.
+ * repo-wide guards, or the core suite plus whatever bonus the bound drained
+ * after a warned fallback — a bound that expires with only bonus files
+ * unrun warns naming them instead of failing; an empty diff runs
+ * nothing — and a warned fallback runs the guards, so an uncovered source
+ * file never exits 0 with nothing run), 1 the selection failed, a test
+ * failed, the run failed or timed out with a core file unfinished or any
+ * failure (a timeout names the core and bonus files that remained), a
+ * listed guard is missing from `tests/`, or the refusal (an oversized
+ * selection the PR carries no test file of its own for — the only
+ * fail-closed case left), 2 unusable input.
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -497,6 +511,42 @@ export function fillNearest(
   const room = maxSelected - planned.length;
   if (room <= 0) return [];
   return ranked.filter((test) => !planned.includes(test)).slice(0, room);
+}
+
+/**
+ * The dropped remainder of a planned run, queued behind the core suite in
+ * nearest-first order instead of being dropped (backlog:3335fd28: an
+ * oversized selection fell back to the PR-owned changed tests and the ~198
+ * dropped selected tests never ran — skipped, against "mai saltata"). The
+ * run queue holds the whole mapped selection — the core first, this bonus
+ * behind it — so the run bound, not the plan, decides how far an oversized
+ * selection drains, and every file the bound does not reach is named at
+ * timeout instead of going quiet. Pure: unit-tested.
+ */
+export function bonusQueue(
+  /** @type {Map<string, number>} */ distances,
+  /** @type {string[]} */ planned,
+) {
+  const queued = new Set(planned);
+  return nearestFirst(distances).filter((test) => !queued.has(test));
+}
+
+/**
+ * What a run timeout means for the step: `fail` when a core file is still
+ * unfinished, or when any file failed anywhere (a warn-green over a failure
+ * would hide it); `warn` when only bonus files the bound did not reach
+ * remain and everything that ran passed — the core suite is green, the
+ * remainder is named, and the full suite on `main` stays the safety net
+ * behind it. Pure: unit-tested.
+ */
+export function timeoutVerdict(
+  /** @type {string[]} */ coreTests,
+  /** @type {string[]} */ remaining,
+  /** @type {string[]} */ failedFiles,
+) {
+  if (failedFiles.length > 0) return 'fail';
+  const core = new Set(coreTests);
+  return remaining.some((file) => core.has(file)) ? 'fail' : 'warn';
 }
 
 /**
@@ -1003,34 +1053,38 @@ export function testJobs(
  * its part (`[touched 1/4]`), each file's elapsed time is logged, and so is
  * each part's and the whole run's, so the cause of a slow run reads from
  * the log. Past `timeoutSec` the running processes die by SIGKILL and the
- * run resolves timed out naming every file not finished — the gate fails
- * red, never green without running.
+ * run resolves timed out naming every file not finished — the caller fails
+ * red unless only the bonus remainder is unrun with everything green (see
+ * `timeoutVerdict`), never green without the core having run.
  *
  * Resolves (never rejects) to `{ status, timedOut, remaining,
- * completedShards, elapsedSec, partSec }`: `status` is the first nonzero
- * exit code, or 0 when every file passed; `remaining` lists the files
- * running or still queued at the timeout; `completedShards` counts the
- * parts that drained; `partSec` is each part's busy time. `cwd` is the
- * repository root; the processes inherit this process's environment
- * (including `ACCORDO_TEST_POSTGRES` and `ACCORDO_PG_TEST_URL`), minus
- * `NODE_TEST_CONTEXT` so each is always a fresh top-level runner.
+ * completedShards, elapsedSec, partSec, failedFiles }`: `status` is the
+ * first nonzero exit code, or 0 when every file passed; `remaining` lists
+ * the files running or still queued at the timeout; `completedShards`
+ * counts the parts that drained; `partSec` is each part's busy time;
+ * `failedFiles` lists every file whose own process exited nonzero, so a
+ * timeout that also saw a failure can still fail red instead of warning
+ * green over it. `cwd` is the repository root; the processes inherit this
+ * process's environment (including `ACCORDO_TEST_POSTGRES` and
+ * `ACCORDO_PG_TEST_URL`), minus `NODE_TEST_CONTEXT` so each is always a
+ * fresh top-level runner.
  *
- * @returns {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }>}
+ * @returns {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }>}
  */
 export function runTestShards(
   /** @type {string[]} */ tests,
-  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string }} */ options,
+  /** @type {{ parts: number, timeoutSec: number, cwd: string, nodePath?: string, startTimer?: (fire: () => void, ms: number) => () => void, onJobDone?: (files: string[], status: number) => void }} */ options,
 ) {
   const jobs = testJobs(tests, options.parts);
   const parts = Math.min(Math.max(1, Math.floor(options.parts)), Math.max(1, jobs.length));
-  /** @type {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }>} */
+  /** @type {Promise<{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }>} */
   const done = new Promise((resolve) => {
     const started = Date.now();
     const elapsedSec = () => (Date.now() - started) / 1000;
     /** @type {number[]} */
     const partSec = Array.from({ length: parts }, () => 0);
     if (jobs.length === 0) {
-      resolve({ status: 0, timedOut: false, remaining: [], completedShards: 0, elapsedSec: elapsedSec(), partSec: [] });
+      resolve({ status: 0, timedOut: false, remaining: [], completedShards: 0, elapsedSec: elapsedSec(), partSec: [], failedFiles: [] });
       return;
     }
     /** @type {Set<import('node:child_process').ChildProcess>} */
@@ -1040,16 +1094,30 @@ export function runTestShards(
     let next = 0;
     let drained = 0;
     let firstFailure = 0;
+    /** @type {string[]} */
+    const failedFiles = [];
     let settled = false;
+    // Assigned below once the bound is armed. Declared first so a timer
+    // that fires synchronously (an injected one may) finds a callable
+    // cancel instead of a temporal-dead-zone ReferenceError.
+    /** @type {() => void} */
+    let cancelTimer = () => {};
     const settle = (
-      /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[] }} */ result,
+      /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }} */ result,
     ) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      cancelTimer();
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
+    // when the bound fires — e.g. once a given file has finished — instead
+    // of racing a wall-clock second against the machine's load.
+    const startTimer = options.startTimer ?? ((fire, ms) => {
+      const handle = setTimeout(fire, ms);
+      return () => clearTimeout(handle);
+    });
+    const cancel = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1064,8 +1132,11 @@ export function runTestShards(
         completedShards: drained,
         elapsedSec: elapsedSec(),
         partSec: partSec.map((sec) => Math.round(sec * 10) / 10),
+        failedFiles: [...failedFiles],
       });
     }, options.timeoutSec * 1000);
+    // Fired already (settled): nothing left to cancel later, cancel now.
+    if (settled) cancel(); else cancelTimer = cancel;
     const startNext = (/** @type {number} */ part) => {
       const tag = `touched ${part + 1}/${parts}`;
       if (settled) return;
@@ -1085,6 +1156,7 @@ export function runTestShards(
             completedShards: drained,
             elapsedSec: run,
             partSec: partSec.map((sec) => Math.round(sec * 10) / 10),
+            failedFiles: [...failedFiles],
           });
         }
         return;
@@ -1128,8 +1200,15 @@ export function runTestShards(
         partSec[part] += sec;
         const status = code ?? 1;
         if (status !== 0 && firstFailure === 0) firstFailure = status;
+        if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+        try {
+          options.onJobDone?.(files, status);
+        } catch (error) {
+          // An observer must never stall its part: log and keep draining.
+          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        }
         startNext(part);
       });
     };
@@ -1237,6 +1316,45 @@ export function buildFileImports(
 }
 
 /**
+ * The commit the PR is measured against, pinned once (backlog:3d560518f3e2):
+ * the base ref resolved to a sha, then the merge-base of that sha with HEAD.
+ * Every diff below reads this one sha, so a ref that moves mid-run — a
+ * parallel phase's `git fetch` rewriting FETCH_HEAD or a tracking ref — can
+ * never split the three diffs across two bases, and the log can name the
+ * base it really used.
+ * @param {(args: string[]) => { status: number | null, stdout: string }} runGit
+ * @param {string} base
+ * @returns {{ baseSha: string, mergeBase: string }}
+ */
+export function resolveDiffBase(runGit, base) {
+  const resolved = runGit(['rev-parse', '--verify', `${base}^{commit}`]);
+  const baseSha = String(resolved.stdout ?? '').trim();
+  if (resolved.status !== 0 || !/^[0-9a-f]{40,64}$/.test(baseSha)) {
+    throw new Error(`ci-touched-tests: base revision ${base} is not present. Fetch the PR base before running (CI does this in the step before).`);
+  }
+  const merged = runGit(['merge-base', baseSha, 'HEAD']);
+  const mergeBase = String(merged.stdout ?? '').trim();
+  if (merged.status !== 0 || !/^[0-9a-f]{40,64}$/.test(mergeBase)) {
+    throw new Error(`ci-touched-tests: ${base} (${baseSha.slice(0, 12)}) shares no history with HEAD: no merge-base to diff against.`);
+  }
+  return { baseSha, mergeBase };
+}
+
+/**
+ * The fallback's core before the guards, said as what it is: the PR's own
+ * changed test files and the nearest selected tests that filled the budget.
+ * It used to read "26 changed test file(s)" for 1 changed test plus 25
+ * nearest — which read like a 26-file diff (backlog:3d560518f3e2).
+ * @param {readonly string[]} core
+ * @param {readonly string[]} changed
+ */
+export function describeFallbackCore(core, changed) {
+  const own = new Set(changed);
+  const changedTests = core.filter((file) => own.has(file)).length;
+  return `${changedTests} changed test file(s), ${core.length - changedTests} nearest selected`;
+}
+
+/**
  * The PR's changed files against `base`, split in four: `changed` drives
  * what runs (the unfiltered diff minus the deleted-only diff: uppercase
  * `--diff-filter=D` selects only deleted paths — lowercase `-d` would
@@ -1286,21 +1404,18 @@ export function listChangedFiles(runGit, /** @type {string} */ base) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
 
-  const verify = git(['rev-parse', '--verify', options.base]);
-  if (verify.status !== 0 || !verify.stdout) {
-    process.stderr.write(
-      `ci-touched-tests: base revision ${options.base} is not present. `
-        + 'Fetch the PR base before running (CI does this in the step before).\n',
-    );
-    process.exit(2);
-  }
-
   let changed;
   let deleted;
   let added;
   let allChanged;
   try {
-    ({ changed, deleted, added, allChanged } = listChangedFiles(git, options.base));
+    const { baseSha, mergeBase } = resolveDiffBase(git, options.base);
+    ({ changed, deleted, added, allChanged } = listChangedFiles(git, mergeBase));
+    const changedTests = changed.filter((file) => file.endsWith('.test.js')).length;
+    process.stdout.write(
+      `ci-touched-tests: base ${options.base} = ${baseSha.slice(0, 12)}, merge-base with HEAD ${mergeBase.slice(0, 12)}: `
+        + `${allChanged.length} changed file(s), ${changedTests} of them test file(s).\n`,
+    );
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exit(2);
@@ -1407,6 +1522,16 @@ async function main() {
       plan.tests = [...plan.tests, ...nearest].sort();
     }
   }
+  // The dropped remainder drains behind the core suite in the same shared
+  // queue, nearest first (`bonusQueue`): an oversized selection no longer
+  // leaves selected tests unrun and unnamed — the bound decides how far the
+  // queue drains, and a timeout names whatever it did not reach. The refusal
+  // queues nothing: fail-closed, there is no evidence this step can run.
+  const bonus = plan.kind === 'refuse' ? [] : bonusQueue(distances, plan.tests);
+  const queue = [...plan.tests, ...bonus];
+  const bonusNote = bonus.length === 0
+    ? null
+    : `queuing ${bonus.length} bonus test(s) behind the ${plan.tests.length} core file(s), nearest first: ${bonus.join(', ')} — every file the run bound does not reach is named at timeout, and the full suite on \`main\` stays the safety net`;
   const addedGuards = plan.kind === 'refuse'
     ? []
     : plan.tests.filter((test) => !preGuardTests.includes(test));
@@ -1426,23 +1551,26 @@ async function main() {
       (test) => !preGuardTests.includes(test) && PACKAGE_DECLARATION_FREEZE_TESTS.includes(test),
     );
 
-  // Selected tests the plan does not run, after the guards joined: a
+  // Selected tests outside the core suite, after the guards joined: a
   // non-empty set here is always reported — a `::warning::` annotation
   // plus a summary line naming them — including on the skip path, so a
-  // discarded mapped set can never go quiet.
+  // discarded mapped set can never go quiet. Outside the refusal they drain
+  // as the bonus queue above instead of being dropped; the note then names
+  // what is queued rather than what is skipped.
   const droppedTests = (plan.dropped ?? []).filter((test) => !plan.tests.includes(test));
   const droppedNote = droppedTests.length === 0
     ? null
     : `dropping ${droppedTests.length} selected test(s) this step does not run: ${droppedTests.join(', ')}`;
+  const remainderNote = bonusNote ?? droppedNote;
 
   if (options.list) {
     if (plan.reason && plan.kind === 'fallback') {
       process.stderr.write(`ci-touched-tests: warning: ${selectNote ?? plan.reason} — listing the fallback suite plus the repo-wide guards.\n`);
     }
-    if (droppedNote !== null) {
-      process.stderr.write(`ci-touched-tests: warning: ${droppedNote}.\n`);
+    if (remainderNote !== null) {
+      process.stderr.write(`ci-touched-tests: warning: ${remainderNote}.\n`);
     }
-    process.stdout.write(plan.tests.length === 0 ? '' : `${plan.tests.join('\n')}\n`);
+    process.stdout.write(queue.length === 0 ? '' : `${queue.join('\n')}\n`);
     process.exit(0);
   }
 
@@ -1507,7 +1635,7 @@ async function main() {
     // files — instead of blocking: the guards above still run, and the full
     // suite on `main` stays the safety net. A discarded mapped set is
     // named too, so an oversized or timed-out deletion-only diff can never
-    // go quiet about the importers it drops.
+    // go quiet about the importers it queues behind the core suite.
     const uncovered = changed.filter((file) => SOURCE_EXT.test(normalize(file).replace(/\\/g, '/')));
     const why = plan.reason === 'selection-timeout' && selectNote !== null
       ? selectNote
@@ -1516,22 +1644,22 @@ async function main() {
         : `selected ${mapped.length} test file(s), past the ${options.maxSelected} this step can run`;
     process.stdout.write(
       `ci-touched-tests: warning: ${why} — running the fallback suite instead `
-      + `(${preGuardTests.length} changed test file(s) plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.`
-      + `${droppedNote === null ? '' : ` ${droppedNote}.`}\n`,
+      + `(${describeFallbackCore(preGuardTests, changed)} plus ${addedGuards.length} repo-wide guard(s)): ${plan.tests.join(', ')}.`
+      + `${remainderNote === null ? '' : ` ${remainderNote}.`}\n`,
     );
     process.stdout.write(
-      `::warning::ci-touched-tests: ${why} — running ${plan.tests.length} test file(s) instead of ${mapped.length} selected.${droppedNote === null ? '' : ` ${droppedNote}.`}\n`,
+      `::warning::ci-touched-tests: ${why} — running ${queue.length} test file(s) instead of ${mapped.length} selected.${remainderNote === null ? '' : ` ${remainderNote}.`}\n`,
     );
   }
-  if (plan.kind === 'skip' && droppedNote !== null) {
+  if (plan.kind === 'skip' && remainderNote !== null) {
     // Pathological but reachable: the scope carries no JavaScript, yet a
     // test relatively imports a changed non-source file (a fixture, a data
-    // file). The guards above still run; the dropped mapped set is named
-    // instead of going quiet.
+    // file). The guards above still run; the remainder is queued as bonus
+    // (or named when the plan dropped it) instead of going quiet.
     process.stdout.write(
-      `ci-touched-tests: warning: ${droppedNote} — best-effort guards only, the full suite on \`main\` stays the safety net.\n`,
+      `ci-touched-tests: warning: ${remainderNote} — best-effort ${bonusNote === null ? 'guards only' : 'guards plus bonus'}, the full suite on \`main\` stays the safety net.\n`,
     );
-    process.stdout.write(`::warning::ci-touched-tests: ${droppedNote}.\n`);
+    process.stdout.write(`::warning::ci-touched-tests: ${remainderNote}.\n`);
   }
 
   // The run is sharded past a dozen files (see the header): one sequential
@@ -1544,26 +1672,53 @@ async function main() {
   // at a time from a shared queue (at most four files at once, beside the
   // other `ci-fast.sh` lanes), so no part idles while another still holds a
   // fixed slice of slow files (agent-crm#621 again: round-robin slices, two
-  // parts done, two still busy at 270 s). The bound yields to the selection
-  // phase so select-plus-run always fits the step wrapper; the floor of a
-  // minute still runs at least one slow file.
+  // parts done, two still busy at 270 s). The queue holds the core suite
+  // first and the bonus remainder behind it, so an oversized selection
+  // drains nearest-first while the bound allows. The bound yields to the
+  // selection phase so select-plus-run always fits the step wrapper; the
+  // floor of a minute still runs at least one slow file.
   const runBudget = runBudgetSec(options.timeoutSec, selectionElapsedSec);
-  const parts = shardCountFor(plan.tests.length);
+  const parts = shardCountFor(queue.length);
   if (parts > 1) {
     process.stdout.write(
-      `ci-touched-tests: running ${plan.tests.length} test file(s) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`,
+      bonus.length === 0
+        ? `ci-touched-tests: running ${plan.tests.length} test file(s) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`
+        : `ci-touched-tests: running ${queue.length} test file(s) (${plan.tests.length} core plus ${bonus.length} bonus draining nearest-first while the bound allows) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`,
     );
   }
-  const run = await runTestShards(plan.tests, { parts, timeoutSec: runBudget, cwd: root });
+  const run = await runTestShards(queue, { parts, timeoutSec: runBudget, cwd: root });
   if (run.timedOut) {
     const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
+    const coreSet = new Set(plan.tests);
+    const coreRemaining = run.remaining.filter((file) => coreSet.has(file));
+    const bonusRemaining = run.remaining.filter((file) => !coreSet.has(file));
+    if (timeoutVerdict(plan.tests, run.remaining, run.failedFiles) === 'warn') {
+      // The core suite finished green and nothing failed: only bonus files
+      // the bound did not reach remain. Warn naming them instead of failing
+      // red over coverage the step could not fit — every unrun file is
+      // named, and the full suite on `main` stays the safety net behind it.
+      // A failure anywhere, or an unfinished core file, still fails red.
+      process.stdout.write(
+        `ci-touched-tests: warning: the ${plan.tests.length} core file(s) finished green but `
+          + `${bonusRemaining.length} bonus file(s) did not run in ${runBudget}s: ${bonusRemaining.join(', ') || '(none reported)'}. `
+          + `The full suite on \`main\` stays the safety net behind them.\n`,
+      );
+      process.stdout.write(
+        `::warning::ci-touched-tests: core green, ${bonusRemaining.length} bonus file(s) unrun after ${runBudget}s: ${bonusRemaining.join(', ') || '(none reported)'}. `
+          + `Completed ${run.completedShards} of ${parts} part(s); part busy times: ${run.partSec.map((sec) => `${sec}s`).join(', ')}.\n`,
+      );
+      process.exit(0);
+    }
     process.stderr.write(
       `ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock. `
-        + `${run.remaining.length} file(s) remaining: ${run.remaining.join(', ') || '(none reported)'}.\n`,
+        + `${coreRemaining.length} core file(s) remaining: ${coreRemaining.join(', ') || '(none reported)'}; `
+        + `${bonusRemaining.length} bonus file(s) remaining: ${bonusRemaining.join(', ') || '(none reported)'}.\n`,
     );
     process.stdout.write(
       `::error::ci-touched-tests: ${what} timed out after ${runBudget}s with `
-        + `${run.remaining.length} file(s) remaining: ${run.remaining.join(', ') || '(none reported)'}. `
+        + `${coreRemaining.length} core file(s) remaining: ${coreRemaining.join(', ') || '(none reported)'}; `
+        + `${bonusRemaining.length} bonus file(s) remaining: ${bonusRemaining.join(', ') || '(none reported)'}. `
+        + `${run.failedFiles.length === 0 ? '' : `Failed file(s): ${run.failedFiles.join(', ')}. `}`
         + `Completed ${run.completedShards} of ${parts} part(s); part busy times: ${run.partSec.map((sec) => `${sec}s`).join(', ')}.\n`,
     );
     process.exit(1);

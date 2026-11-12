@@ -12,6 +12,8 @@ import {
   personStatusLabel,
   personStepLabel,
   proposeSequenceFromPhrase,
+  renderSequenzaDettaglio,
+  renderSequenzeElenco,
   sequenceChannelLabel,
   sequenceDayLabel,
   sequenceQuandoLine,
@@ -248,6 +250,39 @@ test('hostile names are inert text, never markup', () => {
   });
 });
 
+test('opening with sequences selects the first: detail visible without a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const other = { ...SEQUENCE, id: 8, sourceKey: 'seq-seconda', name: 'Seconda sequenza', status: 'active' };
+  const client = stubClient({ sequences: [SEQUENCE, other] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  assert.equal(view.state.selectedKey, 'seq-bentornato');
+  assert.ok(!mount.textContent.includes('Scegli una sequenza per vedere i passi'));
+  assert.ok(mount.textContent.includes('Passi'));
+  assert.ok(mount.textContent.includes('WhatsApp · Ciao, ci manchi'));
+  assert.ok(mount.textContent.includes('Persone nella sequenza'));
+  assert.ok(mount.textContent.includes('Giulia Rossi'));
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=seq-bentornato')), 'the first steps are read');
+});
+
+test('opening with a whitespace-only first sourceKey selects the elenco key, like a click (backlog:bb91276a)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const blank = { ...SEQUENCE, id: 7, sourceKey: '   ' };
+  const client = stubClient({ sequences: [blank] });
+  const view = createSequenzeView({ doc, mount, client });
+  await view.renderSequenze();
+  await flush();
+  const elencoKey = buildSequenzeElenco({ sequences: [blank] })[0].sourceKey;
+  assert.equal(elencoKey, '7');
+  assert.equal(view.state.selectedKey, '7');
+  const stepReads = client.calls.filter((call) => call.path.startsWith('/api/modules/sequence-step/records?'));
+  assert.ok(stepReads.some((call) => call.path.includes('filter.sequenceSourceKey=7')), 'auto-open and click query the same key');
+});
+
 test('full screen: elenco, dettaglio with passi, double-ask activate posts once', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -268,7 +303,7 @@ test('full screen: elenco, dettaglio with passi, double-ask activate posts once'
   const postsBefore = client.calls.filter((call) => call.method === 'POST').length;
   mount.querySelector('button[data-action="activate"]').dispatch('click', {});
   await flush();
-  assert.ok(mount.textContent.includes('Attivare questa sequenza?'));
+  assert.ok(mount.textContent.includes('Avviare questa sequenza?'));
   assert.equal(client.calls.filter((call) => call.method === 'POST').length, postsBefore);
   mount.querySelector('button[data-confirm="activate"]').dispatch('click', {});
   await flush();
@@ -407,8 +442,8 @@ test('loadSequenzeData marks availability from the contract, not from rows', asy
 test('offered write follows the state: draft and paused activate, active pauses', () => {
   assert.deepEqual(sequenzaOfferedAction('draft'), {
     action: 'activate',
-    button: 'Attiva',
-    confirm: 'Attivare questa sequenza? I passi dovuti possono partire.',
+    button: 'Avvia la sequenza',
+    confirm: 'Avviare questa sequenza? I passi dovuti possono partire.',
   });
   assert.equal(sequenzaOfferedAction('paused').button, 'Riattiva');
   assert.equal(sequenzaOfferedAction('active').button, 'Metti in pausa');
@@ -544,10 +579,10 @@ test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', as
   assert.ok(mount.textContent.includes('Si ferma quando: quando risponde'));
   assert.ok(mount.textContent.includes('In corso'));
   assert.ok(mount.textContent.includes('Risposte'));
-  assert.ok(mount.textContent.includes('Call fissate'));
-  assert.ok(mount.textContent.includes('—'), 'the call card stays an honest dash without appointments data');
+  // backlog:bd9ae1482194: no appointments read, so no «Call fissate» card.
+  assert.ok(!mount.textContent.includes('Call fissate'), 'a KPI with no read behind it is left out');
   const cards = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('metric'));
-  assert.equal(cards.length, 3, 'the dettaglio paints the 3 KPI cards with the Reporting classes');
+  assert.equal(cards.length, 2, 'the dettaglio paints the KPI cards it can count, with the Reporting classes');
   for (const card of cards) {
     const kids = card.childNodes ?? [];
     assert.equal(kids.length, 3, 'each KPI card is label + big number + a line below');
@@ -556,7 +591,7 @@ test('the dettaglio paints trigger pills, 3 KPI cards and the approval note', as
     assert.equal(String(kids[2].tagName ?? '').toLowerCase(), 'span');
   }
   assert.ok(mount.textContent.includes('persone dentro adesso'));
-  assert.ok(mount.textContent.includes('non lette in questa vista'), 'the dash card says why it has no number');
+  assert.ok(!mount.textContent.includes('non lette in questa vista'), 'no technical reason on screen');
   assert.ok(mount.textContent.includes(
     'Con «Inviare risposte senza approvazione» spento, ogni messaggio della sequenza aspetta il tuo ok prima di partire.',
   ));
@@ -798,7 +833,7 @@ test('the wait field reads its label and unit in plain sight', async () => {
   mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('attesa'), 'the wait has a visible label, not only an aria-label');
+  assert.match(text, /attesa/i, 'the wait has a visible label, not only an aria-label');
   assert.ok(text.includes('giorni'), 'the wait names its unit in days');
 });
 
@@ -848,6 +883,49 @@ test('a refused creation says so in Italian and keeps the panel', async () => {
   assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open with its text');
 });
 
+test('backlog:7cc35edab50c + 7d30fb517785: a 502 creation reads server-not-answering and Crea retries', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = createDriveClient();
+  let creates = 0;
+  const client = {
+    calls: inner.calls,
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/sequences/create') {
+        creates += 1;
+        if (creates === 1) {
+          // A verdict-less gateway hiccup (the /bo edge answers 502 with
+          // no BO verdict; review agent-crm#696 keeps named BO verdicts
+          // out of the connection text).
+          throw Object.assign(new Error('Bad Gateway'), { status: 502, code: 'UNKNOWN' });
+        }
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createSequenzeView({ doc, mount, client, spaceId: () => 'presti' });
+  await view.renderSequenze();
+  await flush();
+  mount.querySelector('button[data-action="new-manual"]').dispatch('click', {});
+  await flush();
+  setField(mount, 'seq-name', 'Riprova rete');
+  setField(mount, 'seq-step-0-template', 'Ciao');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  // backlog:7d30fb517785: the gateway answered 502 — the server is not
+  // answering, never «Connessione non riuscita» (that is for no answer).
+  assert.ok(mount.textContent.includes('Il server non risponde adesso, riprova tra poco.'), 'the 502 reads as a server not answering');
+  assert.ok(!mount.textContent.includes('Connessione non riuscita'), 'never a connection fault after an answer');
+  assert.ok(!mount.textContent.includes('Scrittura del pannello rifiutata'), 'the generic refusal never shows');
+  assert.ok(!mount.textContent.includes('502'), 'no raw status on screen');
+  assert.ok(mount.querySelector('input[name="seq-name"]'), 'the panel stays open for the retry');
+  mount.querySelector('button[data-action="create-manual"]').dispatch('click', {});
+  await flush();
+  assert.equal(creates, 2, 'Crea posts again (the first attempt threw before the stub recorded it)');
+  assert.ok(mount.textContent.includes('Riprova rete'), 'the elenco shows the retried sequence');
+});
+
 test('Crea con l\u2019AI proposes without a POST and creates only on confirm', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -869,4 +947,145 @@ test('Crea con l\u2019AI proposes without a POST and creates only on confirm', a
   assert.equal(posts.length, 1, 'confirming posts exactly once');
   assert.equal(posts[0].body.triggerLabel, 'offerta inviata');
   assert.ok(mount.textContent.includes('Quando offerta inviata'), 'the elenco shows the confirmed sequence');
+});
+
+test('backlog:1d6dc54f19db dettaglio mostra il passo whatsapp anche quando lo spazio del passo manca', async () => {
+  // Live pre-space rows (sequence-step revision 1 had no spaceId): the
+  // space-scoped steps read returns nothing while the key-only read carries
+  // the whatsapp passo. Before the cure the detail painted
+  // «Questa sequenza non ha passi registrati»; after it paints the passo.
+  const key = 'bo-seq-b6028139-live';
+  const preSpaceStep = {
+    id: 901, sequenceSourceKey: key, spaceId: null, stepOrder: 0, dayOffset: 0,
+    channel: 'whatsapp', templateName: 'Ciao, ci manchi', templateLanguage: 'it', templateVars: '[]',
+  };
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        assert.ok(path.includes(`filter.sequenceSourceKey=${encodeURIComponent(key)}`));
+        return { items: [preSpaceStep] };
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, false);
+  assert.equal(outcome.rows.length, 1, 'the key-only retry recovers the pre-space passo');
+  const detail = buildSequenzaDettaglio({
+    sequence: { id: 77, sourceKey: key, spaceId: 'presti', name: 'Bentornato', status: 'draft' },
+    steps: outcome.rows,
+    enrollments: [],
+    sends: [],
+  });
+  assert.equal(detail.steps.length, 1);
+  assert.equal(detail.steps[0].channelLabel, 'WhatsApp');
+  assert.ok(detail.steps[0].title.includes('Ciao, ci manchi'));
+});
+
+test('backlog:1d6dc54f19db retry senza spazio che fallisce resta un errore, mai zero passi', async () => {
+  // P2 Codex su PR 755: lettura con spazio vuota + retry che lancia (rete,
+  // 500) dipingeva «non ha passi registrati». Resta failed: true.
+  const key = 'bo-seq-b6028139-retry-down';
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path.startsWith('/api/modules/sequence-step/records?')) {
+        if (path.includes('filter.spaceId=')) return { items: [] };
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      }
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const outcome = await loadSequenzaSteps(client, key, 'presti');
+  assert.equal(outcome.failed, true);
+  assert.deepEqual(outcome.rows, []);
+});
+
+test('Bozza wears the same ui-* chip class in elenco and dettaglio (backlog:05e53e77)', () => {
+  // Supervisor 2026-11-07.md:46: live painted Bozza green in the list and
+  // blue in the detail. Both renders must share one system chip class.
+  const doc = createFakeDocument();
+  const list = renderSequenzeElenco(doc, [SEQUENCE], ENROLLMENTS, SENDS, '', () => {});
+  const listChip = list.querySelector('.bo-seq-status');
+  assert.equal(listChip.textContent, 'Bozza');
+  const detail = buildSequenzaDettaglio({
+    sequence: SEQUENCE,
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  const detailRoot = renderSequenzaDettaglio(doc, detail, null, () => {}, () => {}, () => {}, false);
+  const detailChip = detailRoot.querySelector('.bo-seq-status');
+  assert.equal(detailChip.textContent, 'Bozza');
+  const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const listClasses = chipClasses(listChip);
+  assert.ok(listClasses.includes('ui-chip'), 'the elenco chip uses the system chip');
+  assert.ok(listClasses.includes('ui-chip-plain'), 'Bozza wears the neutral system chip (backlog:bd9ae1482194)');
+  assert.ok(!listClasses.includes('ui-chip-wa'), 'Bozza never wears the WhatsApp tint');
+  assert.deepEqual(chipClasses(detailChip), listClasses, 'the dettaglio paints the same chip class as the elenco');
+});
+
+// backlog:bd9ae1482194 (verifica browser 11/11 sulla produzione): the
+// dettaglio of a Bozza read as two states at once («Bozza» beside «Attiva»),
+// the Bozza chip wore the WhatsApp green, and a KPI card said «non lette in
+// questa vista».
+const bd9DetailFor = (status) => {
+  const detail = buildSequenzaDettaglio({
+    sequence: { ...SEQUENCE, status },
+    steps: STEPS,
+    enrollments: ENROLLMENTS,
+    sends: SENDS,
+    nowMs: Date.parse('2026-10-26T12:00:00.000Z'),
+  });
+  return renderSequenzaDettaglio(createFakeDocument(), detail, null, () => {}, () => {}, () => {}, false);
+};
+
+test('backlog:bd9ae1482194: a Bozza shows no «Attiva» beside its chip, and can still be started', () => {
+  const root = bd9DetailFor('draft');
+  const head = root.querySelector('.bo-seq-headcard');
+  assert.ok(head.textContent.includes('Bozza'), 'the chip says Bozza');
+  assert.doesNotMatch(head.textContent, /\bAttiva\b/, 'no «Attiva» word beside the Bozza chip');
+  const start = root.querySelector('button[data-action="activate"]');
+  assert.ok(start, 'the draft can still be started');
+  assert.equal(start.textContent, 'Avvia la sequenza');
+  // The other states keep their words.
+  assert.equal(bd9DetailFor('paused').querySelector('button[data-action="activate"]').textContent, 'Riattiva');
+  assert.equal(bd9DetailFor('active').querySelector('button[data-action="pause"]').textContent, 'Metti in pausa');
+});
+
+test('backlog:bd9ae1482194: the dettaglio has no «non lette in questa vista» line', () => {
+  for (const status of ['draft', 'active', 'paused']) {
+    const text = bd9DetailFor(status).textContent;
+    assert.ok(!text.includes('non lette in questa vista'), `no technical reason on a ${status} sequence`);
+    assert.ok(!text.includes('Call fissate'), 'a KPI with no read behind it is left out');
+    assert.ok(text.includes('In corso') && text.includes('Risposte'), 'the counted KPIs stay');
+  }
+});
+
+test('backlog:bd9ae1482194: the Bozza chip is the neutral ui-chip-plain, and styles.css lets the class pick the tint', async () => {
+  const chipClasses = (node) => String(node.getAttribute('class') ?? '').split(/\s+/).filter(Boolean);
+  const doc = createFakeDocument();
+  const listChip = renderSequenzeElenco(doc, [SEQUENCE], ENROLLMENTS, SENDS, '', () => {}).querySelector('.bo-seq-status');
+  const detailChip = bd9DetailFor('draft').querySelector('.bo-seq-status');
+  for (const chip of [listChip, detailChip]) {
+    assert.equal(chip.textContent, 'Bozza');
+    assert.ok(chipClasses(chip).includes('ui-chip-plain'), 'Bozza is neutral ink');
+    assert.ok(!chipClasses(chip).includes('ui-chip-wa'), 'never the WhatsApp tint');
+  }
+  assert.deepEqual(chipClasses(detailChip), chipClasses(listChip), 'elenco and dettaglio share one class (backlog:05e53e77)');
+  // The rule that sized the chip also painted it green over any ui-chip-*
+  // class (higher specificity): the tint must come from the class alone.
+  const { readFile } = await import('node:fs/promises');
+  const css = (await readFile(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const rules = [...css.matchAll(/([^{}]*\.bo-seq-status[^{}]*)\{([^}]*)\}/g)];
+  const checked = rules.filter(([, selector]) => !/\[data-|ui-chip-/.test(selector));
+  assert.ok(checked.length >= 2, 'styles.css sizes the chip in the elenco and in the dettaglio');
+  for (const [, selector, body] of checked) {
+    assert.doesNotMatch(body, /(^|;|\s)(background|color)\s*:/, `${selector.trim()} must not paint the chip`);
+  }
+  assert.match(css, /\.ui-chip-plain\s*\{[^}]*background:\s*var\(--surface-soft\)/, 'ui-chip-plain is the neutral system chip');
 });

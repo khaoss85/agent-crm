@@ -23,6 +23,7 @@ import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
   buildDashboardModel,
@@ -513,6 +514,14 @@ export function buildRouter(app) {
     }
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
     return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
+  });
+  router.add('POST', '/api/appointments/reschedule', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.rescheduleAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment reschedule');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
   });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
@@ -1531,7 +1540,13 @@ export function buildRouter(app) {
 
   router.add('GET', '/api/companies', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
-    return { items: await app.services.companies.list({ limit: parseLimit(query.limit) }) };
+    const items = await app.services.companies.list({ limit: parseLimit(query.limit) });
+    // Backlog ece81578305d: a «no company» placeholder stands behind one
+    // contact and is never a company to pick — neither the Aziende surfaces
+    // nor the «Nuova offerta» company list (same endpoint) show it. The
+    // predicate keys on the core placeholder flag once voce ac65e448fcb4
+    // lands, on the reserved name until then.
+    return { items: items.filter((company) => !isNoCompany(company)) };
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
@@ -1628,7 +1643,9 @@ export function buildRouter(app) {
   // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
   // screen, read-only. Every number comes from the declared analytics
   // registry — compileReport/runReport over pipeline_value_by_stage and
-  // pipeline_close_schedule — plus the operator's own obiettivo row from the
+  // pipeline_close_schedule, or over their per-pipeline twins when the
+  // opportunity pipeline is composed (backlog 099c41c32355) — plus the
+  // operator's own obiettivo row from the
   // reporting bundle when composed. No storage query of its own, no write
   // surface: there is deliberately no POST under /api/reporting/*, so the
   // "Cosa noto" proposal the model carries can never reassign by itself.
@@ -1641,11 +1658,22 @@ export function buildRouter(app) {
   // storage through this route or through the facade.
   router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
+    // Backlog 099c41c32355 (Reporting like the Pipeline board): the numbers
+    // read the composed opportunity pipeline — the same registry the board's
+    // `/api/schema` serves — so phases, open count and total match the board
+    // instead of the legacy core `stage` column (which a move-stage never
+    // touches). One pipeline per module, so the resolution is deterministic;
+    // with no composed pipeline the legacy grouping still answers.
+    const opportunityPipeline = typeof app.pipelines?.forModule === 'function'
+      ? app.pipelines.forModule('opportunity')
+      : null;
     const dashboardQuery = parseDashboardQuery({
       period: query.period,
       owner: query.owner,
       currency: query.currency,
+      pipeline: opportunityPipeline?.name ?? null,
     });
+    const pipelines = opportunityPipeline ? [opportunityPipeline] : [];
     const specs = dashboardSpecs(dashboardQuery);
     const executeReport = typeof app.runReportFromSpec === 'function'
       ? (spec) => app.runReportFromSpec(spec)
@@ -1671,7 +1699,7 @@ export function buildRouter(app) {
       const counted = await app.countCustomerChannelOrigins({});
       if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
     }
-    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins);
+    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins, pipelines);
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {

@@ -33,6 +33,7 @@ import {
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
 import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
+import { messagePreview } from './admin-message-preview.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -49,10 +50,14 @@ const ASSISTANT_ASK_PATH = '/api/assistant/ask';
  * blames the key by default: the pilot backend serves suggestions only, and
  * free questions are not part of the MVP. The key sentence appears only
  * when the status really reports a missing key (LLM_SECRET_UNAVAILABLE);
- * a disabled space (LLM_SPACE_DISABLED) says the assistant is off there.
+ * a disabled space (LLM_SPACE_DISABLED) says the assistant is off there
+ * and who turns it on — never what it would do if it were on (voce
+ * a684ecf5: il messaggio da spento non si contraddice).
  */
 export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
-export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: in questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci).';
+export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: chiedi al titolare di attivarlo per questo spazio.';
+/** backlog:1968c3320cd3: the titolare is told where to turn it on, never to ask themself. */
+export const ASSISTANT_SPACE_DISABLED_OWNER_NOTICE = 'Assistente non attivo in questo spazio: puoi accenderlo da Spazi e accessi.';
 export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
@@ -254,7 +259,11 @@ export function italianDates(label) {
  */
 function recordSource(module, id, label) {
   if (!isSafeModule(module) || !isSafeRecordId(id)) return null;
-  const text = shortText(italianDates(label), 80) || id;
+  // Voce a684ecf5: la fonte mostra il nome, mai l'id grezzo — l'ultima
+  // rete resta neutra invece di ripiegare sull'id. Le neutre uguali nello
+  // stesso elenco prendono l'ordinale in chi chiama (takeSources o la
+  // risposta con uniqueLabels), mai qui: la singola fonte non vede le altre.
+  const text = shortText(italianDates(label), 80) || 'Record senza nome';
   return {
     kind: 'record',
     module,
@@ -410,14 +419,25 @@ async function readRecords(client, module, limit = SUGGESTION_READ_LIMIT, traceR
  * @param {number} max
  */
 function takeSources(rows, module, labelOf, max = SUGGESTION_MAX_SOURCES) {
-  /** @type {Source[]} */
-  const sources = [];
+  if (!isSafeModule(module)) return [];
+  const candidates = [];
   for (const row of rows) {
-    if (sources.length >= max) break;
-    const source = recordSource(module, row?.id, labelOf(row));
-    if (source !== null) sources.push(source);
+    if (candidates.length >= max) break;
+    if (!isSafeRecordId(row?.id)) continue;
+    candidates.push(row);
   }
-  return sources;
+  // Voce a684ecf5: stessa soglia ordinale di thread e lead (uniqueLabels) —
+  // due righe con lo stesso testo visibile non condividono mai un'etichetta
+  // identica, nemmeno quando la rete neutra scatta («Record senza nome»,
+  // «Opportunità senza titolo», «(senza testo)», «Segnalazione senza titolo»).
+  const distinct = uniqueLabels(candidates.map((row) => shortText(italianDates(labelOf(row)), 80) || 'Record senza nome'));
+  return candidates.map((row, index) => ({
+    kind: 'record',
+    module,
+    id: row.id,
+    label: distinct[index],
+    href: `#/modules/${module}/${encodeURIComponent(row.id)}`,
+  }));
 }
 
 /** @param {unknown} value */
@@ -493,7 +513,7 @@ async function answerUrgenti(client) {
   } else {
     const open = issues.filter((row) => row?.status === 'open');
     answer.lines.push(`${open.length} problemi di qualità aperti.`);
-    answer.sources.push(...takeSources(open, 'data-quality-issue', (row) => row?.title ?? row?.code ?? row?.id));
+    answer.sources.push(...takeSources(open, 'data-quality-issue', (row) => row?.title ?? row?.code ?? 'Segnalazione senza titolo'));
   }
   answer.actions.push({ id: 'bo04:apri-clienti', label: 'Apri Clienti', kind: 'navigate', href: '#/customer-data', customerFacing: false });
   const first = answer.sources[0];
@@ -654,6 +674,48 @@ async function answerRicontattare(client) {
   return answer;
 }
 
+/**
+ * Customer names behind signal lead ids (voce a684ecf5): leadId is a
+ * contact or company record id, so the panel reads those modules and
+ * names the customer — never the raw id. The lookup pages are capped at
+ * FREE_DATA_READ_LIMIT while signals rank from up to SIGNAL_READ_LIMIT
+ * rows, so a leadId missing from the truncated page is NOT «senza nome»:
+ * the caller labels it with the lookup bound instead of asserting an
+ * unknown name as fact.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<TraceRead>} traceReads
+ */
+async function signalLeadNames(client, traceReads) {
+  /** @type {Map<string, string>} */
+  const names = new Map();
+  /** @type {Set<string>} */
+  const seen = new Set();
+  const [contacts, companies] = await Promise.all([
+    readRecords(client, 'contact', FREE_DATA_READ_LIMIT, traceReads),
+    readRecords(client, 'company', FREE_DATA_READ_LIMIT, traceReads),
+  ]);
+  for (const row of contacts ?? []) {
+    if (isSafeRecordId(row?.id)) seen.add(/** @type {string} */ (row.id));
+    const name = contactDisplayName(row);
+    if (name !== '' && isSafeRecordId(row?.id)) names.set(/** @type {string} */ (row.id), name);
+  }
+  for (const row of companies ?? []) {
+    if (isSafeRecordId(row?.id)) seen.add(/** @type {string} */ (row.id));
+    const name = companyDisplayName(row);
+    if (name !== '' && isSafeRecordId(row?.id)) names.set(/** @type {string} */ (row.id), name);
+  }
+  return {
+    names,
+    seen,
+    capped: (contacts?.length ?? 0) >= FREE_DATA_READ_LIMIT
+      || (companies?.length ?? 0) >= FREE_DATA_READ_LIMIT,
+    missing: [
+      ...(contacts === null ? ['contact'] : []),
+      ...(companies === null ? ['company'] : []),
+    ],
+  };
+}
+
 /** Segnali caldi: behavioral-signal di packages/intelligence, per lead. */
 async function answerSegnali(client) {
   const answer = emptyAnswer('bo04:clienti:segnali', 'Quali lead mostrano segnali caldi?');
@@ -675,17 +737,34 @@ async function answerSegnali(client) {
     answer.lines.push('Nessun segnale registrato sui lead.');
     return answer;
   }
+  // Voce a684ecf5: ogni riga nomina il cliente, mai l'id grezzo
+  // (contact/<uuid>). Stessa fonte di verità per righe, fonti e «Apri:».
+  const lookup = await signalLeadNames(client, answer.trace.reads);
+  for (const module of lookup.missing) {
+    answer.unavailable.push(module === 'contact'
+      ? 'Lead: modulo contact non leggibile in questo spazio.'
+      : 'Aziende: modulo company non leggibile in questo spazio.');
+  }
+  // Un leadId fuori dalla pagina troncata non è «senza nome»: lo dice il
+  // bound di lookup, come le altre risposte (lead-day «prime 50 lette»).
+  const leadLabel = (leadId) => lookup.names.get(leadId)
+    ?? (!lookup.seen.has(leadId) && lookup.capped
+      ? `Lead oltre le prime ${FREE_DATA_READ_LIMIT} lette`
+      : 'Lead senza nome');
+  const distinct = uniqueLabels(ranked.map(([leadId]) => leadLabel(leadId)));
+  const labelByLead = new Map(ranked.map(([leadId], index) => [leadId, distinct[index]]));
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = signals.length >= SIGNAL_READ_LIMIT;
-  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead${capped ? ` (prime ${signals.length} lette)` : ''}:`);
+  const lookupBound = lookup.capped ? ` (nomi tra le prime ${FREE_DATA_READ_LIMIT} lette)` : '';
+  answer.lines.push(`${signals.length} segnali su ${byLead.size} lead${capped ? ` (prime ${signals.length} lette)` : ''}${lookupBound}:`);
   const sourceRows = [];
   for (const [leadId, list] of ranked) {
     const latest = newestFirst(list)[0];
-    answer.lines.push(`• ${shortText(leadId, 40)}: ${list.length} segnali (ultimo: ${shortText(latest?.signalType, 30) || '?'})`);
+    answer.lines.push(`• ${labelByLead.get(leadId)}: ${list.length} segnali (ultimo: ${shortText(latest?.signalType, 30) || '?'})`);
     sourceRows.push(latest);
   }
-  answer.sources.push(...takeSources(sourceRows, 'behavioral-signal', (row) => `${shortText(row?.signalType, 30)} su ${shortText(row?.leadId, 40)}`));
+  answer.sources.push(...takeSources(sourceRows, 'behavioral-signal', (row) => `${shortText(row?.signalType, 30) || 'segnale'} · ${labelByLead.get(row?.leadId) ?? leadLabel(row?.leadId)}`));
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -802,7 +881,8 @@ async function answerChiusura(client) {
     return answer;
   }
   traceRead(answer.trace.reads, 'opportunities', null, 'ok', items.length);
-  const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || shortText(row?.id, 24);
+  // Voce a684ecf5: il nome dell'opportunità, mai l'id grezzo.
+  const labelOf = (row) => shortText(row?.name ?? row?.companyName ?? row?.title, 60) || 'Opportunità senza titolo';
   // Honest bounds: /api/opportunities without a limit serves the server
   // default page (OPPORTUNITY_SERVER_DEFAULT_LIMIT) — at the cap the headline
   // says which page it counts, never a total.
@@ -822,9 +902,13 @@ async function answerChiusura(client) {
       ? `1 opportunità aperta in pipeline${items.length !== 1 ? ` su ${items.length} lette` : ''}${pageNote}.`
       : `${open.length} opportunità aperte in pipeline${items.length !== open.length ? ` su ${items.length} lette` : ''}${pageNote}.`);
     pushStageLines(answer, stageCount, stageTotals);
-    for (const row of open.slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
-    }
+    // Voce a684ecf5: due opportunità senza nome non sono la stessa riga —
+    // ordinali come thread e lead, così «Apri:» apre sempre la prima giusta.
+    const listed = open.slice(0, SUGGESTION_MAX_LISTED);
+    const distinctListed = uniqueLabels(listed.map((row) => labelOf(row)));
+    listed.forEach((row, index) => {
+      answer.lines.push(`• ${distinctListed[index]}`);
+    });
     return answer;
   }
   // Board-aware scope, like admin-pipeline.js renderAll: only rows placed on
@@ -876,16 +960,23 @@ async function answerChiusura(client) {
     for (const row of offOpen) accumulateStage(row, offCount, offTotals, legacyStageOf);
     answer.lines.push(`${offOpen.length} fuori pipeline ${board.name}${capped ? ' tra le lette' : ''} (la board non le mostra, senza link).`);
     pushStageLines(answer, offCount, offTotals);
-    for (const row of offOpen.slice(0, SUGGESTION_MAX_LISTED)) {
-      answer.lines.push(`• ${labelOf(row) || shortText(row?.id, 24)}`);
-    }
+    const listedOff = offOpen.slice(0, SUGGESTION_MAX_LISTED);
+    const distinctOff = uniqueLabels(listedOff.map((row) => labelOf(row)));
+    listedOff.forEach((row, index) => {
+      answer.lines.push(`• ${distinctOff[index]}`);
+    });
   }
+  // Voce a684ecf5: stesse ordinali anche nelle fonti, una per riga colocata.
+  const placed = [];
   for (const row of openPlaced) {
-    if (answer.sources.length >= SUGGESTION_MAX_SOURCES) break;
+    if (placed.length >= SUGGESTION_MAX_SOURCES) break;
     if (!isSafeRecordId(row?.id)) continue;
-    const label = labelOf(row) || row.id;
-    answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label, href: boardHref });
+    placed.push(row);
   }
+  const distinctPlaced = uniqueLabels(placed.map((row) => labelOf(row)));
+  placed.forEach((row, index) => {
+    answer.sources.push({ kind: 'record', module: 'opportunity', id: row.id, label: distinctPlaced[index], href: boardHref });
+  });
   const first = answer.sources[0];
   if (first) {
     answer.actions.push({ id: 'bo04:apri-primo', label: `Apri: ${first.label}`, kind: 'navigate', href: first.href, customerFacing: false });
@@ -938,10 +1029,13 @@ async function answerLeadSito(client) {
     return answer;
   }
   answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
-  for (const row of inbound.slice(0, SUGGESTION_MAX_LISTED)) {
-    answer.lines.push(`• ${shortText(row?.body, 60) || '(senza testo)'}`);
-  }
-  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => shortText(row?.body, 60) || shortText(row?.id, 24)));
+  // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
+  const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
+  const distinctSite = uniqueLabels(listedSite.map((row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
+  listedSite.forEach((row, index) => {
+    answer.lines.push(`• ${distinctSite[index]}`);
+  });
+  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
   const first = inbound[0];
   if (isSafeRecordId(first?.conversationId)) {
     const conversationId = /** @type {string} */ (first.conversationId);
@@ -1738,10 +1832,11 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * clickable sources, linked actions with the confirmation gate, the
  * execution trace of every answer (BO-F4-04, kept in the session history),
  * and the free-question box (disabled with the key message in dry-run).
- * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void }} options
+ * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void, spaceId?: any, role?: (() => unknown) | null, win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null }} options
  */
-export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null } = {}) {
+export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null, role = null, win = null } = {}) {
   if (!doc || !mount || !client) throw new Error('Il pannello assistente richiede doc, mount e client.');
+  const readRole = typeof role === 'function' ? role : () => null;
   // backlog:33782ba68747: «@Agente …» writes through the mutation-bound
   // client (Idempotency-Key), scoped to the shell's active space.
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
@@ -1771,6 +1866,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // Review #596 P2: a top-bar question asked while an answer is still
     // running waits here (only the newest one) and starts when it ends.
     queued: null,
+    /** backlog:be99004b06e4: the question echoed while the probe runs. @type {string | null} */
+    waiting: null,
     // Voce 34fd687c: the last free data answer's context (lead-day list),
     // so «e ieri?» and «chi è il primo?» keep the thread. In-session only,
     // like the history — never persisted.
@@ -2025,8 +2122,25 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   function doClose() {
     state.open = false;
     state.queued = null;
+    state.waiting = null;
     openGeneration += 1;
     render();
+  }
+
+  // backlog:1968c3320cd3: Esc closes the open panel, like the ✕. An Esc
+  // another overlay already took (a menu, a popover) stays theirs, and
+  // focus in a field outside the panel (a form, the composer) is left alone.
+  if (win != null && typeof win.addEventListener === 'function') {
+    win.addEventListener('keydown', (event) => {
+      if (!state.open || event?.key !== 'Escape' || event.defaultPrevented === true) return;
+      const active = doc?.activeElement ?? null;
+      const idle = active === null || active === doc?.body;
+      const ours = active !== null && typeof mount.contains === 'function' && mount.contains(active);
+      const bar = active !== null && typeof active.getAttribute === 'function'
+        && String(active.getAttribute('class') ?? '').split(/\s+/).includes('bo-ai-input');
+      if (!idle && !ours && !bar) return;
+      doClose();
+    });
   }
 
   /** Start the question that waited for the running answer, if any. */
@@ -2048,10 +2162,20 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     const generation = (openGeneration += 1);
+    // backlog:be99004b06e4: a question asked from ⌘K shows at once, with a
+    // waiting line, while the status probe runs (production 11/11: 4.8 s of
+    // nothing). Only the waiting echo changes here — review #596 P2 still
+    // holds: screen, draft and answer move only after the probe.
+    if (typed !== '') {
+      state.open = true;
+      state.waiting = typed;
+      render();
+    }
     // Review #596 P2: nothing shared changes before the probe answers — a
     // run started meanwhile keeps its screen, draft and asked header.
     const status = await probeAssistantBackend(client);
     if (generation !== openGeneration) return;
+    state.waiting = null;
     if (state.busy && typed !== '') {
       state.open = true;
       state.queued = { screenId, draft, customer, question: typed };
@@ -2294,17 +2418,29 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (state.asked && typeof state.asked.text === 'string') {
       const asked = el(doc, 'div', 'bo-assistant-asked');
       asked.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.asked.text, 140)}»`));
-      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-note', state.asked.matched
+      scroll.appendChild(asked);
+      // backlog:1968c3320cd3: the system's reply is its own bubble, never
+      // a line inside the person's question.
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-reply', state.asked.matched
         ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
         : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
-      scroll.appendChild(asked);
     }
     if (state.queued !== null) {
       const waiting = el(doc, 'div', 'bo-assistant-asked');
       waiting.setAttribute('data-queued', 'true');
       waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.queued.question, 140)}»`));
-      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
       scroll.appendChild(waiting);
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-reply', 'Finisco la risposta in corso, poi rispondo a questa.'));
+    }
+    if (typeof state.waiting === 'string' && state.waiting !== '') {
+      const waiting = el(doc, 'div', 'bo-assistant-asked');
+      waiting.setAttribute('data-waiting', 'true');
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.waiting, 140)}»`));
+      scroll.appendChild(waiting);
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Chiedo all\u2019assistente…'));
+      panel.appendChild(scroll);
+      mount.appendChild(panel);
+      return;
     }
     const mentionBox = renderMention();
     if (mentionBox) scroll.appendChild(mentionBox);
@@ -2346,10 +2482,26 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // status reported. The key sentence appears only for a really missing
     // key, never as the default.
     if (!live) {
-      const notice = typeof state.status?.notice === 'string' && state.status.notice !== ''
-        ? state.status.notice
-        : ASSISTANT_SUGGEST_ONLY_NOTICE;
-      panel.appendChild(el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice));
+      // The probe's notice is one of this module's constants: the
+      // space-off one is the only reason the titolare can fix themself.
+      const owner = state.status?.notice === ASSISTANT_SPACE_DISABLED_NOTICE && readRole() === 'owner';
+      const notice = owner
+        ? ASSISTANT_SPACE_DISABLED_OWNER_NOTICE
+        : (typeof state.status?.notice === 'string' && state.status.notice !== ''
+          ? state.status.notice
+          : ASSISTANT_SUGGEST_ONLY_NOTICE);
+      const foot = el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice);
+      // backlog:1968c3320cd3: the titolare gets the way there, one click.
+      if (owner) {
+        const where = el(doc, 'a', 'bo-assistant-source-link', 'Apri Spazi e accessi');
+        where.setAttribute('href', '#/spazi-accessi');
+        where.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate('#/spazi-accessi');
+        });
+        foot.appendChild(where);
+      }
+      panel.appendChild(foot);
       // BO-F5-01 draft handoff ("+ Nuovo modulo" -> assistant): with no live
       // backend there is no free-question field, but the caller's draft must
       // not vanish silently — show it as inert read-only text (text only via
