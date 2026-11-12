@@ -110,6 +110,22 @@ const WEEK = {
           sourceKey: 'calendario:marco:1:c1',
           subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
         },
+        // backlog:7587307d5215 (Dan 12/11, produzione): a 10:00–11:00 lesson
+        // stretched from its bottom edge to 13:00 painted only a band in the
+        // middle. The fixture stretches it in the browser and measures it.
+        {
+          id: 'a5',
+          status: 'booked',
+          startsAt: '2026-10-20T08:00:00.000Z',
+          endsAt: '2026-10-20T09:00:00.000Z',
+          serviceKey: 'lezione-prova',
+          teamMemberId: 'marco',
+          priceCents: null,
+          currency: 'EUR',
+          notes: null,
+          sourceKey: 'calendario:marco:2:c5',
+          subject: { resource: 'contact', id: 'c5', owner: 'host', ownerPackage: null, label: 'Fio Neri' },
+        },
       ],
     },
     {
@@ -186,10 +202,20 @@ import { createCalendarioView } from './admin-calendario.js';
 const WEEK = ${JSON.stringify(WEEK)};
 const SLOTS = ${JSON.stringify(SLOTS)};
 const DRAFT = ${JSON.stringify(DRAFT)};
+const RESCHEDULES = [];
 const client = {
   async request(path, options = {}) {
     enforceAdminWriteGate(path, options);
-    if (path.startsWith('/api/appointments/team-week')) return WEEK;
+    // A copy, like a real read: the view never holds the server's rows.
+    if (path.startsWith('/api/appointments/team-week')) return JSON.parse(JSON.stringify(WEEK));
+    if (path === '/api/appointments/reschedule') {
+      const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+      RESCHEDULES.push(body);
+      const row = WEEK.members.flatMap((member) => member.appointments).find((entry) => entry.id === body.id);
+      row.startsAt = body.startsAt;
+      row.endsAt = body.endsAt;
+      return { appointment: JSON.parse(JSON.stringify(row)), moved: true, push: null, pushError: null };
+    }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
@@ -326,6 +352,46 @@ probe.ask = askNode === null ? null : {
   focusedNo: document.activeElement === document.querySelector('[data-action="cancel-no"]'),
   popBottom: Math.round(askPop.bottom), popRight: Math.round(askPop.right), innerHeight: window.innerHeight, innerWidth: window.innerWidth,
 };
+// backlog:7587307d5215 (Dan 12/11): stretch the 10:00–11:00 lesson from its
+// bottom edge to 13:00 with real pointer events, then measure the block
+// against its column after the save and again after a fresh week read.
+const settleFrames = async (rounds) => { for (let i = 0; i < rounds; i += 1) await new Promise((r) => setTimeout(r, 100)); };
+const measure = () => {
+  const block = document.querySelector('[data-event-id="a5"]');
+  if (!block || block.getBoundingClientRect().height === 0) return null;
+  const col = block.closest('.cal-day').getBoundingClientRect();
+  const box = block.getBoundingClientRect();
+  return { top: Math.round(box.top - col.top), bottom: Math.round(box.bottom - col.top), hourPx: Math.round(col.height / 9) };
+};
+probe.stretch = await (async () => {
+  const before = measure();
+  const block = document.querySelector('[data-event-id="a5"]');
+  const handle = block ? block.querySelector('[data-role="event-resize"]') : null;
+  if (!before || !handle) return { before, handle: Boolean(handle) };
+  const col = block.closest('.cal-day');
+  const colTop = col.getBoundingClientRect().top;
+  const hb = handle.getBoundingClientRect();
+  const at = (y) => ({ bubbles: true, cancelable: true, composed: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: Math.round(hb.left + hb.width / 2), clientY: y });
+  handle.dispatchEvent(new PointerEvent('pointerdown', at(Math.round(hb.top + hb.height / 2))));
+  // Through 12:00 to the 12:45 quarter: the bottom edge lands on 13:00.
+  const minute = (m) => Math.round(colTop + (m / 540) * col.getBoundingClientRect().height);
+  col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 5))));
+  col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 52))));
+  const ghost = document.querySelector('.cal-drag-ghost');
+  const ghostBox = ghost ? ghost.getBoundingClientRect() : null;
+  col.dispatchEvent(new PointerEvent('pointerup', at(minute(3 * 60 + 52))));
+  await settleFrames(3);
+  const saved = measure();
+  // A fresh read of the week, as after a page reload.
+  click('Mostra settimana');
+  await settleFrames(3);
+  const reloaded = measure();
+  return {
+    before, saved, reloaded,
+    ghost: ghostBox ? { top: Math.round(ghostBox.top - colTop), bottom: Math.round(ghostBox.bottom - colTop) } : null,
+    writes: RESCHEDULES,
+  };
+})();
 document.getElementById('probe').textContent = JSON.stringify(probe);
 document.title = 'calendario-ready';
 `;
@@ -459,6 +525,19 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   assert.ok(Math.abs(probe.grid.blockBottom - 240) <= 2, `the 13:00 end ends at 13:00: ${JSON.stringify(probe.grid)}`);
   assert.ok(probe.grid.shortHeight !== null && probe.grid.shortHeight >= 12 && probe.grid.shortHeight <= 16, `a quarter-hour block stays a quarter hour: ${JSON.stringify(probe.grid)}`);
   assert.equal(probe.grid.tinted, true, 'every block keeps its member tint, so a short one never vanishes');
+  // Dan 12/11 (production): a 10:00–11:00 lesson stretched from its bottom
+  // edge to 13:00 covers 10:00–13:00 after the save and after a fresh read.
+  const stretch = probe.stretch;
+  assert.ok(stretch && stretch.before, `the lesson paints before the stretch: ${JSON.stringify(stretch)}`);
+  assert.ok(Math.abs(stretch.before.top - 60) <= 2 && Math.abs(stretch.before.bottom - 120) <= 2, `10:00–11:00 before: ${JSON.stringify(stretch)}`);
+  assert.ok(stretch.ghost && Math.abs(stretch.ghost.top - 60) <= 2 && Math.abs(stretch.ghost.bottom - 240) <= 2, `the stretch ghost covers 10:00–13:00: ${JSON.stringify(stretch)}`);
+  assert.deepEqual(stretch.writes, [{ id: 'a5', startsAt: '2026-10-20T08:00:00.000Z', endsAt: '2026-10-20T11:00:00.000Z' }], 'one write: same start, end at 13:00 Rome');
+  for (const phase of ['saved', 'reloaded']) {
+    const box = stretch[phase];
+    assert.ok(box, `${phase}: the lesson paints: ${JSON.stringify(stretch)}`);
+    assert.ok(Math.abs(box.top - 60) <= 2, `${phase}: the block starts at 10:00: ${JSON.stringify(stretch)}`);
+    assert.ok(Math.abs(box.bottom - 240) <= 2, `${phase}: the block ends at 13:00, three whole hours: ${JSON.stringify(stretch)}`);
+  }
   assert.ok(probe.grid.labelMid === null || Math.abs(probe.grid.labelMid - 120) <= 3, `the 11:00 label sits on the 11:00 line: ${JSON.stringify(probe.grid)}`);
   assert.ok(probe.customer, 'the customer search paints in the form');
   assert.ok(probe.customer.iconRight <= probe.customer.textLeft, `the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
