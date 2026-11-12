@@ -255,9 +255,43 @@ function readFlagAt(read, index) {
   return typeof read[index] === 'boolean' ? read[index] : null;
 }
 
+/**
+ * backlog:82235e46e3e9: the corrections and withdrawals of each operator
+ * note, folded before any page is cut — a correction may sit far from its
+ * note in time. Returns, per original note id, its latest wording and
+ * whether it was withdrawn.
+ * @param {ReadonlyArray<any>} rows
+ * @returns {Map<string, {body: string|null, revisedAt: string|null, revisedBy: string|null, withdrawn: boolean}>}
+ */
+function noteCorrections(rows) {
+  /** @type {Map<string, {body: string|null, revisedAt: string|null, revisedBy: string|null, withdrawn: boolean, at: number}>} */
+  const byNote = new Map();
+  for (const row of rows) {
+    if (row?.entry !== 'work-note' || String(row?.kind ?? 'note') !== 'note') continue;
+    if (typeof row?.revisesId !== 'string' || row.revisesId === '') continue;
+    const current = byNote.get(row.revisesId) ?? { body: null, revisedAt: null, revisedBy: null, withdrawn: false, at: -Infinity };
+    if (row.withdrawn === true) {
+      current.withdrawn = true;
+    } else {
+      // The latest correction wins; the write order (seq) breaks a tie of
+      // the same instant, like every other work timeline.
+      const at = Date.parse(String(row.occurredAt ?? '')) + (Number.isInteger(row.seq) ? row.seq / 1e6 : 0);
+      if (Number.isFinite(at) && at >= current.at) {
+        current.at = at;
+        current.body = typeof row.body === 'string' ? row.body : null;
+        current.revisedAt = row.occurredAt ?? null;
+        current.revisedBy = typeof row.actorId === 'string' ? row.actorId : null;
+      }
+    }
+    byNote.set(row.revisesId, current);
+  }
+  return byNote;
+}
+
 function shapeEntries(entries, read = null, page = null) {
   const rows = entries ?? [];
   const shaped = [];
+  const corrections = noteCorrections(rows);
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row?.entry === 'message') {
@@ -297,6 +331,13 @@ function shapeEntries(entries, read = null, page = null) {
       // not channel evidence — with the writer when the row names one.
       // Only the `note` kind reads here: task lifecycle rows
       // (task_created/completed/cancelled) stay in the work views.
+      // backlog:82235e46e3e9: a correction or a withdrawal is never a row of
+      // its own; the note keeps its place and its writer, reads its latest
+      // wording, and a withdrawn note is not listed.
+      if (typeof row?.revisesId === 'string' && row.revisesId !== '') continue;
+      const correction = corrections.get(row.id) ?? null;
+      if (correction?.withdrawn === true) continue;
+      const revised = correction !== null && correction.revisedAt !== null;
       shaped.push(Object.freeze({
         entry: 'note',
         id: row.id,
@@ -304,11 +345,14 @@ function shapeEntries(entries, read = null, page = null) {
         channel: null,
         direction: null,
         sync: null,
-        body: typeof row.body === 'string' ? row.body : null,
+        body: revised ? correction.body : (typeof row.body === 'string' ? row.body : null),
         teamAuthorId: typeof row.actorId === 'string' ? row.actorId : null,
         remoteHandle: null,
         errorCode: null,
         occurredAt: row.occurredAt ?? null,
+        // Only a corrected note says when and by whom: an untouched note
+        // keeps the shape it always had.
+        ...(revised ? { revisedAt: correction.revisedAt, revisedBy: correction.revisedBy } : {}),
       }));
     }
   }

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage, nowIso, selectPackageGraph } from '../../core/index.js';
+import { AppError, ValidationError, definePackage, normalizeActor, nowIso, selectPackageGraph } from '../../core/index.js';
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
@@ -432,12 +432,198 @@ export function buildRecordSubjectNoteOperation(moduleNames) {
   };
 }
 
+/**
+ * The root note a correction or a withdrawal acts on (backlog:82235e46e3e9):
+ * an operator note of this very subject, never a task row, never a row that
+ * is itself a correction, never a note already withdrawn.
+ * @param {any} activities @param {{resource: string, id: string}} subject @param {unknown} noteId
+ */
+async function rootNoteOf(activities, subject, noteId) {
+  if (typeof noteId !== 'string' || noteId.trim() === '') {
+    throw new ValidationError('noteId names the note to change', { field: 'noteId' });
+  }
+  const missing = () => new AppError('No note with this id on this customer', { code: 'WORK_NOTE_NOT_FOUND', status: 404 });
+  // One row by id, then the subject check: never a scan of the customer's
+  // whole timeline.
+  let note;
+  try {
+    note = await activities.get(noteId.trim());
+  } catch (error) {
+    if (error?.status === 404 || error?.name === 'NotFoundError') throw missing();
+    throw error;
+  }
+  if (!note || note.kind !== 'note' || typeof note.revisesId === 'string'
+    || note.subjectResource !== subject.resource || note.subjectId !== subject.id) {
+    throw missing();
+  }
+  // A withdrawal holds the unique key note-withdrawal:<id>: one indexed read.
+  const withdrawn = (await activities.listWhere({ sourceKey: `note-withdrawal:${note.id}` }))[0] ?? null;
+  if (withdrawn !== null) {
+    throw new AppError('This note was withdrawn and can no longer change', { code: 'WORK_NOTE_WITHDRAWN', status: 409 });
+  }
+  return note;
+}
+
+/**
+ * backlog:82235e46e3e9 (owner decision 11/11): a note is corrected or
+ * withdrawn by who wrote it, or by the space owner — never by any other
+ * member who merely may write records. `actorRole` is the caller's role as
+ * the server resolved it (the HTTP route from its authorization decision, a
+ * gateway from its own session), never a request field.
+ * @param {any} note @param {{type: string, id: string}} actor @param {unknown} actorRole
+ */
+function requireNoteKeeper(note, actor, actorRole) {
+  if (actorRole === 'owner') return;
+  if (typeof note?.actorId === 'string' && note.actorId === actor?.id) return;
+  throw new AppError('Only who wrote the note, or the space owner, can change it', {
+    code: 'WORK_NOTE_NOT_AUTHOR', status: 403,
+  });
+}
+
+/** The subject and the activity service of a note correction request. @param {any} runtime @param {any} request @param {string} what */
+function noteContext(runtime, request, what, names) {
+  requireHumanActor(request?.actor, what);
+  const subject = validateSubject({ resource: request?.resource, id: request?.id, owner: 'host' });
+  if (subject.resource !== 'contact' && subject.resource !== 'company') {
+    throw new AppError('a subject note needs a contact or company subject', {
+      code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
+    });
+  }
+  const activities = resolveModule(runtime.modules, names.activity)?.service;
+  if (!activities || typeof activities.createManaged !== 'function' || typeof activities.listWhere !== 'function'
+    || typeof activities.get !== 'function') {
+    throw new AppError('The work package is installed without its activity record', {
+      code: 'WORK_STORAGE_INVALID', status: 500,
+    });
+  }
+  return { subject, activities };
+}
+
+/**
+ * `revise-subject-note` — «Modifica» on a scheda note (backlog:82235e46e3e9).
+ *
+ * Nothing is rewritten: the correction is a new `note` row whose `revisesId`
+ * names the original note, so the timeline reads the latest wording at the
+ * original note's place and every earlier wording stays on record with its
+ * author and time. Like a note it carries no source key — two identical
+ * corrections are two statements.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildReviseSubjectNoteOperation(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'revise-subject-note',
+    appMethod: 'reviseSubjectNote',
+    label: 'Correct an operator note on a subject timeline',
+    description:
+      'Append a correction of a subject note: the timeline shows the new wording, the earlier one stays on record. '
+      + 'Safe text only; it is not sent anywhere.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind, "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'noteId', type: 'string', hint: 'The id of the note to correct (the original note, as the timeline lists it).' },
+      { name: 'body', type: 'string', hint: 'The new wording. Plain text, at most 1000 characters.' },
+    ],
+    // Only the note's writer or the space owner (actorRole 'owner', resolved
+    // by the server) may correct it: WORK_NOTE_NOT_AUTHOR 403 otherwise.
+    create(runtime) {
+      return async (request) => {
+        const { subject, activities } = noteContext(runtime, request, 'Correcting a subject note', names);
+        const body = safeText(request?.body, 'body', bounds.noteBody);
+        const note = await rootNoteOf(activities, subject, request?.noteId);
+        requireNoteKeeper(note, normalizeActor(request.actor), request?.actorRole);
+        return recordActivity({ activities, actor: request.actor }, {
+          sourceKey: null,
+          kind: 'note',
+          subject: { resource: subject.resource, id: subject.id },
+          taskId: null,
+          body,
+          occurredAt: nowIso(),
+          source: { package: WORK_PACKAGE, action: 'revise-subject-note' },
+          revisesId: note.id,
+        });
+      };
+    },
+  };
+}
+
+/**
+ * `withdraw-subject-note` — «Elimina» on a scheda note (backlog:82235e46e3e9).
+ *
+ * Nothing is deleted: the withdrawal is a new `note` row with `revisesId`
+ * naming the original note, `withdrawn: true` and no body. The timeline then
+ * hides the note; the note, its corrections and the withdrawal stay on
+ * record. One withdrawal per note: its source key is unique, so a double
+ * click or a retry replays the first withdrawal instead of writing two.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildWithdrawSubjectNoteOperation(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'withdraw-subject-note',
+    appMethod: 'withdrawSubjectNote',
+    label: 'Withdraw an operator note from a subject timeline',
+    description:
+      'Append the withdrawal of a subject note: the timeline stops showing it, every version stays on record. '
+      + 'Idempotent per note.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind, "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'noteId', type: 'string', hint: 'The id of the note to withdraw (the original note, as the timeline lists it).' },
+    ],
+    // Only the note's writer or the space owner (actorRole 'owner', resolved
+    // by the server) may withdraw it: WORK_NOTE_NOT_AUTHOR 403 otherwise.
+    create(runtime) {
+      return async (request) => {
+        const { subject, activities } = noteContext(runtime, request, 'Withdrawing a subject note', names);
+        const noteId = typeof request?.noteId === 'string' ? request.noteId.trim() : '';
+        const sourceKey = `note-withdrawal:${noteId}`;
+        // A withdrawal already on record is the answer: replay it.
+        const replay = async () => (await activities.listWhere({ sourceKey }))[0] ?? null;
+        const existing = noteId === '' ? null : await replay();
+        if (existing !== null && existing.subjectResource === subject.resource && existing.subjectId === subject.id) {
+          // The replay answers only who could have withdrawn the note.
+          let original = null;
+          try { original = await activities.get(noteId); } catch { original = null; }
+          requireNoteKeeper(original, normalizeActor(request.actor), request?.actorRole);
+          return existing;
+        }
+        const note = await rootNoteOf(activities, subject, noteId);
+        requireNoteKeeper(note, normalizeActor(request.actor), request?.actorRole);
+        try {
+          return await recordActivity({ activities, actor: request.actor }, {
+            sourceKey: `note-withdrawal:${note.id}`,
+            kind: 'note',
+            subject: { resource: subject.resource, id: subject.id },
+            taskId: null,
+            body: null,
+            occurredAt: nowIso(),
+            source: { package: WORK_PACKAGE, action: 'withdraw-subject-note' },
+            revisesId: note.id,
+            withdrawn: true,
+          });
+        } catch (error) {
+          // The loser of two simultaneous withdrawals replays the winner.
+          if (!isUniqueConflict(error)) throw error;
+          const raced = await replay();
+          if (raced === null) throw error;
+          return raced;
+        }
+      };
+    },
+  };
+}
+
 /** @param {{modules?: Record<string, string>}} [options] */
 export function createWorkPackage(options = {}) {
   return selectPackageGraph(definePackage({
     packageContract: 1,
     name: WORK_PACKAGE,
-    version: 1,
+    version: 2,
     label: 'Work items and activity evidence',
     description:
       'Owns follow-up tasks and an append-only user-facing activity timeline, and offers one capability so a domain action can create a deterministic follow-up inside its own transaction. It schedules nothing, reminds nobody and assigns to nobody.',
@@ -452,7 +638,11 @@ export function createWorkPackage(options = {}) {
       buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
     ],
-    operations: [buildRecordSubjectNoteOperation(options.modules)],
+    operations: [
+      buildRecordSubjectNoteOperation(options.modules),
+      buildReviseSubjectNoteOperation(options.modules),
+      buildWithdrawSubjectNoteOperation(options.modules),
+    ],
     // None. A versioned policy earns its fingerprint when two consumers share a
     // rule; these two share none — one wants a lead's name and a due date, the
     // other a contract intent and no date. See ADR-030.

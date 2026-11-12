@@ -647,7 +647,7 @@ export function postponeDueAt(nowIso) {
  * @param {{activities: any, actor?: unknown}} deps
  * @param {{sourceKey: string|null, kind: string, subject: {resource: string, id: string},
  *   taskId: string|null, body: string|null, occurredAt: string,
- *   source: {package: string, action: string}}} entry
+ *   source: {package: string, action: string}, revisesId?: string, withdrawn?: boolean}} entry
  */
 export async function recordActivity({ activities, actor }, entry) {
   if (!ACTIVITY_KINDS.includes(entry.kind)) {
@@ -677,6 +677,10 @@ export async function recordActivity({ activities, actor }, entry) {
       sourcePackage: entry.source.package,
       sourceAction: entry.source.action,
       seq,
+      // backlog:82235e46e3e9: a correction or a withdrawal names the note it
+      // supersedes; every other row leaves both empty.
+      ...(typeof entry.revisesId === 'string' ? { revisesId: entry.revisesId } : {}),
+      ...(entry.withdrawn === true ? { withdrawn: true } : {}),
     }, { actor });
   });
 }
