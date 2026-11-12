@@ -1008,15 +1008,25 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     retry.addEventListener('click', () => {
       void uiBusy(retry, 'Riprovo…', async () => {
         let count = null;
+        // Review #833 P2: the retry answers the live state, not only the
+        // count — Stato sync may have become available since the first
+        // paint. A bare number keeps the availability the panel had.
+        let available = customerDataAvailable;
         try {
-          count = await onRetry();
+          const answer = await onRetry();
+          if (answer !== null && typeof answer === 'object') {
+            count = answer.fixCount ?? null;
+            if (typeof answer.customerDataAvailable === 'boolean') available = answer.customerDataAvailable;
+          } else {
+            count = answer ?? null;
+          }
         } catch {
           count = null;
         }
         // The operator may have left meanwhile: repaint only the panel
         // still on screen, never over the screen just opened.
         if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
-        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable, onRetry });
+        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
       });
     });
     mount.appendChild(retry);

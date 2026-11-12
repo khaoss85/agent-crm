@@ -603,6 +603,16 @@ test('1d33b335fba0: an unread fix count says what is missing and Riprova reads i
   await flushAll();
   assert.ok(failing.textContent.includes('Non sono riuscito a leggere'));
   assert.ok(retryOf(failing), 'Riprova again after a failure');
+  // Review #833 P2: the retry answers the live availability too — Stato
+  // sync composed since the first paint links once the count is read.
+  const late = createMount();
+  renderSettingsPanel({ doc, mount: late, fixCount: null, customerDataAvailable: false,
+    onRetry: async () => ({ fixCount: 2, customerDataAvailable: true }) });
+  assert.ok(!late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'first paint: Stato sync not composed yet');
+  retryOf(late).dispatch('click', {});
+  await flushAll();
+  assert.ok(late.textContent.includes('2 cose da sistemare'));
+  assert.ok(late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'the fresh availability links Stato sync');
   // Left meanwhile: the late answer never repaints the new screen.
   const left = createMount();
   let release;

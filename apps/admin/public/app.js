@@ -1273,7 +1273,7 @@ async function route() {
       customerDataAvailable: shellCustomerData,
       // backlog:1d33b335fba0: Riprova reads the count again, like the
       // sidebar badge, and the panel shows the fresh answer.
-      onRetry: () => refreshShellCounts().then(() => shellFixCount),
+      onRetry: () => refreshShellCounts().then(() => ({ fixCount: shellFixCount, customerDataAvailable: shellCustomerData })),
     });
     syncShell({ view: 'settings' });
     return;
