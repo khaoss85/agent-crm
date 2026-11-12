@@ -89,9 +89,9 @@ const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission
  * The footer words of mass mail (verification 12/11 on the pilot: a SaaS
  * newsletter «View in browser» and a crawl report «Unsubscribe from this
  * project», from mailboxes like `pesupport@` and `sa@` no address rule can
- * name without hurting real people). A defence for the messages stored
- * before the import kept the header signal: it counts only for a sender the
- * team never wrote to.
+ * name without hurting real people). The Gmail readers now quarantine mass
+ * mail by its headers, so this is the cure for the rows stored before that:
+ * it counts only for a sender the team never wrote to.
  */
 const BULK_FOOTER_WORDS = /\b(?:unsubscribe|view (?:it )?in (?:your )?browser|manage (?:your )?(?:email )?preferences|annulla (?:l[\x27\u2019])?iscrizione|disiscriviti|cancella (?:la tua |l[\x27\u2019])?iscrizione|visualizza (?:nel|sul|in) (?:tuo )?browser|gestisci le preferenze)\b/i;
 
@@ -193,11 +193,11 @@ export function isAutomatedSender(handle, ...labels) {
  * - a certified-mail (PEC) message: a PEC mailbox (`pec.*` domains,
  *   `posta-certificata@`) or the PEC wording in subject or body;
  * - the owner writing to themselves: a sender among `ownAddresses`;
- * - mass mail: the import's header signal first (`mailBulk`: List-Unsubscribe,
- *   List-Id, Precedence, Auto-Submitted); for messages stored without it,
- *   the footer words of mass mail («Unsubscribe», «View in browser») from a
- *   sender the team never wrote to (`weWrote: false`).
- * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown, mailBulk?: unknown } | null | undefined} message
+ * - mass mail stored before the Gmail readers quarantined it by its
+ *   headers (List-Unsubscribe, Precedence, Auto-Submitted — today such mail
+ *   is never stored): the footer words of mass mail («Unsubscribe», «View
+ *   in browser») from a sender the team never wrote to (`weWrote: false`).
+ * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown } | null | undefined} message
  * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown>, weWrote?: boolean }} [context]
  */
 export function isNotificationMessage(message, { ownAddresses = [], labels = [], weWrote = true } = {}) {
@@ -208,7 +208,6 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [],
   const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
   if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
   if (channel !== 'email') return false;
-  if (message.mailBulk === true) return true;
   if (weWrote === false && typeof message.body === 'string' && BULK_FOOTER_WORDS.test(message.body)) return true;
   if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
   const address = senderAddress(message.remoteHandle);
