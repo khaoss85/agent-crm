@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { activatedContract, boot, project } from './helpers/contracts-project.js';
+import { activatedContract, boot, project } from './helpers/contracts-project-cache.js';
 
 /**
  * Milestone 15 — the paths a reader has to be able to walk: a contract's

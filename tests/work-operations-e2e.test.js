@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { activatedContract, boot, project } from './helpers/contracts-project-cache.js';
+import { activatedContract, boot, project } from './helpers/contracts-project.js';
 import {
   ACTIVITY_KINDS, TASK_STATES, TASK_TRANSITIONS, createWorkPackage, sortTimeline,
 } from '../packages/work/src/index.js';

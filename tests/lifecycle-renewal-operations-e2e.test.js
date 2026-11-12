@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { activatedContract, boot, project } from './helpers/contracts-project-cache.js';
+import { activatedContract, boot, project } from './helpers/contracts-project.js';
 
 /**
  * M16a end to end, against a real composed application.
