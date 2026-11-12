@@ -253,10 +253,11 @@ test('the scheda renders three columns: actions, identities with motivation, tim
   const mount = await renderCard(stubClient());
   const text = mount.textContent;
 
-  // Left: quick actions are a voice-aware Chiama button (the tel: fallback
-  // appears only after the voice check names no connector, voce 105563eea902)
-  // and the Scrivi composer button — no mailto: anywhere (backlog:e9b4fc2f).
-  // Identities carry their motivation.
+  // Left: quick actions are the prototype six (voce 2f2d22f2) — Chiama stays
+  // voice-aware (the tel: fallback appears only after the voice check names
+  // no connector, voce 105563eea902); WhatsApp and Email open the same
+  // composer with their channel preselected — no mailto: anywhere
+  // (backlog:e9b4fc2f). Identities carry their motivation.
   const links = mount.findAll('a');
   const call = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'call-customer');
   assert.ok(call, 'a Chiama action exists');
@@ -265,9 +266,16 @@ test('the scheda renders three columns: actions, identities with motivation, tim
     'no device-dial link before the voice check');
   assert.ok(links.every((node) => !String(node.getAttribute('href') ?? '').startsWith('mailto:')),
     'no mailto: link in the quick actions');
-  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
-  assert.ok(write, 'a Scrivi action opens the composer');
-  assert.equal(write.textContent, 'Scrivi');
+  for (const [action, label] of [
+    ['call-customer', 'Chiama'], ['compose-whatsapp', 'WhatsApp'], ['compose-email', 'Email'],
+    ['new-appointment', 'Appuntamento'], ['new-offer', 'Offerta'], ['quick-ask-ai', "✦ Chiedi all'AI"],
+  ]) {
+    const tile = mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
+    assert.ok(tile, `the ${label} quick action exists`);
+    assert.equal(tile.textContent, label, `${label} reads its prototype label`);
+  }
+  assert.ok(!mount.findAll('button').some((node) => node.textContent === 'Scrivi'),
+    'no generic Scrivi tile: the prototype names its channels');
 
   assert.ok(text.includes('stesso numero su WhatsApp e Instagram'), 'the link motivation is shown');
   assert.ok(text.includes('elena'), 'the decider is shown');
@@ -2286,8 +2294,8 @@ async function openComposerMount({ client = composerClient(), spaceId = 'presti'
     doc, mount, client, spaceId, toast: toast ?? ((message) => toasts.push(message)),
     wait: () => Promise.resolve(),
   }).renderCard('contact', 'c1');
-  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message');
-  assert.ok(write, 'a Scrivi action exists');
+  const write = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email');
+  assert.ok(write, 'an Email action exists');
   write.dispatch('click');
   await flushComposer();
   const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
@@ -2295,7 +2303,7 @@ async function openComposerMount({ client = composerClient(), spaceId = 'presti'
   return { mount, panel, toasts, client };
 }
 
-test('e9b4fc2f: Scrivi opens the composer with the customer channels', async () => {
+test('e9b4fc2f: Email opens the composer with the customer channels', async () => {
   const { panel } = await openComposerMount();
   const text = panel.textContent;
   assert.ok(text.includes('Scrivi al cliente'), 'the panel names its purpose');
@@ -2358,7 +2366,7 @@ async function draftView(client = composerClient()) {
   const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
   await view.renderCard('contact', 'c1');
   const open = async () => {
-    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+    mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
     await flushComposer();
     return mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   };
@@ -2532,7 +2540,7 @@ test('send pending: an edited message or a definitive failure gets a fresh key',
   assert.notEqual(client.posts[4].messageKey, client.posts[3].messageKey, 'an edited message is a new message');
 });
 
-test('send pending: reopening Scrivi stops the old read-back, which never touches the new form', async () => {
+test('send pending: reopening the composer stops the old read-back, which never touches the new form', async () => {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const client = composerClient({
@@ -2542,7 +2550,7 @@ test('send pending: reopening Scrivi stops the old read-back, which never touche
   const { mount, panel, toasts } = await openComposerMount({ client });
   await typeAndSend(panel);
   assert.equal(client.resumes.length, 1, 'the first read-back is in flight');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   release();
   await flushComposer(24);
@@ -2806,9 +2814,9 @@ test('8ce25b0f445f: unlinked channels name their address in the off line', async
     'the off line names the number to link, readable without hover');
 });
 
-// Voce 8ce25b0f445f (P3 review su #588): Scrivi pressed twice while channels
+// Voce 8ce25b0f445f (P3 review su #588): Email pressed twice while channels
 // load paints the newest opening only — no crash, no doubled form.
-test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
+test('8ce25b0f445f: Email twice while loading paints one panel', async () => {
   const profileReleases = [];
   const connectorReleases = [];
   const slow = composerClient();
@@ -2829,8 +2837,8 @@ test('8ce25b0f445f: Scrivi twice while loading paints one panel', async () => {
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
   const write = mount.findAll('button')
-    .find((node) => node.getAttribute('data-action') === 'compose-message');
-  assert.ok(write, 'a Scrivi action exists');
+    .find((node) => node.getAttribute('data-action') === 'compose-email');
+  assert.ok(write, 'an Email action exists');
   write.dispatch('click');
   write.dispatch('click');
   assert.equal(profileReleases.length, 2, 'both openings are loading');
@@ -2910,7 +2918,7 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const mount = await renderCard(stubClient());
   const byAction = (action) => mount.findAll('button')
     .find((node) => node.getAttribute('data-action') === action);
-  for (const action of ['call-customer', 'compose-message', 'new-offer', 'new-appointment']) {
+  for (const action of ['call-customer', 'compose-email', 'new-offer', 'new-appointment']) {
     const tile = byAction(action);
     assert.ok(tile, `the ${action} quick action exists`);
     assert.ok(String(tile.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile'),
@@ -3224,7 +3232,7 @@ test('composer gmail: closing keeps the draft and Scrivi brings it back', async 
   await flushComposer();
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'), undefined,
     'the composer window is closed');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   assert.ok(reopened, 'Scrivi reopens the window');
@@ -3235,7 +3243,7 @@ test('composer gmail: closing keeps the draft and Scrivi brings it back', async 
 // Cmd/Ctrl+Invio must still queue exactly one message.
 test('composer gmail: reopen then Cmd+Invio sends exactly once', async () => {
   const { mount, client } = await openComposerMount();
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   panel.findAll('textarea')[0].value = 'Una volta sola';
@@ -3675,7 +3683,7 @@ test('review #599 P2: an AI draft that lands after close and reopen never overwr
   first.go.dispatch('click');
   await flushComposer(2);
   panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   const area = reopened.findAll('textarea')[0];
@@ -3685,7 +3693,7 @@ test('review #599 P2: an AI draft that lands after close and reopen never overwr
   await flushComposer();
   assert.equal(area.value, 'IBAN per il bonifico', 'the visible text keeps the new typing');
   reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const third = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   assert.equal(third.findAll('textarea')[0].value, 'IBAN per il bonifico', 'the shared draft kept the new typing, not the stale AI text');
@@ -3705,7 +3713,7 @@ test('review #599 P2: Annulla restores the subject the AI filled, and the shared
   assert.equal(area.value, 'A');
   assert.equal(subject.value, '', 'the AI subject is undone too');
   panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const again = aiParts(mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open'));
   assert.equal(again.area.value, 'A');
@@ -3722,7 +3730,7 @@ test('review #599 P2: closing after Genera keeps the way back to the person’s 
   first.go.dispatch('click');
   await flushComposer();
   panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   const parts = aiParts(reopened);
@@ -4495,7 +4503,7 @@ test('review #612 round 3: a failed re-read of the same scheda keeps the Scrivi 
   const mount = createMount();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti', toast: () => {}, wait: () => Promise.resolve() });
   await view.renderCard('contact', 'c1');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   panel.findAll('textarea')[0].value = 'Ciao, ti scrivo per';
@@ -4685,7 +4693,7 @@ test('composer AI: a queued draft is resumed after ✕ and Scrivi, never asked a
   await flushComposer(80);
   assert.match(panel.textContent, /L’AI sta impiegando più del previsto/);
   panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
-  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-message').dispatch('click');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
   await flushComposer();
   const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
   const again = aiParts(reopened);

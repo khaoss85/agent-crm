@@ -400,7 +400,7 @@ test('review #776: opening Nuovo appuntamento keeps the Scrivi draft for when it
   const mount = createMount();
   await createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
   const action = (name) => mount.findAll('button').find((node) => node.getAttribute('data-action') === name);
-  action('compose-message').dispatch('click');
+  action('compose-email').dispatch('click');
   await flush();
   const text = mount.findAll('textarea')[0];
   text.value = 'Ciao Guido, ti scrivo per';
@@ -409,7 +409,7 @@ test('review #776: opening Nuovo appuntamento keeps the Scrivi draft for when it
   await flush();
   assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'));
   action('appointment-cancel').dispatch('click');
-  action('compose-message').dispatch('click');
+  action('compose-email').dispatch('click');
   await flush();
   assert.equal(mount.findAll('textarea')[0].value, 'Ciao Guido, ti scrivo per', 'the draft is back');
 });
