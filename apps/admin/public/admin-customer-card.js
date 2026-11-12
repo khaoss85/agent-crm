@@ -933,6 +933,25 @@ export function createCustomerCardView(deps) {
         }
       }
     }
+    // Review Muse #835 (P2): a custom field being edited, or a field being
+    // added, keeps its typing through a repaint — the sections of a first
+    // read now land one by one, so the editor can be open while the rest
+    // arrives.
+    const editing = root.querySelector('.bo-campo-editing');
+    if (editing) {
+      const key = editing.getAttribute('data-editing-field');
+      const control = typeof editing.querySelector === 'function'
+        ? editing.querySelector(`[data-field-key="${key}"]`) : null;
+      drafts.field = { key, value: String(control?.value ?? '') };
+    }
+    const adding = root.querySelector('.bo-campo-add');
+    if (adding) {
+      drafts.fieldAdd = {};
+      for (const name of ['nuovo-campo-label', 'nuovo-campo-tipo', 'nuovo-campo-opzioni']) {
+        const input = adding.querySelector(`[name="${name}"]`);
+        if (input && typeof input.value === 'string') drafts.fieldAdd[name] = input.value;
+      }
+    }
     return Object.keys(drafts).length > 0 ? drafts : null;
   }
 
@@ -2650,7 +2669,7 @@ export function createCustomerCardView(deps) {
     const add = el('button', undefined, '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
-    add.addEventListener('click', () => {
+    const openAdd = (draft = null) => {
       if (box.querySelector?.('.bo-campo-add')) return;
       const form = addFieldForm(el, {
         onDefine: async (input) => {
@@ -2664,18 +2683,38 @@ export function createCustomerCardView(deps) {
         await renderCard(ctx.resource, ctx.id);
       });
       box.appendChild(form.wrap);
-    });
+      if (draft !== null) {
+        for (const [name, value] of Object.entries(draft)) {
+          const input = form.wrap.querySelector?.(`[name="${name}"]`);
+          if (input) {
+            input.value = value;
+            // The type select shows the options field for «Scelta».
+            if (typeof input.dispatchEvent === 'function' && typeof Event === 'function') input.dispatchEvent(new Event('change'));
+            else input.dispatch?.('change');
+          }
+        }
+      }
+    };
+    add.addEventListener('click', () => openAdd());
     box.appendChild(add);
+    // Review Muse #835 (P2): what was being typed comes back after a repaint.
+    const kept = pendingDrafts;
+    if (kept?.fieldAdd) openAdd(kept.fieldAdd);
+    const editingDef = kept?.field ? ctx.defs.find((def) => def?.key === kept.field.key) : null;
+    if (editingDef) renderFieldForm(box, ctx, editingDef, kept.field.value);
     return true;
   }
 
   /** In-place edit of one custom-field value: Salva rewrites the single row. */
-  function renderFieldForm(box, ctx, def) {
+  function renderFieldForm(box, ctx, def, draft = undefined) {
     while (box.firstChild) box.removeChild(box.firstChild);
+    box.setAttribute('data-editing-field', String(def?.key ?? ''));
+    const classes = String(box.getAttribute('class') ?? '');
+    if (!classes.split(/\s+/).includes('bo-campo-editing')) box.setAttribute('class', `${classes} bo-campo-editing`.trim());
     box.appendChild(el('h4', undefined, 'Campi personalizzati'));
     const rows = Array.isArray(ctx.values) ? ctx.values : [];
     const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
-    const entry = fieldControl(el, def, current);
+    const entry = fieldControl(el, def, draft !== undefined ? draft : current);
     box.appendChild(entry.wrap);
     const row = el('div', 'bo-scheda-form-actions');
     const save = el('button', undefined, 'Salva');
@@ -3902,7 +3941,18 @@ export function createCustomerCardView(deps) {
       if (!partials || renderToken !== cardRenderToken || pending.size === 0) return;
       try {
         paintPartial(key, resource, id, partial, pending);
-      } catch {
+      } catch (error) {
+        // Review Muse #835 (P2): the cause reaches on-call — name, code and
+        // the space only, never a value — so a stalled progressive load is
+        // never mistaken for slow reads.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] scheda parziale non disegnata', {
+            area: 'scheda-parziale',
+            code: /** @type {any} */ (error)?.code ?? null,
+            name: typeof /** @type {any} */ (error)?.name === 'string' ? /** @type {any} */ (error).name : null,
+            spaceId: activeSpaceId(),
+          });
+        }
         partials = false;
       }
     };

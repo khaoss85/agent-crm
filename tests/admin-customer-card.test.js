@@ -4922,6 +4922,71 @@ test('backlog:1a96094db71d: a card read that fails after other sections landed s
   assert.ok(!mount.textContent.includes('Prossimi passi'), 'no section of a scheda that cannot be read');
 });
 
+test('review Muse #835 (P2): a custom field being edited keeps its typing while the other sections land', async () => {
+  const defs = [{ key: 'amico', label: 'Amico', type: 'testo' }];
+  const { client, held, land } = heldByPath({ fieldDefs: defs, fieldValues: [] });
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  await land('/api/customer-data/fields');
+  const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico');
+  assert.ok(edit, 'the custom fields are there before the rest');
+  edit.dispatch('click');
+  const typed = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'campo:amico');
+  typed().value = 'Mario Rossi';
+  await land('/api/customer-hub/card/');
+  assert.equal(typed()?.value, 'Mario Rossi', 'a section landing keeps the open editor and its typing');
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.equal(typed()?.value, 'Mario Rossi', 'the full answer keeps it too');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-field-value'), 'Salva is still there');
+});
+
+test('review Muse #835 (P2): a field being added keeps its typing while the other sections land', async () => {
+  const { client, held, land } = heldByPath({ fieldDefs: [], fieldValues: [] });
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  await land('/api/customer-data/fields');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-field').dispatch('click');
+  const label = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'nuovo-campo-label');
+  label().value = 'Amico';
+  await land('/api/customer-hub/card/');
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.equal(label()?.value, 'Amico', 'the new field form survives the repaints with its text');
+});
+
+test('review Muse #835 (P2): a partial paint that throws is logged with its cause, and the scheda still paints', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const { client, held, land } = heldByPath();
+    const doc = createFakeDocument();
+    const make = doc.createElement;
+    let boom = false;
+    doc.createElement = (tag) => {
+      if (boom) throw Object.assign(new Error('fault with Guido Presti inside'), { code: 'BOOM' });
+      return make(tag);
+    };
+    const mount = createMount();
+    const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+    await new Promise((resolve) => setImmediate(resolve));
+    boom = true;
+    await land('/api/customer-data/profile/');
+    boom = false;
+    for (const entry of held.splice(0)) entry.release();
+    await rendering;
+    assert.ok(mount.textContent.includes(CARD.name), 'the full answer still paints');
+  } finally {
+    console.error = original;
+  }
+  const lines = logged.filter(([label]) => label === '[bo] scheda parziale non disegnata');
+  assert.equal(lines.length, 1, 'logged once');
+  assert.deepEqual(lines[0][1], { area: 'scheda-parziale', code: 'BOOM', name: 'Error', spaceId: null }, 'cause only, never the message or data');
+});
+
 test('backlog:1a96094db71d: re-reading the customer on screen never falls back to the skeleton', async () => {
   const client = gatedClient();
   const mount = createMount();
