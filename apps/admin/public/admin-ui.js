@@ -610,15 +610,22 @@ export function paintToast(doc, node, message, options = {}) {
  * The shell toast's clock (backlog:2f72000d4a4d): a toast with an action
  * («Annulla») stays at least `duration` (10 s by default), a plain one 3,2 s;
  * while the pointer or the keyboard focus is on it, it never hides — after
- * the person leaves it, it stays 4 s more. The action closes it at once.
+ * the person leaves it, it stays what is left of its minimum, and never less
+ * than 4 s more. The action closes it at once.
  * @param {any} doc @param {any} node the shell's toast element
  * @param {{ setTimer?: (fn: () => void, ms: number) => any, clearTimer?: (timer: any) => void }} [clock]
  */
 export function createToastController(doc, node, clock = {}) {
   const setTimer = clock.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
   const clearTimer = clock.clearTimer ?? ((timer) => clearTimeout(timer));
+  const now = clock.now ?? (() => Date.now());
   let timer = null;
-  let held = false;
+  // Review Muse #809: pointer and keyboard hold the toast independently, and
+  // leaving it never cuts the promised minimum short.
+  let pointerHeld = false;
+  let focusHeld = false;
+  let deadline = 0;
+  const held = () => pointerHeld || focusHeld;
   const hide = () => {
     if (timer !== null) clearTimer(timer);
     timer = null;
@@ -626,21 +633,24 @@ export function createToastController(doc, node, clock = {}) {
   };
   const arm = (ms) => {
     if (timer !== null) clearTimer(timer);
-    timer = held ? null : setTimer(hide, ms);
+    timer = held() ? null : setTimer(hide, ms);
   };
-  const hold = () => {
-    held = true;
+  const hold = (kind) => () => {
+    if (kind === 'pointer') pointerHeld = true;
+    else focusHeld = true;
     if (timer !== null) clearTimer(timer);
     timer = null;
   };
-  const release = () => {
-    held = false;
-    if (!node.classList.contains('hidden')) arm(4000);
+  const release = (kind) => () => {
+    if (kind === 'pointer') pointerHeld = false;
+    else focusHeld = false;
+    if (held() || node.classList.contains('hidden')) return;
+    arm(Math.max(4000, deadline - now()));
   };
-  node.addEventListener('mouseenter', hold);
-  node.addEventListener('mouseleave', release);
-  node.addEventListener('focusin', hold);
-  node.addEventListener('focusout', release);
+  node.addEventListener('mouseenter', hold('pointer'));
+  node.addEventListener('mouseleave', release('pointer'));
+  node.addEventListener('focusin', hold('focus'));
+  node.addEventListener('focusout', release('focus'));
   return {
     /**
      * @param {unknown} message @param {boolean} [error]
@@ -650,6 +660,7 @@ export function createToastController(doc, node, clock = {}) {
       paintToast(doc, node, message, { error, action: options?.action ?? null, onDone: hide });
       node.classList.remove('hidden');
       const duration = Number.isFinite(options?.duration) ? Number(options.duration) : (options?.action ? 10000 : 3200);
+      deadline = now() + duration;
       arm(duration);
     },
     hide,

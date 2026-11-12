@@ -59,6 +59,7 @@ function server(initial) {
               resolve({ ok: true });
             },
             fail: () => reject(Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' })),
+            pend: () => reject(Object.assign(new Error('Scrittura in attesa'), { status: 504, code: 'BO_CRM_PENDING' })),
           });
         });
       }
@@ -175,9 +176,11 @@ test('2f72000d4a4d: the shell toast keeps «Annulla» 10 s, never hides under th
   const node = createMount();
   node.setAttribute('class', 'toast ui-toast hidden');
   const timers = [];
+  let at = 0;
   const clock = {
     setTimer: (fn, ms) => { const timer = { fn, ms, live: true }; timers.push(timer); return timer; },
     clearTimer: (timer) => { if (timer) timer.live = false; },
+    now: () => at,
   };
   const live = () => timers.filter((timer) => timer.live);
   const toaster = createToastController(doc, node, clock);
@@ -186,6 +189,7 @@ test('2f72000d4a4d: the shell toast keeps «Annulla» 10 s, never hides under th
   assert.ok(!node.classList.contains('hidden'));
   assert.deepEqual(live().map((timer) => timer.ms), [10000], 'an action toast stays 10 s');
 
+  at = 12000; // the pointer arrives after the minimum went by
   node.dispatch('mouseenter');
   assert.equal(live().length, 0, 'under the pointer it never hides');
   node.dispatch('mouseleave');
@@ -254,4 +258,74 @@ test('2f72000d4a4d: a failed move logs the shared write line, never «spostament
   assert.ok(lines.includes('[bo] scrittura fallita POST /api/modules/opportunity/records/a/actions/move-stage · 500 INTERNAL: boom'),
     `the shared format (${lines.join(' | ')})`);
   assert.ok(!lines.some((line) => line.includes('spostamento non riuscito')), 'the old line is gone');
+});
+
+// ---- Review Muse #809, giro 2 ----------------------------------------------
+
+function clockedToaster() {
+  const doc = createFakeDocument();
+  const node = createMount();
+  node.setAttribute('class', 'toast ui-toast hidden');
+  const timers = [];
+  const state = { at: 0 };
+  const toaster = createToastController(doc, node, {
+    setTimer: (fn, ms) => { const timer = { fn, ms, live: true }; timers.push(timer); return timer; },
+    clearTimer: (timer) => { if (timer) timer.live = false; },
+    now: () => state.at,
+  });
+  return { node, toaster, state, live: () => timers.filter((timer) => timer.live) };
+}
+
+test('review #809: a short hover early on never cuts the 10 s minimum short', () => {
+  const { node, toaster, state, live } = clockedToaster();
+  toaster.show('Spostata in Prova.', false, { action: { label: 'Annulla', run: () => {} } });
+  state.at = 1000;
+  node.dispatch('mouseenter');
+  state.at = 2000;
+  node.dispatch('mouseleave');
+  assert.deepEqual(live().map((timer) => timer.ms), [8000], 'it still stays until t = 10 s');
+});
+
+test('review #809: pointer and keyboard hold the toast independently', () => {
+  const { node, toaster, state, live } = clockedToaster();
+  toaster.show('Spostata in Prova.', false, { action: { label: 'Annulla', run: () => {} } });
+  state.at = 20000;
+  node.dispatch('focusin');
+  node.dispatch('mouseenter');
+  node.dispatch('mouseleave');
+  assert.equal(live().length, 0, 'focus is still inside: it stays');
+  node.dispatch('mouseenter');
+  node.dispatch('focusout');
+  assert.equal(live().length, 0, 'the pointer is still on it: it stays');
+  node.dispatch('mouseleave');
+  assert.deepEqual(live().map((timer) => timer.ms), [4000], 'both gone: 4 s more');
+});
+
+test('review #809: «Annulla» on a move the server queued says it cannot undo yet, never silence', async () => {
+  const { mount, client, toasts } = await board([record('a', 'discovery')]);
+  drop(mount, 'a', 'demo');
+  await tick();
+  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  client.posts[0].pend();
+  await tick(6);
+  assert.equal(client.posts.length, 1, 'no reverse POST on a queued move');
+  const last = toasts[toasts.length - 1];
+  assert.equal(last.error, true);
+  assert.match(last.message, /^Non ancora confermato: lo spostamento è ancora in coda, non posso annullarlo adesso/);
+});
+
+test('review #809: a queued undo is announced even when its card is on screen', async () => {
+  const { mount, client, toasts } = await board([record('a', 'discovery')]);
+  drop(mount, 'a', 'demo');
+  await tick();
+  client.posts[0].answer();
+  await tick(6);
+  assert.ok(cardOf(mount, 'a'), 'the card is on screen');
+  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  await tick(6);
+  client.posts[1].pend();
+  await tick(6);
+  const last = toasts[toasts.length - 1];
+  assert.equal(last.message, 'Non ancora confermato: ricarica la pipeline tra poco.');
+  assert.equal(last.error, true);
 });

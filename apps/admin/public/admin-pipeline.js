@@ -441,11 +441,20 @@ export function createPipelineBoard(deps) {
   async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
     toast(`Riporto in ${stageLabel(pipeline, fromStage)}…`);
     const first = await outcomeOf;
+    if (first?.pending) {
+      // Review Muse #809: a move the server still holds cannot be undone yet
+      // — never a silent drop of the undo: say so, the board re-read
+      // (Riprova) tells where the card is.
+      toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
+      return;
+    }
     if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
     const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
       undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
     });
     if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+    // Review Muse #809: a queued undo is announced whether or not its card is on screen.
+    if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
