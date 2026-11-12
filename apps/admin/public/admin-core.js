@@ -1102,8 +1102,16 @@ export function isWakeTransient(error, { method = 'GET' } = {}) {
   if (WAKE_TRANSIENT_CODES.includes(code)) return true;
   if (isWriteMethod(method)) return false;
   if (status === 503) return true;
+  // backlog:2b62c771f1f9 (prod 11/11 21:58Z): the Render gateway in front of
+  // a sleeping or swapping web answers 502/504 by itself — an HTML page, no
+  // application code (apiFailure reads it UNKNOWN). A read meeting one is a
+  // waking host too; a 502/504 the application named stays its verdict.
+  if ((status === 502 || status === 504) && GATEWAY_CODES.has(code)) return true;
   return isNetworkFault(error);
 }
+
+/** What the shell says while a read waits for the host to wake (backlog:2b62c771f1f9). */
+export const WAKING_TEXT = 'Il server si sta svegliando…';
 
 /**
  * Whether the rejection carries an explicit starting signal (a workspace
@@ -1137,15 +1145,31 @@ export function wakeWaitText(error) {
  * nothing else), so an uncertain commit is never written twice here.
  * Anything else throws at once. Bounded: at most two runs, ever.
  * @param {() => Promise<any>} run
- * @param {{ waitMs?: number, wait?: (ms: number) => Promise<unknown>, method?: unknown }} [options]
+ * @param {{ waitMs?: number, wait?: (ms: number) => Promise<unknown>, method?: unknown, onWaking?: (waking: boolean) => void }} [options]
  */
-export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait, method = 'GET' } = {}) {
+export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait, method = 'GET', onWaking = () => {} } = {}) {
   try {
     return await run();
   } catch (error) {
     if (!isWakeTransient(error, { method })) throw error;
-    await wait(waitMs);
-    return run();
+    // backlog:2b62c771f1f9: the wait is said («Il server si sta
+    // svegliando…»), opened and closed around the retry. The notice is
+    // decoration: a notifier that throws never masks the read, skips the
+    // retry or stays open.
+    const notify = (waking) => {
+      try {
+        onWaking(waking);
+      } catch {
+        // The shell could not paint the notice; the read goes on.
+      }
+    };
+    notify(true);
+    try {
+      await wait(waitMs);
+      return await run();
+    } finally {
+      notify(false);
+    }
   }
 }
 
