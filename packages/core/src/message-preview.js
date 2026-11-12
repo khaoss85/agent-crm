@@ -70,7 +70,7 @@ const ATTRIBUTE_NAMES = '(?:id|class|style|width|height|align|valign|bgcolor|bac
 const ATTRIBUTE = ATTRIBUTE_NAMES + '\\s*=\\s*(?:\\x22[^\\x22]*(?:\\x22|$)|\\x27[^\\x27]*(?:\\x27|$))';
 const ATTRIBUTE_RESIDUE_RE = new RegExp('(^|[\\s>])' + ATTRIBUTE + '(?:\\s+' + ATTRIBUTE + ')*\\s*\\/?>?', 'gi');
 /** Any sign of markup: a tag, a cut tag or attribute residue. */
-const MARKUP_HINT_RE = new RegExp('<![a-zA-Z]|<\\?xml|<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
+const MARKUP_HINT_RE = new RegExp('<!\\[|<![a-zA-Z]|<\\?[a-zA-Z]|<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')|' + CLOSING_TAG + '|<\\/?' + HTML_TAG_NAMES + '$|(?:^|\\s)' + ATTRIBUTE_NAMES + '\\s*=\\s*[\\x22\\x27]', 'i');
 
 const NAMED_ENTITIES = Object.freeze({
   amp: '&', lt: '<', gt: '>', quot: '\u0022', apos: '\u0027', nbsp: ' ',
@@ -183,8 +183,9 @@ export function htmlToText(html) {
   return String(html)
     .replace(/<!--[\s\S]*?(?:-->|$)/g, '')
     // Declarations and processing instructions (Dan 12/11: «<!DOCTYPE html>»
-    // read as text): `<!DOCTYPE …>`, `<![CDATA[…]]>`, `<?xml …?>`.
-    .replace(/<!\[CDATA\[[\s\S]*?(?:\]\]>|$)/g, '')
+    // read as text): `<!DOCTYPE …>`, `<?xml …?>`; a CDATA section keeps its
+    // text and loses only its delimiters.
+    .replace(/<!\[CDATA\[([\s\S]*?)(?:\]\]>|$)/g, '$1')
     .replace(/<![a-zA-Z][^>]*>?/g, '')
     .replace(/<\?[a-zA-Z][\s\S]*?(?:\?>|$)/g, '')
     .replace(/<(script|style|head|title|template)\b[\s\S]*?<\/\1\s*>/gi, '')

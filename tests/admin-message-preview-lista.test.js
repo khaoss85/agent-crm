@@ -28,12 +28,25 @@ function oggiPreview(body, mailSubject = null) {
 test('«<!DOCTYPE html>» and other declarations never reach a preview', () => {
   const doctype = '<!DOCTYPE html><html><head><title>Report</title></head><body><p>Il tuo report settimanale è pronto.</p></body></html>';
   const xhtml = '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">\n'
-    + '<html xmlns="http://www.w3.org/1999/xhtml"><body><![CDATA[ x ]]><div>Il tuo report settimanale è pronto.</div></body></html>';
+    + '<html xmlns="http://www.w3.org/1999/xhtml"><body><!-- preheader --><div>Il tuo report settimanale è pronto.</div></body></html>';
   for (const body of [doctype, xhtml]) {
     assert.equal(previewLastContactText(body), 'Il tuo report settimanale è pronto.', 'Clienti');
     assert.equal(oggiPreview(body), 'Il tuo report settimanale è pronto.', 'Oggi');
     assert.equal(card.passagePreview({ body, subject: null }), 'Il tuo report settimanale è pronto.', 'cronologia');
     assert.doesNotMatch(card.passageFullText({ body }), /DOCTYPE|<\?xml|CDATA|</, 'the full text of the scheda too');
+  }
+});
+
+test('Muse P2: a CDATA section keeps its text; CDATA and processing instructions are markup for the scheda too', () => {
+  const body = '<html><body><![CDATA[Confermo appuntamento domani alle 10.]]></body></html>';
+  assert.equal(previewLastContactText(body), 'Confermo appuntamento domani alle 10.', 'Clienti');
+  assert.equal(oggiPreview(body), 'Confermo appuntamento domani alle 10.', 'Oggi');
+  assert.equal(card.passagePreview({ body, subject: null }), 'Confermo appuntamento domani alle 10.', 'cronologia');
+  const full = card.passageFullText({ body });
+  assert.match(full, /Confermo appuntamento domani alle 10\./);
+  assert.doesNotMatch(full, /CDATA|<\/|\]\]>/);
+  for (const bare of ['<![CDATA[Ciao]]>', '<?php echo 1; ?>Ciao']) {
+    assert.equal(card.passageFullText({ body: bare }), 'Ciao', `no delimiter leaks in «Mostra tutto»: ${bare}`);
   }
 });
 
