@@ -352,3 +352,23 @@ test('annulla (review #790): the move form stays shut while the cancel runs, and
   assert.ok(note, 'the refusal is painted');
   assert.match(note.textContent, /già chiuso/);
 });
+
+test('annulla (review #790 giro 2): opening another event mid-cancel never paints the question there', async () => {
+  for (const outcome of ['ok', 'fail']) {
+    const refused = Object.assign(new Error('refused'), { code: 'APPOINTMENTS_INVALID_STATE', status: 409 });
+    const { mount, client, toasts } = await openWeek({ cancel: 'hold' });
+    const box = await askCancel(mount, 'p1');
+    action(box, 'cancel-yes').dispatch('click');
+    await settle(2);
+    // Event B opens while A's cancellation is in flight.
+    eventButton(mount, 'g1').dispatch('click');
+    assert.equal(confirmBox(mount), null, `${outcome}: B opens without A's question`);
+    if (outcome === 'fail') client.failNext = refused;
+    client.held.forEach((release) => release());
+    await settle();
+    assert.match(popover(mount)?.textContent ?? '', /Bea Neri/, `${outcome}: B's popover stays B's`);
+    assert.equal(confirmBox(mount), null, `${outcome}: no cancel question paints on B`);
+    assert.equal(toasts.length, 1, `${outcome}: A's outcome speaks in a toast`);
+    assert.equal(toasts[0].error, outcome === 'fail');
+  }
+});
