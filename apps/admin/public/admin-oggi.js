@@ -32,7 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, isProfileEmailStandin, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
@@ -1210,34 +1210,16 @@ export function googleNineChannels(profile) {
 }
 
 /**
- * Backlog:3805161965cd: a `profile:` handle (any case) is a pilot key,
- * never a route — the same rule the composer enforces, so the two screens
- * never disagree on Email.
- * @param {unknown} value
- */
-const isInviteProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
-
-/**
- * Backlog:3805161965cd: whether one row is a stand-in for the
- * space-profile Gmail rather than a real channel connection. The server
- * refuses the send with 409 CHANNEL_CONNECTION_NOT_ACTIVE without a real
- * connection, so these rows never vote Email on Oggi.
- * @param {unknown} row
- */
-const isInviteSyntheticEmailRow = (row) => row != null && typeof row === 'object'
-  && String(row.channel ?? '').toLowerCase() === 'email'
-  && (row.source === 'profile' || isInviteProfileKey(row.connectionKey));
-
-/**
- * Backlog:3805161965cd: the rows Oggi votes on — the profile links merged
- * in, except the profile Gmail stand-in for Email. A real active Email row
- * still votes Email; Calendar and the other profile votes still count, so
- * Stato sync keeps painting them from the shared merge untouched.
+ * Backlog:803d127c4458: the rows Oggi votes on — the profile links merged
+ * in, except the profile Gmail stand-in for Email (shared
+ * `isProfileEmailStandin`, the same rule the composer and Stato sync
+ * enforce). A real active Email row still votes Email; Calendar and the
+ * other profile votes still count.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 function mergeInviteConnections(connections = [], profile = null) {
-  return mergeProfileConnections(connections, profile).filter((row) => !isInviteSyntheticEmailRow(row));
+  return mergeProfileConnections(connections, profile).filter((row) => !isProfileEmailStandin(row));
 }
 
 /**
@@ -1271,7 +1253,7 @@ export function missingLeadChannels(connections = [], profile = null) {
   const active = new Set(
     (Array.isArray(connections) ? connections : [])
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string'
-        && !isInviteSyntheticEmailRow(row))
+        && !isProfileEmailStandin(row))
       .map((row) => row.channel),
   );
   for (const channel of googleNineChannels(profile)) {

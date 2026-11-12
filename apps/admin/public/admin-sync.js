@@ -32,6 +32,7 @@ import {
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
+  isProfileEmailStandin,
   mergeProfileConnections,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -485,17 +486,21 @@ export const SYNC_CHANNELS = NINE_CHANNELS;
 
 /**
  * The activity payload with the profile links merged in as connections
- * (backlog:cf365ada15b9): the shared count reads Gmail and Calendar from
- * GET /api/profile on Oggi, so Stato sync must see them too, or the two
+ * (backlog:cf365ada15b9): the shared count reads Calendar from
+ * GET /api/profile on Oggi, so Stato sync must see it too, or the two
  * screens print two numbers for one space. The pilot already merges them
  * server-side; a channel that has an active row keeps that row alone.
+ * Backlog:803d127c4458: the profile Gmail stand-in never merges as Email
+ * (shared `isProfileEmailStandin`) — without its own channel connection
+ * the send fails with 409, like in the composer and on Oggi, so the hero,
+ * the table and the count invite Email instead of painting it connected.
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
-  const merged = mergeProfileConnections(entries, profile);
+  const merged = mergeProfileConnections(entries, profile).filter((row) => !isProfileEmailStandin(row));
   return merged.length === entries.length ? activity : { ...activity, connections: merged };
 }
 

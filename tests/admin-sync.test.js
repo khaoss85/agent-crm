@@ -1242,7 +1242,10 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  // Backlog:803d127c4458: the profile Gmail alone never connects Email —
+  // the send needs its own channel connection (409 otherwise), like in the
+  // composer and on Oggi. Calendar still counts, so the card reads «1 di 9».
+  assert.equal(count[0], '1 di 9 collegati', 'Calendar counts on Stato sync, Gmail alone does not');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1298,15 +1301,20 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
 // counted as connected, but with no update and no events they wait for
 // the first event like any other quiet row (DECISION to be confirmed:
 // «senza aggiornamento né eventi» covers profile-merged rows too).
+// Backlog:803d127c4458 narrows it for Email: the profile Gmail stand-in
+// is not a sendable route (409 without a real channel connection), so it
+// no longer merges — the card reads «1 di 9», Calendar waits for the
+// first event, and Email offers Collega like the composer requires.
 test('#680 P2-1: profile links counted as connected wait for the first event', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  assert.ok(mount.textContent.includes('1 di 9 collegati'));
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento'], 'quiet Google Calendar waits');
+  assert.ok(mount.textContent.includes('Collega'), 'Email without its own connection offers Collega');
 });
 
 test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {

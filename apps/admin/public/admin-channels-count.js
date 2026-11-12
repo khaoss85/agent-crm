@@ -162,6 +162,24 @@ export function mergeProfileConnections(rows, profile = null) {
 }
 
 /**
+ * Whether one row stands in for the space-profile Gmail rather than a
+ * real channel connection (backlog:803d127c4458): the rows
+ * `mergeProfileConnections` merges in, marked `source: 'profile'`. Only
+ * that marker counts — a real row may carry a `profile:`-like key (the
+ * stopped-import fixture does), and dropping it would hide a grant
+ * refusal. The server refuses the send with 409
+ * CHANNEL_CONNECTION_NOT_ACTIVE without a real connection, so these rows
+ * never vote Email — on Oggi and on Stato sync alike, so the two screens
+ * print one count.
+ * @param {unknown} row
+ */
+export function isProfileEmailStandin(row) {
+  if (row == null || typeof row !== 'object') return false;
+  if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
+  return row.source === 'profile';
+}
+
+/**
  * The display name of one channel of the universe.
  * @param {string} channel
  */
