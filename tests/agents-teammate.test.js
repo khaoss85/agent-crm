@@ -555,7 +555,8 @@ test('an executor that reports far above the cap is stopped, not recorded as a s
   const { ops, modules } = compose();
   const kinds = { artifact: 'ag-liar-artifact', proposals: 'ag-liar-proposals' };
   for (const [kind, agentSourceKey] of Object.entries(kinds)) {
-    await makeAgent(ops, { sourceKey: agentSourceKey, spendingCapCents: 100 });
+    // Two agents of one space never share a name (backlog:1f7cb20d3c30).
+    await makeAgent(ops, { sourceKey: agentSourceKey, name: `Vendi ${kind}`, spendingCapCents: 100 });
     await ops.createAssignment({
       actor: USER,
       spaceId: SPACE,
@@ -1207,4 +1208,18 @@ test('conditional run writes hold on async (PostgreSQL-like) storage', async () 
   assert.equal(rows[0].outcome, 'artifact');
   assert.equal(rows[0].decidedAt, FEB_01);
   assert.ok(!/Slot claimed/.test(rows[0].note ?? ''), 'no claim note survives on the async path either');
+});
+
+test('1f7cb20d3c30: create-agent refuses a second agent with the same @name in a space, and still replays its own key', async () => {
+  const { ops } = compose();
+  const first = await makeAgent(ops, { sourceKey: 'ag-a', name: 'Report Vendite' });
+  const replay = await ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey: 'ag-a', name: 'Report Vendite', role: 'r', instructions: 'i' });
+  assert.equal(replay.duplicate, true, 'the same key replays before the name rule');
+  assert.equal(replay.agent.sourceKey, first.sourceKey);
+  await assert.rejects(
+    () => ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey: 'ag-b', name: ' report  vèndite', role: 'r', instructions: 'i' }),
+    (error) => error.code === 'AGENT_NAME_TAKEN' && error.status === 409,
+  );
+  const other = await ops.createAgent({ actor: USER, spaceId: 'altro-spazio', sourceKey: 'ag-c', name: 'Report Vendite', role: 'r', instructions: 'i' });
+  assert.equal(other.duplicate, false, 'another space may use the name');
 });

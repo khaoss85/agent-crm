@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ConflictError, nowIso, withTimeout } from '../../core/index.js';
+import { agentMentionName } from './catalog.js';
 import {
   AGENTS_DOMAIN,
   AGENT_APPLY_PERMISSION,
@@ -378,6 +379,17 @@ export function createAgentOperations(options = {}) {
     const at = now();
     const existing = (await agents().listWhere({ spaceId: input.spaceId, sourceKey: input.sourceKey }))[0] ?? null;
     if (existing) return { duplicate: true, agent: existing };
+    // backlog:1f7cb20d3c30: an agent is instructed by its name («@Nome …»),
+    // so two agents of one space never answer to the same name. Checked
+    // after the replay above, so a retry of the same key still replays.
+    const wanted = agentMentionName(input.name);
+    const clash = (await agents().listWhere({ spaceId: input.spaceId }))
+      .find((row) => agentMentionName(row?.name) === wanted) ?? null;
+    if (clash) {
+      throw new AppError('Another agent of this space already has this name', {
+        code: 'AGENT_NAME_TAKEN', status: 409,
+      });
+    }
     const made = await createOrReplay(agents(), input.spaceId, input.sourceKey, {
       sourceKey: input.sourceKey,
       spaceId: input.spaceId,

@@ -191,3 +191,6 @@ export function createAgentsPackage(options = {}) {
 export { AGENT_APPLY_PERMISSION };
 // backlog:33782ba68747: the ready-made agents the backoffice «Catalogo» offers.
 export { AGENT_CATALOG, catalogAgentSourceKey } from './catalog.js';
+// backlog:1f7cb20d3c30: hand-written agents («Nuovo agente») and the one
+// @mention name rule both the backoffice and create-agent use.
+export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey } from './catalog.js';
