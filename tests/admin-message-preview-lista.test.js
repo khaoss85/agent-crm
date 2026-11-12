@@ -59,3 +59,24 @@ test('«4,99 € EUR» reads once with NBSP, narrow NBSP and a leading code', ()
   }
   assert.equal(previewLastContactText('Cambio EUR 5 $'), 'Cambio EUR 5 $', 'two different currencies both stay');
 });
+
+test('a stored Ahrefs body (pilot import, 2000 chars) reads clean: no «&zwnj;» run, no style residue', () => {
+  // The shape read from Presti on 12/11 (GET only): text, 180 literal
+  // «&zwnj;» each followed by an NBSP, then attribute residue over several
+  // lines, cut at 2000 characters by the import.
+  let body = 'New crawl for Danielepelleri 400 internal URLs were analyzed. Health Score 72 · Errors 129 '
+    + `&zwnj;${NBSP}`.repeat(180)
+    + '\n style="box-sizing: border-box; margin: 0;\n padding: 0; font-family: Arial">\n Unsubscribe from this project'
+    + '\n style="box-sizing: border-box; color: #333">10 November\n width="100%" cellpadding="0">New crawl for Danielepelleri'
+    + ' style="box-sizing: border-box; font-size: 14px; line-height: 20px; colo';
+  body = body.slice(0, 2000);
+  assert.equal(previewLastContactText(body),
+    'New crawl for Danielepelleri 400 internal URLs were analyzed. Health Score 72 · Errors 129 Unsubscribe from this project 10 November New cr…');
+  for (const shown of [previewLastContactText(body), oggiPreview(body), card.passagePreview({ body, subject: null })]) {
+    assert.doesNotMatch(shown, /&zwnj;|style=|box-sizing|cellpadding|>/, shown);
+    assert.ok(shown.startsWith('New crawl for Danielepelleri 400 internal URLs were analyzed.'), shown);
+  }
+  const full = card.passageFullText({ body });
+  assert.doesNotMatch(full, /&zwnj;|style=|box-sizing|cellpadding|"/, 'the scheda full text is clean too');
+  assert.match(full, /Unsubscribe from this project/);
+});
