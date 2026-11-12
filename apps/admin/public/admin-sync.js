@@ -1380,7 +1380,12 @@ export function createSyncView(deps) {
     }
     state.syncingAll = false;
     state.syncing.clear();
-    if (failed === 0) toast('Sincronizzazione aggiornata.');
+    // Il lotto ha tirato nello spazio di partenza ma il load finale segue
+    // lo spazio cambiato a metà: un successo senza qualifica dipingerebbe
+    // come appena sincronizzati dati mai tirati — il toast lo dice.
+    const endSpace = state.spaceId.trim();
+    if (failed === 0 && endSpace === space) toast('Sincronizzazione aggiornata.');
+    else if (failed === 0) toast('Lotto finito nello spazio di partenza: lo schermo mostra il nuovo spazio.');
     else toast('Alcuni canali non si sono aggiornati: riprova con Sincronizza ora.', true);
     render();
   }

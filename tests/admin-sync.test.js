@@ -448,13 +448,14 @@ test('a lot started in one space finishes in that space after a mid-lot switch',
   };
   const doc = createFakeDocument();
   const mount = createMount();
+  const seen = [];
   const view = createSyncView({
     doc,
     mount,
     client: switching,
     storage: { getItem: () => space, setItem: () => {}, removeItem: () => {} },
     navigate: () => {},
-    toast: () => {},
+    toast: (message, isError) => { seen.push({ message, isError }); },
   });
   await view.render();
   await flush();
@@ -476,6 +477,10 @@ test('a lot started in one space finishes in that space after a mid-lot switch',
   // A lotto finito la vista segue lo spazio nuovo.
   const reads = calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
   assert.ok(reads[reads.length - 1].path.includes('spaceId=nuova'));
+  // Ma il successo non è senza qualifica: il lotto ha tirato 'prova' e
+  // dipinge 'nuova' — il toast lo dice, senza fingere 'nuova' sincronizzata.
+  assert.ok(!seen.some((toast) => toast.message === 'Sincronizzazione aggiornata.'));
+  assert.ok(seen.some((toast) => toast.message.includes('spazio di partenza')));
 });
 
 test('hostile server text stays text, never markup', async () => {
