@@ -1357,6 +1357,9 @@ export function createSyncView(deps) {
   async function syncAll(keys) {
     if (state.syncingAll || keys.length === 0) return;
     state.syncingAll = true;
+    // Il lotto resta nello spazio di partenza: un cambio spazio a lotto in
+    // corso ri-legge lo stato solo nel load finale, mai nelle pull restanti.
+    const space = state.spaceId.trim();
     for (const key of keys) state.syncing.add(key);
     render();
     let failed = 0;
@@ -1364,7 +1367,7 @@ export function createSyncView(deps) {
       try {
         await client.request('/api/connectors/sync-now', {
           method: 'POST',
-          body: { spaceId: state.spaceId.trim(), connectionKey: key },
+          body: { spaceId: space, connectionKey: key },
         });
       } catch {
         failed += 1;
