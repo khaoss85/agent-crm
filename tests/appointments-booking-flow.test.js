@@ -814,6 +814,42 @@ test('the phrase carries a stated duration and refuses a past draft (backlog:d1e
   );
 });
 
+test('a past draft with only endsAt is refused like one with startsAt (backlog:bb833fab673a)', async () => {
+  const service = fakeAppointments();
+  const withText = (text) => capabilityFor({ service, phraseLlm: { async complete() { return { text, dryRun: false }; } } });
+  for (const endsAt of ['2026-10-17T08:00:00.000Z', '2026-10-17T09:00:00.000Z']) {
+    await assert.rejects(
+      withText(`{"teamMemberId": "coach-guido", "endsAt": "${endsAt}"}`).parseBookingPhrase({
+        spaceId: 'spazio-prova', phrase: 'qualcosa con Guido',
+      }),
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_IN_PAST');
+        assert.equal(error.status, 422);
+        assert.equal(error.details?.field, 'draft.endsAt');
+        return true;
+      },
+      `an endsAt-only draft at or before the reference instant is past: ${endsAt}`,
+    );
+  }
+  await assert.rejects(
+    withText('{"teamMemberId": "coach-guido", "startsAt": "2026-10-17T08:00:00.000Z", "endsAt": "2026-10-17T08:30:00.000Z"}').parseBookingPhrase({
+      spaceId: 'spazio-prova', phrase: 'qualcosa con Guido',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_AI_DRAFT_IN_PAST');
+      assert.equal(error.details?.field, 'draft.startsAt', 'a named start keeps its own field');
+      return true;
+    },
+    'startsAt still names the field when both ends are past',
+  );
+  const future = await withText('{"teamMemberId": "coach-guido", "endsAt": "2026-10-21T18:00:00.000Z"}').parseBookingPhrase({
+    spaceId: 'spazio-prova', phrase: 'qualcosa con Guido',
+  });
+  assert.equal(future.draft.endsAt, '2026-10-21T18:00:00.000Z');
+  assert.equal(future.draft.startsAt, undefined, 'a future end alone stays usable, no hour invented');
+  assert.equal(service.rows.length, 0, 'a draft never writes');
+});
+
 test('the phrase returns a day field when the sentence names no time (backlog:65ed7430)', async () => {
   const service = fakeAppointments();
   const withText = (text) => capabilityFor({ service, phraseLlm: { async complete() { return { text, dryRun: false }; } } });
