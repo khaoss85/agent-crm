@@ -717,12 +717,17 @@ shellView.update({
 // missing). Await the faces the shell paints before the fixtures run, so
 // the load event — and the screenshot — wait for real glyphs. Rejections
 // settle the wait instead of hanging the harness.
-await Promise.all([
+// backlog:30dc70e6b076: a face loads and decodes in real time, and the
+// virtual clock does not wait for it — on a loaded runner the budget ran
+// out mid-wait and the harness never reached its ready title («nuovo-modulo
+// phone … no nuovo-modulo-ready»). The wait runs inside the shot server's
+// hold, which keeps virtual time still until the faces settle.
+await window.__boHold(Promise.all([
   document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / OGGI 0123456789'),
-]).catch(() => {});
-await document.fonts.ready.catch(() => {});
+]).catch(() => {}));
+await window.__boHold(document.fonts.ready.catch(() => {}));
 const diagEl = document.getElementById('bodiag');
 if (diagEl) {
   let cssRules = -1;
@@ -1390,8 +1395,34 @@ export function harnessHtml(name, publicDir) {
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
     + `<div id="bodiag" hidden></div>`
+    + HOLD_PRELUDE
     + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
+
+/**
+ * The hold (backlog:30dc70e6b076). Chromium's `--virtual-time-budget`
+ * stops the virtual clock while a network fetch is pending, and only
+ * then: work that takes real time without a fetch — a webfont decoding, a
+ * Blob read — races a clock that keeps running, and on a loaded runner the
+ * budget ran out first, so a harness never reached its ready title.
+ * `window.__boHold(promise)` opens a fetch the shot server answers when
+ * the page reports the promise settled: virtual time stands still exactly
+ * for that wait, never longer. Virtual timers (`setTimeout`) are not held,
+ * so a harness that steps a view with them keeps working; the budget
+ * itself stays 8000 ms. The server answers any hold after HOLD_CAP_MS of
+ * real time, so a promise that never settles cannot hang a run.
+ */
+export const HOLD_PRELUDE = `<script>
+window.__boHold = (promise) => {
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  fetch('/__bo-hold?t=' + token).catch(() => {});
+  const release = () => fetch('/__bo-release?t=' + token).catch(() => {});
+  return Promise.resolve(promise).finally(release);
+};
+</script>`;
+
+/** Real-time cap of one hold: a wait that never settles still ends. */
+export const HOLD_CAP_MS = 30000;
 
 
 /**
@@ -1399,9 +1430,48 @@ export function harnessHtml(name, publicDir) {
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor) {
+  /** @type {Map<string, any>} pending holds by token */
+  const holds = new Map();
+  /** Tokens released before their hold arrived: the hold answers at once. */
+  const released = new Set();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    // backlog:30dc70e6b076: the hold keeps Chromium's virtual time still
+    // while the page waits on real-time work (see HOLD_PRELUDE).
+    if (url.pathname === '/__bo-hold' || url.pathname === '/__bo-release') {
+      const token = url.searchParams.get('t') ?? '';
+      const answer = (reply) => {
+        if (reply.writableEnded) return;
+        reply.writeHead(204, { 'cache-control': 'no-store' });
+        reply.end();
+      };
+      if (url.pathname === '/__bo-release') {
+        const held = holds.get(token);
+        if (held !== undefined) {
+          holds.delete(token);
+          answer(held);
+        } else {
+          released.add(token);
+        }
+        answer(res);
+        return;
+      }
+      if (released.delete(token)) {
+        answer(res);
+        return;
+      }
+      holds.set(token, res);
+      const cap = setTimeout(() => {
+        holds.delete(token);
+        answer(res);
+      }, HOLD_CAP_MS);
+      res.on('close', () => {
+        clearTimeout(cap);
+        holds.delete(token);
+      });
+      return;
+    }
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1433,6 +1503,11 @@ function startServer(publicDir, pageFor) {
     }
     res.writeHead(404);
     res.end('no');
+  });
+  // A cap timer pending at shutdown never keeps the process alive.
+  server.on('close', () => {
+    for (const reply of holds.values()) if (!reply.writableEnded) reply.end();
+    holds.clear();
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
