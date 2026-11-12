@@ -9,7 +9,7 @@ import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, o
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
-import { cleanMessageBody } from './admin-message-preview.js';
+import { cleanMessageBody, cleanPreviewText, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import {
   addFieldForm,
@@ -560,9 +560,62 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
-/** A message longer than this folds behind «Mostra tutto». */
-const ENTRY_FOLD_CHARS = 280;
 const NAMED_ENTITIES = Object.freeze({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' });
+/** What a passage reads when neither its text nor its subject says anything. */
+export const PASSAGE_NO_TEXT = '(nessun testo)';
+
+/**
+ * The line a passage shows in the cronologia, like Gmail (Dan 10/11):
+ * «Oggetto — testo pulito» through the shared preview cleaning, bounded like
+ * every other preview; the clean text alone without a subject (WhatsApp,
+ * forms); the subject when the text cleans to nothing. '' when neither says
+ * anything — the caller writes PASSAGE_NO_TEXT unless an attachment speaks.
+ * @param {{ body?: unknown, subject?: unknown }} item
+ */
+export function passagePreview(item) {
+  return messagePreview(typeof item?.body === 'string' ? item.body : null, { subject: item?.subject });
+}
+
+/**
+ * The whole passage behind «Mostra tutto»: the full body as written, losing
+ * only markup residue (always clean); '' for a body that is only a stand-in
+ * («Please view this email in an HTML-capable email client»). A body that is
+ * only a link keeps it here: the line shows the host, «Mostra tutto» the URL.
+ * @param {{ body?: unknown }} item
+ */
+export function passageFullText(item) {
+  const body = typeof item?.body === 'string' ? item.body : '';
+  if (body === '' || (isPlaceholderBody(body) && !/(?:https?:\/\/|www\.)\S/i.test(body))) return '';
+  return readableText(cleanMessageBody(body));
+}
+
+/**
+ * One passage per real message (Dan 10/11): the same mail synced several
+ * times — same channel, direction, sender, subject, text and minute — reads
+ * once in the cronologia. Notes, calls and attachments are never folded; the first copy
+ * in the list wins.
+ * @param {Array<any>} entries
+ */
+export function collapseDuplicatePassages(entries) {
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(entries) ? entries : []) {
+    // An attachment is its own passage: two photos in one minute are two.
+    const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
+    if (item?.entry !== 'message' || hasAttachment) { out.push(item); continue; }
+    const at = Date.parse(String(item?.occurredAt ?? ''));
+    const minute = Number.isFinite(at) ? Math.floor(at / 60000) : null;
+    const key = minute === null ? null : JSON.stringify([
+      String(item?.channel ?? ''), String(item?.direction ?? ''), String(item?.remoteHandle ?? ''),
+      cleanPreviewText(item?.subject), passageFullText(item) || passagePreview(item), minute,
+    ]);
+    if (key !== null && seen.has(key)) continue;
+    if (key !== null) seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
 /**
  * Message text as a person reads it: HTML entities the mail provider left in
  * the snippet are decoded (as text — nothing is ever parsed as markup), the
@@ -2602,7 +2655,7 @@ export function createCustomerCardView(deps) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
-    const entries = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    const entries = collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : []);
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
     // there, one chip per writer («da dan», «dal team»).
@@ -2813,23 +2866,31 @@ export function createCustomerCardView(deps) {
           const dur = durationParts(item?.durationSec);
           bubble.appendChild(el('p', 'bo-scheda-entry-body',
             [isOutbound ? 'chiamata in uscita' : isInbound ? 'chiamata in entrata' : 'chiamata', dur, outcome].filter(Boolean).join(' · ')));
-        } else if (typeof item?.body === 'string' && item.body !== '') {
-          // The full body stays as written; only markup residue a mail
-          // stored (tags, style="…" fragments, hidden preheaders) goes.
-          const text = readableText(cleanMessageBody(item.body));
-          const bodyNode = el('p', 'bo-scheda-entry-body', text);
-          bubble.appendChild(bodyNode);
-          if (text.length > ENTRY_FOLD_CHARS) {
-            bodyNode.setAttribute('data-folded', 'true');
-            const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
-            more.setAttribute('type', 'button');
-            more.setAttribute('data-action', 'entry-expand');
-            more.addEventListener('click', () => {
-              const folded = bodyNode.getAttribute('data-folded') === 'true';
-              bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
-              more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
-            });
-            bubble.appendChild(more);
+        } else {
+          // Dan 10/11, like Gmail: the line reads «Oggetto — testo pulito»,
+          // bounded like every preview; «Mostra tutto» opens the whole body,
+          // always clean. Never an empty line: «(nessun testo)» unless an
+          // attachment is what the passage carries.
+          const line = passagePreview(item);
+          const full = passageFullText(item);
+          const hasAttachment = item?.attachment != null && typeof item.attachment === 'object';
+          if (line !== '' || !hasAttachment) {
+            const shown = line !== '' ? line : PASSAGE_NO_TEXT;
+            const bodyNode = el('p', 'bo-scheda-entry-body', shown);
+            bubble.appendChild(bodyNode);
+            if (full !== '' && full !== shown) {
+              bodyNode.setAttribute('data-folded', 'true');
+              const more = el('button', 'bo-scheda-entry-more', 'Mostra tutto');
+              more.setAttribute('type', 'button');
+              more.setAttribute('data-action', 'entry-expand');
+              more.addEventListener('click', () => {
+                const folded = bodyNode.getAttribute('data-folded') === 'true';
+                bodyNode.setAttribute('data-folded', folded ? 'false' : 'true');
+                bodyNode.textContent = folded ? full : shown;
+                more.textContent = folded ? 'Mostra meno' : 'Mostra tutto';
+              });
+              bubble.appendChild(more);
+            }
           }
         }
         const attachment = attachmentNode(item?.attachment);
