@@ -291,10 +291,11 @@ const DRAG_WEEK = () => ({
   ],
 });
 
-async function openPointerWeek({ failRescheduleWith = null, wait = undefined } = {}) {
+async function openPointerWeek({ failRescheduleWith = null, wait = undefined, endsAt = undefined } = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const week = DRAG_WEEK();
+  if (endsAt) week.members[0].appointments[0].endsAt = endsAt;
   const client = stubClient({ week, failRescheduleWith });
   const toasts = [];
   const view = createCalendarioView({
@@ -708,6 +709,20 @@ test('7587307d: a move and a stretch snap to the quarter hour', async () => {
   assert.equal(stretchBody.endsAt, '2026-10-22T13:15:00.000Z', 'the end snaps to 15:15 (Rome)');
 });
 
+test('7587307d (review #834): a 20-minute booking drags with a whole-row ghost', async () => {
+  // a9 runs 14:00–14:20 Rome: 20 minutes, not a whole quarter count.
+  const { mount, col } = await openPointerWeek({ endsAt: '2026-10-22T12:20:00.000Z' });
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 300 });
+  col.dispatch('pointermove', { clientY: 345 });
+  const ghost = (col.childNodes ?? []).find((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  assert.ok(ghost, 'the drag ghost paints');
+  const style = ghost.getAttribute('style') ?? '';
+  assert.match(style, /grid-row: \d+ \/ span \d+;/, `a whole-row span: ${style}`);
+  assert.match(style, /grid-row: 24 \/ span 2;/, `14:45–15:05 covers the 14:45 and 15:00 rows: ${style}`);
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
 // backlog:7587307d5215: while the roster and the week load, Team and the
 // grid show placeholders — never «nessuna persona» nor an empty week.
 test('7587307d: loading shows skeletons, never the empty states', async () => {
@@ -744,6 +759,13 @@ test('7587307d: loading shows skeletons, never the empty states', async () => {
   assert.ok(!/Nomina le persone|nessuna persona/.test(team().textContent), team().textContent);
   assert.ok(week_().findAll('div').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the grid shows placeholder blocks');
   assert.ok(!/Scegli le persone/.test(week_().textContent), 'no empty-week sentence while the team loads');
+  // Review #834: the phone layout hides `is-empty` days and shows the compact
+  // «Nessun appuntamento» row; neither may paint while the week loads, or
+  // the skeletons vanish under the empty state.
+  const classed = (root, name) => root.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(name));
+  assert.equal(classed(week_(), 'is-empty').length, 0, 'no day is called empty while loading');
+  assert.equal(classed(week_(), 'cal-day-compact').length, 0, 'no compact empty row while loading');
+  assert.ok(!/Nessun appuntamento/.test(week_().textContent), week_().textContent);
   // Roster in, week in flight: the grid still shows its skeleton.
   releaseRoster();
   await settle(5);
@@ -751,6 +773,8 @@ test('7587307d: loading shows skeletons, never the empty states', async () => {
   assert.ok(team().textContent.includes('Marco'));
   assert.ok((week_().findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('cal-grid'))?.getAttribute('class') ?? '').includes('is-loading'), 'the grid is still loading');
   assert.equal(week_().getAttribute('aria-busy'), 'true');
+  assert.equal(classed(week_(), 'is-empty').length, 0, 'still no empty day while the week is in flight');
+  assert.equal(classed(week_(), 'cal-day-compact').length, 0);
   // Week in: no placeholder left, the blocks paint.
   releaseWeek();
   await settle(10);

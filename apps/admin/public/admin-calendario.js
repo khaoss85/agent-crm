@@ -512,7 +512,7 @@ export function romeMinutes(value) {
 }
 
 /**
- * Half-hour grid rows (1-based, inside the day column) for an event: start
+ * Quarter-hour grid rows (1-based, inside the day column) for an event: start
  * row and span, clamped into the 09:00–18:00 body so an out-of-hours booking
  * still paints at the edge with its exact time in the label — never dropped.
  * @param {unknown} startsAt @param {unknown} endsAt
@@ -1126,9 +1126,11 @@ export function weekCovers(week, searchIds) {
  * Overlap lanes per day column: blocks sharing grid rows split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
- * the column lane count. Lanes follow the PAINTED half-hour rows, not the
- * exact minutes (backlog:5fbebe8559e9): a 10:00–10:45 booking and a
- * 10:45–11:30 proposal both cover the 10:30 row, so they sit side by side.
+ * the column lane count. Lanes follow the PAINTED quarter-hour rows, not the
+ * exact minutes (backlog:5fbebe8559e9, backlog:7587307d5215): a 10:00–10:20
+ * booking covers the 10:15 row, so a 10:15–11:00 proposal sits beside it,
+ * while 10:00–10:45 and 10:45–11:30 touch without sharing a row and stack
+ * in one lane.
  * Events and «✦ Proposta» ghosts share one pass, so a ghost never covers a
  * booking or another ghost.
  * @param {Array<any>} rows
@@ -2293,7 +2295,7 @@ export function createCalendarioView(deps) {
   /**
    * BO-F6-11 fetta 4 (specs/calendario.md C13–C16): the prototype time grid —
    * an 09:00–18:00 hour gutter beside five work-day columns, event blocks on
-   * their Rome half-hour rows, the red now-line on the current day. Empty
+   * their Rome quarter-hour rows, the red now-line on the current day. Empty
    * days paint their empty timeline, never a message. DOM order interleaves
    * each day head with its column, so the narrow-screen stack (heads above
    * their day, hours hidden) needs no extra markup.
@@ -2333,9 +2335,14 @@ export function createCalendarioView(deps) {
     return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_ROW_MINUTES;
   }
 
-  /** The rows a span of Rome minutes covers, as a grid-row value. */
+  /**
+   * The rows a span of Rome minutes covers, as a grid-row value: whole rows
+   * only, so a 20 or 50 minute booking still paints a valid span (review #834).
+   */
   function rowsOf(start, end) {
-    return `${(start - GRID_START_MINUTES) / GRID_ROW_MINUTES + 1} / span ${Math.max(1, (end - start) / GRID_ROW_MINUTES)}`;
+    const first = Math.floor((start - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    const last = Math.ceil((end - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    return `${first + 1} / span ${Math.max(1, last - first)}`;
   }
 
   /** A pick spans at least half an hour from its first row (a plain click). */
@@ -2580,7 +2587,7 @@ export function createCalendarioView(deps) {
    * (backlog:3d0fbe7dc8d1): a move keeps its duration and takes the hovered
    * day and hour, a resize keeps its start and day and takes the hovered
    * end on the same column. Both
-   * stay inside the painted 09:00–18:00 hours in half-hour steps; the ghost
+   * stay inside the painted 09:00–18:00 hours in quarter-hour steps; the ghost
    * paints the target range on the hovered column, except a resize ghost,
    * which stays on the origin column (review #757).
    * @param {string} dayKey @param {number} minute @param {any} col
@@ -2852,7 +2859,9 @@ export function createCalendarioView(deps) {
       // Review #646 round 3: «Nessun appuntamento» is a claim about the day,
       // so it reads the whole loaded week — a day whose only bookings belong
       // to a hidden person keeps its timeline, never the compact row.
-      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
+      // Review #834: while the week loads no day is empty yet — the phone
+      // layout would hide its skeletons under «Nessun appuntamento».
+      const empty = !loadingWeek && rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
       const head = el(doc, 'div', {
         className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },

@@ -1515,6 +1515,7 @@ select.bo-spazi-input { flex: none; }
 /* backlog:7587307d5215: the week and the team while they load — grey
  * placeholders that pulse (the ui-skeleton rhythm), never an empty week. */
 .cal-skeleton { margin: 2px 4px; border-radius: 8px; background: var(--line-soft); }
+.cal-grid.is-loading { cursor: progress; }
 .cal-team-skeleton { padding: 8px 0; }
 @media (prefers-reduced-motion: no-preference) {
   .cal-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
