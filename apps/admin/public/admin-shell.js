@@ -1,7 +1,7 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
@@ -968,6 +968,12 @@ export function renderUnknownRoute({ doc, mount }) {
 }
 
 /**
+ * What the Impostazioni screen says when the «things to fix» count could not
+ * be read (backlog:1d33b335fba0): what is missing, and that it may not be zero.
+ */
+export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -975,22 +981,46 @@ export function renderUnknownRoute({ doc, mount }) {
  * count above zero, never at zero and never when the count is unknown.
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
-  mount.appendChild(el(
+  const summary = el(
     doc,
     'p',
     'bo-muted',
     unknown
-      ? 'Non è stato possibile leggerle (non è detto che non ce ne siano).'
+      // backlog:1d33b335fba0: say what was not read, in plain words, with
+      // a way to try again — never «leggerle» with nothing it refers to.
+      ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
-  ));
+  );
+  mount.appendChild(summary);
+  if (unknown && typeof onRetry === 'function') {
+    summary.setAttribute('role', 'status');
+    const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'settings-retry');
+    retry.addEventListener('click', () => {
+      void uiBusy(retry, 'Riprovo…', async () => {
+        let count = null;
+        try {
+          count = await onRetry();
+        } catch {
+          count = null;
+        }
+        // The operator may have left meanwhile: repaint only the panel
+        // still on screen, never over the screen just opened.
+        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable, onRetry });
+      });
+    });
+    mount.appendChild(retry);
+  }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');

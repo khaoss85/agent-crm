@@ -559,8 +559,60 @@ test('settings panel lists the four areas with honest availability', () => {
 
   const unknown = createMount();
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
-  assert.ok(unknown.textContent.includes('Non è stato possibile leggerle'));
+  assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+// backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non
+// ce ne siano)» named nothing and offered nothing. The panel says what was
+// not read and offers Riprova, which reads the count again.
+test('1d33b335fba0: an unread fix count says what is missing and Riprova reads it again', async () => {
+  const doc = createFakeDocument();
+  const flushAll = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  const mount = createMount();
+  const answers = [null, 3];
+  const asked = [];
+  const onRetry = async () => { asked.push(true); return answers.shift(); };
+  renderSettingsPanel({ doc, mount, fixCount: null, onRetry });
+  const text = mount.textContent;
+  assert.ok(text.includes('Non sono riuscito a leggere le cose da sistemare'), 'names what was not read');
+  assert.ok(text.includes('problemi nei dati e schede doppie'), 'in plain words');
+  assert.ok(!text.includes('leggerle'), 'never the old dangling pronoun');
+  assert.ok(!text.includes('non è detto che non ce ne siano'));
+  const retryOf = (node) => node.findAll('button').find((button) => button.getAttribute('data-action') === 'settings-retry');
+  let retry = retryOf(mount);
+  assert.ok(retry, 'Riprova is offered');
+  assert.equal(retry.textContent, 'Riprova');
+  // Still unreadable: the same note and Riprova again.
+  retry.dispatch('click', {});
+  assert.equal(retry.getAttribute('aria-busy'), 'true', 'the button says it is working');
+  await flushAll();
+  assert.equal(asked.length, 1);
+  retry = retryOf(mount);
+  assert.ok(retry, 'still unreadable: Riprova stays');
+  // Read: the count replaces the note.
+  retry.dispatch('click', {});
+  await flushAll();
+  assert.equal(asked.length, 2);
+  assert.ok(mount.textContent.includes('3 cose da sistemare'), 'the fresh count shows');
+  assert.ok(!retryOf(mount), 'no Riprova once read');
+  // A failing retry keeps the note, never throws.
+  const failing = createMount();
+  renderSettingsPanel({ doc, mount: failing, fixCount: null, onRetry: async () => { throw new Error('down'); } });
+  retryOf(failing).dispatch('click', {});
+  await flushAll();
+  assert.ok(failing.textContent.includes('Non sono riuscito a leggere'));
+  assert.ok(retryOf(failing), 'Riprova again after a failure');
+  // Left meanwhile: the late answer never repaints the new screen.
+  const left = createMount();
+  let release;
+  renderSettingsPanel({ doc, mount: left, fixCount: null, onRetry: () => new Promise((resolve) => { release = resolve; }) });
+  retryOf(left).dispatch('click', {});
+  while (left.firstChild) left.removeChild(left.firstChild);
+  left.appendChild(doc.createElement('p')).textContent = 'Clienti';
+  release(5);
+  await flushAll();
+  assert.equal(left.textContent, 'Clienti', 'the screen opened meanwhile stays');
 });
 
 test('Stato sync links its own screen once customer-data is composed', () => {
