@@ -200,10 +200,18 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   // cliente's operator note. A note is a subject-timeline write with no
   // task, so it cannot ride an action; the frozen v1 declaration moves
   // deliberately here, the way #380 moved it for `postpone`.
+  // Voce 82235e46e3e9 (giro 2, VERIFIER_BACK on #793): two more, the
+  // scheda's Modifica and Elimina on a note — an in-place correction and
+  // an eliminated tombstone through the managed in-process write, never a
+  // public record path.
   assert.deepEqual(
     (work.operations ?? []).map(({ name, operationContract, appMethod }) => ({ name, operationContract, appMethod })),
-    [{ name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' }],
-    'Work v1 declares exactly the operator-note application operation',
+    [
+      { name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' },
+      { name: 'edit-subject-note', operationContract: 1, appMethod: 'editSubjectNote' },
+      { name: 'delete-subject-note', operationContract: 1, appMethod: 'deleteSubjectNote' },
+    ],
+    'Work v1 declares exactly the operator-note application operations',
   );
   assert.deepEqual(
     work.operations[0].input.map(({ name, type }) => ({ name, type })),

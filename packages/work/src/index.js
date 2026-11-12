@@ -1,6 +1,6 @@
 // @ts-check
 
-import { AppError, definePackage, nowIso, selectPackageGraph } from '../../core/index.js';
+import { AppError, NotFoundError, definePackage, nowIso, selectPackageGraph } from '../../core/index.js';
 import {
   ACTIVITY_KINDS,
   ACTIVITY_MODULE,
@@ -432,6 +432,140 @@ export function buildRecordSubjectNoteOperation(moduleNames) {
   };
 }
 
+/**
+ * Load one operator note and prove it belongs to the named subject.
+ *
+ * A ghost id answers the record's own 404; a row of another kind (a task
+ * lifecycle row) or of another subject answers 404/409 without leaking the
+ * other subject: the scheda edits only the notes it shows.
+ *
+ * @param {any} activities @param {{resource: string, id: string, noteId: string}} ref
+ */
+async function loadSubjectNote(activities, { resource, id, noteId }) {
+  if (!activities || typeof activities.get !== 'function' || typeof activities.applyManaged !== 'function') {
+    throw new AppError('The work package is installed without its activity records', {
+      code: 'WORK_STORAGE_INVALID', status: 500,
+    });
+  }
+  const row = await activities.get(String(noteId ?? ''));
+  if (row?.kind !== 'note') {
+    throw new AppError('only a note row can be changed: task lifecycle rows stay as written', {
+      code: 'WORK_NOTE_NOT_EDITABLE', status: 409,
+    });
+  }
+  if (row?.subjectResource !== resource || row?.subjectId !== id) {
+    throw new NotFoundError('subject note', String(noteId ?? ''));
+  }
+  return row;
+}
+
+/**
+ * `edit-subject-note` — the scheda cliente's "Modifica" on a note
+ * (backlog:82235e46e3e9, giro 2: VERIFIER_BACK on #793).
+ *
+ * The correction lands on the curated timeline row through the managed
+ * in-process write (`applyManaged`, audited as `work-activity.updated`),
+ * never through a public record path and never as a second row: the
+ * cronologia keeps one statement per note. The writer stays the note's
+ * writer — an edit fixes the text, it does not re-sign it. An eliminated
+ * note (body null) refuses 409: it is history, not a draft.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildEditSubjectNoteOperation(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'edit-subject-note',
+    appMethod: 'editSubjectNote',
+    label: 'Edit an operator note on a subject timeline',
+    description:
+      'Correct the text of a subject note in place. Safe text only; it is not sent anywhere. '
+      + 'The writer stays who wrote it; an eliminated note refuses.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind, e.g. "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'noteId', type: 'string', hint: 'The note row id.' },
+      { name: 'body', type: 'string', hint: 'The corrected note. Plain text, at most 1000 characters.' },
+    ],
+    create(runtime) {
+      return async (request) => {
+        requireHumanActor(request?.actor, 'Editing a note');
+        const subject = validateSubject({
+          resource: request?.resource, id: request?.id, owner: 'host',
+        });
+        if (subject.resource !== 'contact' && subject.resource !== 'company') {
+          throw new AppError('a subject note needs a contact or company subject', {
+            code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
+          });
+        }
+        const body = safeText(request?.body, 'body', bounds.noteBody);
+        const activities = resolveModule(runtime.modules, names.activity)?.service;
+        const row = await loadSubjectNote(activities, {
+          resource: subject.resource, id: subject.id, noteId: request?.noteId,
+        });
+        if (row.body === null) {
+          throw new AppError('an eliminated note cannot be edited', {
+            code: 'WORK_NOTE_DELETED', status: 409,
+          });
+        }
+        if (row.body === body) return row;
+        return activities.applyManaged(row.id, { body }, { actor: request.actor });
+      };
+    },
+  };
+}
+
+/**
+ * `delete-subject-note` — the scheda cliente's "Elimina" on a note
+ * (backlog:82235e46e3e9, giro 2: VERIFIER_BACK on #793).
+ *
+ * The framework has no storage delete and generated records are never
+ * removed (customer-data erasure redacts rather than removing), so an
+ * eliminated note stays a row: its body clears to null and the scheda
+ * reads «Nota eliminata» where the text was. Order, counts and the writer
+ * survive — the cronologia loses nothing it already showed. Repeating the
+ * delete is a no-op returning the same row.
+ *
+ * @param {Record<string, string>} [moduleNames]
+ */
+export function buildDeleteSubjectNoteOperation(moduleNames) {
+  const names = resolvedNames(moduleNames);
+  return {
+    operationContract: 1,
+    name: 'delete-subject-note',
+    appMethod: 'deleteSubjectNote',
+    label: 'Eliminate an operator note on a subject timeline',
+    description:
+      'Clear a subject note, leaving an «eliminated» tombstone in its place. '
+      + 'The row stays; only its text goes. Repeating the delete changes nothing.',
+    input: [
+      { name: 'resource', type: 'string', hint: 'The record kind, e.g. "contact" or "company".' },
+      { name: 'id', type: 'string', hint: 'The record id.' },
+      { name: 'noteId', type: 'string', hint: 'The note row id.' },
+    ],
+    create(runtime) {
+      return async (request) => {
+        requireHumanActor(request?.actor, 'Eliminating a note');
+        const subject = validateSubject({
+          resource: request?.resource, id: request?.id, owner: 'host',
+        });
+        if (subject.resource !== 'contact' && subject.resource !== 'company') {
+          throw new AppError('a subject note needs a contact or company subject', {
+            code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
+          });
+        }
+        const activities = resolveModule(runtime.modules, names.activity)?.service;
+        const row = await loadSubjectNote(activities, {
+          resource: subject.resource, id: subject.id, noteId: request?.noteId,
+        });
+        if (row.body === null) return row;
+        return activities.applyManaged(row.id, { body: null }, { actor: request.actor });
+      };
+    },
+  };
+}
+
 /** @param {{modules?: Record<string, string>}} [options] */
 export function createWorkPackage(options = {}) {
   return selectPackageGraph(definePackage({
@@ -452,7 +586,11 @@ export function createWorkPackage(options = {}) {
       buildPostponeTaskAction(options.modules),
       buildAddNoteAction(options.modules),
     ],
-    operations: [buildRecordSubjectNoteOperation(options.modules)],
+    operations: [
+      buildRecordSubjectNoteOperation(options.modules),
+      buildEditSubjectNoteOperation(options.modules),
+      buildDeleteSubjectNoteOperation(options.modules),
+    ],
     // None. A versioned policy earns its fingerprint when two consumers share a
     // rule; these two share none — one wants a lead's name and a due date, the
     // other a contract intent and no date. See ADR-030.

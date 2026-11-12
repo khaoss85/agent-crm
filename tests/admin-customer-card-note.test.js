@@ -204,6 +204,61 @@ test('82235e46e3e9: in Dettagli Invio saves and Esc cancels', async () => {
   assert.ok(!mount.textContent.includes('cambiata@esempio.it'), 'the edit is gone');
 });
 
+// VERIFIER_BACK 2026-11-12 (repro, voce 82235e46e3e9 giro 2): PR #793
+// diceva «Modifica ed Elimina delle note arrivano dopo, in un'altra PR» —
+// la riga della nota non ha azioni di modifica/eliminazione. Questo test
+// fallisce finché la riga non offre Modifica ed Elimina, e passa quando
+// Invio salva la modifica, Esc annulla ed Elimina chiede conferma.
+test('82235e46e3e9: una nota si può modificare o eliminare', async () => {
+  const note = { entry: 'note', id: 'n0', body: 'Richiamare lunedì', teamAuthorId: 'google|118', occurredAt: '2026-11-10T10:00:00.000Z' };
+  const { mount, client, toasts } = await open(fakeClient({ timeline: entries([note]) }));
+  const rowButtons = () => mount.findAll('button').filter((node) => node.getAttribute('data-note-id') === 'n0');
+  const edit = () => rowButtons().find((node) => node.getAttribute('data-action') === 'note-edit');
+  const del = () => rowButtons().find((node) => node.getAttribute('data-action') === 'note-delete');
+  assert.ok(edit(), 'the note row offers Modifica');
+  assert.ok(del(), 'the note row offers Elimina');
+
+  edit().listeners.click[0]();
+  const editor = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteEditBody');
+  assert.ok(editor, 'Modifica opens an inline editor with the current text');
+  assert.equal(editor.value, 'Richiamare lunedì');
+  editor.value = 'Richiamare martedì';
+  editor.dispatch('keydown', key('Escape'));
+  await flush();
+  assert.equal(client.writes.length, 0, 'Esc annuls the edit without writing');
+  assert.ok(edit(), 'the row is back to Modifica/Elimina');
+
+  edit().listeners.click[0]();
+  const again = mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteEditBody');
+  again.value = 'Richiamare martedì';
+  again.dispatch('keydown', key('Enter'));
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.method, write.path, write.body]), [
+    ['PATCH', '/api/customer-hub/notes/n0', { resource: 'contact', id: 'c1', body: 'Richiamare martedì' }],
+  ]);
+  assert.deepEqual(toasts, ['Nota aggiornata']);
+
+  del().listeners.click[0]();
+  const confirm = () => rowButtons().find((node) => node.getAttribute('data-action') === 'note-delete-confirm');
+  assert.ok(confirm(), 'Elimina asks for confirmation inline, never a native dialog');
+  confirm().listeners.click[0]();
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.method, write.path]), [
+    ['PATCH', '/api/customer-hub/notes/n0'],
+    // DELETE reads no body in this server (writesBody is POST/PUT/PATCH):
+    // the subject rides the query, like the timeline page cursor.
+    ['DELETE', '/api/customer-hub/notes/n0?resource=contact&id=c1'],
+  ]);
+  assert.deepEqual(toasts, ['Nota aggiornata', 'Nota eliminata']);
+});
+
+test('82235e46e3e9: an eliminated note reads as eliminated, with no actions', async () => {
+  const gone = { entry: 'note', id: 'n0', body: null, teamAuthorId: 'google|118', occurredAt: '2026-11-10T10:00:00.000Z' };
+  const { mount } = await open(fakeClient({ timeline: entries([gone]) }));
+  assert.ok(mount.textContent.includes('Nota eliminata'));
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-note-id') === 'n0').length, 0);
+});
+
 // Review Muse #793 (P2): the roster arriving while a note is saving
 // repaints the scheda; the rebuilt field's Invio must not post it again.
 test('82235e46e3e9: a repaint while the note is saving never posts it twice', async () => {

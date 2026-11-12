@@ -31,7 +31,7 @@ const HEADERS = {
   'x-actor-id': 'nota-route',
 };
 
-function stubApp({ notes = [], withRecordNote = true } = {}) {
+function stubApp({ notes = [], withRecordNote = true, withEditNote = true, withDeleteNote = true } = {}) {
   return {
     services: {
       contacts: { get: async (id) => { if (id !== 'c1') throw new NotFoundError('contact', String(id)); return { id: 'c1' }; } },
@@ -44,6 +44,21 @@ function stubApp({ notes = [], withRecordNote = true } = {}) {
         const body = safeText(params?.body, 'body', bounds.noteBody);
         notes.push({ ...params, body });
         return { id: 'n1', kind: 'note', body };
+      },
+    } : {}),
+    ...(withEditNote ? {
+      async editSubjectNote(params) {
+        const body = safeText(params?.body, 'body', bounds.noteBody);
+        if (params?.noteId !== 'n1') throw new NotFoundError('subject note', String(params?.noteId ?? ''));
+        notes.push({ ...params, body });
+        return { id: 'n1', kind: 'note', body };
+      },
+    } : {}),
+    ...(withDeleteNote ? {
+      async deleteSubjectNote(params) {
+        if (params?.noteId !== 'n1') throw new NotFoundError('subject note', String(params?.noteId ?? ''));
+        notes.push({ ...params });
+        return { id: 'n1', kind: 'note', body: null };
       },
     } : {}),
   };
@@ -123,4 +138,88 @@ test('aaa36cd07cd4: a non contact/company resource refuses 400', async (t) => {
   });
   assert.equal(status, 400);
   assert.equal(notes.length, 0);
+});
+
+/**
+ * Voce 82235e46e3e9 (giro 2, VERIFIER_BACK on #793): the scheda's
+ * Modifica and Elimina reach the composed operations with the session
+ * actor; without them the honest 404 names the operation. A stub app
+ * keeps this instant: no sqlite, no provider.
+ */
+
+test('82235e46e3e9: PATCH edits the note and answers 200', async (t) => {
+  const notes = [];
+  const { status, payload } = await request(t, stubApp({ notes }), 'PATCH', '/api/customer-hub/notes/n1', {
+    resource: 'contact', id: 'c1', body: 'Richiamare martedì.',
+  });
+  assert.equal(status, 200);
+  assert.equal(payload?.body, 'Richiamare martedì.');
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].noteId, 'n1', 'the note id travels in the path, not the body');
+  assert.equal(notes[0].actor?.id, 'nota-route', 'authorship is server-derived, never a caller claim');
+});
+
+test('82235e46e3e9: PATCH without a body refuses 400 and writes nothing', async (t) => {
+  const notes = [];
+  const { status } = await request(t, stubApp({ notes }), 'PATCH', '/api/customer-hub/notes/n1', {
+    resource: 'contact', id: 'c1',
+  });
+  assert.equal(status, 400);
+  assert.equal(notes.length, 0);
+});
+
+test('82235e46e3e9: PATCH on a ghost note or ghost record refuses 404', async (t) => {
+  const notes = [];
+  const ghostNote = await request(t, stubApp({ notes }), 'PATCH', '/api/customer-hub/notes/n9', {
+    resource: 'contact', id: 'c1', body: 'x',
+  });
+  assert.equal(ghostNote.status, 404);
+  const ghostRecord = await request(t, stubApp({ notes }), 'PATCH', '/api/customer-hub/notes/n1', {
+    resource: 'contact', id: 'c-ghost', body: 'x',
+  });
+  assert.equal(ghostRecord.status, 404);
+  assert.equal(notes.length, 0);
+});
+
+test('82235e46e3e9: PATCH without the operation composed names it in the 404', async (t) => {
+  const { status, payload } = await request(t, stubApp({ withEditNote: false }), 'PATCH', '/api/customer-hub/notes/n1', {
+    resource: 'contact', id: 'c1', body: 'x',
+  });
+  assert.equal(status, 404);
+  assert.match(String(payload?.error?.message ?? ''), /subject note edit/);
+});
+
+test('82235e46e3e9: DELETE eliminates the note and answers 200', async (t) => {
+  const notes = [];
+  const { status, payload } = await request(
+    t, stubApp({ notes }), 'DELETE', '/api/customer-hub/notes/n1?resource=contact&id=c1',
+  );
+  assert.equal(status, 200);
+  assert.equal(payload?.body, null, 'the tombstone, not a removed row');
+  assert.equal(notes.length, 1);
+  assert.deepEqual([notes[0].resource, notes[0].id, notes[0].noteId], ['contact', 'c1', 'n1']);
+  assert.equal(notes[0].actor?.id, 'nota-route');
+});
+
+test('82235e46e3e9: DELETE without a subject or on a ghost refuses and writes nothing', async (t) => {
+  const notes = [];
+  const noSubject = await request(t, stubApp({ notes }), 'DELETE', '/api/customer-hub/notes/n1');
+  assert.equal(noSubject.status, 400);
+  const ghost = await request(
+    t, stubApp({ notes }), 'DELETE', '/api/customer-hub/notes/n1?resource=contact&id=c-ghost',
+  );
+  assert.equal(ghost.status, 404);
+  const ghostNote = await request(
+    t, stubApp({ notes }), 'DELETE', '/api/customer-hub/notes/n9?resource=contact&id=c1',
+  );
+  assert.equal(ghostNote.status, 404);
+  assert.equal(notes.length, 0);
+});
+
+test('82235e46e3e9: DELETE without the operation composed names it in the 404', async (t) => {
+  const { status, payload } = await request(
+    t, stubApp({ withDeleteNote: false }), 'DELETE', '/api/customer-hub/notes/n1?resource=contact&id=c1',
+  );
+  assert.equal(status, 404);
+  assert.match(String(payload?.error?.message ?? ''), /subject note delete/);
 });

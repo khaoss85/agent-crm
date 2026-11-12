@@ -882,6 +882,53 @@ export function buildRouter(app) {
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
 
+  // Voce 82235e46e3e9 (giro 2, VERIFIER_BACK on #793): the scheda's
+  // Modifica on a note. Same enumerated-adapter shape as the notes route:
+  // the kernel owns the path, gates records.write, and delegates to the
+  // composed operation — without the work package composed the honest 404
+  // names the missing operation; a note on a ghost record refuses with the
+  // record's own NotFoundError, never a dangling row. Only the text is
+  // editable (the writer stays who wrote it); a body without `body`, a
+  // ghost note id, a foreign subject or a lifecycle row refuses.
+  router.add('PATCH', '/api/customer-hub/notes/:noteId', async ({ params, body, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.editSubjectNote !== 'function') {
+      throw new NotFoundError('Operation', 'subject note edit');
+    }
+    const input = recordInput(body);
+    if (input.resource === 'contact') {
+      await app.services.contacts.get(String(input.id ?? ''));
+    } else if (input.resource === 'company') {
+      await app.services.companies.get(String(input.id ?? ''));
+    } else {
+      throw new ValidationError('a subject note needs resource contact or company', { field: 'resource' });
+    }
+    return await app.editSubjectNote({ ...stripServerControlledKeys(input), noteId: params.noteId, actor });
+  });
+
+  // Voce 82235e46e3e9 (giro 2, VERIFIER_BACK on #793): the scheda's
+  // Elimina on a note. The framework has no storage delete, so the route
+  // clears the text through the managed write and the row stays as the
+  // «Nota eliminata» tombstone. This server reads no body on DELETE
+  // (writesBody is POST/PUT/PATCH), so the subject rides the query —
+  // the ghost-record and resource checks are the same as the PATCH route.
+  router.add('DELETE', '/api/customer-hub/notes/:noteId', async ({ params, query, actor, identity, organizationId, headers }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.deleteSubjectNote !== 'function') {
+      throw new NotFoundError('Operation', 'subject note delete');
+    }
+    if (query.resource === 'contact') {
+      await app.services.contacts.get(String(query.id ?? ''));
+    } else if (query.resource === 'company') {
+      await app.services.companies.get(String(query.id ?? ''));
+    } else {
+      throw new ValidationError('a subject note needs resource contact or company', { field: 'resource' });
+    }
+    return await app.deleteSubjectNote({
+      resource: String(query.resource), id: String(query.id ?? ''), noteId: params.noteId, actor,
+    });
+  });
+
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial
   // it. Same enumerated-adapter shape as the notes route: the kernel owns
