@@ -759,3 +759,62 @@ test('review #795 P1: an inbox that could not be read never reads as «Niente in
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: null }),
     'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Non riesco a leggere i messaggi da rispondere.');
 });
+
+// Verification 12/11 on the pilot (bab63e32acdb NON PASSA): the
+// «Notifiche automatiche» rows read bare addresses.
+test('bab63e32acdb: a notification names its sender like Clienti — the brand of its domain, never the address', () => {
+  const notice = (id, handle, label = null) => ({
+    id: `m-${id}`, conversationId: id, direction: 'inbound', channel: 'email', body: 'Ricevuta',
+    occurredAt: '2026-10-19T06:00:00.000Z', ...host, subjectId: `s-${id}`, remoteHandle: handle, subjectLabel: label,
+  });
+  const inbox = buildInbox({
+    messages: [
+      notice('a', 'noreply@namecheap.com'),
+      notice('b', 'Ahrefs <noreply@ahrefs.com>'),
+      notice('c', 'comments-noreply@docs.google.com'),
+      notice('d', 'assistenza@paypal.it', 'PayPal'),
+    ],
+    now: NOW,
+  });
+  const names = Object.fromEntries(inbox.notifications.rows.map((row) => [row.id, row.name]));
+  assert.deepEqual(names, { a: 'Namecheap', b: 'Ahrefs', c: 'Google', d: 'PayPal' }, 'a stored name still wins');
+  assert.ok(inbox.notifications.rows.every((row) => !row.name.includes('@')), 'never an address');
+});
+
+// Verification 12/11 on the pilot: the names in «Da rispondere» came 10-16 s
+// late. The server view never holds the day back: the day paints, the
+// section and the recap wait in grey, then fill in place.
+test('bab63e32acdb: a slow «Da rispondere» view never holds the day back, and never says «Niente in sospeso» before its count', async () => {
+  const view = deferred();
+  const base = serverClient(repliesAnswer(24, { unread: 0 }));
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/customer-data/customers?')) await view.promise;
+      if (path === '/api/schema') return { domains: { work: {}, interactions: {}, 'customer-data': {} } };
+      if (path.startsWith('/api/modules/work-task/records')) return { items: [TASK] };
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const oggi = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void oggi.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') }).then(() => { rendered = true; });
+  await flush();
+  assert.equal(rendered, false, 'the view is still reading');
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'), 'the day painted without waiting for the view');
+  const section = () => mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section().querySelector('span[data-skeleton="true"]'), 'the section waits in grey');
+  assert.ok(mount.querySelector('[data-oggi-recap="true"]').querySelector('span[data-skeleton="true"]'), 'the recap waits in grey');
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', 'Nessun messaggio aspetta una risposta', '0 in attesa']) {
+    assert.ok(!mount.textContent.includes(claim), `no claim before the count: ${claim}`);
+  }
+  const advisor = mount.findAll('section')[0];
+  view.resolve();
+  await flush();
+  assert.equal(rendered, true);
+  assert.ok(section().textContent.includes('24 in attesa') && section().textContent.includes('Persona 0'), section().textContent);
+  assert.ok(mount.querySelector('[data-oggi-recap="true"]').textContent.includes('Ti aspettano anche 24 messaggi da rispondere'), mount.querySelector('[data-oggi-recap="true"]').textContent);
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+});

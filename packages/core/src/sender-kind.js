@@ -209,3 +209,68 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [] 
   }
   return false;
 }
+
+/**
+ * Two-level public suffixes where the registrable name is the third label
+ * from the right (`amazon.co.uk` → `amazon`). Deliberately small: a miss
+ * reads the suffix's own first label, never an address.
+ */
+export const SECOND_LEVEL_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.au', 'net.au', 'org.au', 'co.nz', 'co.jp', 'co.kr', 'co.in',
+  'co.za', 'com.br', 'com.mx', 'com.ar', 'com.tr', 'com.cn', 'com.sg', 'com.hk', 'gov.it',
+]);
+
+/**
+ * Personal mailbox providers: the domain names the provider, not the
+ * customer, so a label from it would call every Gmail sender «Gmail».
+ */
+export const PERSONAL_MAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'outlook.it', 'hotmail.com', 'hotmail.it', 'live.com', 'live.it',
+  'msn.com', 'yahoo.com', 'yahoo.it', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'libero.it',
+  'virgilio.it', 'tiscali.it', 'alice.it', 'tim.it', 'tin.it', 'email.it', 'fastwebnet.it', 'inwind.it',
+  'proton.me', 'protonmail.com', 'gmx.com', 'gmx.it', 'gmx.de', 'pec.it', 'legalmail.it',
+]);
+
+/**
+ * The registrable domain of an address, lowercase, technical subdomains
+ * dropped (`x@identity-reachout.bounces.google.com` → `google.com`). Null
+ * when the value is not an address with a dotted domain.
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function registrableDomain(email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const at = text.lastIndexOf('@');
+  if (at <= 0) return null;
+  const labels = text.slice(at + 1).split('.').filter((label) => label !== '');
+  if (labels.length < 2 || labels.some((label) => !/^[\p{L}\p{N}-]+$/u.test(label))) return null;
+  const lastTwo = labels.slice(-2).join('.');
+  if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(lastTwo)) return labels.slice(-3).join('.');
+  return lastTwo;
+}
+
+/**
+ * A readable label for an address with no usable name: the registrable
+ * domain's own name, capitalized (`…@bounces.google.com` → `Google`,
+ * `assistenza@paypal.it` → `Paypal`). A personal mailbox provider names
+ * the provider, not the customer: the local part reads as a name when it
+ * looks like one (`mario.rossi@gmail.com` → `Mario Rossi`), else null.
+ * Never the address itself.
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function labelFromEmail(email) {
+  const domain = registrableDomain(email);
+  if (domain === null) return null;
+  if (PERSONAL_MAIL_DOMAINS.has(domain)) {
+    // A machine mailbox at a personal provider (`noreply@gmail.com`) names
+    // nobody: never «Noreply» as a person (review #739 giro 3).
+    if (isTechnicalLocalPart(email)) return null;
+    const text = String(email).trim();
+    const local = text.slice(0, text.lastIndexOf('@')).split('+')[0] ?? '';
+    if (!/^\p{L}+(?:[._-]\p{L}+){0,3}$/u.test(local) || local.length > 40) return null;
+    return local.split(/[._-]+/).map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(' ');
+  }
+  const base = domain.split('.')[0];
+  return base.charAt(0).toUpperCase() + base.slice(1);
+}
