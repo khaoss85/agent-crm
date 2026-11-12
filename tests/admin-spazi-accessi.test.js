@@ -296,6 +296,23 @@ test('with the master AI switch off the screen says spenta and locks the five (b
   }
 });
 
+// backlog:cb1a32dc46b2: with the AI off only the AI's actions become
+// proposals — a person's Conferma books, a person's save saves. The screen
+// never says «ogni azione» any more.
+test('cb1a32dc46b2: with the AI off the screen says only the AI\'s actions become proposals', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /le azioni dell\u2019AI diventano proposte da approvare/);
+  assert.match(rendered, /quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(rendered, /ogni azione diventa una proposta/);
+  assert.match(SPAZI_AI_MASTER.line, /le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(SPAZI_AI_MASTER.line, /ogni azione/);
+});
+
 // backlog:1cfc68175ab7 (giro UX 11/11, punto 34): with the AI off the five
 // stayed green (aria-checked=true, disabled). They decide nothing until the
 // AI is back on: grey and «in pausa», never on.
