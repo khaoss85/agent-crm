@@ -5,7 +5,7 @@ import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, i
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -919,7 +919,7 @@ export function createCustomerCardView(deps) {
   function readDrafts(root) {
     if (!root || typeof root.querySelector !== 'function') return null;
     const drafts = {};
-    const note = root.querySelector('input[name="noteBody"]');
+    const note = root.querySelector('[name="noteBody"]');
     if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
     if (root.querySelector('button[data-action="save-details"]')) {
       // Review #612 round 3: only the fields the person changed travel to
@@ -2550,7 +2550,7 @@ export function createCustomerCardView(deps) {
     // the PATCH already in flight and send nothing.
     const flightKey = `PATCH contact ${contact.id}`;
     let busy = false;
-    save.addEventListener('click', () => uiBusy(save, 'Salvo…', async () => {
+    const doSave = () => uiBusy(save, 'Salvo…', async () => {
       if (busy || detailsInFlight.has(flightKey)) return;
       busy = true;
       detailsInFlight.add(flightKey);
@@ -2583,15 +2583,31 @@ export function createCustomerCardView(deps) {
         busy = false;
         save.disabled = false;
       }
-    }));
-    cancel.addEventListener('click', async () => {
+    });
+    const doCancel = async () => {
       if (typeof restore === 'function') {
         restore();
         return;
       }
       // Nothing was written: the scheda comes back from what it shows.
       await repaintShown(editCtx.resource, editCtx.id);
-    });
+    };
+    save.addEventListener('click', doSave);
+    cancel.addEventListener('click', doCancel);
+    // backlog:82235e46e3e9: Invio saves and Esc cancels, from any field. A
+    // save in flight is not cancelled under it: Esc waits for the answer.
+    for (const input of [firstInput, lastInput, emailInput]) {
+      input.addEventListener('keydown', (event) => {
+        if (event?.isComposing) return;
+        if (event?.key === 'Enter') {
+          event.preventDefault?.();
+          void doSave();
+        } else if (event?.key === 'Escape' && !busy) {
+          event.preventDefault?.();
+          void doCancel();
+        }
+      });
+    }
     void card;
   }
 
@@ -2751,7 +2767,7 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function timelineBox(box, timeline, noteCtx) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = []) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -2766,7 +2782,11 @@ export function createCustomerCardView(deps) {
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
     // there, one chip per writer («da dan», «dal team»).
     const notes = entries.filter((item) => item?.entry === 'note');
-    const noteAuthor = (item) => (isHumanHandle(item?.teamAuthorId) ? String(item.teamAuthorId).trim() : '');
+    // backlog:82235e46e3e9: a provider id the roster names is a writer too.
+    const noteAuthor = (item) => {
+      const id = typeof item?.teamAuthorId === 'string' ? item.teamAuthorId.trim() : '';
+      return id !== '' && (rosterName(id) !== null || isHumanHandle(id)) ? id : '';
+    };
     const authors = [...new Set(notes.map(noteAuthor))];
     // Review #612 round 3: a filter kept through a re-read may name a channel
     // (or a note writer) the fresh cronologia no longer has. It falls back to
@@ -2814,7 +2834,7 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${teamName(author) ?? 'un membro del team'}`;
+          const label = author === '' ? 'dal team' : `da ${writerName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
@@ -2858,13 +2878,33 @@ export function createCustomerCardView(deps) {
       const name = typeof attachment.name === 'string' && attachment.name !== '' ? attachment.name : 'Documento';
       return el('p', 'bo-scheda-allegato', `Documento: ${name}`);
     };
+    // backlog:82235e46e3e9: «Tutti» also tells the commercial story — each
+    // offer when it was created, and the stage moves of the offer the
+    // scheda shows (the same history «Storia stati» reads), signed by name.
+    const companyName = typeof profile?.identity?.company?.name === 'string' && profile.identity.company.name !== ''
+      ? profile.identity.company.name : null;
+    const offers = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
+      ? profile.opportunities.items : [];
+    const offerEvents = offers
+      .filter((row) => typeof row?.id === 'string' && Number.isFinite(Date.parse(String(row?.createdAt ?? ''))))
+      .map((row) => ({
+        entry: 'offer-created', id: `offerta:${row.id}`, occurredAt: row.createdAt,
+        title: typeof row.name === 'string' && row.name.trim() !== '' ? row.name.trim() : 'offerta',
+        who: writerName(row.createdBy ?? row.actorId) ?? null,
+      }));
+    let stageEvents = [];
+    const quotes = profile?.quotes?.available === true && Array.isArray(profile.quotes.items) ? profile.quotes.items : [];
+    const shownOffer = quotes[0] ?? offers[0] ?? null;
+    const historyId = historyTarget(shownOffer, quotes.length > 0);
+    const historyName = offers.find((row) => row?.id === historyId)?.name ?? null;
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
+      const events = channelFilter === 'all' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
       // a 5.600px page. «Mostra precedenti» opens the next page below.
-      const filtered = entries.filter((item) => {
+      const filtered = [...entries, ...events].filter((item) => {
         if (channelFilter === 'all') return true;
         if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
         return String(item?.channel ?? '') === channelFilter;
@@ -2879,8 +2919,15 @@ export function createCustomerCardView(deps) {
           list.appendChild(el('p', 'bo-muted', 'Scrivi una nota qui sotto: resta nella cronologia del cliente.'));
           return;
         }
-        list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio qui'));
-        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale oppure scrivi il primo messaggio qui sotto.'));
+        // backlog:82235e46e3e9: the field below writes a note, not a
+        // message: the empty state names the right tool for each.
+        if (channelFilter === 'all') {
+          list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
+          list.appendChild(el('p', 'bo-muted', 'Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
+          return;
+        }
+        list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio su questo canale'));
+        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivi al cliente con «Scrivi».'));
         return;
       }
       const todayKey = romeDayKey(Date.now());
@@ -2912,6 +2959,23 @@ export function createCustomerCardView(deps) {
           list.appendChild(row);
           continue;
         }
+        if (item?.entry === 'offer-created' || item?.entry === 'stage-moved') {
+          // backlog:82235e46e3e9: an offer or a stage move in the
+          // cronologia — a system line with its own mark, never a bubble.
+          const when = timeParts(item?.occurredAt);
+          const head = item.entry === 'offer-created' ? 'Offerta creata' : 'Cambio di stato';
+          const by = typeof item.who === 'string' && item.who !== '' ? ` · da ${item.who}` : '';
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-event');
+          const mark = el('span', 'bo-scheda-chan bo-tile-event', item.entry === 'offer-created' ? '€' : '→');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-event-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head', when ? `${head}${by} · ${when}` : `${head}${by}`));
+          paper.appendChild(el('p', 'bo-scheda-event-body', item.text ?? item.title ?? ''));
+          row.appendChild(paper);
+          list.appendChild(row);
+          continue;
+        }
         if (item?.entry === 'note') {
           // Voce 714433c2: the operator note. No channel badge and no sync
           // line — it is a statement about the customer, not a passage.
@@ -2920,8 +2984,10 @@ export function createCustomerCardView(deps) {
           // Dan 06/11: «ho aggiunto una nota ma non si vede» — the note
           // reads as a note at a glance: its own mark and a paper tone.
           const when = timeParts(item?.occurredAt);
-          const author = teamName(item?.teamAuthorId) !== null
-            ? `da ${teamName(item.teamAuthorId)}` : 'dal team';
+          // backlog:82235e46e3e9: signed with the writer's name from the
+          // team roster, never «dal team» for a known operator.
+          const writer = writerName(item?.teamAuthorId);
+          const author = writer !== null ? `da ${writer}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -2955,7 +3021,7 @@ export function createCustomerCardView(deps) {
         // The side already says the direction: the head names channel,
         // person and hour once (it used to repeat the channel three times).
         const who = isOutbound
-          ? (teamName(item?.teamAuthorId) ?? 'il team')
+          ? (writerName(item?.teamAuthorId) ?? 'il team')
           : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
             ? item.remoteHandle.trim()
             // Review #626 giro 2: a received passage without a handle still
@@ -3081,6 +3147,26 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
+    if (typeof historyId === 'string' && historyId !== '') {
+      void readHistory(historyId).then(({ items, people }) => {
+        const owner = offers.find((row) => row?.id === historyId)?.owner ?? null;
+        const rows = [];
+        for (const entry of Array.isArray(items) ? items : []) {
+          const move = stageMoveOf(entry);
+          if (move === null || !Number.isFinite(Date.parse(String(entry?.createdAt ?? '')))) continue;
+          const words = stageMoveLabels(pipelines, move);
+          const what = words === null ? 'stato cambiato' : `da ${words.from} a ${words.to}`;
+          rows.push({
+            entry: 'stage-moved', id: `stato:${String(entry?.id ?? rows.length)}`, occurredAt: entry.createdAt,
+            text: historyName ? `${historyName}: ${what}` : what,
+            who: auditActorLabel(entry, [owner, companyName], people),
+          });
+        }
+        if (rows.length === 0 || list.parentNode == null) return;
+        stageEvents = rows;
+        drawList();
+      }, () => {});
+    }
     // Voce 714433c2: "Aggiungi nota" — the operator statement that reads
     // back in the cronologia above. Plain text only, like the work views; it
     // emails nobody and notifies nobody. A refused save keeps the text with
@@ -3088,8 +3174,11 @@ export function createCustomerCardView(deps) {
     // row is the server's row, never an optimistic copy.
     if (noteCtx && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string') {
       const noteForm = el('div', 'bo-scheda-note-form');
-      const noteInput = el('input');
+      // backlog:82235e46e3e9: a note can hold more lines — Invio adds it,
+      // Maiusc+Invio goes to a new line, like a chat.
+      const noteInput = el('textarea', 'bo-scheda-note-input');
       noteInput.setAttribute('name', 'noteBody');
+      noteInput.setAttribute('rows', '1');
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
       if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
@@ -3097,10 +3186,16 @@ export function createCustomerCardView(deps) {
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
       const noteError = el('small', 'field-error', '');
-      let noteBusy = false;
-      noteButton.addEventListener('click', () => uiBusy(noteButton, 'Salvo…', async () => {
-        if (noteBusy) return;
-        noteBusy = true;
+      const addNote = () => uiBusy(noteButton, 'Salvo…', async () => {
+        // Review #793 (P2): the guard is the view's, not this form's — a
+        // repaint while the note is saving (the roster arriving) rebuilds
+        // the form, and its Invio must not post the same note again.
+        if (noteSaving) return;
+        if (String(noteInput.value ?? '').trim() === '') {
+          noteError.textContent = 'Scrivi la nota prima di aggiungerla.';
+          return;
+        }
+        noteSaving = true;
         noteError.textContent = '';
         try {
           const written = noteInput.value;
@@ -3114,20 +3209,26 @@ export function createCustomerCardView(deps) {
           const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
             (loaded) => withNote(loaded, saved, written));
           toast('Nota aggiunta');
-          mount.querySelector('input[name="noteBody"]')?.focus?.();
+          mount.querySelector('[name="noteBody"]')?.focus?.();
           await refreshed;
         } catch (error) {
           noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
           toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
         } finally {
-          noteBusy = false;
+          noteSaving = false;
         }
-      }));
+      });
+      noteButton.addEventListener('click', addNote);
+      noteInput.addEventListener('keydown', (event) => {
+        if (event?.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+        event.preventDefault?.();
+        void addNote();
+      });
       noteForm.appendChild(noteInput);
       noteForm.appendChild(noteButton);
       noteForm.appendChild(noteError);
       noteForm.appendChild(el('p', 'bo-muted',
-        'La nota resta qui, nella cronologia del cliente. Non viene inviata a nessuno.'));
+        'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
       box.appendChild(noteForm);
     }
   }
@@ -3493,23 +3594,7 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
-    const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
-    // backlog:2a214b66fe12: a repaint after a note or a Dettagli save reuses
-    // the history already read; a full re-read or a stage move reads it again.
-    let read = historyReads.get(targetId);
-    if (read === undefined) {
-      read = client.request('/api/spine/memberships').then(
-        (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
-        (error) => {
-          logHistoryFailure(error, 'scheda-stati-roster');
-          return [];
-        },
-      ).then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
-      historyReads.set(targetId, read);
-      // A failed read is not kept: the next paint asks again.
-      read.catch(() => { if (historyReads.get(targetId) === read) historyReads.delete(targetId); });
-    }
-    void read.then(
+    void readHistory(targetId).then(
       ({ items, people }) => fill(items, people),
       (error) => {
         // Review giro 1 (P2): the rejection cause reaches on-call, like the
@@ -3751,6 +3836,7 @@ export function createCustomerCardView(deps) {
     for (const part of Object.keys(partSeq)) partSeq[part] += 1;
     const startSeq = { ...partSeq };
     historyReads.clear();
+    rosterRead = null;
     if (key !== shownKey) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
@@ -3812,6 +3898,7 @@ export function createCustomerCardView(deps) {
    * progress, the open windows, the filters and the scroll stay.
    */
   function paint(key, resource, id, loaded) {
+    void readRoster();
     const {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
@@ -3851,6 +3938,71 @@ export function createCustomerCardView(deps) {
 
   /** The «Storia stati» reads by offer id, shared by the repaints of one read. @type {Map<string, Promise<any>>} */
   const historyReads = new Map();
+  /**
+   * The offer's stage history with the roster that names its actors —
+   * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
+   * a repaint after a note or a Dettagli save reuses it; a full re-read or a
+   * stage move reads it again).
+   * @param {string} targetId
+   */
+  function readHistory(targetId) {
+    let read = historyReads.get(targetId);
+    if (read === undefined) {
+      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
+      read = readRoster().then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
+      historyReads.set(targetId, read);
+      // A failed read is not kept: the next paint asks again.
+      read.catch(() => { if (historyReads.get(targetId) === read) historyReads.delete(targetId); });
+    }
+    return read;
+  }
+
+  /**
+   * backlog:82235e46e3e9: the space roster names who wrote a note or a
+   * message — a provider id (`google|…`) reads its person's name, never
+   * «dal team». Read once per full read of the scheda and shared with
+   * «Storia stati»; when it answers, the scheda repaints from what it shows.
+   * @type {Promise<Array<any>> | null}
+   */
+  let rosterRead = null;
+  /** A note being saved, view-wide (review #793): one POST per note. */
+  let noteSaving = false;
+  /** @type {Array<any> | null} */
+  let rosterPeople = null;
+  function readRoster() {
+    if (rosterRead === null) {
+      const read = client.request('/api/spine/memberships').then(
+        (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
+        (error) => {
+          logHistoryFailure(error, 'scheda-stati-roster');
+          if (rosterRead === read) rosterRead = null;
+          return [];
+        },
+      );
+      rosterRead = read;
+      void read.then((people) => {
+        if (rosterRead !== read || people.length === 0) return;
+        const first = rosterPeople === null;
+        rosterPeople = people;
+        // Names arrive after the first paint: paint once more, no read.
+        if (first && lastShown !== null && lastShown.key === shownKey) {
+          paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+        }
+      });
+    }
+    return rosterRead;
+  }
+  /** The roster name of a team subject, or null. @param {string} id */
+  function rosterName(id) {
+    // The same person lookup as «Storia stati» (subject or person key).
+    const person = rosterPeople === null ? null : personOf(id, rosterPeople);
+    return person !== null && typeof person.name === 'string' && person.name.trim() !== '' ? person.label : null;
+  }
+  /** Who wrote a note or a message: the roster name, else the readable handle, else null. @param {unknown} id */
+  function writerName(id) {
+    if (typeof id !== 'string' || id.trim() === '') return null;
+    return rosterName(id.trim()) ?? teamName(id);
+  }
 
   /** What the scheda on screen was built from (backlog:2a214b66fe12). */
   /** @type {{key: string, resource: string, id: string, loaded: any} | null} */
@@ -3956,7 +4108,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id });
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines);
     }
     if (callsError) {
       section(right, 'bo-scheda-ai', (box) => {
