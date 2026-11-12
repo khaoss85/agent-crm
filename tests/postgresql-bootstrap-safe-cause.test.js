@@ -32,7 +32,7 @@ test('a startup failure without a code still names its kind', () => {
 // The tests below drive each site with a scripted pool or verifier and fail
 // when that site stops carrying the redacted cause.
 
-const SECRET_MESSAGE = 'password authentication failed for user "pg-user" password=secret host=db.internal:5432';
+const SECRET_MESSAGE = 'password authentication failed for user "pg-user" password=hunter2 host=db.internal:5432';
 
 function codedDriverError(code, message = SECRET_MESSAGE) {
   return Object.assign(new Error(message), { code });
@@ -76,7 +76,7 @@ function assertRedactedCause(error, code) {
   assert.deepEqual({ ...error.cause }, { code, name: 'Error' });
   assert.ok(Object.isFrozen(error.cause), 'the cause stays frozen');
   const text = errorGraphText(error);
-  for (const needle of ['secret', 'db.internal', 'pg-user']) {
+  for (const needle of ['hunter2', 'db.internal', 'pg-user']) {
     assert.ok(!text.includes(needle), `nothing of the driver message leaks (${needle})`);
   }
 }
@@ -249,7 +249,7 @@ test('a data-pool failure ends the already-opened control pool', async () => {
       identityVerifier: createTestVerifier({ tenantId: 'acme' }),
       createPool: async (endpoint) => {
         if (endpoint.database === 'accordo_control') return controlPool;
-        throw codedDriverError('3D000', 'database "accordo" does not exist password=secret host=db.internal:5432');
+        throw codedDriverError('3D000', 'database "accordo" does not exist password=hunter2 host=db.internal:5432');
       },
     }),
     (error) => {
