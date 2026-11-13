@@ -922,6 +922,15 @@ export function createCustomerCardView(deps) {
   const wait = typeof deps.wait === 'function'
     ? deps.wait
     : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
+  // load backstop never sits among the screen's pauses above. Unref'd
+  // where the host allows it, so an idle process never waits on it.
+  const firstWaveWait = typeof deps.firstWaveWait === 'function'
+    ? deps.firstWaveWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -1226,9 +1235,12 @@ export function createCustomerCardView(deps) {
     const FIRST_WAVE_BUDGET_MS = 3000;
     let wave2go;
     const wave2gate = new Promise((resolve) => { wave2go = resolve; });
-    // The budget is a backstop only: wait() is injectable (deps.wait), so
-    // tests run this without real time.
-    void wait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
+    // The budget is a backstop only, on its own clock (deps.firstWaveWait,
+    // injectable so tests run it without real time). Never the shared
+    // deps.wait: that one is the screen's user-facing pauses (send
+    // read-back, the note Annulla window of #867), and a load backstop
+    // parked there showed up as a pending pause on every scheda.
+    void firstWaveWait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
     const firstTake = (part, settledRead, notComposedIsNull = true) => {
       take(part, settledRead, notComposedIsNull);
       wave2go();
