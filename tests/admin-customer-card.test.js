@@ -490,6 +490,41 @@ test('2c1c0e149cf9: with no upcoming booking the appointment card hides, the rec
   assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'the vista still reads as none booked');
 });
 
+// Voce 2c1c0e149cf9, review Codex #854 (P2): the timeline arrives
+// oldest-first, but the Messaggi preview keeps the five newest — never the
+// five oldest labelled as if the newer ones were «precedenti».
+test('2c1c0e149cf9: the recap Messaggi vista previews the five newest messages, not the five oldest', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      entries: {
+        available: true,
+        count: 7,
+        truncated: false,
+        items: [1, 2, 3, 4, 5, 6, 7].map((index) => ({
+          entry: 'message', id: `mx-${index}`, conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: `Messaggio numero ${index}`, teamAuthorId: null,
+          remoteHandle: '+39 333 1234567', errorCode: null,
+          occurredAt: `2026-10-20T0${index}:00:00.000Z`,
+        })),
+      },
+    },
+  }));
+  const messaggi = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'messaggi');
+  assert.ok(messaggi, 'the recap keeps its Messaggi vista');
+  messaggi.dispatch('click');
+  // The cronologia lists every message; the preview scope is the recap body.
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  const text = recap.textContent;
+  for (const index of [7, 6, 5, 4, 3]) {
+    assert.ok(text.includes(`Messaggio numero ${index}`), `the newest message ${index} is previewed`);
+  }
+  assert.ok(!text.includes('Messaggio numero 1'), 'the oldest message falls outside the preview');
+  assert.ok(!text.includes('Messaggio numero 2'), 'the second oldest message falls outside the preview');
+  assert.ok(text.includes('+ 2 messaggi precedenti'), 'the hidden two read as precedenti');
+});
+
 // backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
 // stays in the scheda's cronologia as one readable row, with its reason.
 test('a cancelled appointment reads in the cronologia as «Appuntamento annullato», with the reason', async () => {

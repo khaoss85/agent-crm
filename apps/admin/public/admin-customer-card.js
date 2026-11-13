@@ -4071,7 +4071,11 @@ export function createCustomerCardView(deps) {
       readError(box, timelineError, 'I messaggi non si sono potuti leggere. Riprova più tardi.');
       return;
     }
-    const items = messageItemsOf(timeline);
+    // Voce 2c1c0e149cf9, review Codex #854: the timeline arrives oldest-first,
+    // so the five-item preview takes the newest first — like the timeline
+    // projection (line ~3135) — never the five oldest.
+    const items = [...messageItemsOf(timeline)].sort(
+      (a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
     if (items.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'nessun messaggio registrato per questo cliente'));
       return;
