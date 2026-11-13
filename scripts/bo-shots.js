@@ -93,6 +93,8 @@ export function parseArgs(argv, options = {}) {
   const root = options.root ?? process.cwd();
   let out = null;
   let screen = null;
+  let period = null;
+  let theme = 'light';
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--out') {
@@ -110,19 +112,38 @@ export function parseArgs(argv, options = {}) {
       if (!SCREEN_NAMES.includes(screen)) {
         throw new Error(`bo:shots unknown screen "${screen}" (one of: ${SCREEN_NAMES.join(', ')})`);
       }
+    } else if (arg === '--period') {
+      // backlog:c0726d0f6d13: YYYY-MM the reporting demo answers to (the
+      // current UTC month when omitted).
+      period = argv[index + 1];
+      index += 1;
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period ?? '')) {
+        throw new Error('bo:shots --period needs YYYY-MM (for example --period 2026-10)');
+      }
+    } else if (arg === '--theme') {
+      // backlog:c0726d0f6d13: light (default) or dark (Chromium
+      // --force-dark-mode) for the design checks.
+      theme = argv[index + 1];
+      index += 1;
+      if (theme !== 'light' && theme !== 'dark') {
+        throw new Error('bo:shots --theme needs light or dark (for example --theme dark)');
+      }
     } else if (arg === '--help' || arg === '-h') {
-      return { help: true, out: null, screen: null };
+      return { help: true, out: null, screen: null, period: null, theme: 'light' };
     } else {
       throw new Error(`bo:shots unknown argument "${arg}" (see --help)`);
     }
   }
-  return { help: false, out: resolve(root, out ?? join('..', 'bo-shots')), screen };
+  return { help: false, out: resolve(root, out ?? join('..', 'bo-shots')), screen, period, theme };
 }
 
-export const USAGE = `usage: npm run bo:shots [--out <dir>] [--screen <nome>]
+export const USAGE = `usage: npm run bo:shots [--out <dir>] [--screen <nome>] [--period YYYY-MM] [--theme light|dark]
 
 Renders every /bo screen to PNG with demo data, at 1440x1800 and 390x1600.
 Output defaults outside the repo (<repo>/../bo-shots).
+--period YYYY-MM photographs that month in reporting (default: current UTC
+month); --theme dark renders with Chromium --force-dark-mode. Non-default
+period/theme are suffixed to the PNG names.
 
 screens: ${SCREEN_NAMES.join(', ')}`;
 
@@ -696,9 +717,9 @@ export const SCREENS = Object.freeze([
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
   // backlog:06d4b855fac4: the demo dashboard follows the requested period
-  // (the screen asks for the current UTC month, the same currentPeriod()
-  // the fixture builds the demo with), so the cards must read that month —
-  // never a hard-coded «ottobre 2026».
+  // (backlog:c0726d0f6d13: --period, else the current UTC month, the same
+  // currentPeriod() the fixture builds the demo with), so the cards must
+  // read that month — never a hard-coded «ottobre 2026».
   { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(currentPeriod())}`] },
   { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
@@ -888,7 +909,12 @@ export function checkShotSize(file, screenName, kind, viewport) {
 }
 
 /** @param {string} name */
-function fixtureScript(name) {
+/**
+ * @param {string} name
+ * @param {{ period?: string|null }} [options] YYYY-MM the reporting demo
+ * answers to (backlog:c0726d0f6d13); null reads the current UTC month
+ */
+function fixtureScript(name, options = {}) {
   switch (name) {
     case 'oggi': return `
 import { createOggiView, buildOggiLinks } from './admin-oggi.js';
@@ -1216,9 +1242,10 @@ document.getElementById('probe').textContent = JSON.stringify({
 document.title = 'agenti-ready';`;
     case 'reporting': {
       // backlog:06d4b855fac4: the whole demo answers the period the screen
-      // asks for (the current UTC month until --period lands): model, bundle
-      // rows, card labels and CSV name alike, never a fixed October.
-      const period = currentPeriod();
+      // asks for (backlog:c0726d0f6d13: --period, else the current UTC
+      // month): model, bundle rows, card labels and CSV name alike, never a
+      // fixed October.
+      const period = options.period ?? currentPeriod();
       const MODEL = JSON.stringify(reportingModelFor(period));
       const ROWS = JSON.stringify(reportingBundleRows(period));
       return `
@@ -1472,6 +1499,8 @@ const MIME = Object.freeze({
  * stays in the DOM but hidden, so it can never leak into a PNG.
  * @param {string} name
  * @param {string} publicDir
+ * @param {{ period?: string|null }} [options] forwarded to fixtureScript
+ * (backlog:c0726d0f6d13)
  */
 /**
  * The login probe writer. The static login page carries no `#probe` div, so
@@ -1492,7 +1521,7 @@ document.getElementById('probe').textContent = JSON.stringify({
 });
 </script>`;
 
-export function harnessHtml(name, publicDir) {
+export function harnessHtml(name, publicDir, options = {}) {
   if (name === 'login') {
     const markup = readFileSync(join(publicDir, 'login.html'), 'utf8');
     if (!markup.includes('</body>')) {
@@ -1519,7 +1548,7 @@ export function harnessHtml(name, publicDir) {
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
     + `<div id="bodiag" hidden></div>`
-    + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
+    + `<script type="module">${shellBoot(name)}${fixtureScript(name, options)}</script></body></html>`;
 }
 
 /**
@@ -2023,9 +2052,11 @@ export function assertProbe(name, probe) {
  * half-drawn page. A below-floor PNG is retaken exactly once and then fails
  * naming the screen; the floor itself never moves down.
  * (backlog:418b90704674).
- * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
+ * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string, theme?: string, tag?: string }} options
  */
-async function renderScreen({ binary, flags, port, screen, outDir }) {
+async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '' }) {
+  // backlog:c0726d0f6d13: dark renders with Chromium --force-dark-mode.
+  const themeFlags = theme === 'dark' ? ['--force-dark-mode'] : [];
   const page = screen.name === 'login'
     ? `http://127.0.0.1:${port}/login.html`
     : `http://127.0.0.1:${port}/shot-${screen.name}.html`;
@@ -2038,11 +2069,11 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
   }
   const shots = [];
   for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', PHONE]]) {
-    const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
+    const file = join(outDir, `${screen.name}${tag}-${viewport.width}x${viewport.height}.png`);
     // The proof run goes first (backlog:418b90704674): only a harness that
     // signalled its ready title gets photographed, never a half-drawn page.
     const dom = await runChromium(binary, [
-      '--headless', ...flags, '--dump-dom',
+      '--headless', ...flags, ...themeFlags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
       `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
       '--force-prefers-reduced-motion',
@@ -2092,6 +2123,7 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
     const take = () => runChromium(binary, [
       '--headless',
       ...flags,
+      ...themeFlags,
       `--screenshot=${file}`,
       `--window-size=${viewport.width},${viewport.height}`,
       `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
@@ -2146,10 +2178,17 @@ async function main() {
     return;
   }
   const wanted = args.screen ?? null;
-  const screens = SCREENS.filter((screen) => wanted === null || screen.name === wanted);
+  // backlog:c0726d0f6d13: the asked month names the painted cards; the tag
+  // keeps non-default runs from overwriting the default PNGs.
+  const screens = SCREENS
+    .filter((screen) => wanted === null || screen.name === wanted)
+    .map((screen) => (args.period !== null && screen.name === 'reporting'
+      ? { ...screen, expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(args.period)}`] }
+      : screen));
+  const tag = `${args.period !== null ? `-${args.period}` : ''}${args.theme === 'dark' ? '-dark' : ''}`;
   const outDir = args.out;
   mkdirSync(outDir, { recursive: true });
-  const server = await startServer(publicDir, (name) => harnessHtml(name, publicDir));
+  const server = await startServer(publicDir, (name) => harnessHtml(name, publicDir, { period: args.period }));
   const address = server.address();
   if (!address || typeof address !== 'object') {
     console.error('bo:shots: the fixture server did not listen on 127.0.0.1.');
@@ -2160,7 +2199,7 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir });
+      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir, theme: args.theme, tag });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

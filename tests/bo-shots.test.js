@@ -215,6 +215,29 @@ test('parseArgs refuses unknown screens and flags', () => {
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
 });
 
+test('parseArgs reads --period and --theme (backlog:c0726d0f6d13)', () => {
+  const defaults = parseArgs([], { root: '/repo' });
+  assert.equal(defaults.period, null);
+  assert.equal(defaults.theme, 'light');
+  const asked = parseArgs(['--screen', 'reporting', '--period', '2026-10', '--theme', 'dark'], { root: '/repo' });
+  assert.equal(asked.period, '2026-10');
+  assert.equal(asked.theme, 'dark');
+  assert.throws(() => parseArgs(['--period', '2026-13']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period', 'ottobre']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--theme', 'sepia']), /--theme needs light or dark/);
+  assert.throws(() => parseArgs(['--theme']), /--theme needs light or dark/);
+});
+
+test('the reporting harness photographs the asked month (backlog:c0726d0f6d13)', () => {
+  const page = harnessHtml('reporting', publicDir, { period: '2026-10' });
+  assert.ok(page.includes('"period":"2026-10"'), 'the harness model answers October');
+  assert.ok(page.includes('"periodLabel":"ottobre 2026"'), 'the harness labels October');
+  const other = harnessHtml('reporting', publicDir, { period: '2026-11' });
+  assert.ok(other.includes('"period":"2026-11"'), 'the harness model answers November');
+  assert.ok(other.includes('"periodLabel":"novembre 2026"'), 'the harness labels November');
+});
+
 test('below-floor shots are retaken once, never lowered (backlog:418b90704674)', () => {
   // One retry only: the first shot plus exactly one retake, then the run
   // fails naming the screen. The floors themselves never move down.
