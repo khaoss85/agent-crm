@@ -448,3 +448,25 @@ test('PROFILO 34f7fb85ad8b Modifica focuses Nome with the text selected, styled 
   assert.equal(input.__focused, true, 'the Nome field takes focus on open');
   assert.deepEqual(selected, ['profile-name'], 'the current name is selected, ready to be replaced');
 });
+
+// backlog:f7d2f7f362cf: at rest «Modifica» was a bordered button as wide as
+// the name, sitting between the name and the email like an empty field. It
+// now sits beside the name in one row, at its own text measure.
+test('backlog:f7d2f7f362cf Modifica sits beside the name at its own measure, never like a field', async () => {
+  const mount = await render({ member: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+    connections: { available: true, reason: null, items: [] } });
+  const edit = mount.findAll('button').find((node) => node.textContent === 'Modifica');
+  assert.ok(edit, 'Modifica is still a button');
+  assert.match(edit.getAttribute('class') ?? '', /(^|\s)bo-profilo-edit-open(\s|$)/, 'the button wears its own-measure class');
+  const row = edit.parentNode;
+  assert.match(row?.getAttribute?.('class') ?? '', /(^|\s)bo-profilo-name-row(\s|$)/, 'Modifica shares a row with the name');
+  const kids = row?.childNodes ?? [];
+  assert.equal(kids[0]?.textContent, 'Elena Rinaldi', 'the name comes first in the row');
+  assert.equal(kids[1], edit, 'Modifica sits beside the name, not between the name and the email');
+  const words = row?.parentNode;
+  assert.match(words?.getAttribute?.('class') ?? '', /(^|\s)bo-profilo-words(\s|$)/);
+  const order = (words?.childNodes ?? []).map((node) => node.getAttribute?.('class') ?? '');
+  const rowAt = order.findIndex((cls) => cls.split(/\s+/).includes('bo-profilo-name-row'));
+  const emailAt = order.findIndex((cls) => cls.split(/\s+/).includes('bo-profilo-meta'));
+  assert.ok(rowAt >= 0 && emailAt >= 0 && rowAt < emailAt, 'the name row stays above the email line');
+});
