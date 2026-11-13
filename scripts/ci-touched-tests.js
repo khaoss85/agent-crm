@@ -929,7 +929,8 @@ const DIGEST_RELEVANT_ADDED = /\.[cm]?js$|\.module\.json$/;
  * Add the characterization staleness suite(s) (`CHARACTERIZATION_SUITES`) on
  * top of a mapped or fallback selection when the diff touches a file their
  * baselines digest — or adds a digest-relevant source file under a directory
- * their baselines digest (a brand-new file is never a digest key yet).
+ * their baselines digest (a brand-new file is never a digest key yet) — or
+ * changes a baseline itself, which selects that baseline's own suite.
  *
  * - a diff touching no digested path (docs-only included) returns the
  *   selection unchanged — but only after the missing check below, so a PR
@@ -959,9 +960,15 @@ export function withCharacterizationTests(
     );
   }
   const matched = new Set();
+  // A changed baseline selects its own suite (backlog:e03475513020): the
+  // source-hash realignment PR touches only `*-baseline.json`, which no
+  // digest map records and no test imports, and that PR's gate is what
+  // proves the realignment moved no observed value.
+  const ownSuite = new Map(suites.map((suite) => [suite.baseline, suite.test]));
   for (const file of changedFiles) {
     const key = normalize(file).replace(/\\/g, '/');
     for (const suite of digestIndex.get(key) ?? []) matched.add(suite);
+    if (ownSuite.has(key)) matched.add(/** @type {string} */ (ownSuite.get(key)));
   }
   if (addedFiles.length > 0) {
     const ownedDirs = digestDirectorySuites(digestIndex);

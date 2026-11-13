@@ -3252,6 +3252,8 @@ export function diffDocuments(committed, fresh) {
       + (!moved.length && !dropped.length && !bodyMoved && sourceMoved
         ? `No fact moved and no conclusion changed: only sourceSha did, because an authority source was edited `
           + `(${String(committed?.sourceSha ?? 'none').slice(0, 12)} → ${String(fresh?.sourceSha ?? 'none').slice(0, 12)}). `
+          + 'Every CI gate treats this as advisory (`--drift-advisory`): a PR need not regenerate for it, and '
+          + '`main` realigns through the `chore(truth): realign main` PR. To realign it here anyway: '
         : '')
       + 'Run `npm run repo:truth` and commit the result.',
   }];

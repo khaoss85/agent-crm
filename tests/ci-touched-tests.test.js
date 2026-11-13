@@ -1180,6 +1180,25 @@ test('a diff on a single-suite file selects only that suite', () => {
   );
 });
 
+test('a changed baseline alone selects its own suite, and only that one (backlog:e03475513020)', () => {
+  // The source-hash realignment PR (`npm run characterize:realign-source`)
+  // touches nothing but `*-baseline.json`: no digest map records it and no
+  // test imports it, yet that PR's gate is what proves the realignment moved
+  // no observed value.
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['tests/characterization/commercial-baseline.json', 'tests/characterization/signature-baseline.json'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+    ],
+  );
+});
+
 test('a docs-only diff never selects the characterization tests', () => {
   assert.deepEqual(
     withCharacterizationTests(

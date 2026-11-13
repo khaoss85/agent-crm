@@ -246,10 +246,19 @@ test('a generated authority clock that cannot advance fails explicitly without w
 const fullHistory = String(spawnGit(['rev-parse', '--is-shallow-repository'], { cwd: repoRoot, encoding: 'utf8' }).stdout ?? '').trim() === 'false';
 
 test('the committed truth document is a fresh generation of its own authorities', async () => {
-  const report = await checkRepository({ rootDir: repoRoot });
+  // The same leniency every CI agreement gate applies (`--drift-advisory`,
+  // S70 and backlog:e03475513020): a moved or dropped fact still fails here,
+  // but a `sourceSha` moved by an edit to an authority source only warns. The
+  // strict form failed the full suite on `main` after every such merge — and
+  // the suite runs before the realign step that clears exactly that drift, so
+  // PRs regenerated the document by hand instead and conflicted on its lines.
+  const report = await checkRepository({ rootDir: repoRoot, driftAdvisory: true });
   const detail = report.problems.map((p) => `${p.code}: ${p.message}`).join('\n');
+  for (const warning of report.warnings ?? []) {
+    assert.equal(warning.advisory, true, `a non-advisory warning: ${warning.code}: ${warning.message}`);
+  }
   if (fullHistory) {
-    assert.deepEqual(report.problems, [], `repo:truth --check failed:\n${detail}`);
+    assert.deepEqual(report.problems, [], `repo:truth --check --drift-advisory failed:\n${detail}`);
     assert.equal(report.ok, true);
   } else {
     // A shallow clone cannot prove the measured commit, so the measurement facts
