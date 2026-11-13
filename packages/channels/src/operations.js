@@ -20,7 +20,7 @@ import { composerTimelineRefusal } from './composer-text.js';
 import { assertConnectionInput, assertSpaceId, boundedKey, channelSendIdempotencyKey } from './connection.js';
 import { fingerprintPayload } from './crypto.js';
 import { formatGoogleSyncLog, gmailThreadSubject, isGmailThreadId } from './gmail.js';
-import { advanceLetter, assertJobTransition, jobSendState, transitionInbox } from './transitions.js';
+import { advanceLetter, assertJobTransition, jobSendState, transitionInbox, withInboxWrite } from './transitions.js';
 
 /**
  * Channel operations (backlog:e5532d1c9146).
@@ -664,28 +664,41 @@ export function createChannelOperations(deps) {
       if (connection.status !== 'active') {
         return { duplicate: true, quarantined: true, eventId: already.id, effect: already.effect };
       }
-      const decision = decideStoredEffect(item);
-      const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
-      // Two redeliveries racing the same unprocessed row both read it as
-      // received: the winner moves it, the loser's transition then lands on
-      // the committed state and refuses CHANNEL_TRANSITION_INVALID. The loss
-      // is not a conflict — the same bytes already earned their effect — so
-      // the loser adopts the winner's row instead of 409ing (the same
-      // loser-adopts-winner contract as the insert races in this function).
-      let resumed;
-      try {
-        resumed = await transitionInbox(service, already.id, {
-          event: transition,
-          patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
-          actor,
-        });
-      } catch (error) {
-        if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
-        const winner = await service.get(already.id);
-        if (!winner || winner.processed !== true) throw error;
-        return { duplicate: true, eventId: winner.id, effect: winner.effect };
-      }
-      return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
+      // Two redeliveries racing the same unprocessed row both pre-read it
+      // as received: the chain below orders their moves per row, so the
+      // loser re-reads the winner's committed state and adopts it instead
+      // of writing a second resume. The loss is not a conflict — the same
+      // bytes already earned their effect — so the loser reports duplicate
+      // (the same loser-adopts-winner contract as the insert races in this
+      // function). A cross-process winner still surfaces through the
+      // CHANNEL_TRANSITION_INVALID catch, which adopts the same way.
+      return withInboxWrite(already.id, async () => {
+        const current = await service.get(already.id);
+        if (!current) {
+          throw new AppError('Channel inbox row vanished under its redelivery', {
+            code: 'CHANNEL_STORE_TRANSIENT', status: 503,
+          });
+        }
+        if (current.processed === true) {
+          return { duplicate: true, eventId: current.id, effect: current.effect };
+        }
+        const decision = decideStoredEffect(item);
+        const transition = decision.effect === 'applied' ? 'apply' : decision.effect === 'ignored' ? 'discard' : 'quarantine';
+        let resumed;
+        try {
+          resumed = await transitionInbox(service, current.id, {
+            event: transition,
+            patch: { effectReason: decision.effectReason === '' ? 'redelivery resumed the received row' : decision.effectReason },
+            actor,
+          });
+        } catch (error) {
+          if (!error || typeof error !== 'object' || /** @type {any} */ (error).code !== 'CHANNEL_TRANSITION_INVALID') throw error;
+          const winner = await service.get(current.id);
+          if (!winner || winner.processed !== true) throw error;
+          return { duplicate: true, eventId: winner.id, effect: winner.effect };
+        }
+        return { duplicate: false, resumed: true, eventId: resumed.id, effect: resumed.effect };
+      });
     }
 
     const baseRow = {
