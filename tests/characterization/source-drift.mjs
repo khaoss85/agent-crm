@@ -64,7 +64,7 @@ export function formatDriftAdvisory({ domain, drifted, regenerate }) {
     ...drifted.map((file) => `  drifted ${file}`),
     'No baseline regeneration is needed for this drift. When behaviour does change, '
     + `regenerate deliberately with \`${regenerate}\` and review the diff.`,
-    'The hashes realign on main afterwards through a normal PR and its gate, never a direct push.',
+    'The hashes realign on main afterwards with `npm run characterize:realign-source` in a normal PR and its gate, never a direct push.',
   ].join('\n');
 }
 

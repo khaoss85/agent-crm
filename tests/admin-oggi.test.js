@@ -946,7 +946,27 @@ test('no technical resource-id label reaches the Oggi screen', () => {
   });
   const text = mount.textContent;
   assert.ok(!text.includes('lead · lead-1'), 'no technical label on screen');
-  assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
+  // Backlog 1f846205b9a3: one fallback only — the agenda and the advisor
+  // read «un ospite da confermare», never «il cliente».
+  assert.ok(text.includes('un ospite da confermare'), 'the one fallback names the wait');
+  assert.ok(!text.includes('il cliente'), 'no second fallback on screen');
+});
+
+test('1f846205b9a3: a nameless appointment reads one fallback in every card', () => {
+  const nameless = {
+    id: 'appt-noname', status: 'booked', startsAt: '2026-10-19T08:00:00.000Z',
+    subjectResource: 'lead', subjectId: 'lead-9',
+  };
+  const agenda = buildTodayAgenda([nameless], OGGI_NOW);
+  assert.equal(agenda[0].title, 'un ospite da confermare', 'agenda reads the one fallback');
+  const { actions } = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW });
+  const prep = actions.find((action) => action?.kind === 'appointment-prep');
+  assert.ok(prep, 'the prep card exists');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare', 'prep reads the one fallback');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no second fallback on the prep card');
+  const brief = buildPreCallBrief({ appointment: nameless, now: OGGI_NOW });
+  assert.equal(brief.title, 'un ospite da confermare', 'brief reads the one fallback');
+  assert.ok(!brief.bullets.join(' ').includes('il cliente'), 'no second fallback on the brief card');
 });
 
 test('the greeting is the only h1 of the Oggi screen', () => {
@@ -1947,4 +1967,35 @@ test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 
   assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
   assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
   assert.equal(romeDayKeyShift('not a date', 1), null);
+});
+
+// backlog:8763c6f1a9b0 (verifica Mac 10/11 08:43Z su Presti): the agenda and
+// «Prima della prossima call» said Fio Neri while the advisor card said «un
+// ospite da confermare». One name rule now feeds all three: for every way a
+// name can arrive (profile, stored label, both, a placeholder, nothing) the
+// three places say the same name, and the neutral wait only when none exists.
+test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for the same appointment', () => {
+  const linked = { ...APPT_TODAY, subjectResource: 'contact', subjectId: 'fio' };
+  const cases = [
+    { label: 'profile only', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'stored label only', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: {}, want: 'Fio Neri' },
+    { label: 'profile wins over a stale label', appt: { ...linked, subjectLabel: 'Fio' }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'placeholder profile, real label', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: { 'contact:fio': 'Unknown' }, want: 'Fio Neri' },
+    { label: 'no name anywhere', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Unknown Unknown' }, want: null },
+  ];
+  for (const { label, appt, names, want } of cases) {
+    const [prep] = buildAdvisorActions({ tasks: [], appointments: [appt], now: OGGI_NOW, names }).actions;
+    const [row] = buildTodayAgenda([appt], OGGI_NOW, names);
+    const brief = buildPreCallBrief({ appointment: appt, now: OGGI_NOW, names });
+    if (want === null) {
+      assert.equal(prep.title, 'Prepara la call con un ospite da confermare', `${label}: the neutral wait only without a name`);
+      assert.equal(brief.title, 'un ospite da confermare', label);
+      continue;
+    }
+    assert.equal(row.title, want, `${label}: agenda`);
+    assert.equal(brief.title, want, `${label}: Prima della prossima call`);
+    assert.equal(prep.title, `Prepara la call con ${want}`, `${label}: advisor card`);
+    assert.ok(prep.why.includes(`con ${want}.`), `${label}: advisor motive`);
+    assert.ok(!`${prep.title} ${prep.why}`.includes('ospite da confermare'), `${label}: no stand-in beside a known name`);
+  }
 });

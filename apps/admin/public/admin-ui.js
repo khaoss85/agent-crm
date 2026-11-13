@@ -631,6 +631,8 @@ export function createToastController(doc, node, clock = {}) {
   let pointerHeld = false;
   let focusHeld = false;
   let deadline = 0;
+  /** The screen that raised the toast on show, when it says one (backlog:3d811389bb4c). */
+  let scope = null;
   const held = () => pointerHeld || focusHeld;
   const hide = () => {
     if (timer !== null) clearTimer(timer);
@@ -663,6 +665,7 @@ export function createToastController(doc, node, clock = {}) {
      * @param {{ action?: { label: string, run: () => void } | null, duration?: number }} [options]
      */
     show(message, error = false, options = {}) {
+      scope = typeof options?.scope === 'string' && options.scope !== '' ? options.scope : null;
       paintToast(doc, node, message, { error, action: options?.action ?? null, onDone: hide });
       node.classList.remove('hidden');
       const duration = Number.isFinite(options?.duration) ? Number(options.duration) : (options?.action ? 10000 : 3200);
@@ -670,6 +673,14 @@ export function createToastController(doc, node, clock = {}) {
       arm(duration);
     },
     hide,
+    /**
+     * Close the toast when it belongs to `owner` — a screen's own message
+     * («Spostata in … · Annulla») leaves with the screen. Any other toast stays.
+     * @param {string} owner
+     */
+    hideScope(owner) {
+      if (scope !== null && scope === owner && !node.classList.contains('hidden')) hide();
+    },
   };
 }
 

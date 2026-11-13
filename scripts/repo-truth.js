@@ -770,6 +770,13 @@ export function gitIn(cwd) {
 // ──────────────────────────────────────────────────────── reading authorities
 
 /**
+ * How many times the generated storage probe may read its own clock. A full
+ * probe reads it a few dozen times; code that waits for the clock to advance
+ * reads it without end and is refused here, by count rather than by time.
+ */
+export const GENERATED_PROBE_CLOCK_READ_BUDGET = 1000;
+
+/**
  * Read every authority.
  *
  * Returns a plain **bundle** of what the authorities say — no facts yet. The
@@ -1251,6 +1258,8 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
     // operation is driven; an alias/bracket/raw bypass therefore throws rather
     // than being hidden by a token scan.
     const generatedRoot = mkdtempSync(join(tmpdir(), 'accordo-truth-generated-'));
+    /** @type {any} */
+    let probeClock = null;
     try {
       // Give planning an isolated, empty module registry. The authority must
       // not read an un-fingerprinted project module tree merely to generate a
@@ -1302,10 +1311,24 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
       // The authority owns its clock so timestamp ordering is deterministic and
       // cannot turn into a wall-clock spin. The stalled variant exists only to
       // prove that a clock which cannot advance is refused with a stable code.
+      // Both variants count their reads and refuse past a fixed read budget:
+      // code that waited for the clock to move would read it without end, so
+      // the bound is the event (a read too many), never the machine's speed.
       const probeTimePath = join(generatedRoot, 'packages/core/src/time.js');
-      writeFileSync(probeTimePath, generatedProbeClock === 'stalled'
-        ? `export function nowIso() { return '2026-01-01T00:00:00.000Z'; }\n`
-        : `let tick = 0;\nexport function nowIso() { return new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++)).toISOString(); }\n`);
+      writeFileSync(probeTimePath, [
+        'let reads = 0;',
+        'let tick = 0;',
+        'export function probeClockReads() { return reads; }',
+        'export function nowIso() {',
+        '  reads += 1;',
+        `  if (reads > ${GENERATED_PROBE_CLOCK_READ_BUDGET}) throw new Error('generated probe clock read more than ${GENERATED_PROBE_CLOCK_READ_BUDGET} times: something waits on the clock instead of failing');`,
+        generatedProbeClock === 'stalled'
+          ? "  return '2026-01-01T00:00:00.000Z';"
+          : '  return new Date(Date.UTC(2026, 0, 1, 0, 0, 0, tick++)).toISOString();',
+        '}',
+        '',
+      ].join('\n'));
+      probeClock = await import(pathToFileURL(probeTimePath).href);
       const generatedPath = join(generatedRoot, ...serviceFile.path.split(/[\\/]/));
       mkdirSync(dirname(generatedPath), { recursive: true });
       writeFileSync(generatedPath, serviceFile.content);
@@ -1747,6 +1770,7 @@ export async function readAuthorities({ rootDir, generatedProbeClock = 'advancin
         managedRaw.close();
       };
     } finally {
+      bundle.generatedProbeClockReads = probeClock ? probeClock.probeClockReads() : null;
       rmSync(generatedRoot, { recursive: true, force: true });
     }
 
@@ -3252,6 +3276,8 @@ export function diffDocuments(committed, fresh) {
       + (!moved.length && !dropped.length && !bodyMoved && sourceMoved
         ? `No fact moved and no conclusion changed: only sourceSha did, because an authority source was edited `
           + `(${String(committed?.sourceSha ?? 'none').slice(0, 12)} → ${String(fresh?.sourceSha ?? 'none').slice(0, 12)}). `
+          + 'Every CI gate treats this as advisory (`--drift-advisory`): a PR need not regenerate for it, and '
+          + '`main` realigns through the `chore(truth): realign main` PR. To realign it here anyway: '
         : '')
       + 'Run `npm run repo:truth` and commit the result.',
   }];

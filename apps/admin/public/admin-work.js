@@ -155,7 +155,7 @@ export function createWorkView(deps) {
     const panel = el('section', 'panel panel-wide work-queue');
     const heading = el('div', 'panel-heading');
     const titleBox = el('div');
-    titleBox.appendChild(el('p', 'kicker', 'Work package'));
+    titleBox.appendChild(el('p', 'kicker', 'Pacchetto di lavoro'));
     titleBox.appendChild(el('h2', undefined, 'Tasks'));
     titleBox.appendChild(el('p', 'lede',
       'Follow-up work a person must do, and the record of what happened to it. '
@@ -246,7 +246,7 @@ export function createWorkView(deps) {
     panel.setAttribute('data-task', task.id);
     const heading = el('div', 'panel-heading');
     const titleBox = el('div');
-    titleBox.appendChild(el('p', 'kicker', 'Work task'));
+    titleBox.appendChild(el('p', 'kicker', 'Attività'));
     titleBox.appendChild(el('h2', undefined, task.title ?? '—'));
     heading.appendChild(titleBox);
     panel.appendChild(heading);

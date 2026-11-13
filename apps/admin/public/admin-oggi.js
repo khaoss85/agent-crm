@@ -34,7 +34,7 @@ import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberLabel, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
@@ -325,7 +325,7 @@ export function calendarEventOf(appointment) {
 
 /**
  * Label shown for the cited record: the stored snapshot label when present,
- * otherwise a generic Italian name — never a technical `resource · id`
+ * otherwise the one fallback of Oggi — never a technical `resource · id`
  * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
@@ -333,20 +333,34 @@ function subjectDisplayLabel(row, names = {}) {
   // The customer's readable name first (backlog:5083e7a77c26, production
   // 08/11: the brief read «il cliente · 10 nov alle 11:00» for Fio Neri —
   // the channel syncs store no subject label on the appointment): the
-  // profile name read for that subject, else the stored label, and «il
-  // cliente» only when no name exists at all.
-  const key = inboxSubjectKey(row);
-  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
-    ? readableName(nonEmptyText(names[key])) : null;
-  return fromProfile ?? readableName(nonEmptyText(row?.subjectLabel)) ?? 'il cliente';
+  // profile name read for that subject, else the stored label, and the one
+  // fallback (backlog:1f846205b9a3) only when no name exists at all.
+  return subjectName(row, names) ?? APPOINTMENT_GUEST_LABEL;
 }
 
 /**
- * The next call's guest name, or null when no name exists yet — never a
- * stand-in noun. The next-call card (verification 09/11, backlog
- * 1a3a0ba236c0) must not print «il cliente» before the name: with no
- * stored or profile name it waits for the name with a neutral
- * placeholder, never a presumed customer.
+ * The one name rule of Oggi (backlog:8763c6f1a9b0): the profile name read
+ * for the subject, else the stored label, null when neither is a name. The
+ * agenda, the advisor card and «Prima della prossima call» all read it, so
+ * the same appointment never says Fio Neri in one place and «un ospite da
+ * confermare» in another.
+ * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ * @returns {string | null}
+ */
+function subjectName(row, names = {}) {
+  const key = inboxSubjectKey(row);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(row?.subjectLabel));
+}
+
+/**
+ * The one fallback of Oggi (backlog:1f846205b9a3): with no stored or
+ * profile name the screen waits with this neutral placeholder — never a
+ * presumed customer. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name, and since
+ * this item the agenda and the advisor read the same words.
  */
 const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
 
@@ -355,10 +369,7 @@ const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
 function appointmentGuestName(appointment, names = {}) {
-  const key = inboxSubjectKey(appointment);
-  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
-    ? readableName(nonEmptyText(names[key])) : null;
-  return fromProfile ?? readableName(nonEmptyText(appointment?.subjectLabel));
+  return subjectName(appointment, names);
 }
 
 /**
@@ -660,14 +671,6 @@ export async function executeAdvisorAction(client, action, run) {
 // a gap renders as its own honest line.
 // ---------------------------------------------------------------------------
 
-/**
- * @param {number} count
- * @param {string} singular
- * @param {string} plural
- */
-function countNoun(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
 
 /**
  * One-sentence recap of the day, verbatim from the prototype: open chores
@@ -711,13 +714,13 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   if (tasks.length === 0) {
     if (unanswered > 0 || floor) {
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
-      return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+      return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
     if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
-    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : countNoun(today.length, 'appuntamento', 'appuntamenti');
-  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
+  const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
+  const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
   return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
@@ -1405,7 +1408,7 @@ export const APPOINTMENT_NAME_LIMIT = 10;
 /**
  * Customer names for the agenda of today and the next call
  * (backlog:5083e7a77c26): appointments synced from a calendar carry no
- * subject label, so the brief and the agenda read «il cliente». One
+ * subject label, so the brief and the agenda read the one fallback. One
  * read-only profile per subject (the same read the inbox uses), the next
  * call first, bounded, settled together; a refused or unknown profile
  * leaves the row on its stored label, never an error on Oggi.

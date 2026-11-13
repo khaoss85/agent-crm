@@ -1,6 +1,6 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
-import { resolveAdminBase } from './admin-base.js';
+import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
@@ -10,6 +10,14 @@ import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
 // absolute API path below is prefixed, so the shell works unchanged.
 const ADMIN_BASE = resolveAdminBase();
+// Every /bo in-page link: settle on the base path so links never reload
+// the shell (see canonicalShellPath in admin-base.js).
+try {
+  const settled = canonicalShellPath(window.location, document.querySelector('base')?.getAttribute('href'));
+  if (settled !== null) window.history.replaceState(window.history.state, '', settled);
+} catch {
+  // Best-effort: links still work, they only reload.
+}
 
 // Under a space mount (e.g. `/bo`) the home is the Oggi frame and the
 // framework demo is never rendered (backlog:7eee63a5). The standalone
@@ -524,6 +532,7 @@ import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { moduleScreenLabel } from './admin-labels.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -570,7 +579,9 @@ const pipelineBoard = createPipelineBoard({
   mount: mountGate.owned('pipeline'),
   client: moduleClient,
   submissions,
-  toast,
+  // backlog:3d811389bb4c: the Pipeline's messages are its own — they close
+  // when the person leaves the Pipeline (see the hashchange below).
+  toast: (message, error, options) => toast(message, error, { ...(options ?? {}), scope: 'pipeline' }),
   navigate: (hash) => { window.location.hash = hash; },
   // C3 `Crea con l'AI`: same assistant seam as Clienti and Reporting —
   // the voice opens the BO-F0-04 panel on the pipeline screen.
@@ -1096,8 +1107,11 @@ function shellScreenFor(target) {
     case 'list':
     case 'new':
     case 'detail':
+      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
+      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
+      // Italian, never the raw module key.
       return target.moduleName
-        ? { id: `module-${target.moduleName}`, label: target.moduleName }
+        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
         : { id: null, label: 'Modulo' };
     // Admin views outside the backoffice prototype: an honest crumb with no
     // sidebar highlight, never the previous screen left stale.
@@ -1521,6 +1535,10 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+// backlog:3d811389bb4c: a Pipeline message never follows the person to another page.
+window.addEventListener('hashchange', () => {
+  if (toaster !== null && !/^#\/pipelines?(\/|$)/.test(window.location.hash)) toaster.hideScope('pipeline');
+});
 populateNav();
 route();
 // backlog:49bd3657b0f8: after a release the tab still runs the old bundle

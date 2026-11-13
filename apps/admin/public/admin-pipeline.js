@@ -47,7 +47,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError, italianDay } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay, logWriteFailure, wakeWaitText } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
@@ -75,6 +75,17 @@ const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
 });
 
 /**
+ * Rome calendar day (YYYY-MM-DD) of a stored day or instant, null when
+ * absent/unparseable or an impossible day («2026-99-99», «2026-02-30»):
+ * the same day the screen prints with italianDay (review #761), never the
+ * UTC day. One rule with the sort key: it delegates to romeDayKey.
+ * @param {unknown} value
+ */
+function romeDayOf(value) {
+  return romeDayKey(value);
+}
+
+/**
  * Review #789: the sort key of a date column is the same Rome day the cell
  * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
  * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
@@ -85,7 +96,10 @@ export function romeDayKey(value) {
   const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
   const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
   if (Number.isNaN(time)) return null;
-  return ROME_DAY_KEY.format(new Date(time));
+  const day = ROME_DAY_KEY.format(new Date(time));
+  // A bare day must exist: V8 rolls «2026-02-30» over to 2 March, so the
+  // day must read back unchanged (review #761 P1: fail closed).
+  return bareDay && day !== value ? null : day;
 }
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
@@ -94,6 +108,21 @@ function dayOf(value) {
   const time = Date.parse(value);
   if (Number.isNaN(time)) return null;
   return new Date(time).toISOString().slice(0, 10);
+}
+
+/**
+ * BO-F6-10 C8: whether a record created at `createdAt` falls in the last
+ * `days` Rome calendar days: today and the `days - 1` days before it, on the
+ * same Rome day the Creata column shows. Fail closed on an unreadable day.
+ * @param {unknown} createdAt @param {number} days @param {Date} [now]
+ */
+export function createdWithin(createdAt, days, now = new Date()) {
+  const day = romeDayOf(createdAt);
+  const today = now instanceof Date && !Number.isNaN(now.getTime()) ? ROME_DAY_KEY.format(now) : null;
+  if (!days || day === null || today === null) return false;
+  const [year, month, date] = today.split('-').map(Number);
+  const cutoff = new Date(Date.UTC(year, month - 1, date - days + 1)).toISOString().slice(0, 10);
+  return day >= cutoff;
 }
 
 /**
@@ -145,12 +174,7 @@ function matchesFilters(record, filters) {
   // matches nothing rather than silently lifting the filter.
   if (filters.created) {
     const days = filters.created === '7d' ? 7 : filters.created === '30d' ? 30 : 0;
-    const day = dayOf(record.createdAt);
-    if (!days || !day) return false;
-    const now = new Date();
-    const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days))
-      .toISOString().slice(0, 10);
-    if (day < cutoff) return false;
+    if (!createdWithin(record.createdAt, days)) return false;
   }
   return true;
 }
@@ -171,6 +195,36 @@ const CREATED_OPTIONS = [
 export const MOVE_PENDING_MS = 15000;
 /** backlog:2f72000d4a4d: how long the «Annulla» toast stays at least (the shell pauses it under the pointer). */
 export const UNDO_TOAST_MS = 10000;
+/** backlog:3d811389bb4c: after this long a move still being written says so on its card. */
+export const MOVE_SLOW_MS = 3000;
+/** d3910a25dbc0: the pause before the single retry of a write that met another one. */
+export const MOVE_RETRY_MS = 250;
+const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
+/** backlog:fd0adcded1c3: the same signal for a board read past MOVE_SLOW_MS. */
+const LOAD_SLOW = 'Ancora un momento: il caricamento è lento.';
+
+/**
+ * 67a3116f4f65 (pilot #562): the place code of a move-stage receipt when the
+ * stage was saved but the place was not — 'refused' or 'unavailable' — else
+ * null. The pilot answers { saved: { …row, placement }, spaceId }, which
+ * the /bo write client unwraps to the row (unwrapBoWriteAnswer); both shapes
+ * are read. The core's own move-stage writes stage and place together and
+ * carries no such code.
+ * @param {unknown} answer
+ */
+export function placementNotSaved(answer) {
+  const record = answer !== null && typeof answer === 'object' ? /** @type {any} */ (answer) : {};
+  const row = record.saved !== null && typeof record.saved === 'object' ? record.saved : record;
+  const code = row?.placement;
+  return code === 'refused' || code === 'unavailable' ? code : null;
+}
+
+/** d3910a25dbc0: the server's «two writes met» answer (PostgreSQL 40001/40P01 → 409 CONFLICT, transient). */
+export function isTransientConflict(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  return record.code === 'CONFLICT' && (record.status === 409 || record.status === undefined)
+    && record.details !== null && typeof record.details === 'object' && record.details.transient === true;
+}
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -258,6 +312,14 @@ export function createPipelineBoard(deps) {
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
 
+  /** d3910a25dbc0: the short pause before the one retry of a met write (injectable for tests). */
+  const retryPause = typeof deps.retryWait === 'function'
+    ? () => deps.retryWait(MOVE_RETRY_MS)
+    : () => new Promise((resolve) => {
+      const timer = /** @type {any} */ (setTimeout(resolve, MOVE_RETRY_MS));
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+
   /** Guard against stale async responses overwriting a newer board. */
   let renderToken = 0;
 
@@ -329,33 +391,99 @@ export function createPipelineBoard(deps) {
    * or null when the card is not on the board (a filter hides it).
    * @param {string} id @param {string} fromStage @param {string} toStage
    */
-  function placeCardNow(id, fromStage, toStage) {
-    const card = cardNodes.get(id)?.card ?? null;
+  function placeCardNow(id, fromStage, toStage, placement = null) {
+    const card = cardElements.get(id) ?? null;
     const from = columnSummaries.get(fromStage);
     const to = columnSummaries.get(toStage);
-    const target = columnNodes.find((node) => node.getAttribute('data-stage') === toStage) ?? null;
+    const target = columnOfStage(toStage);
     if (!card || !card.parentNode || !from || !to || !target || typeof target.insertBefore !== 'function') return null;
     const record = from.records.find((candidate) => String(candidate.id) === id);
     if (!record) return null;
     const home = { parent: card.parentNode, next: card.nextSibling ?? null };
-    const anchor = slotAnchors.get(target) ?? null;
-    target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+    // 67a3116f4f65: the card lands right after `afterId`, or first.
+    const afterCard = placement?.afterId ? cardElements.get(placement.afterId) ?? null : null;
+    let reference;
+    if (afterCard && afterCard.parentNode === target) {
+      reference = afterCard.nextSibling ?? null;
+      if (reference === card) reference = card.nextSibling ?? null;
+    } else {
+      reference = cardsIn(target).find((node) => node !== card) ?? slotAnchors.get(target) ?? null;
+      if (reference && reference.parentNode !== target) reference = null;
+    }
+    target.insertBefore(card, reference);
     const at = from.records.indexOf(record);
     from.records.splice(at, 1);
-    to.records.unshift(record);
+    const afterIndex = placement?.afterId ? to.records.findIndex((candidate) => String(candidate.id) === placement.afterId) : -1;
+    to.records.splice(afterIndex + 1, 0, record);
     paintColumnSummary(fromStage);
-    paintColumnSummary(toStage);
+    if (toStage !== fromStage) paintColumnSummary(toStage);
+    syncEmptyLine(target);
+    syncEmptyLine(home.parent);
     return () => {
       if (typeof home.parent.insertBefore === 'function') {
-        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent && home.next !== card ? home.next : null);
       }
       const back = to.records.indexOf(record);
       if (back >= 0) to.records.splice(back, 1);
       from.records.splice(Math.min(at, from.records.length), 0, record);
       paintColumnSummary(fromStage);
-      paintColumnSummary(toStage);
+      if (toStage !== fromStage) paintColumnSummary(toStage);
+      syncEmptyLine(home.parent);
+      syncEmptyLine(target);
     };
   }
+
+  /**
+   * backlog:fd0adcded1c3: «Trascina qui un'offerta» only on a column with
+   * no card — gone the moment a card lands there (not after the save), back
+   * when its last card leaves.
+   */
+  function syncEmptyLine(column) {
+    if (!column || !column.childNodes || typeof column.getAttribute !== 'function' || column.getAttribute('data-stage') === null) return;
+    const line = [...column.childNodes].find((node) => typeof node.getAttribute === 'function' && node.getAttribute('data-empty-line') === 'true') ?? null;
+    if (cardsIn(column).length) {
+      if (line) line.setAttribute('class', 'empty hidden');
+      return;
+    }
+    if (line) {
+      line.setAttribute('class', 'empty');
+      return;
+    }
+    const fresh = emptyLine();
+    column.appendChild(fresh);
+    const anchor = slotAnchors.get(column);
+    if (!anchor || anchor.parentNode !== column) slotAnchors.set(column, fresh);
+  }
+  /** The line of a column with no card. */
+  function emptyLine() {
+    return el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta", attrs: { 'data-empty-line': 'true' } });
+  }
+
+  /** Record id → its card node, for every card on the board (open or closed). */
+  const cardElements = new Map();
+  /** The live column of a stage, or null. */
+  function columnOfStage(stageKey) {
+    return columnNodes.find((node) => node.getAttribute('data-stage') === stageKey) ?? null;
+  }
+  /** The cards of a column in screen order (never the slot, never the empty line). */
+  function cardsIn(column) {
+    const children = column?.childNodes ? [...column.childNodes] : [];
+    return children.filter((node) => typeof node.getAttribute === 'function'
+      && node.getAttribute('data-record') !== null
+      && String(node.getAttribute('class') ?? '').split(/\s+/).includes('pipeline-card'));
+  }
+  /** Where a card sits in its column: the card before it, or first. */
+  function placementOf(id) {
+    const card = cardElements.get(id) ?? null;
+    if (!card || !card.parentNode) return { afterId: null };
+    const cards = cardsIn(card.parentNode);
+    const at = cards.indexOf(card);
+    return { afterId: at > 0 ? String(cards[at - 1].getAttribute('data-record')) : null };
+  }
+  /** Whether this board stores a card's place in its column (the opportunity module). */
+  const positionsOf = (pipeline) => pipeline?.module === 'opportunity';
+  /** The last placement the slot showed: its column and the card it follows. */
+  let slotPlacement = null;
 
   /** Column → the node the slot sits before: the first card, or the empty line. */
   const slotAnchors = new Map();
@@ -367,15 +495,36 @@ export function createPipelineBoard(deps) {
     }
     return slot;
   }
-  /** Seat the placeholder at the top of `column`, as tall as the dragged card. */
-  function showSlot(column) {
+  /**
+   * Seat the placeholder where the card would land, as tall as the dragged
+   * card. 67a3116f4f65: between two cards, under the pointer — the first
+   * card whose middle is below it; with no measure (or no positions on this
+   * board) on top, like before. Remembers the card it follows for the drop.
+   */
+  function showSlot(column, clientY = null, positions = true) {
     const node = dropSlot();
     const height = drag && drag.height > 0 ? Math.round(drag.height) : 0;
     if (height > 0) node.setAttribute('style', `height: ${height}px`);
     else node.removeAttribute('style');
-    const anchor = slotAnchors.get(column) ?? null;
-    if (node.parentNode === column && (anchor === null ? true : node.nextSibling === anchor)) return;
-    column.insertBefore(node, anchor && anchor.parentNode === column ? anchor : null);
+    const cards = cardsIn(column).filter((card) => card.getAttribute('data-record') !== drag?.id);
+    let index = 0;
+    if (positions && Number.isFinite(clientY)) {
+      index = cards.length;
+      for (const [at, card] of cards.entries()) {
+        const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+        if (!box || !Number.isFinite(box.top) || !Number.isFinite(box.height)) { index = 0; break; }
+        if (clientY < box.top + box.height / 2) { index = at; break; }
+      }
+    }
+    const before = index < cards.length ? cards[index] : null;
+    const reference = before
+      ?? (cards.length ? cards[cards.length - 1].nextSibling ?? null : slotAnchors.get(column) ?? null);
+    slotPlacement = {
+      stage: column.getAttribute('data-stage'),
+      afterId: index > 0 ? String(cards[index - 1].getAttribute('data-record')) : null,
+    };
+    if (node.parentNode === column && node.nextSibling === reference) return;
+    column.insertBefore(node, reference && reference.parentNode === column ? reference : null);
   }
   /** Take the placeholder off the board (idempotent: drop and dragend both call it). */
   function hideSlot() {
@@ -388,6 +537,31 @@ export function createPipelineBoard(deps) {
     for (const child of [...mount.childNodes]) {
       if (child !== keep) mount.removeChild(child);
     }
+  }
+
+  /**
+   * backlog:3d811389bb4c: while the board loads, a skeleton of columns and
+   * cards — the shape of what is coming, like Trello — never a bare
+   * «Caricamento…». The words stay for a screen reader (role=status).
+   */
+  function showSkeleton() {
+    clear();
+    const panel = el(doc, 'section', {
+      class: 'panel panel-wide pipeline-board-panel pipeline-skeleton',
+      attrs: { 'aria-busy': 'true', 'data-skeleton': 'board' },
+    });
+    const status = el(doc, 'p', { class: 'sr-only', text: 'Caricamento…', attrs: { role: 'status' } });
+    panel.appendChild(status);
+    const board = el(doc, 'div', { class: 'pipeline-board', attrs: { 'aria-hidden': 'true' } });
+    for (const cards of [3, 2, 2, 1]) {
+      const column = el(doc, 'div', { class: 'pipeline-column pipeline-skeleton-column' });
+      column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-bar' }));
+      for (let index = 0; index < cards; index += 1) column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-card' }));
+      board.appendChild(column);
+    }
+    panel.appendChild(board);
+    mount.appendChild(panel);
+    return { panel, status };
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -427,44 +601,115 @@ export function createPipelineBoard(deps) {
 
   /**
    * Run one stage move for every entry point (review #774, P2): the lock,
-   * «Spostamento in corso…», the bounded «Non ancora confermato» + Riprova
-   * once MOVE_PENDING_MS goes by without an answer, the toast, and the quiet
-   * board re-read. A queued move (BO_CRM_PENDING) stays locked: only a board
-   * read (Riprova) releases it, never a second POST.
-   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+   * «Spostamento in corso…», a slow signal after MOVE_SLOW_MS, the bounded
+   * «Non ancora confermato» + Riprova once MOVE_PENDING_MS goes by, the toast,
+   * and the quiet board re-read. A queued move (BO_CRM_PENDING) stays locked:
+   * only a board read (Riprova) releases it, never a second POST.
+   *
+   * backlog:3d811389bb4c: the card is seated in its new column first (drop,
+   * Sposta, Cambia fase alike), and only then the toast speaks — the
+   * message never runs ahead of the card. backlog:fd0adcded1c3: while the
+   * write runs it says «Spostamento in …»; «Spostata in …» only after the
+   * server's yes. «Annulla» puts card and message back at once, whatever the
+   * write is still doing (see undoMove).
+   * @param {{ undo?: boolean, done?: string | null, seated?: boolean, quietToast?: boolean }} [options]
+   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, undone?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null, seated = false, quietToast = false, placement = null } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
+    const reorder = toStage === fromStage;
+    // Where the card was, for «Annulla» (67a3116f4f65): the card before it, or first.
+    const origin = placementOf(id);
+    // The card and its column numbers move first; `restore` brings both back.
+    let restore = seated ? null : placeCardNow(id, fromStage, toStage, placement);
     for (const view of moveViewsOf(id)) view.start();
-    // backlog:2f72000d4a4d: the toast comes at once, with the card already
-    // in its new place — not after the write (4 s on the pilot) — and keeps
-    // «Annulla» (backlog:7b2203e69826) for at least 10 s. Only between
-    // working stages: a won or lost offer never reopens (TERMINAL_STAGE).
     const working = (key) => {
       const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
       return type === 'open' || type === 'renewal';
     };
-    const undoable = undo && working(fromStage) && working(toStage);
+    // A reorder inside a column can always go back; a stage move only
+    // between working stages (a won or lost offer never reopens).
+    const undoable = undo && (reorder || (working(fromStage) && working(toStage)));
+    /** Set by «Annulla»: the card is already back; this move only finishes its write. */
+    const intent = { undone: false };
     /** @type {(outcome: any) => void} */
     let settle = () => {};
     const outcomeOf = new Promise((resolve) => { settle = resolve; });
-    toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
-      action: { label: 'Annulla', run: () => { void undoMove(pipeline, id, fromStage, toStage, outcomeOf); } },
-      duration: UNDO_TOAST_MS,
-    } : undefined);
+    /** The «Annulla» toast options — reused when a later toast replaces the first one. */
+    function undoOptions() {
+      return undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            intent.undone = true;
+            // Card, numbers and message go back together, now — on the
+            // board as it is (a re-read may have replaced the card node),
+            // to the very place the card left (67a3116f4f65).
+            restore = null;
+            placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+            void undoMove(pipeline, id, fromStage, toStage, outcomeOf, positionsOf(pipeline) ? origin : null, placement);
+          },
+        },
+        duration: UNDO_TOAST_MS,
+      } : undefined;
+    }
+    // backlog:fd0adcded1c3: while the write runs the toast only says what is
+    // happening — «Spostata in …» waits for the server's yes, so a failure
+    // never follows a message that said the opposite. «Annulla» is there
+    // from the first moment, as before.
+    if (!quietToast) {
+      const where = stageLabel(pipeline, toStage);
+      toast(reorder ? `Aggiornamento dell'ordine in ${where}…` : `Spostamento in ${where}…`, false, undoOptions());
+    }
     let settled = false;
+    void wait(MOVE_SLOW_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.slow?.();
+    });
     void wait(MOVE_PENDING_MS).then(() => {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
     });
     try {
-      await postMove(pipeline, id, fromStage, toStage, reason);
+      let answer;
+      try {
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      } catch (error) {
+        // d3910a25dbc0: two moves in one column met on the server
+        // (PostgreSQL SERIALIZABLE answers 409 CONFLICT, transient): one
+        // quiet retry, then the person hears it in plain words.
+        if (!isTransientConflict(error)) throw error;
+        await retryPause();
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      }
+      // 67a3116f4f65 (pilot #562): the stage is saved but the place is not —
+      // the receipt says so ('refused': the column changed in between;
+      // 'unavailable': this space cannot store places). Never a silent
+      // «saved»: after the re-read below the card sits on top, and we say so.
+      const unplaced = placement !== null ? placementNotSaved(answer) : null;
       settled = true;
       moveLocks.delete(id);
-      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      // An undone move does not repaint its landing: the reverse write is
+      // next, and the board re-reads after it.
+      if (!intent.undone) await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      // Review Muse #852 (P2): «Annulla» may land while that re-read is in
+      // flight — its repaint just put the card back on the landing column.
+      // The undo wins: card and numbers go back to the place they left,
+      // and only then does the reverse write follow (undoMove).
+      if (intent.undone) placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+      if (!intent.undone && !quietToast) {
+        const where = stageLabel(pipeline, toStage);
+        // The server said yes: now, and only now, «Spostata in …». «Annulla»
+        // stays: the write stands, so it can still go back.
+        if (unplaced === null) toast(done ?? (reorder ? `Ordine aggiornato in ${where}.` : `Spostata in ${where}.`), false, undoOptions());
+        else {
+          toast(unplaced === 'refused'
+            ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
+            : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
+        }
+      }
       settle({ moved: true });
-      return { moved: true };
+      return { moved: true, ...(intent.undone ? { undone: true } : {}) };
     } catch (error) {
       settled = true;
       if (isMovePending(error)) {
@@ -477,57 +722,85 @@ export function createPipelineBoard(deps) {
         const views = moveViewsOf(id);
         for (const view of views) view.unconfirmed();
         // A card no view shows (filtered out) still says where it stands.
-        if (!views.length) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+        if (!views.length && !intent.undone) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
         settle({ pending: true });
         return { pending: true };
       }
       moveLocks.delete(id);
       const message = moveFailureText(error);
+      if (error?.code === 'STALE_POSITION') {
+        // Review Muse #852 (P2): the column changed under this drop. On the
+        // pilot the stage write may already have landed before the place was
+        // refused (two writes, not one): never guess by putting the card
+        // back — the fresh board says where it is.
+        restore = null;
+        await renderBoard(pipeline.name, { quiet: true });
+      } else if (restore) {
+        restore();
+        restore = null;
+      }
       for (const view of moveViewsOf(id)) view.fail(message);
-      // The toast that said «Spostata» is replaced by the truth.
-      toast(message, true);
-      settle({ failed: true, message });
-      return { failed: true, message };
+      // The toast that said «Spostata» is replaced by the truth — unless the
+      // person already undid it: the card is where they wanted it.
+      if (!intent.undone) toast(message, true);
+      const waking = wakeWaitText(error) !== null;
+      settle({ failed: true, message, waking });
+      return { failed: true, message, waking };
     }
   }
 
   /**
-   * «Annulla» (review Muse #799, P2): the reverse move, never fire-and-forget.
-   * It waits for the first move to land (a click while it is still being
-   * written undoes it as soon as it lands), then every outcome says so — a
-   * failure, a queued undo or a busy card toasts even when no card shows it
-   * (a filter hides it).
+   * «Annulla» (review Muse #799, P2; backlog:3d811389bb4c): card, column
+   * numbers and «Riportata in …» are already back when this runs (runMove's
+   * action did it at the click). Here the server follows: once the first
+   * write lands, the reverse write runs; every outcome that disagrees with
+   * the screen says so and puts the card where the server has it.
    */
-  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
-    toast(`Riporto in ${stageLabel(pipeline, fromStage)}…`);
+  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf, origin = null, landed = null) {
+    toast(toStage === fromStage ? 'Ordine ripristinato.' : `Riportata in ${stageLabel(pipeline, fromStage)}.`);
     const first = await outcomeOf;
+    if (first?.failed) return; // the first move never landed: the card is right where it is
     if (first?.pending) {
       // Review Muse #809: a move the server still holds cannot be undone yet
-      // — never a silent drop of the undo: say so, the board re-read
-      // (Riprova) tells where the card is.
+      // — never a silent drop of the undo: say so; the card shows where the
+      // queued move will land, the board re-read (Riprova) tells the truth.
+      placeCardNow(id, fromStage, toStage, landed);
       toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
       return;
     }
-    if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
-    // backlog:07d29c0d1b06: the card and its column numbers go back together
-    // at once; a refused undo puts both where the server says they are.
-    const restore = placeCardNow(id, toStage, fromStage);
+    if (!first?.moved) return;
     const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
-      undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+      undo: false, seated: true, quietToast: true, placement: origin,
     });
-    if ((back.failed || back.busy) && restore) restore();
-    if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+    if (back.failed || back.busy) {
+      // The server kept the card where the first move put it: card and
+      // column numbers go back there together, and the toast says what
+      // happened in plain words (backlog:3d811389bb4c).
+      placeCardNow(id, fromStage, toStage, landed);
+      if (back.busy) {
+        toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+      } else {
+        const resta = `Non sono riuscito a riportarla in ${stageLabel(pipeline, fromStage)}: resta in ${stageLabel(pipeline, toStage)}.`;
+        toast(back.waking ? `${resta} Il servizio si sta avviando: riprova tra qualche secondo.` : resta, true);
+      }
+    }
     // Review Muse #809: a queued undo is announced whether or not its card is on screen.
     if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
-  async function postMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function postMove(pipeline, recordId, fromStage, toStage, reason, placement = null) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
+    // 67a3116f4f65: the place in the column rides the same write.
+    if (placement && positionsOf(pipeline)) {
+      if (placement.afterId) input.afterId = placement.afterId;
+      else input.first = true;
+    }
     const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
     try {
-      await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+      // The answer is the receipt: the pilot says there whether the place was saved.
+      return await client.request(path, { method: 'POST', body: JSON.stringify(input) });
     } catch (error) {
       // The failure log names the request (backlog:2f72000d4a4d) even when
       // the client did not stamp it.
@@ -552,8 +825,9 @@ export function createPipelineBoard(deps) {
    */
   async function handleDrop(pipeline, toStage, payload, column = null) {
     // The slot only previews: whatever happens next, it leaves the board.
-    const slotWasIn = slot && slot.parentNode === column ? column : null;
+    const shown = slot && slot.parentNode === column && slotPlacement?.stage === toStage ? slotPlacement : null;
     hideSlot();
+    slotPlacement = null;
     let parsed;
     try {
       parsed = JSON.parse(payload);
@@ -562,7 +836,14 @@ export function createPipelineBoard(deps) {
     }
     const recordId = typeof parsed?.id === 'string' ? parsed.id : null;
     const fromStage = typeof parsed?.fromStage === 'string' ? parsed.fromStage : null;
-    if (!recordId || !fromStage || toStage === fromStage) return;
+    if (!recordId || !fromStage) return;
+    const positions = positionsOf(pipeline);
+    // 67a3116f4f65: the place the slot showed (first, or after a card).
+    const placement = positions ? { afterId: shown?.afterId ?? null } : null;
+    if (toStage === fromStage) {
+      // A drop back where the card already is changes nothing: no write, no message.
+      if (!positions || placementOf(recordId).afterId === placement.afterId) return;
+    }
     const record = cached.records.find((candidate) => candidate.id === recordId);
     if (!record || record.pipelineStage !== fromStage) {
       toast('Questa card è cambiata nel frattempo — la pagina si aggiorna.', true);
@@ -571,8 +852,15 @@ export function createPipelineBoard(deps) {
     }
     const target = pipeline.stages.find((stage) => stage.key === toStage);
     if (!target) return;
-    if (stageNeedsConfirm(target)) {
-      const revealed = revealConfirm(pipeline, record, fromStage, toStage);
+    const source = pipeline.stages.find((stage) => stage.key === fromStage);
+    if (toStage !== fromStage && source && source.type !== 'open' && source.type !== 'renewal') {
+      // A refused drop says why instead of bouncing in silence.
+      toast(`Un'offerta chiusa non cambia più fase: resta in ${stageLabel(pipeline, fromStage)}.`, true);
+      return;
+    }
+    if (toStage !== fromStage && stageNeedsConfirm(target)) {
+      // Review Muse #852 (P2): the place the slot showed rides Conferma too.
+      const revealed = revealConfirm(pipeline, record, fromStage, toStage, placement);
       if (!revealed) {
         toast(target.type === 'lost'
           ? 'Per la perdita serve un motivo — apri prima la card.'
@@ -582,23 +870,9 @@ export function createPipelineBoard(deps) {
     }
     // Review #657: a drop rides the card's own move — the same lock,
     // «Spostamento in corso…» and pending «Non ancora confermato» + Riprova
-    // as Sposta, so a queued move never reads as a failure.
-    const controls = cardNodes.get(recordId);
-    if (controls && typeof controls.move === 'function') {
-      // backlog:07d29c0d1b06: card, count and totals move together now,
-      // and come back together on a failure (runMove's toast names it).
-      const restore = placeCardNow(recordId, fromStage, toStage);
-      const outcome = await controls.move(toStage);
-      if ((outcome?.failed || outcome?.busy) && restore) restore();
-      return;
-    }
-    try {
-      await postMove(pipeline, recordId, fromStage, toStage);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
-    } catch (error) {
-      toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
-    }
+    // as Sposta. runMove seats the card and its numbers where the slot was,
+    // then speaks (backlog:3d811389bb4c), and brings both back on a failure.
+    await runMove(pipeline, recordId, fromStage, toStage, undefined, { placement });
   }
 
   /**
@@ -617,7 +891,17 @@ export function createPipelineBoard(deps) {
     // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
     // the parent node itself — ask it whether it holds the panel.
     if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
-    if (!quiet || !mount.firstChild) showMessage('Caricamento…');
+    if (!quiet || !mount.firstChild) {
+      const skeleton = showSkeleton();
+      // backlog:fd0adcded1c3: a read still running after MOVE_SLOW_MS says
+      // so in words, like a slow move does on its card — never only the
+      // skeleton for seconds.
+      void wait(MOVE_SLOW_MS).then(() => {
+        if (token !== renderToken || !mount.contains(skeleton.panel)) return;
+        skeleton.status.textContent = LOAD_SLOW;
+        skeleton.status.setAttribute('class', 'pipeline-skeleton-slow');
+      });
+    }
     let pipeline;
     let records;
     let composed = [];
@@ -641,7 +925,8 @@ export function createPipelineBoard(deps) {
       // The board currently supports the core opportunity module's list
       // endpoint; a generated staged module would use its records route.
       const listPath = pipeline.module === 'opportunity'
-        ? `/api/opportunities?limit=${BOARD_LIMIT}`
+        // 67a3116f4f65: the board order — position, then newest first.
+        ? `/api/opportunities?limit=${BOARD_LIMIT}&order=board`
         : `/api/modules/${encodeURIComponent(pipeline.module)}/records?limit=${BOARD_LIMIT}`;
       records = (await client.request(listPath)).items ?? [];
       try {
@@ -688,6 +973,7 @@ export function createPipelineBoard(deps) {
     const { pipeline, pipelines, records } = cached;
     clear();
     cardNodes.clear();
+    cardElements.clear();
     columnNodes.length = 0;
     slotAnchors.clear();
     columnSummaries.clear();
@@ -790,9 +1076,61 @@ export function createPipelineBoard(deps) {
       else {
         if (!mount.contains(drawer.node)) mount.appendChild(drawer.node);
         if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
+        // The fresh board starts unscrolled: the open card's column (maybe
+        // a new one, after Cambia fase) comes out from under the panel again.
+        keepOpenColumnInView();
       }
     }
     return panel;
+  }
+
+  /** The board that holds room for the offer panel, if any. */
+  let roomBoard = null;
+  /** Space kept between the open card's column and the panel. */
+  const OFFER_ROOM_GAP = 16;
+  /**
+   * backlog:fd0adcded1c3 (seguito di 23f92c6a72ea): beside the board (above
+   * 700 px) the offer panel covered the open card's own column — at 1024
+   * Proposta, at 1280 Pagato — and the board could not scroll it out. Now
+   * the board keeps its column widths, gains room at its end as wide as the
+   * panel, and scrolls just enough to set the column left of the panel.
+   * The full-width sheet (≤700 px) covers the board by design: nothing here.
+   */
+  function keepOpenColumnInView() {
+    if (!drawer) return;
+    const card = cardElements.get(drawer.recordId) ?? null;
+    const column = card?.parentNode ?? null;
+    const board = column?.parentNode ?? null;
+    const measurable = (node) => node && typeof node.getBoundingClientRect === 'function';
+    if (!measurable(column) || !measurable(board) || !measurable(drawer.node)) return;
+    const sheet = drawer.node.getBoundingClientRect();
+    const frame = board.getBoundingClientRect();
+    if (![sheet.left, sheet.width, frame.left, frame.right].every(Number.isFinite) || sheet.width <= 0) return;
+    if (sheet.left <= frame.left + OFFER_ROOM_GAP) { freeOfferRoom(); return; }
+    const covered = frame.right - sheet.left + OFFER_ROOM_GAP;
+    if (covered > 0 && roomBoard !== board) {
+      freeOfferRoom();
+      const width = column.getBoundingClientRect().width;
+      if (Number.isFinite(width) && width > 0) {
+        board.setAttribute('style', `--pipeline-column-width: ${Math.round(width)}px; --pipeline-offer-room: ${Math.ceil(covered)}px`);
+        board.setAttribute('data-offer-room', 'true');
+        roomBoard = board;
+      }
+    }
+    const box = column.getBoundingClientRect();
+    if (![box.left, box.right].every(Number.isFinite)) return;
+    const limit = sheet.left - OFFER_ROOM_GAP;
+    let shift = 0;
+    if (box.right > limit) shift = Math.min(box.right - limit, box.left - frame.left);
+    else if (box.left < frame.left) shift = box.left - frame.left;
+    if (shift !== 0) board.scrollLeft = Math.max(0, Number(board.scrollLeft ?? 0) + shift);
+  }
+  /** Give the board back its own width once the panel closes. */
+  function freeOfferRoom() {
+    if (!roomBoard) return;
+    roomBoard.removeAttribute('data-offer-room');
+    roomBoard.removeAttribute('style');
+    roomBoard = null;
   }
 
   /**
@@ -1429,31 +1767,21 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
-  /**
-   * backlog:2f72000d4a4d: the shared /bo write-failure line — «[bo] scrittura
-   * fallita POST <percorso> · <stato> <codice>: messaggio» — the format of
-   * admin-core's reportFailure, which #808 exports as logWriteFailure. Until
-   * that lands on main the board writes the same line here; then this
-   * becomes a call to logWriteFailure.
-   */
-  function logMoveFailure(record, code, message) {
-    if (typeof console === 'undefined' || typeof console.error !== 'function') return;
-    const method = typeof record.method === 'string' ? record.method.toUpperCase() : 'POST';
-    const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
-    const status = typeof record.status === 'number' ? record.status : null;
-    const outcome = [status === null ? '' : String(status), code || 'UNKNOWN'].filter((part) => part !== '').join(' ');
-    const request = path !== null ? ` ${method} ${path}` : '';
-    console.error(`[bo] scrittura fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
-      { code: code || 'UNKNOWN', status, message, method, path });
-  }
-
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    logMoveFailure(record, code, message);
+    // The shared /bo write-failure line (admin-core, #808).
+    logWriteFailure(error);
+    // backlog:3d811389bb4c: a waking workspace (503 «Spazio di lavoro in
+    // avvio») is a wait, said in plain words — never «Riprova più tardi».
+    const wake = wakeWaitText(error);
+    if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
+    if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
+    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
+    if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
   }
@@ -1494,13 +1822,15 @@ export function createPipelineBoard(deps) {
     // can paint the dashed outline; the dragged card is attenuated the same way.
     columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
-      // Dan 11/11: the source column takes no drop — a reorder would not
-      // survive a reload (no stored position). Without preventDefault the
+      // Dan 11/11: without stored positions the source column takes no drop
+      // — a reorder would not survive a reload. Without preventDefault the
       // browser shows «not allowed» and a release there moves nothing.
-      if (drag && drag.fromStage === stage.key) return;
+      // 67a3116f4f65: on a board that stores positions the source column
+      // takes the drop too — a reorder now survives a reload.
+      if (drag && drag.fromStage === stage.key && !positionsOf(pipeline)) return;
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
-      if (drag) showSlot(column);
+      if (drag) showSlot(column, Number(event?.clientY), positionsOf(pipeline));
     });
     column.addEventListener('dragleave', (event) => {
       // Entering a child card still hovers this column: only a true exit
@@ -1519,7 +1849,7 @@ export function createPipelineBoard(deps) {
     column.__drop = (payload) => handleDrop(pipeline, stage.key, payload, column);
 
     if (!records.length) {
-      const empty = el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" });
+      const empty = emptyLine();
       column.appendChild(empty);
       slotAnchors.set(column, empty);
       return column;
@@ -1538,6 +1868,7 @@ export function createPipelineBoard(deps) {
       class: 'pipeline-card',
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
+    cardElements.set(String(record.id), card);
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
     // backlog:7b2203e69826: the customer the offer is for — the contact,
     // else the company — never «Senza azienda».
@@ -1556,7 +1887,7 @@ export function createPipelineBoard(deps) {
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
-    const closeDay = dayOf(record.expectedCloseDate);
+    const closeDay = italianDay(record.expectedCloseDate);
     if (closeDay) {
       card.appendChild(el(doc, 'p', { class: 'card-close', text: `chiusura ${closeDay}` }));
     }
@@ -1668,6 +1999,7 @@ export function createPipelineBoard(deps) {
         confirmError.setAttribute('class', 'field-error hidden');
         showStatus(MOVE_IN_FLIGHT, false);
       },
+      slow() { showStatus(MOVE_SLOW, false); },
       unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
       fail(message) {
         markCardBusy(false);
@@ -1686,14 +2018,14 @@ export function createPipelineBoard(deps) {
     /**
      * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
      */
-    const doPost = (toStage, reason) => runMove(pipeline, record.id, stage.key, toStage, reason);
+    const doPost = (toStage, reason, placement = null) => runMove(pipeline, record.id, stage.key, toStage, reason, { placement });
     const confirm = async () => {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
       const target = pipeline.stages.find((candidate) => candidate.key === pending.toStage);
       const answer = readStageConfirm(confirmPanel, target);
       if (!answer.ok) return;
-      await doPost(pending.toStage, answer.reason);
+      await doPost(pending.toStage, answer.reason, pending.placement ?? null);
     };
     const cancelConfirm = () => {
       pendingConfirm.delete(String(record.id));
@@ -1749,12 +2081,12 @@ export function createPipelineBoard(deps) {
    * @param {any} pipeline @param {Record<string, any>} record
    * @param {string} fromStage @param {string} toStage
    */
-  function revealConfirm(pipeline, record, fromStage, toStage) {
+  function revealConfirm(pipeline, record, fromStage, toStage, placement = null) {
     const controls = cardNodes.get(String(record.id));
     if (!controls) return false;
     const target = pipeline.stages.find((candidate) => candidate.key === toStage);
     if (!target) return false;
-    pendingConfirm.set(String(record.id), { fromStage, toStage });
+    pendingConfirm.set(String(record.id), { fromStage, toStage, placement });
     controls.select.value = toStage;
     showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
@@ -1843,6 +2175,7 @@ export function createPipelineBoard(deps) {
     };
     paintOfferDrawer(pipeline, record);
     mount.appendChild(node);
+    keepOpenColumnInView();
     if (typeof close.focus === 'function') close.focus();
     node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
   }
@@ -1854,6 +2187,7 @@ export function createPipelineBoard(deps) {
     drawer = null;
     detach();
     if (node.parentNode) node.parentNode.removeChild(node);
+    freeOfferRoom();
     if (!refocus) return;
     const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
     if (live && typeof live.focus === 'function') live.focus();
@@ -1976,6 +2310,7 @@ export function createPipelineBoard(deps) {
         say(status, MOVE_IN_FLIGHT);
         retry.setAttribute('class', 'small secondary hidden');
       },
+      slow() { say(status, MOVE_SLOW); },
       unconfirmed() {
         say(status, MOVE_UNCONFIRMED);
         retry.setAttribute('class', 'small secondary');

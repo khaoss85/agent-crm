@@ -20,6 +20,7 @@
 
 import test from 'node:test';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
+import { formatMinor } from '../packages/analytics/src/dashboard.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -31,8 +32,10 @@ import {
   BO_SCREENS,
   SCREENS,
   SHELL_SCREENS,
+  SHOT_MAX_ATTEMPTS,
   USAGE,
   assertProbe,
+  checkShotSize,
   chromiumFlags,
   chromiumRuns,
   findChromium,
@@ -40,6 +43,11 @@ import {
   parseArgs,
   readPngSize,
   readProbe,
+  reportingBundleRows,
+  reportingModelFor,
+  reportingMonthLabel,
+  reportingShiftMonth,
+  shotFloor,
 } from '../scripts/bo-shots.js';
 
 const root = join(fileURLToPath(import.meta.url), '..', '..');
@@ -205,6 +213,153 @@ test('parseArgs refuses unknown screens and flags', () => {
   assert.throws(() => parseArgs(['--screen']), /needs one of/);
   assert.throws(() => parseArgs(['--out']), /needs a directory/);
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
+});
+
+test('parseArgs reads --period and --theme (backlog:c0726d0f6d13)', () => {
+  const defaults = parseArgs([], { root: '/repo' });
+  assert.equal(defaults.period, null);
+  assert.equal(defaults.theme, 'light');
+  const asked = parseArgs(['--screen', 'reporting', '--period', '2026-10', '--theme', 'dark'], { root: '/repo' });
+  assert.equal(asked.period, '2026-10');
+  assert.equal(asked.theme, 'dark');
+  assert.throws(() => parseArgs(['--period', '2026-13']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period', 'ottobre']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--theme', 'sepia']), /--theme needs light or dark/);
+  assert.throws(() => parseArgs(['--theme']), /--theme needs light or dark/);
+});
+
+test('the reporting harness photographs the asked month (backlog:c0726d0f6d13)', () => {
+  const page = harnessHtml('reporting', publicDir, { period: '2026-10' });
+  assert.ok(page.includes('"period":"2026-10"'), 'the harness model answers October');
+  assert.ok(page.includes('"periodLabel":"ottobre 2026"'), 'the harness labels October');
+  const other = harnessHtml('reporting', publicDir, { period: '2026-11' });
+  assert.ok(other.includes('"period":"2026-11"'), 'the harness model answers November');
+  assert.ok(other.includes('"periodLabel":"novembre 2026"'), 'the harness labels November');
+});
+
+test('below-floor shots are retaken once, never lowered (backlog:418b90704674)', () => {
+  // One retry only: the first shot plus exactly one retake, then the run
+  // fails naming the screen. The floors themselves never move down.
+  assert.equal(SHOT_MAX_ATTEMPTS, 2, 'first shot plus exactly one retry');
+  assert.equal(shotFloor('desktop'), 20000, 'the desktop floor stays at 20000 bytes');
+  assert.equal(shotFloor('phone'), 10000, 'the phone floor stays at 10000 bytes');
+  assert.throws(() => shotFloor('tablet'), /no byte floor/, 'unknown viewports have no floor');
+});
+
+test('checkShotSize gates existence and dimensions, never the floor', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-size-'));
+  const header = Buffer.from('89504e470d0a1a0a', 'hex');
+  const length = Buffer.alloc(4);
+  const kind = Buffer.from('IHDR', 'ascii');
+  const dimensions = Buffer.alloc(8);
+  dimensions.writeUInt32BE(1440, 0);
+  dimensions.writeUInt32BE(1800, 4);
+  const file = join(dir, 'shot.png');
+  writeFileSync(file, Buffer.concat([header, length, kind, dimensions]));
+  const shot = checkShotSize(file, 'oggi', 'desktop', { width: 1440, height: 1800 });
+  assert.equal(shot.width, 1440);
+  assert.equal(shot.height, 1800);
+  // A wrong size is deterministic from --window-size, never a paint race:
+  // it throws at once and names the screen, without consuming the retake.
+  assert.throws(
+    () => checkShotSize(file, 'oggi', 'phone', { width: 390, height: 1600 }),
+    /oggi phone: the PNG is 1440x1800, expected 390x1600/,
+  );
+  assert.throws(
+    () => checkShotSize(join(dir, 'missing.png'), 'oggi', 'desktop', { width: 1440, height: 1800 }),
+    /oggi desktop: .* without writing the screenshot/,
+  );
+});
+
+test('the reporting demo follows the asked period (backlog:06d4b855fac4)', () => {
+  // Like the real server (formatMonth(query.period)): period, labels, the
+  // monthly window, the channel weeks and the CSV name follow the period
+  // the screen asks for, never a fixed October.
+  assert.equal(reportingMonthLabel('2026-10'), 'ottobre 2026');
+  assert.equal(reportingMonthLabel('2026-11'), 'novembre 2026');
+  assert.equal(reportingShiftMonth('2026-11', -1), '2026-10');
+  assert.equal(reportingShiftMonth('2026-01', -1), '2025-12');
+  const october = reportingModelFor('2026-10');
+  assert.equal(october.period, '2026-10');
+  assert.equal(october.periodLabel, 'ottobre 2026');
+  assert.ok(
+    october.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in ottobre 2026'),
+    'the won card names October',
+  );
+  assert.deepEqual(october.monthly.map((entry) => entry.month), ['2026-09', '2026-10']);
+  assert.equal(october.monthly.at(-1).label, 'ottobre 2026');
+  assert.equal(october.csv.filename, 'reporting-2026-10.csv');
+  assert.ok(october.csv.content.startsWith('reporting;2026-10;'), 'the CSV names October');
+  const november = reportingModelFor('2026-11');
+  assert.equal(november.period, '2026-11');
+  assert.equal(november.periodLabel, 'novembre 2026');
+  assert.ok(
+    november.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in novembre 2026'),
+    'the won card names November with November asked',
+  );
+  assert.deepEqual(november.monthly.map((entry) => entry.month), ['2026-10', '2026-11']);
+  assert.equal(november.csv.filename, 'reporting-2026-11.csv');
+  // The four Monday-start weeks opening the asked month (1 Nov 2026 is a
+  // Sunday, so the first week starts Mon 26 Oct), never the fixed October set.
+  assert.deepEqual(november.channels.weeks.map((week) => week.week), [
+    '2026-10-26',
+    '2026-11-02',
+    '2026-11-09',
+    '2026-11-16',
+  ]);
+  assert.deepEqual(october.channels.weeks.map((week) => week.week), [
+    '2026-09-28',
+    '2026-10-05',
+    '2026-10-12',
+    '2026-10-19',
+  ]);
+  // An invalid period falls back to the fixture's own month, never garbage.
+  assert.equal(reportingModelFor('nope').period, '2026-10');
+  // The bundle summary rows follow the same month as the cards.
+  assert.deepEqual(reportingBundleRows('2026-11'), [
+    { id: 'r1', metric: 'chiamate', period: '2026-11', value: 20, unit: 'call' },
+  ]);
+});
+
+test('the reporting demo uses one money scale with totals that add up (backlog:6e927ba9dd16)', () => {
+  // Cards, funnel, monthly, forecast, team and CSV all read minor cents on
+  // the same scale: open stages add up to the open-value KPI, won to the
+  // won-period KPI, the team splits both, and the forecast closes on won.
+  const model = reportingModelFor('2026-10');
+  const kpi = (id) => model.kpis.find((entry) => entry.id === id);
+  const openStages = model.funnel.filter((entry) => entry.stage !== 'won');
+  const openMinor = openStages.reduce((sum, entry) => sum + entry.minor, 0);
+  const openCount = openStages.reduce((sum, entry) => sum + entry.count, 0);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-value').display);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-count').sub);
+  assert.equal(openCount, Number(kpi('open-count').display));
+  const won = model.funnel.find((entry) => entry.stage === 'won');
+  assert.equal(formatMinor(won.minor, 'EUR'), kpi('won-period').display);
+  assert.equal(model.forecast.closedMinor, won.minor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openMinor, 0), openMinor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openCount, 0), openCount);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.wonMinor, 0), won.minor);
+  assert.equal(model.monthly.at(-1).wonMinor, won.minor);
+  const csvRows = model.csv.content.trim().split('\n').slice(1).map((line) => line.split(';'));
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[1]), 0), openCount);
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[2]), 0), openMinor);
+});
+
+test('the reporting harness answers the current period end to end', async () => {
+  // The fixture the page serves is built for the same currentPeriod() the
+  // screen asks for, so the painted month and the card labels coincide.
+  const { currentPeriod } = await import('../apps/admin/public/admin-reporting.js');
+  const asked = currentPeriod();
+  const page = harnessHtml('reporting', publicDir);
+  assert.ok(
+    page.includes(`"period":"${asked}"`),
+    `the harness model answers the asked period (${asked})`,
+  );
+  assert.ok(
+    page.includes(`"periodLabel":"${reportingMonthLabel(asked)}"`),
+    'the harness model labels the asked month',
+  );
 });
 
 test('readPngSize reads dimensions and refuses non-PNG output', () => {

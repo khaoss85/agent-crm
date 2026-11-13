@@ -757,7 +757,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
 
   const post = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
-  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery', first: true }); // 67a3116f4f65: a drop carries its place in the column
   assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 
@@ -1318,8 +1318,8 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   const closeOf = (id) => mount.findAll('div')
     .find((n) => n.getAttribute('data-record') === id)
     .findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-close');
-  assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
-  assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
+  assert.equal(closeOf('a')?.textContent, 'chiusura 20 nov 2026', 'C13: close line follows `chiusura <data>`');
+  assert.equal(closeOf('b')?.textContent, 'chiusura 1 dic 2026', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
 });
 
