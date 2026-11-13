@@ -384,6 +384,9 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
 .bo-offer .offer-quote:first-of-type { border-top: 0; }
+/* Review Muse #871: the place of the price books and of each quote while they read. */
+.bo-offer .offer-quote-create-wait { padding: 4px 0 8px; }
+.bo-offer .offer-quote[data-loading="true"] > * + *, .bo-offer .offer-quote-create-wait > * + * { margin-top: 6px; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }

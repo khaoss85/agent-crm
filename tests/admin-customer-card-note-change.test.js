@@ -341,23 +341,53 @@ test('cb348c9fcaeb: opening another customer sends a waiting withdrawal at once'
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
 });
 
-// backlog:947260f9f036: leaving the scheda and coming back to the same
-// customer is a new opening (the skeleton at once): like opening another
-// customer, a waiting withdrawal leaves at once and its «Annulla» toast
-// leaves with it — never an Annulla that no longer works.
-test('947260f9f036: back on the same customer after another screen, a waiting withdrawal is sent and its Annulla leaves', async () => {
+// backlog:947260f9f036 (review Muse #871 giro 1): leaving the scheda and
+// coming back to the same customer (scheda → offerta → «← cliente») paints
+// the skeleton at once, but a note in its «Annulla» window stays waiting:
+// Annulla keeps working until the window ends. Only another customer sends
+// it at once (#867), and then the toast with its Annulla leaves.
+test('947260f9f036: back on the same customer after another screen, a waiting withdrawal keeps its Annulla', async () => {
+  const { mount, view, client, toasts, timer, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing is sent on the way back');
+  assert.deepEqual(hidden, [], 'the Annulla toast stays');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays hidden while the window is open');
+  toasts[0].options.action.run();
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'Annulla still brings it back');
+  timer.endAll();
+  await flush();
+  assert.equal(client.writes.length, 0, 'and nothing is ever sent');
+});
+
+test('947260f9f036: back on the same customer, a withdrawal not undone leaves when its window ends', async () => {
+  const { mount, view, client, timer } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  timer.endAll();
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined);
+});
+
+test('947260f9f036: opening another customer sends the waiting withdrawal and takes its Annulla away', async () => {
   const { mount, view, client, toasts, hidden } = await open();
   await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
   await flush();
   const scope = toasts[0].options.scope;
   assert.ok(typeof scope === 'string' && scope !== '', 'the Annulla toast has an owner the shell can hide');
-  assert.deepEqual(hidden, [], 'nothing hidden while the window is open');
   view.invalidate();
-  await view.renderCard('contact', 'c1');
+  await view.renderCard('contact', 'c2');
   await flush();
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
   assert.deepEqual(hidden, [scope], 'the Annulla toast leaves when the withdrawal is sent');
-  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays gone');
 });
 
 test('947260f9f036: the shell hides the scheda toast by its owner', () => {

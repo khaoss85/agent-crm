@@ -328,17 +328,27 @@ export function createOfferDetail(deps) {
 
   /**
    * The quotes of an offer and, as soon as they land, every quote's lines
-   * and versions (backlog:94eabbd4762f): the cards are built while the rest
-   * of the page still reads.
+   * and versions (backlog:94eabbd4762f): each card is read while the rest
+   * of the page still reads, and fills its own place when ready — never
+   * holding the page (review Muse #871).
    * @param {string} id @param {number} token
    */
   function readQuotes(id, token) {
-    const read = fetchLinked('quote', 'opportunityId', id).then(async (quotes) => ({
+    const read = fetchLinked('quote', 'opportunityId', id).then((quotes) => ({
       quotes,
-      cards: await Promise.all(quotes.rows.map((quote) => paintQuote(quote, token))),
+      cards: quotes.rows.map((quote) => paintQuote(quote, token)),
     }));
     read.catch(() => {});
     return read;
+  }
+
+  /** A place still filling: grey bars, busy for assistive tech. @param {string} cls */
+  function waitingPlace(cls) {
+    const node = el('div', cls);
+    node.setAttribute('aria-busy', 'true');
+    node.setAttribute('data-loading', 'true');
+    for (const width of ['64%', '42%']) node.appendChild(uiSkeleton(doc, { width, block: true }));
+    return node;
   }
 
   /**
@@ -374,13 +384,13 @@ export function createOfferDetail(deps) {
     let schema;
     let record;
     let quotes;
-    /** @type {Array<any>} */
+    /** @type {Array<Promise<any>>} */
     let quoteCards = [];
     let auditItems;
     let auditUnreadable = false;
     let auditTruncated = false;
-    /** @type {{books: Array<any> | null, error: any}} */
-    let bookAnswer = { books: null, error: null };
+    /** @type {Promise<{books: Array<any> | null, error: any}>} */
+    let bookRead = Promise.resolve({ books: null, error: null });
     /** @type {Array<any>} */
     let people = [];
     try {
@@ -407,11 +417,13 @@ export function createOfferDetail(deps) {
       const booksRead = readBooks(schemaRead);
       [schema, record] = await Promise.all([schemaRead, offerRead]);
       const sameId = String(record?.id ?? '') === offerId;
-      const [quotesAnswer, audit, team, books] = await Promise.all([
+      // Review Muse #871 (P1): the page paints with the offer, its quotes
+      // list, the history and the team; the price books and each quote's
+      // lines and versions fill their own place afterwards.
+      const [quotesAnswer, audit, team] = await Promise.all([
         sameId ? quotesFirst : readQuotes(String(record.id), token),
         sameId ? auditFirst : readAudit(String(record.id)),
         teamRead,
-        booksRead,
       ]);
       quotes = quotesAnswer.quotes;
       quoteCards = quotesAnswer.cards;
@@ -419,7 +431,7 @@ export function createOfferDetail(deps) {
       auditUnreadable = audit.unreadable;
       auditTruncated = auditItems.length >= AUDIT_LIMIT;
       people = team;
-      bookAnswer = books;
+      bookRead = booksRead;
     } catch (error) {
       if (token !== renderToken) return;
       clear();
@@ -509,16 +521,38 @@ export function createOfferDetail(deps) {
     const quotesHead = el('div', 'offer-quotes-head');
     quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     quotesPanel.appendChild(quotesHead);
-    if (quotes.rows.length === 0) {
-      quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
-    }
-    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token, latestQuote(quotes.rows), bookAnswer);
+    // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
+    // arrive together; while the price books read, their place is grey.
+    const emptyLine = quotes.rows.length === 0 ? el('p', 'empty', 'Ancora nessun preventivo per questa offerta.') : null;
+    const commercial = Boolean(commercialBlock(schema));
+    const createPlace = commercial ? waitingPlace('offer-quote-create-wait') : null;
+    if (createPlace !== null) quotesPanel.appendChild(createPlace);
+    else if (emptyLine !== null) quotesPanel.appendChild(emptyLine);
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
-    // backlog:d8175e1c3495: every quote read its lines and versions at the
-    // same time; the cards still paint in the order the quotes were read.
-    for (const card of quoteCards) quotesPanel.appendChild(card);
+    // backlog:d8175e1c3495: every quote reads its lines and versions at the
+    // same time; each card fills its own place, in the order the quotes
+    // were read.
+    const fills = quoteCards.map((cardRead) => {
+      const place = waitingPlace('offer-quote');
+      quotesPanel.appendChild(place);
+      return cardRead.then((card) => {
+        if (token !== renderToken || place.parentNode == null) return;
+        place.parentNode.insertBefore(card, place);
+        place.parentNode.removeChild(place);
+      });
+    });
+    if (createPlace !== null) {
+      fills.push(bookRead.then((answer) => {
+        if (token !== renderToken || createPlace.parentNode == null) return;
+        const tail = el('div', 'offer-quote-create-fill');
+        if (emptyLine !== null) tail.appendChild(emptyLine);
+        paintCreateQuote(quotesHead, tail, record, token, latestQuote(quotes.rows), answer);
+        while (tail.firstChild) createPlace.parentNode.insertBefore(tail.firstChild, createPlace);
+        createPlace.parentNode.removeChild(createPlace);
+      }));
+    }
     page.appendChild(quotesPanel);
 
     const historyPanel = el('div', 'offer-history');
@@ -538,6 +572,9 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(row);
     }
     page.appendChild(historyPanel);
+    // The page is complete when every place has filled (the shell's badges
+    // wait for this, backlog:94eabbd4762f).
+    await Promise.all(fills);
   }
 
   /**

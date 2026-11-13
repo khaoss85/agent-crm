@@ -1125,13 +1125,55 @@ test('96c7b56001ba: the quotes section never shows an empty line that changes �
   const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
   const done = view.renderOfferDetail('off1');
   await flushAll();
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer is on screen while the price books read (review Muse #871)');
   assert.ok(!mount.textContent.includes('Ancora nessun preventivo'), 'no empty line while the price books read');
-  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-skeleton') === 'true'), 'the skeleton holds the place');
+  assert.equal(button(mount, 'offer-create-quote'), undefined);
+  const place = mount.findAll('div').find((node) => node.getAttribute('class') === 'offer-quote-create-wait');
+  assert.ok(place && place.getAttribute('aria-busy') === 'true', 'grey bars hold the place of the empty line and the action');
   releaseBooks();
   await done;
   await flushAll();
   assert.ok(mount.textContent.includes('Ancora nessun preventivo per questa offerta.'));
   assert.ok(button(mount, 'offer-create-quote'), 'the empty line and «Crea preventivo» arrive together');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-loading') === 'true').length, 0, 'no grey place left');
+});
+
+// Review Muse #871 giro 1 (P1): the price books and each quote's lines and
+// versions are decoration — a slow one never holds the offer itself.
+test('94eabbd4762f: a slow price book or quote line never holds the offer — title, facts and history paint first', async () => {
+  const base = pageClient({ record: {} });
+  const held = [];
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/quote/records?')) return Promise.resolve({ items: [QUOTE] });
+      if (path.startsWith('/api/modules/price-book/records') || path.startsWith('/api/modules/quote-line/records')) {
+        return new Promise((resolve) => { held.push(() => base.request(path, options).then(resolve)); });
+      }
+      if (path.startsWith('/api/audit')) return Promise.resolve({ items: AUDIT });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  let complete = false;
+  const done = view.renderOfferDetail('off1').then(() => { complete = true; });
+  await flushAll();
+  assert.ok(held.length >= 2, 'the price books and the lines are still reading');
+  assert.equal(complete, false);
+  const text = mount.textContent;
+  assert.ok(text.includes('Cucina per Giulia'), 'the title is on screen');
+  assert.ok(text.includes('27.500'), 'the value');
+  assert.ok(text.includes('Referente') && text.includes('Cronologia'), 'the facts and the history');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0, 'the page skeleton is gone');
+  const card = mount.findAll('div').find((node) => node.getAttribute('class') === 'offer-quote' && node.getAttribute('data-loading') === 'true');
+  assert.ok(card, 'the quote card holds its place with grey bars');
+  for (const go of held.splice(0)) go();
+  await done;
+  await flushAll();
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-quote') === 'q1'), 'the card fills its place');
+  assert.ok(button(mount, 'offer-create-quote') || mount.findAll('a').some((node) => node.getAttribute('data-action') === 'offer-open-quote'), 'the quote action arrives');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-loading') === 'true').length, 0, 'no grey place left');
 });
 
 test('96c7b56001ba: unreadable price books say so in one honest line', async () => {

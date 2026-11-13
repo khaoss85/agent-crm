@@ -1035,6 +1035,8 @@ export function createCustomerCardView(deps) {
   // definitive answer (sent, refused, failed) drops the key.
   const composerSendKeys = new Map();
   let shownKey = null;
+  /** The router left the scheda and cleared the mount (backlog:947260f9f036). */
+  let offScreen = false;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
   // the open Dettagli form, a phone number) when a re-read swaps it. The new
@@ -4323,7 +4325,13 @@ export function createCustomerCardView(deps) {
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
     meRead = null;
-    if (key !== shownKey) {
+    // backlog:947260f9f036: back on the same customer after another screen
+    // (the router cleared the mount): the skeleton at once like a first
+    // visit, but it is still this customer — a note in its «Annulla»
+    // window stays waiting, and an open «Modifica» stays open.
+    const returning = key === shownKey && offScreen;
+    offScreen = false;
+    if (key !== shownKey || returning) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
       // line, so a direct link stayed blank for the whole read (5.8 s on
@@ -4341,8 +4349,10 @@ export function createCustomerCardView(deps) {
       // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
       // leaves now — never silently undone by opening another customer —
       // and an open «Modifica» closes with the scheda it belonged to.
-      flushWithdrawals();
-      noteEditing = null;
+      if (!returning) {
+        flushWithdrawals();
+        noteEditing = null;
+      }
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
       // with the same name re-narrows the crumb instead of staying silent.
@@ -4648,8 +4658,8 @@ export function createCustomerCardView(deps) {
   }
   /**
    * Every withdrawal still waiting leaves now (the scheda opens another
-   * customer, or the same one again after another screen): its «Annulla»
-   * would no longer work, so the toast that offers it leaves too.
+   * customer): its «Annulla» would no longer work, so the toast that offers
+   * it leaves too.
    */
   function flushWithdrawals() {
     if (pendingWithdrawals.size === 0) return;
@@ -4976,9 +4986,9 @@ export function createCustomerCardView(deps) {
     cardRenderToken += 1;
     // backlog:947260f9f036: the router leaves the scheda and clears the
     // mount, so nothing of it stays on screen: coming back to the same
-    // customer is a first visit again — the skeleton at once, never the
-    // router's lone «Carico Clienti…» for the whole read.
-    shownKey = null;
+    // customer paints the skeleton at once, never the router's lone
+    // «Carico Clienti…» for the whole read (renderCard reads the flag).
+    offScreen = true;
     resetTitle();
   }
 
