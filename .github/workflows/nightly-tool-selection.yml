@@ -5,17 +5,61 @@ name: Nightly tool-selection matrix
 # receipt tests on every CI run and skips the 21 worktree-heavy cells unless the
 # variable is set. This job sets it, so the whole matrix still runs daily, off
 # peak, on the same self-hosted runner — coverage is moved, not removed.
+# Two launchers, one run a night (owner GO 13/11: one run a night after 01:17Z, idempotent, no double with the
+# GitHub event). The server launcher (accordo-night round -> nightly-matrix.sh, outside this repo) dispatches at
+# 01:17Z unless a run of that night exists. The GitHub schedule stays as the in-repo fallback: a scheduled run
+# skips when it starts outside 00:00-04:59 UTC (it came ~7 h late every day 10-13/11) or when another run of
+# this workflow was already created this UTC night, so the two never run twice.
 on:
   schedule:
     - cron: '17 1 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: nightly-tool-selection
   cancel-in-progress: false
 
 jobs:
+  # Light gate: decides whether this run does the matrix. A skip leaves the matrix job «skipped» (no cancel, no
+  # extra token right); only the matrix job concluding «success» counts as a night done, for this check and for
+  # the supervisor round (nightly-matrix.sh status). A manual dispatch always runs.
+  window:
+    runs-on: [self-hosted, accordo-ci]
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          h=$((10#$(date -u +%H)))
+          run=true
+          if [ "${{ github.event_name }}" = schedule ]; then
+            if [ "$h" -ge 5 ]; then
+              run=false; echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04"
+            else
+              # Another run of tonight counts only if it is still going or its matrix job succeeded.
+              api="repos/${{ github.repository }}/actions"
+              done_or_going=0
+              for id in $(gh api "$api/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
+                  --jq ".workflow_runs[] | select(.id != ${{ github.run_id }}) | .id") ; do
+                st=$(gh api "$api/runs/$id" --jq .status) || continue
+                if [ "$st" != completed ]; then done_or_going=1; break; fi
+                ok=$(gh api "$api/runs/$id/jobs" --jq '[.jobs[] | select(.name == "full-matrix" and .conclusion == "success")] | length') || continue
+                if [ "${ok:-0}" -gt 0 ]; then done_or_going=1; break; fi
+              done
+              if [ "$done_or_going" = 1 ]; then run=false; echo "::notice::nightly matrix already done or running tonight; this scheduled run skips"; fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   full-matrix:
+    needs: window
+    if: needs.window.outputs.run == 'true'
     runs-on: [self-hosted, accordo-ci]
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
