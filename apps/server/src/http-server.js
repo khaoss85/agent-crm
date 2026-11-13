@@ -22,7 +22,7 @@ import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../pa
 import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-window.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
-import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { AGENT_CATALOG, catalogAgentSourceKey, customAgentSourceKey } from '../../../packages/agents/src/catalog.js';
 import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -553,9 +553,10 @@ export function buildRouter(app) {
   // - catalog: the checked-in ready-made agents, each with the agent source
   //   key it takes in the asked space (so the screen can say «già nel
   //   team» without restating the key rule);
-  // - create: adds ONE catalogue agent through create-agent — only
-  //   catalogue slugs, never a free-form agent; a second add replays as
-  //   `duplicate: true`;
+  // - create: adds ONE catalogue agent through create-agent (a `slug`), or
+  //   — backlog:1f7cb20d3c30 — one hand-written agent (no slug: name, role,
+  //   instructions, optional cap, keyed by the caller `key`); a second add
+  //   of the same slug or key replays as `duplicate: true`;
   // - assign: an instruction to an agent («@Riaggancio …») through
   //   create-assignment. An explicit `plan` is the user's own choice (the
   //   screen offers «una volta, adesso» after AGENT_PHRASE_UNCLEAR), never
@@ -587,6 +588,24 @@ export function buildRouter(app) {
     }
     const input = stripServerControlledKeys(recordInput(body));
     const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
+    // backlog:1f7cb20d3c30 — «Nuovo agente»: without a slug the body is a
+    // hand-written agent (name, role, instructions, optional monthly cap).
+    // The source key is made from the caller key by the package rule, never
+    // taken from the body, and never shaped like a catalogue key.
+    if (input.slug === undefined || input.slug === null) {
+      if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+      const sourceKey = customAgentSourceKey(spaceId, input.key);
+      if (sourceKey === null) throw new ValidationError('key must be a caller key of 8 to 80 safe characters', { field: 'key' });
+      return respond(201, await app.createTeammateAgent({
+        spaceId,
+        sourceKey,
+        name: input.name,
+        role: input.role,
+        instructions: input.instructions,
+        ...(input.spendingCapCents === undefined || input.spendingCapCents === null ? {} : { spendingCapCents: input.spendingCapCents }),
+        actor,
+      }));
+    }
     const slug = typeof input.slug === 'string' ? input.slug.trim().toLowerCase() : '';
     const entry = AGENT_CATALOG.find((candidate) => candidate.slug === slug);
     // The refusal echoes at most a short slug, never the raw input (review #661 P3).
@@ -908,6 +927,38 @@ export function buildRouter(app) {
     }
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
+
+  // Scheda cliente note «Modifica» and «Elimina» (backlog:82235e46e3e9):
+  // the same enumerated-adapter shape as the notes route above. Neither
+  // rewrites a row: the work operations append a correction or a withdrawal
+  // naming the original note, so the timeline shows the latest wording or
+  // hides the note while every version stays on record. Fixed paths with
+  // the note in the body, so a gateway allowlist names them one by one.
+  for (const [path, method, label] of [
+    ['/api/customer-hub/notes/revise', 'reviseSubjectNote', 'subject note revision'],
+    ['/api/customer-hub/notes/withdraw', 'withdrawSubjectNote', 'subject note withdrawal'],
+  ]) {
+    router.add('POST', path, async ({ body, actor, identity, organizationId }) => {
+      const decision = await gate(app, identity, organizationId, 'records.write');
+      if (typeof app[method] !== 'function') {
+        throw new NotFoundError('Operation', label);
+      }
+      const input = recordInput(body);
+      // The role is the authorization decision's, never the caller's: only
+      // the note's writer or the space owner may change a note.
+      delete input.actorRole;
+      if (input.resource === 'contact') {
+        await app.services.contacts.get(String(input.id ?? ''));
+      } else if (input.resource === 'company') {
+        await app.services.companies.get(String(input.id ?? ''));
+      } else {
+        throw new ValidationError(`a ${label} needs resource contact or company`, { field: 'resource' });
+      }
+      const actorRole = typeof decision?.role === 'string' ? decision.role : null;
+      return respond(method === 'withdrawSubjectNote' ? 200 : 201,
+        await app[method]({ ...stripServerControlledKeys(input), actor, actorRole }));
+    });
+  }
 
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial

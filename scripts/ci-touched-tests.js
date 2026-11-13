@@ -808,8 +808,10 @@ export function withPackageDeclarationFreezeTests(
 /**
  * The characterization staleness suites: each `tests/characterization/*-baseline.json`
  * freezes the behaviour of the source files its `source` map digests, and the
- * paired `*-characterization.test.js` fails red when a digested file moves
- * without a deliberate baseline regeneration. The import mapping above never
+ * paired `*-characterization.test.js` fails red when an asserted observed
+ * value moves without a deliberate baseline regeneration. A digested file
+ * that moves without changing any observed value only warns (advisory,
+ * backlog:e0347551): no regeneration, no hash-line conflicts. The import mapping above never
  * selects them — a characterization suite relatively imports almost none of
  * the files it digests — so twice `main` turned red within a day after
  * green-alone PRs (S99, S116) that changed a digested file.
