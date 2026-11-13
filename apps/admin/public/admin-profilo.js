@@ -27,7 +27,7 @@
  */
 
 import { CHANNEL_STATE_LABELS } from './admin-channels-count.js';
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { sessionRoleLabel } from './admin-session.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -361,12 +361,17 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         }
         saving = true;
         editError = '';
-        paintLast();
-        bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
+        // The /bo write wait (#775, #831): «Salvo…» and disabled on this
+        // button while the name is written, Annulla off beside it — never a
+        // second click on a write in flight.
+        cancel.disabled = true;
+        void uiBusy(save, 'Salvo…', () => bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
           async () => {
-            saving = false;
+            // The write stays in flight until the reread lands: saving drops
+            // only then, with uiBusy, so no second PATCH slips in meanwhile.
             const mine = ++token;
             const fresh = await read();
+            saving = false;
             if (mine !== token) return;
             if (fresh === null) {
               editError = 'Il nome è stato salvato, ma la rilettura non è riuscita. Riprova più tardi.';
@@ -384,7 +389,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
             editError = 'Il nome non si è potuto salvare. Riprova più tardi.';
             paintLast();
           },
-        );
+        ));
       };
       const doCancel = () => {
         if (saving) return;

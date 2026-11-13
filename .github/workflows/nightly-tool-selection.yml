@@ -20,9 +20,27 @@ jobs:
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # GitHub can fire a scheduled run hours late when the runners are busy (10-13/11: the 01:17 schedule
+      # started between 07:44 and 08:25Z and held one of the runners during the morning PR rush). A scheduled
+      # run that starts outside the night window (00:00-04:59 UTC, so the 45+ min matrix ends before the
+      # morning) skips the matrix in seconds instead of holding a runner, with a warning so the lost night is
+      # visible; the supervisor round also reports the night as NOT DONE. A manual workflow_dispatch always runs.
+      - id: window
+        run: |
+          h=$((10#$(date -u +%H)))
+          if [ "${{ github.event_name }}" = schedule ] && [ "$h" -ge 5 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04; this night has no full tool-selection matrix"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - run: npm ci
-      - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
+      - if: steps.window.outputs.run == 'true'
+        run: npm ci
+      - if: steps.window.outputs.run == 'true'
+        run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js

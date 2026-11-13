@@ -761,3 +761,21 @@ export function moduleScreenLabel(view, moduleName) {
   const words = key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+/**
+ * backlog:a3d3b99c738e: a price book as a person reads it in a menu. The
+ * manual book the catalog creates is named after its currency («Manuale
+ * EUR»), so «Manuale EUR (EUR)» said the currency twice: the trailing code
+ * leaves the name, the manual book reads «Listino manuale», and the
+ * currency rides once, as € for euro. «Listino (€)», «Stripe (USD)».
+ * @param {{ name?: unknown, currency?: unknown } | null | undefined} book
+ * @returns {string}
+ */
+export function priceBookLabel(book) {
+  const currency = typeof book?.currency === 'string' ? book.currency.trim().toUpperCase() : '';
+  let name = typeof book?.name === 'string' ? book.name.trim() : '';
+  if (currency !== '' && name.toUpperCase().endsWith(` ${currency}`)) name = name.slice(0, -(currency.length + 1)).trim();
+  if (name === '' || name.toLowerCase() === 'manuale') name = name === '' ? 'Listino' : 'Listino manuale';
+  const unit = currency === 'EUR' ? '€' : currency;
+  return unit === '' ? name : `${name} (${unit})`;
+}

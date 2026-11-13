@@ -29,7 +29,7 @@
 import { formatMinorUnits } from './admin-core.js';
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
 import {
-  PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
+  AGENT_CAP_USE_CARD_NOTE, PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
 import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
@@ -2262,6 +2262,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       if (!found || !found.agent) {
         const word = found?.typedName ?? '';
         state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
+      } else if (Number.isInteger(found.agent.spendingCapCents)) {
+        // backlog:1f7cb20d3c30: a capped agent needs the cost of one run,
+        // which this bar does not ask — never a post bound to refuse.
+        state.mention = { typed, status: 'capped', agent: found.agent, space };
       } else if (found.instruction === '') {
         state.mention = { typed, status: 'empty', agent: found.agent, space };
       } else {
@@ -2335,7 +2339,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       case 'unknown': {
         const agents = Array.isArray(mention.agents) ? mention.agents : [];
         if (agents.length === 0) {
-          say('Non hai ancora agenti nel team: aggiungine uno dal catalogo.');
+          say('Non hai ancora agenti nel team: aggiungine uno dal catalogo o creane uno nuovo in Agenti.');
           box.appendChild(agentsLink());
           break;
         }
@@ -2353,6 +2357,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         box.appendChild(chips);
         break;
       }
+      case 'capped':
+        say(AGENT_CAP_USE_CARD_NOTE);
+        box.appendChild(agentsLink());
+        break;
       case 'empty':
         say(`Cosa deve fare ${mention.agent.name}? Scrivi «@${mention.agent.name}» e l’incarico nella barra in alto.`);
         break;
