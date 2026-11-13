@@ -4057,21 +4057,7 @@ export function createCustomerCardView(deps) {
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
     } catch (error) {
-      if (renderToken !== cardRenderToken) return;
-      const panel = el('div', 'bo-scheda-error');
-      panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', humanReadError(error, {
-        failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
-      })));
-      if (key === shownKey) retainedDrafts = readDrafts(mount) ?? retainedDrafts;
-      show(panel, key === shownKey ? key : null);
-      return;
-    }
-    let first;
-    try {
-      first = await loadFirst(encoded);
-    } catch (error) {
-      first = { card: null, cardError: error };
+      loaded = { card: null, cardError: error };
     }
     // A newer render started while this one loaded: it owns the screen.
     if (renderToken !== cardRenderToken) return;
@@ -4079,7 +4065,7 @@ export function createCustomerCardView(deps) {
       emitTitle(null);
       const panel = el('div', 'bo-scheda-error');
       panel.appendChild(el('h3', undefined, 'Scheda non disponibile'));
-      panel.appendChild(el('p', 'bo-muted', humanReadError(first.cardError, {
+      panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
       // Review #612 round 3: a failed re-read of the scheda already shown
@@ -4142,29 +4128,11 @@ export function createCustomerCardView(deps) {
     retainedDrafts = null;
     emitTitle(card?.name ?? null);
     try {
-      if (key === shownKey) {
-        // A re-read of the scheda already shown keeps the old one up while
-        // it loads and swaps in the same tick — no blank flash, no lost
-        // drafts: the atomic swap review #612 protects.
-        const rest = await loadRest(encoded, resource, id, spaceId);
-        if (renderToken !== cardRenderToken) return;
-        buildAndShow(key, resource, id, {
-          card, timeline, timelineError, ...rest, reloadEnrichment,
-        });
-      } else {
-        // Voce 908f2eb9bbfb (secondo ritorno, AC-3): a first open paints
-        // the shell — the header (name) and the center timeline — as soon
-        // as the card and the timeline settle. The profile-fed sides fill
-        // in when their reads land, so a slow profile never holds the name
-        // and the timeline hostage on a direct link.
-        const shell = buildShell(resource, id, { card, timeline, timelineError });
-        show(shell.panel, key, [shell.left, shell.right]);
-        const rest = await loadRest(encoded, resource, id, spaceId);
-        if (renderToken !== cardRenderToken) return;
-        fillSides(shell.left, shell.right, resource, id, {
-          card, timeline, timelineError, ...rest, reloadEnrichment,
-        });
-      }
+      buildAndShow(key, resource, id, {
+        card, timeline, timelineError, profile, profileError,
+        enrichment, enrichmentError, calls, callsError,
+        fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+      });
     } finally {
       pendingDrafts = null;
     }
