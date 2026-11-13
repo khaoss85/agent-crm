@@ -7,8 +7,8 @@ name: Nightly tool-selection matrix
 # peak, on the same self-hosted runner — coverage is moved, not removed.
 # Launched once a night (01:17-04:59Z) by the Accordo supervisor on the server: the systemd user timer
 # accordo-night runs night-supervisor.sh every 600 s, which calls nightly-matrix.sh run (owner GO 13/11). The
-# launcher lives outside this repo, in the supervisor tools on the CI server (versioned in the private
-# orchestro-server-ops repo). It dispatches at most once a night and only when no run of that night exists; a
+# launcher lives outside this repo, in the supervisor tools on the CI server
+# (~/dev/_handoff/accordo-minimal-supervisor/tools/nightly-matrix.sh). It dispatches at most once a night and only when no run of that night exists; a
 # night with no successful run is reported as NOT DONE in the supervisor round. The GitHub schedule fired ~7 h
 # late every day (10-13/11) and could run twice next to it, so it is removed here.
 on:
