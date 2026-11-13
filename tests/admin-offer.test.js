@@ -53,7 +53,10 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
+      // backlog:a2ea75f705fd: like the pilot, the generic records surface
+      // never serves the core offer — only its own route answers.
+      if (path.startsWith('/api/modules/opportunity/records/') && !path.includes('/actions/')) throw Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...record };
       if (path === '/api/opportunities/off1' && options.method === 'PATCH') {
         if (failPatch) throw Object.assign(new Error(failPatch.message), failPatch);
         Object.assign(record, JSON.parse(options.body));
@@ -346,7 +349,7 @@ test('a full linked page says it shows only the first rows', async () => {
       enforceAdminWriteGate(path, options);
       this.calls.push(path);
       if (path === '/api/schema') return SCHEMA;
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...offerRecord() };
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...offerRecord() };
       if (path.startsWith('/api/modules/quote/records')) return full;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
@@ -435,7 +438,7 @@ test('a record read 404 falls back to the board list and the detail opens', asyn
     calls: base.calls,
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
       }
       if (path.startsWith('/api/opportunities?')) return { items: [offerRecord()] };
@@ -455,7 +458,7 @@ test('an offer missing from the board list too still says not found', async () =
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { modules: [] };
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
       }
       if (path.startsWith('/api/opportunities?')) return { items: [] };
@@ -547,7 +550,10 @@ function pageClient({ record: overrides = {}, schema = LOST_SCHEMA, books = [{ i
         if (createQuote) return createQuote(calls.filter((call) => call.path === path).length);
         return { ok: true, result: { quote: { id: 'q9' } } };
       }
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
+      // backlog:a2ea75f705fd: like the pilot, the generic records surface
+      // never serves the core offer — only its own route answers.
+      if (path.startsWith('/api/modules/opportunity/records/') && !path.includes('/actions/')) throw Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...record };
       if (path.startsWith('/api/modules/price-book/records')) {
         if (books instanceof Error) throw books;
         return { items: books };
@@ -849,4 +855,60 @@ test('review #786: an offer outside any board asks Conferma before won or lost, 
   won.mount.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
   await flushAll();
   assert.equal(won.client.writes().length, 0, 'Annulla writes nothing');
+});
+
+
+// backlog:a2ea75f705fd (verifica 12/11, pilota 62654a1): no read that ends
+// in 404, the existing quote is the main action, and the page opens from a
+// quote id as well.
+test('a2ea75f705fd: the page reads the offer on its own route — no generic read that 404s', async () => {
+  const { client } = await openPage();
+  const gets = client.calls.filter((call) => call.method === 'GET').map((call) => call.path);
+  assert.ok(gets.includes('/api/opportunities/off1'), 'the core offer route');
+  assert.ok(!gets.some((path) => path.startsWith('/api/modules/opportunity/records/')), 'never the generic records surface (404 in the pilot)');
+});
+
+test('a2ea75f705fd: with a quote already there, the main action opens it; a new one is the second choice', async () => {
+  const base = pageClient();
+  const withQuote = {
+    calls: base.calls,
+    writes: base.writes,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/quote/records')) return Promise.resolve({ items: [{ ...QUOTE, id: 'q-old', createdAt: '2026-11-01T00:00:00Z' }, { ...QUOTE, id: 'q-new', createdAt: '2026-11-10T00:00:00Z' }] });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: withQuote });
+  await view.renderOfferDetail('off1');
+  await flushAll();
+  const open = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
+  assert.ok(open, 'the open action is there');
+  assert.equal(open.getAttribute('href'), '#/quotes/q-new', 'it opens the newest quote');
+  assert.match(open.getAttribute('class'), /ui-btn-primary/, 'it is the main action');
+  const create = button(mount, 'offer-create-quote');
+  assert.equal(create.textContent, 'Nuovo preventivo');
+  assert.doesNotMatch(String(create.getAttribute('class')), /primary/, 'creating another is the quiet choice');
+
+  const fresh = await openPage();
+  assert.equal(button(fresh.mount, 'offer-create-quote').textContent, 'Crea preventivo', 'without quotes, creating is the main action');
+  assert.match(String(button(fresh.mount, 'offer-create-quote').getAttribute('class')), /primary/);
+  assert.equal(fresh.mount.findAll('a').filter((node) => node.getAttribute('data-action') === 'offer-open-quote').length, 0);
+});
+
+test('a2ea75f705fd: #/offerte/<quote id> opens the offer the quote belongs to, never «Offerta non trovata»', async () => {
+  const base = pageClient();
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/opportunities/q9') return Promise.reject(Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' }));
+      if (path === '/api/modules/quote/records/q9') return Promise.resolve({ id: 'q9', opportunityId: 'off1' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('q9');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer behind the quote paints');
+  assert.ok(!mount.textContent.includes('non trovata'), 'never «Offerta non trovata» for a quote of an offer');
 });

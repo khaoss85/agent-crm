@@ -3623,22 +3623,29 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', 'bo-scheda-sep', ' · '));
       line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
     }
-    // Voce cf340b571e98: a quote row opens its detail (righe, totale, stato,
-    // storia) — the line is a link to #/quotes/<id>. An opportunity without
-    // a quote has no detail screen, so its fallback line stays plain text.
-    const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // backlog:a2ea75f705fd: the offer line opens the offer page
+    // (#/offerte/<opportunity id>) — stato, valore, preventivi e storia in
+    // one place — for a quote row (its offer) and an offer row alike. Only
+    // a quote that names no offer keeps its own detail (#/quotes/<id>).
+    const offerId = fromQuote
+      ? (typeof first?.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null)
+      : (typeof first?.id === 'string' && first.id !== '' ? first.id : null);
+    const quoteOnly = offerId === null && fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    const offerHref = offerId !== null
+      ? `#/offerte/${encodeURIComponent(offerId)}`
+      : (quoteOnly !== null ? `#/quotes/${encodeURIComponent(quoteOnly)}` : null);
     // Voce 59def6cb805d (C25): the prototype's big amount, read from the
     // server total the profile carries — never summed here. No figure (a
     // recurring quote, a record without a value, an empty draft) shows none.
     const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
       && typeof first?.currency === 'string' && first.currency !== ''
       ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
-    if (quoteId === null) {
+    if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
-      link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
+      link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
       box.appendChild(link);
