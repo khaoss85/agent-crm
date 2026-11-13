@@ -342,9 +342,13 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         draft = input.value;
         const next = cleanProfileName(draft);
         if (next === null) {
-          editError = draft.trim() === ''
-            ? 'Scrivi un nome prima di salvare.'
-            : `Il nome è troppo lungo: al massimo ${PROFILE_NAME_MAX} caratteri.`;
+          if (draft.trim() === '') {
+            editError = 'Scrivi un nome prima di salvare.';
+          } else if (personText(draft) === null) {
+            editError = 'Scrivi un nome leggibile, senza codici.';
+          } else {
+            editError = `Il nome è troppo lungo: al massimo ${PROFILE_NAME_MAX} caratteri.`;
+          }
           paintLast();
           return;
         }
@@ -361,11 +365,17 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
           async () => {
             saving = false;
-            editing = false;
-            draft = '';
             const mine = ++token;
             const fresh = await read();
             if (mine !== token) return;
+            if (fresh === null) {
+              editError = 'Il nome è stato salvato, ma la rilettura non è riuscita. Riprova più tardi.';
+              paintLast();
+              return;
+            }
+            editing = false;
+            draft = '';
+            editError = '';
             paint(session, fresh);
           },
           (error) => {
