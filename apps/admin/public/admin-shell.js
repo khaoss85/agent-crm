@@ -3,6 +3,7 @@
 import { sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
+import { agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -111,10 +112,17 @@ const AI_PLACEHOLDERS = Object.freeze({
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
+ * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
+ * agent of this team (so «@Nome» always reaches somebody), falling back
+ * to the static example when the team is still unknown.
  * @param {string} screenId
+ * @param {string} [agentName]
  */
-export function aiPlaceholder(screenId) {
+export function aiPlaceholder(screenId, agentName = '') {
   if (typeof screenId !== 'string') return AI_ENTRY_FALLBACK;
+  if (screenId === 'agenti' && typeof agentName === 'string' && agentName.trim() !== '') {
+    return agentMentionPlaceholder([{ name: agentName.trim() }]);
+  }
   return AI_PLACEHOLDERS[screenId] ?? AI_ENTRY_FALLBACK;
 }
 
@@ -521,6 +529,9 @@ export function createShellView({
     // highlight (Stato sync lives under Impostazioni). Null falls back to
     // the highlighted screen id.
     aiScreenId: null,
+    // Backlog 7d169a3b1dd2: first named team agent, told by the Agenti
+    // screen once its read lands — the bar placeholder names the team.
+    aiAgentName: '',
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -872,7 +883,7 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId));
+    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName));
     aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
@@ -968,12 +979,13 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
+      if (typeof aiAgentName === 'string') state.aiAgentName = aiAgentName;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {

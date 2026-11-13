@@ -1501,6 +1501,8 @@ async function route() {
           storage: shellStorage,
           spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
           navigate: (next) => { window.location.hash = next; },
+          // backlog:7d169a3b1dd2: the AI bar names an agent of this team.
+          onTeamAgent: (name) => { shellView?.update({ aiAgentName: name }); },
         });
       }
       await agentiView.render();

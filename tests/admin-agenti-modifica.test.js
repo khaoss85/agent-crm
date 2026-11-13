@@ -1,0 +1,233 @@
+// @ts-check
+/**
+ * backlog:7d169a3b1dd2 — Agenti scritti a mano: modifica e ritiro dalla
+ * card senza confirm nativo; errori del form accanto al campo (scroll +
+ * focus + aria-invalid); senza motore la card spiega la differenza col
+ * catalogo e Affida dice che l'incarico aspetta (o è spento); la barra
+ * cita un agente del team; al rientro la lista è subito quella buona.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
+import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import {
+  AGENT_NAME_TAKEN_NOTE,
+  AGENT_NO_ENGINE_NOTE,
+  AGENT_PAUSED_DONE,
+  AGENT_WAIT_ENGINE_DONE,
+  agentMentionPlaceholder,
+  buildAgentCards,
+  checkNewAgent,
+  createAgentiView,
+  firstTeamAgent,
+} from '../apps/admin/public/admin-agenti.js';
+import { aiPlaceholder } from '../apps/admin/public/admin-shell.js';
+
+const NOW = '2026-11-13T10:00:00.000Z';
+const RIAGGANCIO = { id: 1, sourceKey: 'agent:presti:riaggancio', spaceId: 'presti', name: 'Riaggancio', role: 'Ricontatta i clienti', status: 'active' };
+const CATALOG = [
+  { slug: 'riaggancio', name: 'Riaggancio', role: 'Ricontatta i clienti', instructions: 'Trova…', examplePhrase: 'occupati dei lead', agentSourceKey: 'agent:presti:riaggancio' },
+];
+const MANO = { id: 2, sourceKey: 'custom-agent:presti:v1.20261113.mano', spaceId: 'presti', name: 'Mano', role: 'Fa cose a mano', instructions: 'Guarda e propone.', status: 'active' };
+
+async function flush() {
+  for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** A server like apps/server for the agents routes, plus the hand-agent PATCH. */
+function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreate = [] } = {}) {
+  const calls = [];
+  const rows = agents.map((row) => ({ ...row }));
+  const assignments = [];
+  const failures = [...failCreate];
+  return {
+    calls,
+    rows,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const method = String(options.method ?? 'GET').toUpperCase();
+      const body = typeof options.body === 'string' && options.body !== '' ? JSON.parse(options.body) : options.body;
+      calls.push({ path, method, body, key: options.idempotencyKey });
+      if (path.startsWith('/api/agents/catalog')) return { agents: catalog };
+      if (path.startsWith('/api/modules/teammate-agent/records?')) return { items: rows.map((row) => ({ ...row })) };
+      if (path.startsWith('/api/modules/teammate-assignment/records?')) return { items: assignments.map((row) => ({ ...row })) };
+      if (path.startsWith('/api/modules/teammate-run/records?')) return { items: [] };
+      if (path === '/api/agents/create' && method === 'POST') {
+        const failure = failures.shift();
+        if (failure) throw failure;
+        const fold = (value) => String(value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        if (rows.some((row) => fold(row.name) === fold(body.name))) {
+          throw Object.assign(new Error('name taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
+        }
+        const agent = { id: rows.length + 1, sourceKey: `custom-agent:${body.spaceId}:${body.key}`, spaceId: body.spaceId, name: body.name, role: body.role, instructions: body.instructions, status: 'active' };
+        rows.push(agent);
+        return { duplicate: false, agent };
+      }
+      if (path === '/api/agents/assign' && method === 'POST') {
+        const assignment = { sourceKey: body.sourceKey, agentSourceKey: body.agentSourceKey, phrase: body.phrase, cadence: 'once', status: 'active', decidedAt: NOW };
+        assignments.push(assignment);
+        return { duplicate: false, assignment };
+      }
+      if (path.startsWith('/api/modules/teammate-agent/records/') && method === 'PATCH') {
+        const id = decodeURIComponent(String(path.split('/').pop()));
+        const row = rows.find((entry) => String(entry.id) === id);
+        if (!row) throw Object.assign(new Error('missing'), { status: 404 });
+        Object.assign(row, body);
+        return { item: { ...row } };
+      }
+      throw new Error(`unexpected ${method} ${path}`);
+    },
+  };
+}
+
+const posts = (client, path) => client.calls.filter((call) => call.method === 'POST' && (!path || call.path === path));
+const patches = (client) => client.calls.filter((call) => call.method === 'PATCH');
+
+async function paintedView(options) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = driveClient(options);
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer: () => null, clearTimer: () => {} });
+  await view.render();
+  await flush();
+  return { mount, client, view };
+}
+
+const button = (mount, action) => mount.querySelector(`button[data-action="${action}"]`);
+
+test('7d169a3b1dd2: il rifiuto dice a quale campo manca', () => {
+  assert.equal(checkNewAgent({ name: '', role: 'r', instructions: 'i' }).field, 'name');
+  assert.equal(checkNewAgent({ name: 'A', role: ' ', instructions: 'i' }).field, 'role');
+  assert.equal(checkNewAgent({ name: 'A', role: 'r', instructions: '' }).field, 'instructions');
+  assert.equal(checkNewAgent({ name: 'A', role: 'r', instructions: 'i', cap: 'dieci' }).field, 'cap');
+  assert.equal(checkNewAgent({ name: 'A', role: 'r', instructions: 'i', cap: '0' }).field, 'cap');
+  assert.equal(checkNewAgent({ name: 'Riaggancio', role: 'r', instructions: 'i' }, [RIAGGANCIO]).field, 'name');
+  const ok = checkNewAgent({ name: 'Mano', role: 'r', instructions: 'i' });
+  assert.equal(ok.field, undefined, 'quando passa non c’è nessun campo da segnare');
+});
+
+test('7d169a3b1dd2: il segnaposto della barra cita un agente del team', () => {
+  assert.equal(firstTeamAgent([]), '');
+  assert.equal(firstTeamAgent([RIAGGANCIO, MANO]), 'Riaggancio');
+  assert.match(agentMentionPlaceholder([MANO]), /@Mano/);
+  assert.match(agentMentionPlaceholder([]), /@Riaggancio/, 'senza team, l’esempio del catalogo');
+  assert.match(aiPlaceholder('agenti', 'Mano'), /@Mano/, 'la barra Agenti nomina il team');
+  assert.match(aiPlaceholder('agenti'), /@Riaggancio/, 'senza nome resta il segnaposto statico');
+  assert.doesNotMatch(aiPlaceholder('agenti'), /@Mano/);
+});
+
+test('7d169a3b1dd2: la card di un agente scritto a mano porta id e custom; il catalogo no', () => {
+  const [hand, catalog] = buildAgentCards({ agents: [MANO, RIAGGANCIO], assignments: [], runs: [], nowIso: NOW, catalog: CATALOG });
+  assert.equal(hand.custom, true);
+  assert.equal(hand.id, '2', 'il PATCH di Modifica/Ritira punta alla riga');
+  assert.equal(hand.engine, false, 'scritto a mano: nessun motore in questo spazio');
+  assert.equal(catalog.custom, false);
+});
+
+test('7d169a3b1dd2: senza motore la card spiega la differenza col catalogo', async () => {
+  const { mount } = await paintedView();
+  assert.ok(mount.textContent.includes(AGENT_NO_ENGINE_NOTE), 'la nota dice che qui lavorano solo quelli del catalogo');
+  assert.ok(mount.textContent.includes('catalogo'));
+});
+
+test('7d169a3b1dd2: l’errore del form sta accanto al campo, col focus sopra', async () => {
+  const { mount } = await paintedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  button(mount, 'create-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  assert.equal(name.getAttribute('aria-invalid'), 'true', 'il campo rifiutato si segna');
+  assert.equal(mount.querySelector('input[name="agent-role"]').getAttribute('aria-invalid'), null, 'gli altri no');
+  const errors = mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error'));
+  assert.equal(errors.length, 1, 'un solo errore, quello del nome');
+  assert.match(errors[0].textContent, /Dagli un nome/);
+  assert.equal(errors[0].getAttribute('role'), 'alert');
+  assert.ok(name.__focused, 'il fuoco va sul campo da correggere');
+});
+
+test('7d169a3b1dd2: un nome già preso resta un rifiuto in cima, non del campo', async () => {
+  // Libero nel controllo locale, preso sul server nel frattempo.
+  const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
+  const { mount } = await paintedView({ agents: [MANO], failCreate: [taken] });
+  button(mount, 'new-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  name.value = 'Riaggancio';
+  name.dispatch('input', {});
+  const role = mount.querySelector('input[name="agent-role"]');
+  role.value = 'Fa cose';
+  role.dispatch('input', {});
+  const instructions = mount.querySelector('textarea[name="agent-instructions"]');
+  instructions.value = 'Guarda e propone.';
+  instructions.dispatch('input', {});
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE);
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).length, 0, 'il server non punta a un campo');
+});
+
+test('7d169a3b1dd2: Modifica salva con un PATCH sulla riga', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  assert.ok(panel, 'il pannello si apre sulla card');
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = 'Manona';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.equal(patches(client).length, 1);
+  assert.equal(patches(client)[0].path, '/api/modules/teammate-agent/records/2');
+  assert.equal(patches(client)[0].body.name, 'Manona');
+  assert.ok(mount.textContent.includes('Manona aggiornato.'));
+});
+
+test('7d169a3b1dd2: Ritira chiede Conferma in linea e mette in pausa, mai un dialog nativo', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'retire-agent').dispatch('click', {});
+  assert.ok(mount.querySelector('button[data-action="confirm-retire-agent"]'), 'prima chiede, in linea');
+  assert.equal(patches(client).length, 0, 'niente scrittura prima della conferma');
+  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  await flush();
+  assert.equal(patches(client).length, 1);
+  assert.deepEqual(patches(client)[0].body, { status: 'paused' });
+  assert.ok(mount.textContent.includes('Mano ritirato: resta nel team ma non riceve più incarichi.'));
+});
+
+test('7d169a3b1dd2: Affida dice che l’incarico aspetta il motore, o che è spento', async () => {
+  const plain = { ...MANO, spendingCapCents: undefined };
+  const first = await paintedView({ agents: [plain] });
+  const card = first.mount.querySelector(`article[data-agent="${MANO.sourceKey}"]`);
+  card.querySelector(`input[name="talk-${MANO.sourceKey}"]`).value = 'ogni lunedì fai gli auguri';
+  card.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.equal(posts(first.client, '/api/agents/assign').length, 1);
+  assert.ok(first.mount.textContent.includes(AGENT_WAIT_ENGINE_DONE), 'aspetta il motore e parte da solo');
+
+  const second = await paintedView({ agents: [{ ...plain, status: 'paused' }] });
+  const paused = second.mount.querySelector(`article[data-agent="${MANO.sourceKey}"]`);
+  paused.querySelector(`input[name="talk-${MANO.sourceKey}"]`).value = 'ogni lunedì fai gli auguri';
+  paused.querySelector('form').dispatch('submit', {});
+  await flush();
+  assert.ok(second.mount.textContent.includes(AGENT_PAUSED_DONE), 'in pausa: l’incarico resta fermo');
+});
+
+test('7d169a3b1dd2: al rientro la lista è subito quella buona, poi si rilegge', async () => {
+  await paintedView({ agents: [MANO] });
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = null;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = driveClient({ agents: [{ ...MANO, name: 'Manona' }] });
+  const realRequest = client.request.bind(client);
+  client.request = (path, options = {}) => {
+    if (path.startsWith('/api/modules/teammate-agent/records?')) return gate;
+    return realRequest(path, options);
+  };
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer: () => null, clearTimer: () => {} });
+  const pending = view.render();
+  await flush();
+  assert.ok(mount.textContent.includes('Mano'), 'dipinto subito dalla cache');
+  release({ items: [{ ...MANO, name: 'Manona' }] });
+  await pending;
+  await flush();
+  assert.ok(mount.textContent.includes('Manona'), 'la rilettura sostituisce la cache');
+});
