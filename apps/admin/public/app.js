@@ -597,6 +597,14 @@ const pipelineBoard = createPipelineBoard({
 // Quote builder (ADR-016) over the ADR-009 override seam: the generic action
 // forms cannot browse a price book, so this focused view owns that experience
 // while every mutation still goes through the same server actions.
+/** The crumb of the offer page last read (backlog:f2d39e473e3a). @type {{offerId: string, label: string, space: string | null} | null} */
+let offerTitle = null;
+/** The remembered offer crumb for `target`, or null. @param {any} target */
+function rememberedOfferCrumb(target) {
+  return target?.view === 'offer-detail' && offerTitle !== null && offerTitle.offerId === target.offerId
+    && offerTitle.space === (shellActiveSpace ?? null) ? offerTitle.label : null;
+}
+
 const offerDetail = createOfferDetail({
   doc: document,
   mount: mountGate.owned('offer-detail'),
@@ -604,6 +612,16 @@ const offerDetail = createOfferDetail({
   submissions,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
+  // backlog:f2d39e473e3a: the crumb names the customer and the offer once
+  // read, and keeps them when the shell re-syncs (the schema landing after
+  // the offer); a page that is no longer routed never retitles the screen.
+  onTitle: (label) => {
+    if (!mountGate.isActive('offer-detail')) return;
+    const target = targetForHash(window.location.hash || '#/');
+    if (target.view !== 'offer-detail') return;
+    offerTitle = { offerId: target.offerId, label, space: shellActiveSpace ?? null };
+    if (shellView) shellView.update({ screenLabel: label });
+  },
 });
 
 const quoteView = createQuoteView({
@@ -1190,7 +1208,7 @@ function syncShell(target) {
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
-    screenLabel: customerCrumbLabel(target, typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista', rememberedCustomerTitle()),
+    screenLabel: customerCrumbLabel(target, rememberedOfferCrumb(target) ?? (typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista'), rememberedCustomerTitle()),
   });
 }
 

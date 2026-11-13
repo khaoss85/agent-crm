@@ -304,3 +304,61 @@ for (const order of [['roster', 'audit'], ['audit', 'roster']]) {
     assert.ok(history.some((text) => /^da .+ a .+ · da /.test(text)), '«Storia stati» names the move');
   });
 }
+
+// backlog:f2d39e473e3a (pilota 13/11): «Tutti i contatti» filled in pieces
+// over 4-5,6 s — the notes, then «Offerta creata», then «Cambio di stato».
+// The offers come with the profile (second wave), their moves with the
+// trail after it: until both are in, the messages show with one marked row,
+// then the offer's creation and its moves arrive together, in one step.
+test('f2d39e473e3a: the offers and their moves join the cronologia together, after one marked row', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc, mount, client });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
+  // The timeline is in, the profile is not: the messages show, marked.
+  const early = timelineRows(mount);
+  assert.ok(early.text.includes('Ciao, vorrei prenotare una prova'), 'the message shows at once');
+  assert.equal(early.list.getAttribute('aria-busy'), 'true', 'the cronologia says it is still reading');
+  assert.ok(early.text.includes('Carico offerte e cambi di stato…'), 'one marked row says what is coming');
+  // The profile lands with the offer; its trail is still reading.
+  client.gates.get('profile').release.resolve(OFFER_PROFILE);
+  await shown;
+  await flush();
+  const middle = timelineRows(mount);
+  assert.ok(!/Pacchetto sede/.test(middle.text), 'the offer creation waits for its moves: never two steps');
+  assert.ok(middle.text.includes('Carico offerte e cambi di stato…'));
+  client.gates.get('roster').release.resolve({ items: [] });
+  client.gates.get('audit').release.resolve({ items: [MOVE] });
+  await flush();
+  const done = timelineRows(mount);
+  assert.equal(done.list.getAttribute('aria-busy'), 'false');
+  assert.ok(!done.text.includes('Carico offerte'), 'the marked row leaves');
+  assert.ok(done.text.includes('Pacchetto sede'), 'the offer creation');
+  assert.ok(/Pacchetto sede: da .+ a .+/.test(done.text), 'and its move, in the same step');
+});
+
+test('f2d39e473e3a: a customer without offers loses the marked row when the profile lands, nothing else moves', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc, mount, client });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
+  const before = timelineRows(mount).list.findAll('div').length;
+  client.gates.get('profile').release.resolve(PROFILE);
+  await shown;
+  await flush();
+  const after = timelineRows(mount);
+  assert.equal(after.list.getAttribute('aria-busy'), 'false');
+  assert.ok(!after.text.includes('Carico offerte'));
+  assert.equal(after.list.findAll('div').length, before, 'the same rows, without the marked one');
+  assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no trail to read');
+});
