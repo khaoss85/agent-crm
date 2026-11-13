@@ -1,6 +1,6 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
-import { resolveAdminBase } from './admin-base.js';
+import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
@@ -10,6 +10,14 @@ import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
 // absolute API path below is prefixed, so the shell works unchanged.
 const ADMIN_BASE = resolveAdminBase();
+// Every /bo in-page link: settle on the base path so links never reload
+// the shell (see canonicalShellPath in admin-base.js).
+try {
+  const settled = canonicalShellPath(window.location, document.querySelector('base')?.getAttribute('href'));
+  if (settled !== null) window.history.replaceState(window.history.state, '', settled);
+} catch {
+  // Best-effort: links still work, they only reload.
+}
 
 // Under a space mount (e.g. `/bo`) the home is the Oggi frame and the
 // framework demo is never rendered (backlog:7eee63a5). The standalone

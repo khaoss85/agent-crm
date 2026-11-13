@@ -266,9 +266,10 @@ test('the executor refuses without its seams', () => {
   assert.throws(() => createReengagementExecutor(/** @type {any} */ ({ loadCustomers: () => [] })), /draftText/);
 });
 
-test('the agents package declares reject-run and revise-run at version 2', () => {
+test('the agents package declares reject-run and revise-run (since version 2)', () => {
   const graph = createAgentsPackage();
-  assert.equal(graph.version, 2);
+  // 3 since backlog:1f7cb20d3c30 (hand-written agents, run-due runnable).
+  assert.ok(graph.version >= 2);
   const names = graph.operations.map((operation) => operation.name);
   for (const name of ['run-due', 'approve-run', 'reject-run', 'revise-run']) {
     assert.ok(names.includes(name), `${name} is declared`);
