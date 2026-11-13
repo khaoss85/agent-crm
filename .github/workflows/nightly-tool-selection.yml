@@ -17,22 +17,22 @@ on:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 concurrency:
   group: nightly-tool-selection
   cancel-in-progress: false
 
 jobs:
-  full-matrix:
+  # Light gate: decides whether this run does the matrix. A skip leaves the matrix job «skipped» (no cancel, no
+  # extra token right); only the matrix job concluding «success» counts as a night done, for this check and for
+  # the supervisor round (nightly-matrix.sh status). A manual dispatch always runs.
+  window:
     runs-on: [self-hosted, accordo-ci]
-    env:
-      ACCORDO_FULL_TOOL_SELECTION: '1'
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
     steps:
-      # Late or duplicate scheduled runs stop in seconds instead of holding a runner, concluding «cancelled»
-      # (never «success»); the supervisor round reports a night without a successful run as NOT DONE.
-      # A manual dispatch always runs.
-      - id: window
+      - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -42,22 +42,31 @@ jobs:
             if [ "$h" -ge 5 ]; then
               run=false; echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04"
             else
-              others=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
-                --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.conclusion != \"cancelled\" and .conclusion != \"failure\")] | length") || others=0
-              if [ "${others:-0}" -gt 0 ]; then run=false; echo "::notice::nightly matrix already launched tonight ($others other run(s)); this scheduled run skips"; fi
+              # Another run of tonight counts only if it is still going or its matrix job succeeded.
+              api="repos/${{ github.repository }}/actions"
+              done_or_going=0
+              for id in $(gh api "$api/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
+                  --jq ".workflow_runs[] | select(.id != ${{ github.run_id }}) | .id") ; do
+                st=$(gh api "$api/runs/$id" --jq .status) || continue
+                if [ "$st" != completed ]; then done_or_going=1; break; fi
+                ok=$(gh api "$api/runs/$id/jobs" --jq '[.jobs[] | select(.name == "full-matrix" and .conclusion == "success")] | length') || continue
+                if [ "${ok:-0}" -gt 0 ]; then done_or_going=1; break; fi
+              done
+              if [ "$done_or_going" = 1 ]; then run=false; echo "::notice::nightly matrix already done or running tonight; this scheduled run skips"; fi
             fi
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
-          # A skipped night must never read as a passing one: the run cancels itself, so its conclusion is
-          # «cancelled», not «success»; only a run that executed the matrix can conclude success.
-          if [ "$run" = false ]; then gh run cancel ${{ github.run_id }} -R ${{ github.repository }}; sleep 60; exit 1; fi
-      - if: steps.window.outputs.run == 'true'
-        uses: actions/checkout@v4
-      - if: steps.window.outputs.run == 'true'
-        uses: actions/setup-node@v4
+
+  full-matrix:
+    needs: window
+    if: needs.window.outputs.run == 'true'
+    runs-on: [self-hosted, accordo-ci]
+    env:
+      ACCORDO_FULL_TOOL_SELECTION: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - if: steps.window.outputs.run == 'true'
-        run: npm ci
-      - if: steps.window.outputs.run == 'true'
-        run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
+      - run: npm ci
+      - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
