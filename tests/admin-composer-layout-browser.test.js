@@ -16,9 +16,14 @@ import { fileURLToPath } from 'node:url';
 import { chromiumFlags, chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
 const CHROMIUM = findChromium();
-const BROWSER_SKIP = chromiumRuns(CHROMIUM)
+const CHROMIUM_RUNS = chromiumRuns(CHROMIUM);
+// Skip only where the proof cannot run AND nobody gates on it (the rule of
+// admin-shell-identity-shots.test.js): on CI (GitHub Actions sets CI=true)
+// a missing Chromium fails the test instead of skipping it, so the layout
+// claim never passes unproven.
+const BROWSER_SKIP = CHROMIUM_RUNS
   ? false
-  : 'no runnable Chromium here (set CHROMIUM_BIN); the Mac CI runner measures the layout';
+  : (process.env.CI ? false : 'no runnable Chromium here (set CHROMIUM_BIN)');
 const PUBLIC_DIR = fileURLToPath(new URL('../apps/admin/public', import.meta.url));
 const MIME = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
 
@@ -113,6 +118,7 @@ function dumpDom(binary, url, width, height) {
 // where the opening focus on the message field used to scroll it.
 for (const height of [773, 640]) {
   test(`backlog:d30d17880f63: at 1512×${height} «Rispondi su» shows whole under the composer header`, { skip: BROWSER_SKIP }, async () => {
+    assert.ok(CHROMIUM_RUNS, 'CI runs this proof: no runnable Chromium here (set CHROMIUM_BIN)');
     const server = /** @type {import('node:http').Server} */ (await serve());
     try {
       const address = /** @type {import('node:net').AddressInfo} */ (server.address());
