@@ -2443,8 +2443,10 @@ export function createCustomerCardView(deps) {
       const ask = tile("✦ Chiedi all'AI", 'ai');
       ask.setAttribute('type', 'button');
       // Voce 2c1c0e149cf9: the AI tile wears the assistant's violet, never
-      // the plain tile style — same tokens as the Dettagli AI voice.
-      ask.setAttribute('class', 'bo-scheda-tile bo-scheda-tile-ai');
+      // the plain tile style — same tokens as the Dettagli AI voice. The
+      // violet joins the tile's own classes (el() gave it the ui-* one),
+      // never replaces them (BO-F6-09: every control carries the system).
+      ask.setAttribute('class', `${ask.getAttribute('class') ?? ''} bo-scheda-tile-ai`.trim());
       ask.setAttribute('data-action', 'quick-ask-ai');
       ask.setAttribute('title', 'Chiedi all\u2019assistente con questo cliente nel contesto (⌘K)');
       ask.addEventListener('click', () => {
@@ -3969,27 +3971,41 @@ export function createCustomerCardView(deps) {
   };
 
   /** The Chiamate vista body: the latest call's summary (BO-F1-08) with its signals and openable transcript. */
-  function callVistaBody(box, calls) {
+  function callVistaBody(box, calls, callsError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed calls read fails this
+    // vista too, instead of vanishing as "no summary".
+    if (callsError) {
+      readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
+      return;
+    }
+    // Voce 2c1c0e149cf9: this vista merges the two cards it replaces — the
+    // «✦ Riepilogo AI» summary block and the «Chiamate» head, signals and
+    // openable transcript — with the same honest states, never invented.
     const items = Array.isArray(calls?.calls) ? calls.calls : [];
+    if (items.length === 0) {
+      box.appendChild(el('p', 'bo-muted',
+        calls === null || calls === undefined
+          ? 'Nessun dato di chiamata registrato per questo cliente'
+          : 'nessuna chiamata registrata per questo cliente'));
+      return;
+    }
+    const [first] = items;
+    const when = dateParts(first?.recordedAt);
+    box.appendChild(el('p', 'bo-scheda-call-head',
+      `ultima chiamata${first?.channel ? ` · ${channelLabel(first.channel)}` : ''}${when ? ` · ${when}` : ''}`));
     // BO-F1-08: the per-customer AI summary is the latest summarized call.
     // Without a recorded source it stays unavailable — never an invented one.
     // Voce 59def6cb805d (C23): the prototype's `<quando aggiornato>` row —
     // when the summarized call was recorded, never an invented freshness.
     const latest = latestSummarized(calls);
-    const headItem = items[0] ?? latest;
-    if (headItem) {
-      const when = dateParts(headItem?.recordedAt);
-      box.appendChild(el('p', 'bo-scheda-call-head',
-        `ultima chiamata${headItem?.channel ? ` · ${channelLabel(headItem.channel)}` : ''}${when ? ` · ${when}` : ''}`));
-    }
-    if (!latest) {
+    if (latest) {
+      const updated = dateTimeParts(latest?.recordedAt);
+      if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
+      box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
+    } else {
       box.appendChild(el('p', 'bo-muted', 'Nessun riepilogo registrato per questo cliente'));
-      return;
     }
-    const updated = dateTimeParts(latest?.recordedAt);
-    if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
-    box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
-    const signals = Array.isArray(latest?.signals) ? latest.signals : [];
+    const signals = Array.isArray(first?.signals) ? first.signals : [];
     if (signals.length > 0) {
       const list = el('ul', 'bo-scheda-signals');
       for (const signal of signals) {
@@ -4005,7 +4021,7 @@ export function createCustomerCardView(deps) {
     } else {
       box.appendChild(el('p', 'bo-muted', 'nessun segnale registrato per questa chiamata'));
     }
-    const transcript = latest?.transcript;
+    const transcript = first?.transcript;
     if (transcript?.available === true) {
       // Voce 59def6cb805d (C20): the prototype's toggle with its exact
       // texts — one speaker row per transcript line. The rows mount only
@@ -4034,9 +4050,113 @@ export function createCustomerCardView(deps) {
           ? `trascrizione ${transcript.reason}`
           : 'trascrizione non disponibile per questa chiamata'));
     }
+    const older = items.slice(1);
     if (older.length > 0) {
       box.appendChild(el('p', 'bo-muted', `+ ${older.length} chiamate precedenti`));
     }
+  }
+
+  /** The Messaggi vista body: the customer's own latest messages, newest first. */
+  function messageVistaBody(box, timeline, timelineError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // vista too, instead of vanishing as "no messages".
+    if (timelineError) {
+      readError(box, timelineError, 'I messaggi non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
+    const items = messageItemsOf(timeline);
+    if (items.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'nessun messaggio registrato per questo cliente'));
+      return;
+    }
+    for (const item of items.slice(0, 5)) {
+      const who = item?.direction === 'outbound'
+        ? (writerName(item?.teamAuthorId) ?? 'il team')
+        : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
+          ? item.remoteHandle.trim() : 'ricevuto');
+      const head = [channelLabel(item?.channel), who, dateParts(item?.occurredAt)].filter(Boolean).join(' · ');
+      if (head !== '') box.appendChild(el('p', 'bo-scheda-recap-msg-head', head));
+      const line = passagePreview(item);
+      box.appendChild(el('p', 'bo-scheda-recap-msg', line !== '' ? line : '(nessun testo)'));
+    }
+    if (items.length > 5) {
+      box.appendChild(el('p', 'bo-muted', `+ ${items.length - 5} messaggi precedenti`));
+    }
+  }
+
+  /** The Appuntamenti vista body: the next booking that can still happen. */
+  function appointmentVistaBody(box, timeline, timelineError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // vista too, instead of vanishing as "none booked".
+    if (timelineError) {
+      readError(box, timelineError, 'Gli appuntamenti non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
+    const upcoming = upcomingOf(timeline);
+    if (upcoming.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
+      return;
+    }
+    appointmentBody(box, upcoming[0]);
+    if (upcoming.length > 1) {
+      box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
+    }
+  }
+
+  /**
+   * Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — it takes
+   * the place of the «✦ Riepilogo AI» and «Chiamate» cards. «Vista per» tabs
+   * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
+   * AZIONI lists the same open server tasks as «Prossimi passi». A failed
+   * read fails its vista (or the azioni block) like the card it replaces,
+   * never vanishing as empty. DECISION (to be confirmed): the panel always
+   * paints with honest vista states; only an empty azioni list hides its own
+   * block — the review left the empty state undecided, and hiding the whole
+   * panel would drop the failure contract.
+   */
+  function recapPanel(box, parts) {
+    const { card, calls, callsError, timeline, timelineError, profile, profileError, stepCtx } = parts;
+    const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : null;
+    box.appendChild(el('h4', undefined, name ? `✦ Recap per ${name}` : '✦ Recap'));
+    const vistas = el('p', 'bo-scheda-viste');
+    vistas.appendChild(el('span', 'bo-scheda-viste-label', 'Vista per'));
+    const body = el('div', 'bo-scheda-recap-body');
+    const painters = {
+      chiamate: (target) => callVistaBody(target, calls, callsError),
+      messaggi: (target) => messageVistaBody(target, timeline, timelineError),
+      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError),
+    };
+    const order = [['chiamate', 'Chiamate'], ['messaggi', 'Messaggi'], ['appuntamenti', 'Appuntamenti']];
+    let current = 'chiamate';
+    const tabs = [];
+    const paint = () => {
+      while (body.firstChild) body.removeChild(body.firstChild);
+      painters[current](body);
+      for (const tab of tabs) {
+        tab.setAttribute('data-active', tab.getAttribute('data-vista') === current ? 'true' : 'false');
+      }
+    };
+    for (const [key, label] of order) {
+      const tab = el('button', 'bo-scheda-vista', label);
+      tab.setAttribute('type', 'button');
+      tab.setAttribute('data-vista', key);
+      tab.addEventListener('click', () => { current = key; paint(); });
+      tabs.push(tab);
+      vistas.appendChild(tab);
+    }
+    box.appendChild(vistas);
+    box.appendChild(body);
+    paint();
+    const tasks = openTasksOf(profile);
+    if (profileError) {
+      box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+      readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
+      return true;
+    }
+    if (tasks === null || tasks.length === 0) return true;
+    box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
+    return true;
   }
 
   // Voce 908f2eb9bbfb: a section that fails shows its own error and leaves
@@ -4502,21 +4622,16 @@ export function createCustomerCardView(deps) {
     } else {
       section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines);
     }
-    if (waits('calls')) {
-      skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');
-      skeleton(right, '', 'Chiamate');
-    } else if (callsError) {
-      section(right, 'bo-scheda-ai', (box) => {
-        box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
-        readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
-      });
-      section(right, '', (box) => {
-        box.appendChild(el('h4', undefined, 'Chiamate'));
-        readError(box, callsError, 'Le chiamate non si sono potute leggere. Riprova più tardi.');
-      });
+    // Voce 2c1c0e149cf9: the prototype's violet panel takes the place of the
+    // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
+    // prototype has not got.
+    if (waits('calls', 'timeline', 'profile')) {
+      skeleton(right, 'bo-scheda-ai', '✦ Recap');
     } else {
-      section(right, 'bo-scheda-ai', aiSummary, calls);
-      section(right, '', callsBox, calls);
+      section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
+        card, calls, callsError, timeline, timelineError, profile, profileError,
+        stepCtx: { resource, id },
+      });
     }
     if (waits('profile')) skeleton(right, '', 'Prossimi passi');
     else section(right, '', nextSteps, profile, profileError, { resource, id });

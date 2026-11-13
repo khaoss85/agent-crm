@@ -464,7 +464,7 @@ test('the next appointment skips cancelled, past and done bookings', async () =>
   assert.ok(!text.includes('coach-guido'), 'the slot never prints the internal member id');
 });
 
-test('with no upcoming booking the scheda says none is booked', async () => {
+test('2c1c0e149cf9: with no upcoming booking the appointment card hides, the recap vista still says so', async () => {
   const mount = await renderCard(stubClient({
     timeline: {
       ...TIMELINE,
@@ -481,7 +481,13 @@ test('with no upcoming booking the scheda says none is booked', async () => {
       },
     },
   }));
-  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
+  // Voce 2c1c0e149cf9: the prototype shows no empty «Prossimo appuntamento».
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Prossimo appuntamento'), 'a terminal-only schedule hides the empty card');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'the vista still reads as none booked');
 });
 
 // backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
@@ -590,9 +596,16 @@ test('voce 908f2eb9bbfb, review round 2: with the calls in error the Chiamate ca
   const mount = await renderCard(stubClient({ callsError: failure }), 'call-x');
   const text = mount.textContent;
   assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
-  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
-  assert.ok(text.includes('Chiamate'), 'the calls section stays');
-  assert.ok(text.includes('Le chiamate non si sono potute leggere. Riprova più tardi.'), 'the calls name the failure instead of dropping the card');
+  // Voce 2c1c0e149cf9: the standalone «✦ Riepilogo AI» and «Chiamate» cards
+  // are the recap's default Chiamate vista — the failure names itself there.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel stays');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista stays');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the failure shows on the default vista');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the vista names the failure instead of dropping the panel');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Chiamate'), 'no standalone Chiamate card: the prototype has none');
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card: the recap replaces it');
 });
 
 test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-composed, never a retry error', async () => {
@@ -721,9 +734,12 @@ test('BO-F1-08: the scheda shows the AI summary, the signals and the openable tr
   assert.ok(callsPath, 'the card reads the calls for this customer');
   assert.ok(callsPath.includes('spaceId=call-a'), 'the space stays explicit in the read');
 
-  assert.ok(text.includes('Riepilogo AI'), 'the summary section exists');
+  // Voce 2c1c0e149cf9: the summary lives in the recap's default Chiamate vista.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel holds the summary');
   assert.ok(text.includes('Cliente con budget 800 euro'), 'the AI summary is shown');
-  assert.ok(text.includes('Chiamate'), 'the calls section exists');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista exists');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the summary vista is the default');
   assert.ok(text.includes('Budget'), 'the budget signal label is shown');
   assert.ok(text.includes('Tempi'), 'the timing signal label is shown');
   assert.ok(text.includes('il budget massimo è 800 euro'), 'the signal excerpt quotes the transcript');
@@ -793,9 +809,10 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
     'without a space no calls read is attempted');
 
   const uncomposed = await renderCard(stubClient({ failCalls: true }), 'call-a');
-  assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
-  assert.ok(uncomposed.textContent.includes('Nessun riepilogo registrato'),
-    'without intelligence composed no summary is shown');
+  // Voce 2c1c0e149cf9: the recap renders with the calls half unavailable.
+  assert.ok(uncomposed.textContent.includes('✦ Recap per'), 'the recap still renders');
+  assert.ok(uncomposed.textContent.includes('Nessun dato di chiamata registrato'),
+    'without intelligence composed no call data is shown');
 });
 
 test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
@@ -2212,9 +2229,18 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   }).renderCard('contact', 'c1');
 
   const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
-  // Dan 06/11: Nuova offerta opens its window over the scheda (see
-  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  // Voce 2c1c0e149cf9: Offerta opens the «Crea con l'AI / Compila
+  // manualmente» menu like the other creation points, never a direct window.
   byAction('new-offer').dispatch('click');
+  assert.equal(byAction('new-offer').getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const byVoice = (voice) => mount.findAll('button').find((node) => node.getAttribute('data-voice') === voice);
+  assert.ok(byVoice('ai'), 'the Crea con l\u2019AI voice exists');
+  assert.ok(byVoice('ai').textContent.includes("Crea con l'AI"), 'the AI voice reads as in the other menus');
+  const manual = byVoice('manual');
+  assert.ok(manual, 'the Compila manualmente voice exists');
+  // Dan 06/11: Compila manualmente opens its window over the scheda (see
+  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  manual.dispatch('click');
   assert.deepEqual(navs, [], 'Nuova offerta stays on the scheda');
   assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'), 'the offer window opens');
   assert.equal(storage.getItem('accordo.bo.customer-pick.offer'), null, 'no page handoff is needed');
@@ -2253,6 +2279,8 @@ test('review #654: a contact without Azienda picks its own placeholder id under 
     await createCustomerCardView({ doc, mount, client, navigate: () => {}, spaceId: 'presti', toast: () => {} })
       .renderCard('contact', 'c1');
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
+    // Voce 2c1c0e149cf9: Offerta is a menu — the manual voice opens the window.
+    mount.findAll('button').find((node) => node.getAttribute('data-voice') === 'manual').dispatch('click');
     const panel = mount.findAll('div').find((node) => node.getAttribute('data-offer-panel') === 'open');
     assert.ok(panel, 'the offer window opens');
     assert.ok(!panel.textContent.includes('deve avere un’azienda'), 'the placeholder company is a company: no block');
@@ -3006,7 +3034,10 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   const tileRules = [...css.matchAll(/\.bo-scheda-tile\s*\{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(tileRules.length > 0, 'the tile rule exists in styles.css');
-  const tileRule = tileRules[tileRules.length - 1];
+  // Voce 2c1c0e149cf9: narrower tile rules (the Offerta menu wrap) share the
+  // selector — the guard reads the base rule that sets word-break, not the
+  // last match.
+  const tileRule = tileRules.find((body) => /word-break/.test(body)) ?? tileRules[tileRules.length - 1];
   // 31/10 (bo:shots su 79efbf01): break-word spezza ancora una parola più
   // larga della tessera; la regola giusta non spezza mai dentro una parola.
   assert.ok(/word-break\s*:\s*keep-all/.test(tileRule) && !/overflow-wrap\s*:\s*break-word/.test(tileRule),
@@ -4335,13 +4366,19 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   const check = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step');
   assert.ok(check, 'the open step carries the circular check');
   assert.equal(check.getAttribute('aria-label'), 'Segna come fatto: Richiamare per la prova');
-  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 1,
-    'a done task carries no check');
+  // Voce 2c1c0e149cf9: the recap PROSSIME AZIONI and «Prossimi passi» share
+  // the same server list — the open step carries its check in both.
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 2,
+    'a done task carries no check, the open one in both sections');
   check.dispatch('click');
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  assert.ok(mount.textContent.includes('nessun passo aperto'), 'the card re-reads: the server list, never an optimistic copy');
+  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
+  // copy — with no open step left the empty card hides like the prototype.
+  assert.ok(!mount.textContent.includes('Prossimi passi'), 'with no open step the card hides');
+  assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
+    'no check without an open step');
 });
 
 test('59def6cb805d: a refused step completion keeps the step and says so in Italian (C24)', async () => {
