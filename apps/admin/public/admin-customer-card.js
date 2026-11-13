@@ -529,6 +529,48 @@ export function mergeLinkedIdentities(timeline) {
 }
 
 /**
+ * Backlog e5e3e886: the linked sources «Aggiorna» sends to the extraction
+ * run — up to ten recent channel messages the scheda already shows, oldest
+ * assumptions none. A call, a note or a message without text is not a
+ * source: the operation refuses an empty list fail-closed, and the button
+ * says so before any request leaves. Text and detail stay within the
+ * operation's own bounds (8000/200 chars); the detail names the channel
+ * and the handle, never markup.
+ * @param {any} timeline the read-customer-timeline answer
+ * @returns {Array<{kind: string, text: string, detail: string}>}
+ */
+export function extractionSourcesFromTimeline(timeline) {
+  const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+  const sources = [];
+  for (const entry of items) {
+    if (sources.length >= 10) break;
+    if (entry?.entry !== 'message') continue;
+    const text = typeof entry?.body === 'string' ? entry.body : '';
+    if (text.trim() === '') continue;
+    const channel = String(entry?.channel ?? '').toLowerCase().replace(/[^a-z-]/g, '') || 'canale';
+    const handle = String(entry?.remoteHandle ?? entry?.id ?? '')
+      .replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 80) || 'messaggio';
+    sources.push(Object.freeze({
+      kind: 'channel-message',
+      text: text.slice(0, 8000),
+      detail: `${channel}:${handle}`.slice(0, 200),
+    }));
+  }
+  return Object.freeze(sources);
+}
+
+/**
+ * Backlog e5e3e886: the extraction run refused before doing anything — no
+ * adapter on this deployment, so no AI is active here. The button names
+ * that, never «Nessun dato nuovo» (which now means the run happened and
+ * found nothing).
+ * @param {any} error
+ */
+const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 'object'
+  && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
+    || /** @type {any} */ (error).status === 503);
+
+/**
  * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
  * the phone-bearing identities the profile holds beside the record, and the
  * phone handles observed on its passages — deduplicated on their dialable
@@ -2873,18 +2915,24 @@ export function createCustomerCardView(deps) {
   });
   const ENRICHMENT_SOURCE_LABELS = Object.freeze({
     'google-contacts': 'Contatti Google', 'email-signature': 'firma email',
+    'channel-message': 'messaggio', 'company-website': 'sito azienda',
   });
 
-  function enriched(box, enrichment, reload, enrichmentError = null) {
+  function enriched(box, enrichment, reload, enrichmentError = null, ctx = null, proposals = null) {
     // BO-F4-03, ref "05 Scheda cliente": every enriched datum cites the free
     // source that filled it and its observation date; an opted-out customer
     // reads as opted out, never as empty; no row without a recorded source
     // is ever shown. Values are text, never markup.
-    // Voce 59def6cb805d (C13): the ghost `Aggiorna` button re-reads the
-    // enrichment through the same operation the card load uses and reports
-    // through the shell toast — `Dati aggiornati` when the re-read changed
-    // the section, `Nessun dato nuovo` when it did not. A failed re-read is
-    // the Italian retry sentence, and the section keeps its previous rows.
+    // Backlog e5e3e886 (supera C13): the ghost `Aggiorna` button STARTS one
+    // extraction run — a POST the network shows — instead of re-reading the
+    // same GET. While the run is in flight the section reads `Estraggo…`;
+    // when it lands the section re-reads the facts and lists the stored
+    // proposals beside them, each with its source. Without an AI adapter on
+    // this deployment the run refuses before doing anything and the button
+    // says the AI is off — `Nessun dato nuovo` now means the run happened
+    // and found nothing. A failed run is the Italian retry sentence, and
+    // the section keeps its previous rows. Accepting or dismissing a
+    // proposal is a later voce (it needs the decide route first).
     box.appendChild(el('h4', undefined, "Arricchito dall'AI"));
     // Voce 908f2eb9bbfb: a failed enrichment read fails only this section,
     // never the scheda.
@@ -2892,23 +2940,48 @@ export function createCustomerCardView(deps) {
       readError(box, enrichmentError, "I dati arricchiti non si sono potuti leggere. Riprova più tardi.");
       return;
     }
-    if (typeof reload === 'function') {
+    const extract = ctx !== null && typeof ctx === 'object' ? ctx.extract ?? null : null;
+    const sourcesOf = ctx !== null && typeof ctx === 'object' ? ctx.timeline ?? null : null;
+    if (typeof reload === 'function' && typeof extract === 'function') {
       const refresh = el('button', 'bo-scheda-refresh', 'Aggiorna');
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => uiBusy(refresh, 'Aggiorno…', async () => {
+      refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
         if (busy) return;
         busy = true;
         try {
+          const sources = extractionSourcesFromTimeline(sourcesOf);
+          if (sources.length === 0) {
+            toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+            return;
+          }
+          const status = el('p', 'bo-scheda-extracting', 'Estraggo…');
+          status.setAttribute('role', 'status');
+          box.appendChild(status);
+          let answer;
+          try {
+            answer = await extract(sources);
+          } catch (error) {
+            status.remove();
+            if (isEnrichmentAiUnavailable(error)) {
+              toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
+            return;
+          }
+          status.remove();
           const fresh = await reload();
-          const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-          const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+          const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
           while (box.firstChild) box.removeChild(box.firstChild);
-          enriched(box, fresh, reload);
-          toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-        } catch (error) {
-          toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+          enriched(box, fresh, reload, null, ctx, freshProposals);
+          if (freshProposals.length > 0) {
+            const count = freshProposals.length;
+            toast(`L\u2019AI propone ${count} campo${count === 1 ? '' : 'i'} da decidere qui sotto.`);
+          } else {
+            toast('Nessun dato nuovo');
+          }
         } finally {
           busy = false;
         }
@@ -4416,7 +4489,12 @@ export function createCustomerCardView(deps) {
       section(left, '', customFields, { defs: fieldDefs, values: fieldValues, resource, id });
     }
     if (waits('enrichment')) skeleton(left, '', "Arricchito dall'AI");
-    else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
+    else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError, {
+      timeline,
+      extract: (sources) => client.request(
+        `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}/extract`,
+        { method: 'POST', body: JSON.stringify({ sources }) }),
+    });
     // Voce 908f2eb9bbfb (AC-3): the cronologia paints from the timeline read
     // alone — timelineBox only takes optional extras from the profile
     // (company name, offers, quotes, all null-safe), so a slow profile never

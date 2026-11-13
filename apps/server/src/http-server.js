@@ -697,6 +697,33 @@ export function buildRouter(app) {
     return await app.readCustomerEnrichment({ resource: params.resource, id: params.id });
   });
 
+  // Customer enrichment extraction (backlog:e5e3e886): the scheda's
+  // «Aggiorna» button starts one AI extraction over the customer's linked
+  // sources and shows the stored proposals beside the facts. The same
+  // enumerated-adapter shape as the read above, but on the WRITE boundary:
+  // a run stores proposed enriched-field rows, so it gates
+  // `records.write`, like the import apply. Without the package composed
+  // the method is absent and the route answers an honest 404. The AI
+  // adapter is deployment-provided (`app.enrichmentExtractionAdapter`,
+  // the pilot worker's OpenAI wiring): the framework never holds a key,
+  // so without one the operation refuses ENRICHMENT_AI_UNAVAILABLE and
+  // the button says the AI is off instead of «Nessun dato nuovo». The
+  // browser never supplies the adapter: a JSON body carries no function,
+  // and the route reads only `sources` from it (validated by the
+  // operation, which refuses an empty or malformed list fail-closed).
+  router.add('POST', '/api/customer-data/enriched/:resource/:id/extract', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.extractCustomerEnrichment !== 'function') {
+      throw new NotFoundError('Operation', 'customer enrichment extraction');
+    }
+    const input = stripServerControlledKeys(body);
+    const sources = Array.isArray(input.sources) ? input.sources : [];
+    const adapter = /** @type {any} */ (app).enrichmentExtractionAdapter;
+    return await app.extractCustomerEnrichment({
+      resource: params.resource, id: params.id, sources, adapter, actor,
+    });
+  });
+
   // Customer list (BO-F1-05): one server page over the host records with
   // views-as-saved-queries, channel and status filters, sorting and the
   // AI budget column. Same enumerated-adapter shape as the profile route:
