@@ -186,7 +186,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -219,6 +219,13 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         return profile;
       }
       if (path.startsWith('/api/customer-data/enriched/')) {
+        // Backlog e5e3e886: «Aggiorna» starts an extraction run with a POST
+        // on .../enriched/:resource/:id/extract — a write, never another
+        // GET. The run answer defaults to no proposals.
+        if ((options?.method ?? 'GET') !== 'GET') {
+          if (onExtract) return onExtract(path, body, options);
+          return { status: 'done', proposals: [] };
+        }
         if (enrichedError) throw enrichedError;
         if (!enriched) throw Object.assign(new Error('Not Found'), { status: 404 });
         return enriched;
@@ -1207,12 +1214,16 @@ test('59def6cb805d: every channel badge reads its Italian label (C15, C17)', asy
   }
 });
 
-// Voce 59def6cb805d (C13): `Arricchito dall'AI` carries the ghost `Aggiorna`
-// button; the click re-reads the enrichment and reports through the toast.
-test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13)', async () => {
+// Voce 59def6cb805d (C13), superseded by backlog e5e3e886: `Arricchito
+// dall'AI` carries the ghost `Aggiorna` button; the click starts one
+// extraction run — a POST on .../enriched/:resource/:id/extract — and
+// reports through the toast. «Nessun dato nuovo» now means the run happened
+// and found nothing, never a re-read.
+test('59def6cb805d: Aggiorna starts one extraction run and toasts the outcome (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  const mount = await renderCard(stubClient(), undefined, toast);
+  const client = stubClient();
+  const mount = await renderCard(client, undefined, toast);
   const refresh = mount.findAll('button').find((node) => node.textContent === 'Aggiorna');
   assert.ok(refresh, 'the Aggiorna button is in the enriched section');
   assert.ok(
@@ -1221,39 +1232,35 @@ test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13
   );
   refresh.dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(client.writes.map((write) => write.path),
+    ['/api/customer-data/enriched/contact/c1/extract'],
+    'one POST leaves: the extraction run, not another GET');
   assert.deepEqual(seen, [{ message: 'Nessun dato nuovo', error: false }],
-    'an unchanged re-read toasts Nessun dato nuovo');
+    'a run that found nothing toasts Nessun dato nuovo');
 });
 
-test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', async () => {
+test('59def6cb805d: Aggiorna lists the proposed fields with their source (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  let current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null, items: [],
-  };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) return current;
-      return stubClient().request(path, options);
-    },
-  };
+  const client = stubClient({
+    onExtract: () => ({
+      status: 'done',
+      proposals: [{
+        id: 'p1', field: 'firstName', value: 'Guido', source: 'google-contacts',
+        sourceDetail: 'people/c1', observedAt: '2026-10-20T10:00:00.000Z',
+      }],
+    }),
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
   assert.ok(mount.textContent.includes('Nessun dato arricchito ancora'), 'the section starts empty');
-  current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null,
-    items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
-  };
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(mount.textContent.includes('Nome: Guido (fonte: Contatti Google'),
-    'the re-read rows render with source and date');
-  assert.deepEqual(seen, [{ message: 'Dati aggiornati', error: false }],
-    'a changed re-read toasts Dati aggiornati');
+  assert.ok(mount.textContent.includes('L\u2019AI propone: Nome: Guido (fonte: Contatti Google'),
+    'the proposed field renders with its source');
+  assert.deepEqual(seen, [{ message: 'L\u2019AI propone 1 campo da decidere qui sotto.', error: false }],
+    'a run that proposes toasts the count');
 });
 
 test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)', async () => {
@@ -1265,16 +1272,13 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
     linked: false, optedOut: null,
     items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
   };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) {
-        if (fail) throw Object.assign(new Error('boom'), { status: 500 });
-        return enriched;
-      }
-      return stubClient().request(path, options);
+  const client = stubClient({
+    enriched,
+    onExtract: (path) => {
+      if (fail) throw Object.assign(new Error('boom'), { status: 500 });
+      return { status: 'done', proposals: [] };
     },
-  };
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
@@ -1282,7 +1286,7 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(mount.textContent.includes('Nome: Guido'), 'the previous rows stay on screen');
-  assert.equal(seen.length, 1, 'one toast for the failed re-read');
+  assert.equal(seen.length, 1, 'one toast for the failed run');
   assert.equal(seen[0].error, true, 'the failure toasts as an error');
   assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });

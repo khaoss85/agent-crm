@@ -2963,7 +2963,7 @@ export function createCustomerCardView(deps) {
           try {
             answer = await extract(sources);
           } catch (error) {
-            status.remove();
+            if (status.parentNode) status.parentNode.removeChild(status);
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
             } else {
@@ -2971,8 +2971,18 @@ export function createCustomerCardView(deps) {
             }
             return;
           }
-          status.remove();
-          const fresh = await reload();
+          if (status.parentNode) status.parentNode.removeChild(status);
+          // The run landed but the re-read failed: the stored proposals
+          // stay stored (a later «Aggiorna» replays instead of doubling
+          // them) and the section keeps its previous rows with the retry
+          // line — never a silent old screen after a happened run.
+          let fresh;
+          try {
+            fresh = await reload();
+          } catch (error) {
+            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            return;
+          }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
           while (box.firstChild) box.removeChild(box.firstChild);
           enriched(box, fresh, reload, null, ctx, freshProposals);
@@ -2998,7 +3008,13 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted',
         `arricchimento disattivato${when ? ` il ${when}` : ''} (opt-out): nessun nuovo dato verrà salvato`));
     }
-    if (items.length === 0) {
+    // Backlog e5e3e886: the stored proposals land beside the facts, each
+    // with the source that produced it — even when no fact is stored yet,
+    // so a first run never reads as «Nessun dato arricchito ancora».
+    // Accepting or dismissing one is a later voce (it needs the decide
+    // route first): here they read as proposals, never as facts.
+    const pending = Array.isArray(proposals) ? proposals : [];
+    if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
       return;
     }
@@ -3008,6 +3024,15 @@ export function createCustomerCardView(deps) {
       const when = dateParts(item?.observedAt);
       box.appendChild(el('p', 'bo-scheda-enriched',
         `${label}: ${String(item?.value ?? '—')} (fonte: ${source}${when ? ` · ${when}` : ''})`));
+    }
+    for (const proposal of pending) {
+      const label = ownLabel(ENRICHED_FIELD_LABELS, String(proposal?.field ?? '')) ?? String(proposal?.field ?? 'dato');
+      const source = ownLabel(ENRICHMENT_SOURCE_LABELS, String(proposal?.source ?? '')) ?? String(proposal?.source ?? 'fonte non registrata');
+      const detail = typeof proposal?.sourceDetail === 'string' && proposal.sourceDetail.trim() !== ''
+        ? ` · ${proposal.sourceDetail.trim().slice(0, 80)}` : '';
+      const when = dateParts(proposal?.observedAt);
+      box.appendChild(el('p', 'bo-scheda-proposal',
+        `L\u2019AI propone: ${label}: ${String(proposal?.value ?? '—')} (fonte: ${source}${detail}${when ? ` · ${when}` : ''})`));
     }
   }
 
