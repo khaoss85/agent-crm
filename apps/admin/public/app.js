@@ -663,6 +663,9 @@ const customerCardView = createCustomerCardView({
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  // backlog:f48593bb06d4: with the space AI off the composer sends the
+  // titolare to Spazi e accessi and tells the others whom to ask.
+  role: () => shellUser?.role ?? null,
   // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
   // customer here; without the shell storage the buttons only navigate.
   storage: shellStorage,

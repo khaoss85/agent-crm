@@ -325,7 +325,7 @@ export function calendarEventOf(appointment) {
 
 /**
  * Label shown for the cited record: the stored snapshot label when present,
- * otherwise a generic Italian name — never a technical `resource · id`
+ * otherwise the one fallback of Oggi — never a technical `resource · id`
  * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
@@ -333,9 +333,9 @@ function subjectDisplayLabel(row, names = {}) {
   // The customer's readable name first (backlog:5083e7a77c26, production
   // 08/11: the brief read «il cliente · 10 nov alle 11:00» for Fio Neri —
   // the channel syncs store no subject label on the appointment): the
-  // profile name read for that subject, else the stored label, and «il
-  // cliente» only when no name exists at all.
-  return subjectName(row, names) ?? 'il cliente';
+  // profile name read for that subject, else the stored label, and the one
+  // fallback (backlog:1f846205b9a3) only when no name exists at all.
+  return subjectName(row, names) ?? APPOINTMENT_GUEST_LABEL;
 }
 
 /**
@@ -356,11 +356,11 @@ function subjectName(row, names = {}) {
 }
 
 /**
- * The next call's guest name, or null when no name exists yet — never a
- * stand-in noun. The next-call card (verification 09/11, backlog
- * 1a3a0ba236c0) must not print «il cliente» before the name: with no
- * stored or profile name it waits for the name with a neutral
- * placeholder, never a presumed customer.
+ * The one fallback of Oggi (backlog:1f846205b9a3): with no stored or
+ * profile name the screen waits with this neutral placeholder — never a
+ * presumed customer. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name, and since
+ * this item the agenda and the advisor read the same words.
  */
 const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
 
@@ -1408,7 +1408,7 @@ export const APPOINTMENT_NAME_LIMIT = 10;
 /**
  * Customer names for the agenda of today and the next call
  * (backlog:5083e7a77c26): appointments synced from a calendar carry no
- * subject label, so the brief and the agenda read «il cliente». One
+ * subject label, so the brief and the agenda read the one fallback. One
  * read-only profile per subject (the same read the inbox uses), the next
  * call first, bounded, settled together; a refused or unknown profile
  * leaves the row on its stored label, never an error on Oggi.

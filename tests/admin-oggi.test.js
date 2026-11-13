@@ -946,7 +946,27 @@ test('no technical resource-id label reaches the Oggi screen', () => {
   });
   const text = mount.textContent;
   assert.ok(!text.includes('lead · lead-1'), 'no technical label on screen');
-  assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
+  // Backlog 1f846205b9a3: one fallback only — the agenda and the advisor
+  // read «un ospite da confermare», never «il cliente».
+  assert.ok(text.includes('un ospite da confermare'), 'the one fallback names the wait');
+  assert.ok(!text.includes('il cliente'), 'no second fallback on screen');
+});
+
+test('1f846205b9a3: a nameless appointment reads one fallback in every card', () => {
+  const nameless = {
+    id: 'appt-noname', status: 'booked', startsAt: '2026-10-19T08:00:00.000Z',
+    subjectResource: 'lead', subjectId: 'lead-9',
+  };
+  const agenda = buildTodayAgenda([nameless], OGGI_NOW);
+  assert.equal(agenda[0].title, 'un ospite da confermare', 'agenda reads the one fallback');
+  const { actions } = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW });
+  const prep = actions.find((action) => action?.kind === 'appointment-prep');
+  assert.ok(prep, 'the prep card exists');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare', 'prep reads the one fallback');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no second fallback on the prep card');
+  const brief = buildPreCallBrief({ appointment: nameless, now: OGGI_NOW });
+  assert.equal(brief.title, 'un ospite da confermare', 'brief reads the one fallback');
+  assert.ok(!brief.bullets.join(' ').includes('il cliente'), 'no second fallback on the brief card');
 });
 
 test('the greeting is the only h1 of the Oggi screen', () => {

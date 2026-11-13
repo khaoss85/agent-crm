@@ -12,6 +12,7 @@ import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
+import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
 import {
   addFieldForm,
   defineField,
@@ -897,6 +898,8 @@ export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
 /** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
 const NOTE_TOAST_SCOPE = 'scheda-nota';
+/** The LLM gate codes that mean «the AI is off here», not an outage. */
+const COMPOSER_AI_OFF_CODES = new Set(['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']);
 
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
@@ -924,6 +927,15 @@ export function createCustomerCardView(deps) {
   const wait = typeof deps.wait === 'function'
     ? deps.wait
     : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
+  // load backstop never sits among the screen's pauses above. Unref'd
+  // where the host allows it, so an idle process never waits on it.
+  const firstWaveWait = typeof deps.firstWaveWait === 'function'
+    ? deps.firstWaveWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -984,6 +996,60 @@ export function createCustomerCardView(deps) {
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
+  // backlog:f48593bb06d4: the space AI state, from the read the Assistente
+  // panel already probes (GET /api/assistant/status), decided by the same
+  // gate code the panel reads to say «AI spenta» (assistantStatusCode:
+  // `code`/`reason` of the answer or of its rejection). Off only for an
+  // LLM gate code and never with `enabled: true`; anything else (pending,
+  // failed, no code) is «unknown», Genera stays and the draft POST still
+  // meets the gate. A settled answer is kept a minute per space; a draft
+  // the gate refused updates it, so a reopen paints off at once.
+  /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null } | null} */
+  let spaceAiRead = null;
+  // `opening`: a new composer opening reuses only a settled answer — a
+  // pending (504) or failed read was «unknown» for its own opening and is
+  // asked again, never a minute of «unknown» while the worker catches up.
+  // The AI row of the same opening reuses the read in flight.
+  const readSpaceAi = (spaceId, { opening = false } = {}) => {
+    if (spaceAiRead !== null && spaceAiRead.spaceId === spaceId
+      && Date.now() - spaceAiRead.at < 60000
+      && !(opening && spaceAiRead.settled === false)) return spaceAiRead.promise;
+    /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null }} */
+    const entry = { spaceId, at: Date.now(), promise: Promise.resolve(null), settled: null };
+    entry.promise = Promise.resolve()
+      .then(() => client.request(ASSISTANT_STATUS_PATH))
+      .then((status) => {
+        const code = assistantStatusCode(status);
+        // Settled: the gate said on or off. A 200 with neither (an
+        // unknown shape) is asked again at the next opening.
+        entry.settled = status?.enabled === true || status?.freeQuestions === 'enabled' || COMPOSER_AI_OFF_CODES.has(code);
+        return status?.enabled !== true && COMPOSER_AI_OFF_CODES.has(code) ? code : null;
+      }, (error) => {
+        // A gate refusal (403/503 with the LLM code) is a settled «off».
+        const code = assistantStatusCode(error);
+        if (COMPOSER_AI_OFF_CODES.has(code)) {
+          entry.settled = true;
+          return code;
+        }
+        entry.settled = false;
+        // A handled «unknown»: one info line with the safe fields, never an error.
+        if (typeof console !== 'undefined' && typeof console.info === 'function') {
+          console.info('bo-scheda ai state unreadable:', typeof error?.code === 'string' ? error.code : '',
+            Number.isFinite(error?.status) ? error.status : '', `spaceId=${spaceId}`);
+        }
+        return null;
+      });
+    spaceAiRead = entry;
+    return entry.promise;
+  };
+  const rememberSpaceAiOff = (spaceId, code) => {
+    if (typeof spaceId === 'string' && COMPOSER_AI_OFF_CODES.has(code)) {
+      spaceAiRead = { spaceId, at: Date.now(), promise: Promise.resolve(code), settled: true };
+    }
+  };
+  // The session role: only the titolare is sent to Spazi e accessi, the
+  // others are told who turns the AI on (the Assistente idiom, 1968c3320cd3).
+  const readRole = typeof deps.role === 'function' ? deps.role : () => null;
   // Azioni rapide: the prototype's stroke icon above the label, drawn as a
   // real SVG element. A CSS data: mask is blocked by the host CSP
   // (default-src 'self'), so the icons of #627 never painted in production.
@@ -1123,11 +1189,19 @@ export function createCustomerCardView(deps) {
   const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines']);
 
   /**
-   * The scheda's reads, all in flight at once. backlog:1a96094db71d: with
-   * `onPart` the caller hears each read as it lands (production 12/11: the
-   * card answered in 5.4 s, the cronologia in 7 s, and the scheda waited for
+   * The scheda's reads in two waves. backlog:1a96094db71d: with `onPart`
+   * the caller hears each read as it lands (production 12/11: the card
+   * answered in 5.4 s, the cronologia in 7 s, and the scheda waited for
    * the slowest before painting anything), so a section fills the moment
-   * its own read is back. The final answer is the same shape as before.
+   * its own read is back. Voce 4cd1bbb646d0 (production 13/11: ~11 reads
+   * in parallel at open, card and timeline queued behind them — alone they
+   * answer in 466 ms and 281 ms, at open the name took 4-6 s): the first
+   * wave is card and timeline alone, and the second wave starts after the
+   * first of the two paints (or a small budget), so the name and the
+   * cronologia never wait behind the secondary reads. No pool limit is
+   * raised — the server keeps its single
+   * reader; the client simply stops crowding it. The final answer is the
+   * same shape as before.
    * @param {string} resource @param {string} id
    * @param {((loaded: any, pending: Set<string>) => void) | null} [onPart]
    */
@@ -1157,9 +1231,40 @@ export function createCustomerCardView(deps) {
       pending.delete(part);
       if (typeof onPart === 'function') onPart({ ...loaded }, new Set(pending));
     };
-    await Promise.all([
-      PART_READS.card(encoded).then((read) => take('card', read, false)),
-      PART_READS.timeline(encoded).then((read) => take('timeline', read)),
+    // Voce 4cd1bbb646d0, review rev-agent-crm-865-10914b18 (P1): a hung
+    // first-wave read must not starve the second wave. Promise.all over the
+    // two first-wave reads never resolves when one of them never settles
+    // (settle only converts rejections), so every secondary read behind it
+    // never even starts. The second wave starts after the first progressive
+    // paint (one of card/timeline landed) or after a small budget,
+    // whichever comes first — a hung card can delay the name, never the
+    // cronologia and the sections behind it. No pool limit is raised.
+    const FIRST_WAVE_BUDGET_MS = 3000;
+    let wave2go;
+    const wave2gate = new Promise((resolve) => { wave2go = resolve; });
+    // The budget is a backstop only, on its own clock (deps.firstWaveWait,
+    // injectable so tests run it without real time). Never the shared
+    // deps.wait: that one is the screen's user-facing pauses (send
+    // read-back, the note Annulla window of #867), and a load backstop
+    // parked there showed up as a pending pause on every scheda.
+    void firstWaveWait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
+    const firstTake = (part, settledRead, notComposedIsNull = true) => {
+      take(part, settledRead, notComposedIsNull);
+      wave2go();
+    };
+    // Voce 4cd1bbb646d0: first wave — card and timeline alone. The two
+    // takes paint the name and the cronologia through onPart before any
+    // secondary read even starts, so a slow profile can never hold them
+    // (or queue behind them on the server's single reader).
+    const wave1 = Promise.all([
+      PART_READS.card(encoded).then((read) => firstTake('card', read, false)),
+      PART_READS.timeline(encoded).then((read) => firstTake('timeline', read)),
+    ]);
+    // Voce 4cd1bbb646d0: second wave — everything else, after the first
+    // paint of card/timeline (or the budget). take() never throws (settle
+    // catches), so this await always runs: a failed card still reads the
+    // sections behind it, exactly like the single wave did before.
+    const wave2 = wave2gate.then(() => Promise.all([
       PART_READS.profile(encoded).then((read) => take('profile', read)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
@@ -1181,7 +1286,8 @@ export function createCustomerCardView(deps) {
       // exactly like the Pipeline board (the shell shares one schema read).
       // Without them the offer line falls back to the core stage.
       settle(() => client.request('/api/schema')).then((read) => take('pipelines', read, false)),
-    ]);
+    ]));
+    await Promise.all([wave1, wave2]);
     return { ...loaded };
   }
 
@@ -1712,6 +1818,9 @@ export function createCustomerCardView(deps) {
     }
     const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
     panel.appendChild(wait);
+    // backlog:f48593bb06d4: the AI state starts with the channel reads, in
+    // parallel; the AI row reads the same (cached) answer when it paints.
+    void readSpaceAi(spaceId, { opening: true });
     // Voce a935af6a6d19: Email also reads the space profile's Gmail link
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
@@ -1816,44 +1925,88 @@ export function createCustomerCardView(deps) {
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
-    const off = (sentence) => {
-      while (row.firstChild) row.removeChild(row.firstChild);
-      row.setAttribute('data-off', 'true');
-      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+    // Genera switched off with its reason beside it (backlog:f48593bb06d4).
+    // The field and the words typed in it stay — read-only, still there to
+    // copy — never a row wiped after a refusal.
+    const switchOff = () => {
+      go.setAttribute('disabled', 'disabled');
+      go.setAttribute('aria-disabled', 'true');
+      if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
     };
+    // The reason Genera is off, kept so Annulla repaints it (Annulla
+    // survives the off state: the person's text before an AI draft stays
+    // one click away even with the AI switched off).
+    /** @type {{ code: string|null, status: number|null } | null} */
+    let offState = null;
+    const paintOff = () => {
+      if (offState === null) return;
+      const { code, status } = offState;
+      say('');
+      if (code === 'LLM_SPACE_DISABLED') {
+        // Who turns it on: the titolare gets the way there, one click; the
+        // others are told whom to ask (the Assistente idiom).
+        if (readRole() === 'owner') {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto, o '));
+          line.appendChild(link('#/spazi-accessi', 'accendila da Spazi e accessi', 'composer-ai-settings'));
+        } else {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto. Per accenderla chiedi al titolare.'));
+        }
+      } else if (code === 'LLM_SECRET_UNAVAILABLE') {
+        line.appendChild(el('span', undefined, 'L’AI non è ancora configurata: scrivi il messaggio qui sotto.'));
+      } else if (status === 404 || status === 405) {
+        line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
+      }
+      const kept = baseline();
+      if (kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== '')) appendUndo();
+    };
+    const off = (code, status = null) => {
+      row.setAttribute('data-off', 'true');
+      switchOff();
+      prompt.setAttribute('readonly', 'readonly');
+      prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
+      offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
+      paintOff();
+    };
+    // Annulla: back to the person's own text before the first AI draft.
+    function appendUndo() {
+      const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+      back.setAttribute('type', 'button');
+      back.setAttribute('data-action', 'composer-ai-undo');
+      back.addEventListener('click', () => {
+        const kept = baseline();
+        if (kept === null) return;
+        filled = null;
+        markPicked(null);
+        text.value = kept.text;
+        // Muse P2 on #599: with no subject field mounted (channel switched
+        // to WhatsApp) the undone subject goes to the shared draft, so the
+        // AI subject never comes back when Email returns.
+        restoreSubject(kept.subject);
+        setBaseline(null);
+        changed();
+        go.textContent = 'Genera';
+        // With the AI off the reason stays on the line (backlog:f48593bb06d4).
+        if (offState !== null) paintOff();
+        else say('Testo di prima ripristinato.');
+      });
+      line.appendChild(el('span', undefined, ' · '));
+      line.appendChild(back);
+    }
     const say = (sentence, undo = false) => {
       beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
       line.appendChild(el('span', undefined, sentence));
-      if (undo) {
-        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
-        back.setAttribute('type', 'button');
-        back.setAttribute('data-action', 'composer-ai-undo');
-        back.addEventListener('click', () => {
-          const kept = baseline();
-          if (kept === null) return;
-          filled = null;
-          markPicked(null);
-          text.value = kept.text;
-          // Muse P2 on #599: with no subject field mounted (channel switched
-          // to WhatsApp) the undone subject goes to the shared draft, so the
-          // AI subject never comes back when Email returns.
-          restoreSubject(kept.subject);
-          setBaseline(null);
-          changed();
-          go.textContent = 'Genera';
-          say('Testo di prima ripristinato.');
-        });
-        line.appendChild(el('span', undefined, ' · '));
-        line.appendChild(back);
-      }
+      if (undo) appendUndo();
     };
-    // No channel to write on: the one way forward is Connettori.
+    // No channel to write on: the one way forward is Connettori. Genera is
+    // off with this reason beside it from the opening (backlog:f48593bb06d4):
+    // the draft is written for one channel, and Invia has none either.
     const sayConnect = () => {
       say('');
-      line.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato · '));
+      line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     };
     // The line under an AI draft: reread it, and Annulla when there is a
     // text of the person's own to go back to.
@@ -1862,6 +2015,8 @@ export function createCustomerCardView(deps) {
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
+      // AI off: Invio in the prompt asks nothing either (backlog:f48593bb06d4).
+      if (row.getAttribute('data-off') === 'true') return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
       // Review #664: during the minute of read-back a Genera with other
@@ -1869,16 +2024,16 @@ export function createCustomerCardView(deps) {
       // Genera with those words); the same words keep the read going. While
       // the POST itself is in flight Genera stays off, as before.
       if (busy && (reading === null || reading === pendingKey(words, picked))) return;
-      if (words === '') {
-        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
-        return;
-      }
       if (picked === null) {
         // backlog:bd9ae1482194 (verifica 11/11): with nothing to pick, the
         // line says what to do. Scrivi only opens for a customer with an
         // address, so «no channel to pick» always means the customer's
         // channels are not linked (or not usable) yet: Connettori.
         sayConnect();
+        return;
+      }
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
       }
       const mine = ++drafting;
@@ -2054,15 +2209,16 @@ export function createCustomerCardView(deps) {
         if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
-        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
-        // The operator sees why the row went quiet; never the person's prompt.
-        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
-          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
-        }
-        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
-        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
-        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
-        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        const aiOff = COMPOSER_AI_OFF_CODES.has(code) || status === 404 || status === 405;
+        if (aiOff) {
+          // A handled state, not a fault (backlog:f48593bb06d4): one warn
+          // line for the operator, never console.error, never the prompt.
+          if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+            console.warn('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+          }
+          rememberSpaceAiOff(spaceId, code);
+          off(code, status);
+        } else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
         if (mine !== drafting) return;
@@ -2080,6 +2236,19 @@ export function createCustomerCardView(deps) {
     if (kept !== null) {
       go.textContent = 'Rigenera';
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept.text.trim() !== '' || kept.subject.trim() !== '');
+    }
+    // backlog:f48593bb06d4: the row knows at opening whether Genera can work.
+    // No usable channel: off, with Connettori beside it. AI off in the space
+    // (the cached state read): off, with the reason and who turns it on. A
+    // Genera already in flight is left to the gate's own answer.
+    if (channel() === null) {
+      switchOff();
+      sayConnect();
+    } else {
+      void readSpaceAi(spaceId).then((code) => {
+        if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
+        off(code);
+      });
     }
     prompt.addEventListener?.('keydown', (event) => {
       if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
@@ -2188,10 +2357,12 @@ export function createCustomerCardView(deps) {
       if (entry.recipient === null) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
         // Voce 8ce25b0f445f: the address reads in the line too, not only in
         // the title — a phone has no hover.

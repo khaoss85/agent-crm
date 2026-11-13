@@ -216,6 +216,8 @@ test('947260f9f036: back on the same customer after another screen, the scheda s
   await flush(3);
   client.gates.get('card').release.resolve(CARD);
   client.gates.get('timeline').release.resolve(TIMELINE);
+  // Voce 4cd1bbb646d0: the profile is a second-wave read.
+  await flush(3);
   client.gates.get('profile').release.resolve(PROFILE);
   await first;
   await flush(3);
@@ -235,6 +237,8 @@ test('947260f9f036: back on the same customer after another screen, the scheda s
   await flush(3);
   client.gates.get('card').release.resolve(CARD);
   client.gates.get('timeline').release.resolve(TIMELINE);
+  // Voce 4cd1bbb646d0: the profile is a second-wave read.
+  await flush(3);
   client.gates.get('profile').release.resolve(PROFILE);
   await again;
   await flush(3);
@@ -273,6 +277,8 @@ for (const order of [['roster', 'audit'], ['audit', 'roster']]) {
     await flush(3);
     client.gates.get('card').release.resolve(CARD);
     client.gates.get('timeline').release.resolve(TIMELINE);
+    // Voce 4cd1bbb646d0: the profile is a second-wave read.
+    await flush(3);
     client.gates.get('profile').release.resolve(OFFER_PROFILE);
     await shown;
     await flush();
