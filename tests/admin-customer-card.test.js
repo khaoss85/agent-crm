@@ -2808,8 +2808,28 @@ test('3805161965cd: Oggi, Stato sync, composer and Connettori agree on profile-o
   // composer lands where production Stato sync lands (adapters read, none
   // for Email). The unread-schema branch still names the guided flow.
   assert.equal(link.getAttribute('href'), '#/profilo', 'the Gmail cure lands on Profilo');
+  assert.equal(link.textContent, 'Profilo', 'the cure anchor names its real destination, not Connettori');
   assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, []), 'the composer cures where Stato sync cures');
   assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'unread schema still offers the guided flow');
+});
+
+// Backlog:3805161965cd (Muse review on #848, P2, paired): the composer
+// never reads the schema, so it cannot follow the adapters the way Stato
+// sync does — the three adapter states are pinned here, loudly.
+test('3805161965cd: composer cure per adapter state against Stato sync', async () => {
+  const profile = COMPOSER_GMAIL_PROFILE;
+  assert.equal(syncConnectRoute('email', profile, []), '#/profilo', 'schema read, no adapter: both cure to Profilo');
+  assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'schema unread: Stato sync offers the guided flow');
+  const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
+  assert.equal(syncConnectRoute('email', profile, emailAdapters), null, 'composed Email adapter: Stato sync reads da-completare, no direct route');
+  const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard }),
+  });
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the single off Gmail keeps its own cure line');
+  assert.equal(link.getAttribute('href'), '#/profilo', 'the composer cure stays Profilo in every adapter state');
+  assert.equal(link.textContent, 'Profilo', 'and it says Profilo');
 });
 
 // Backlog:3805161965cd (review giro 6 P1, paired): a real Email row

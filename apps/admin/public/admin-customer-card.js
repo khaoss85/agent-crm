@@ -1465,16 +1465,19 @@ export function createCustomerCardView(deps) {
       // stays off with its «collega Gmail» line — the same contract Oggi,
       // Stato sync and Connettori enforce (review giro 4 P1).
       const realLive = live !== null && !synthetic;
-      // Backlog:3805161965cd (review giro 6 P1): one Email cure on every
-      // screen — Profilo, where the Google grant lives (the same answer
-      // Connettori and Stato sync name in production, through the same
-      // helper and inputs). The email guided flow without a composed
-      // adapter ends in «non ancora disponibile», so the composer never
-      // names it. '#/connettori' only when nothing here names a route.
-      // DECISION (to be confirmed): if an Email adapter is ever composed,
-      // Connettori and Stato sync switch to '#/connettori/email' while this
-      // screen (which never reads the schema) still cures to Profilo — then
-      // the composer must read the matched adapters too.
+      // Backlog:3805161965cd (review giro 6 P1): the composer cures Email
+      // to Profilo, where the Google grant lives (the same answer
+      // Connettori and Stato sync name in production once the schema reads
+      // with no Email adapter, through the same helper and inputs). The
+      // email guided flow without a composed adapter ends in «non ancora
+      // disponibile», so the composer never names it. '#/connettori' only
+      // when nothing here names a route.
+      // DECISION (to be confirmed): this screen never reads the schema, so
+      // it cannot follow the adapters the way Stato sync does (Muse review
+      // on #848): while the schema is unread Stato sync names the guided
+      // flow, and with a composed Email adapter it reads da-completare,
+      // while the composer still cures to Profilo. The paired test pins
+      // all three states, so the screens disagree loudly, never silently.
       const connectRoute = channel === 'email'
         ? (channelState(channel, { rows: list, profile, adapters: [], guided: [] }).connectRoute ?? '#/connettori')
         : null;
@@ -2444,8 +2447,11 @@ export function createCustomerCardView(deps) {
         // where Stato sync's Collega lands — Profilo, via the entry's
         // connectRoute — '#/connettori' only as the fallback.
         const gmailRoute = channels.find((entry) => entry.channel === 'email')?.connectRoute ?? '#/connettori';
+        // Muse review on #848 (P2): the anchor names its real destination —
+        // «Profilo» when the cure lands there, never «Connettori» to Profilo.
+        const gmailLabel = gmailRoute === '#/profilo' ? 'Profilo' : 'Connettori';
         offLine.appendChild(el('span', undefined, `${offLinked[0]} in `));
-        offLine.appendChild(link(gmailRoute, 'Connettori', 'composer-connectors'));
+        offLine.appendChild(link(gmailRoute, gmailLabel, 'composer-connectors'));
       } else {
         offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
         offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));

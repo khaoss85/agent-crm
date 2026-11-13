@@ -207,17 +207,24 @@ export function syncAgo(iso, nowMs = Date.now()) {
  * fallback, never a zero posing as measured.
  * @param {any} activity
  * @param {number} [nowMs]
- * @param {{ syncing?: boolean, extraCount?: number }} [options]
+ * @param {{ syncing?: boolean, extraCount?: number, fixActivity?: any }} [options] `fixActivity` is the raw
+ *   entries the fix/grant cards read; the badge votes their total while rows and tone stay on `activity`.
  */
-export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, extraCount = 0 } = {}) {
+export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, extraCount = 0, fixActivity = null } = {}) {
   // A null payload is an unread state, never an ok one: unknown must not
   // pose as fresh. The view only calls this with a loaded payload; the
   // empty-space case below (a real object with no connections) stays ok.
   if (activity === null || typeof activity !== 'object') {
     return { tone: 'wait', title: 'Stato non letto', detail: 'Ricarica la pagina per leggere lo stato.', count: 0 };
   }
-  const items = syncFixItems(activity);
-  const grantCards = syncGrantCards(activity, nowMs);
+  // The fix and grant cards read the raw entries (backlog:3805161965cd):
+  // a stand-in Email row with failure state keeps its card below, so the
+  // hero votes the same fix total, never a calm badge above a
+  // «Da sistemare» card (Muse review on #848). Rows, pills and the empty
+  // tone stay on the filtered activity; only the fix total is shared.
+  const fixes = fixActivity !== null && typeof fixActivity === 'object' ? fixActivity : activity;
+  const items = syncFixItems(fixes);
+  const grantCards = syncGrantCards(fixes, nowMs);
   // Unresolved identity candidates need a human on this same screen, so
   // they count like the channel fix items (the purple cards below).
   const extra = Number.isSafeInteger(extraCount) && extraCount > 0 ? extraCount : 0;
@@ -1063,7 +1070,9 @@ export function createSyncView(deps) {
   function renderHero(box, activity) {
     const syncing = state.syncingAll || state.syncing.size > 0;
     const extraCount = syncIdentityCards(state.candidates).length;
-    const indicator = syncIndicator(activity, Date.now(), { syncing, extraCount });
+    // The hero's rows read the filtered activity; its fix total reads the
+    // same raw entries the cards below read (backlog:3805161965cd).
+    const indicator = syncIndicator(activity, Date.now(), { syncing, extraCount, fixActivity: state.activity });
     box.appendChild(settingsTabs(doc, { activeId: 'stato-sync', fixCount: indicator.count, navigate: go }));
     box.appendChild(el(doc, 'p', 'bo-kicker', 'Stato sync'));
     const hero = el(doc, 'div', 'bo-sync-hero');
@@ -1453,7 +1462,8 @@ export function createSyncView(deps) {
     // The fix and grant cards read the raw entries: a stopped import or
     // a refused grant keyed `profile:` is a real server row with a route
     // to name, even though it never votes Email in the count and table
-    // (review giro 4 P1).
+    // (review giro 4 P1). The hero votes the same raw fix total through
+    // `fixActivity`, so its badge never reads 0 above these cards.
     renderFixes(box, state.activity);
     // Supervisor design pass: channels and the live feed as the prototype's
     // two cards side by side (2:1).

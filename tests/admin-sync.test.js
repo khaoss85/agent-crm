@@ -199,6 +199,42 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   assert.ok(!unknown.title.includes('Tutto sincronizzato'));
 });
 
+test('hero votes the raw fix total the cards read (stand-in Email with failures)', () => {
+  // Muse review on #848 (P1): the raw activity carries a key-only Email
+  // stand-in with failure state; the filtered hero rows drop it, but the
+  // fix cards below still name it — the hero badge must vote the same
+  // total, never 0 above a «Da sistemare» card.
+  const raw = activityOf({
+    connections: [{
+      connectionKey: 'profile:gmail',
+      channel: 'email',
+      account: 'guido@palestra-esempio.it',
+      status: 'active',
+      importable: false,
+      sync: null,
+      inbox: inboxOf(),
+      outbox: { openDeadLetters: 1, lastFailedAt: '2026-10-25T11:45:00.000Z' },
+      direction: 'both',
+      health: 'ok',
+      needsFix: 0,
+    }],
+  });
+  const profile = {
+    connections: {
+      available: true,
+      items: [{ connector: 'gmail', status: 'connected', account: 'guido@palestra-esempio.it' }],
+    },
+  };
+  const filtered = withProfileConnections(raw, profile);
+  assert.equal(syncFixItems(filtered).length, 0, 'the filtered rows carry no fix');
+  assert.equal(syncIndicator(filtered, NOW).count, 0, 'without the shared total the hero would read calm');
+  assert.equal(syncFixItems(raw).length, 1, 'the raw card names the failed send');
+  const hero = syncIndicator(filtered, NOW, { fixActivity: raw });
+  assert.equal(hero.count, 1, 'hero badge votes the same total the cards read');
+  assert.equal(hero.tone, 'empty', 'nothing real is linked, so the Collega button stays');
+  assert.equal(hero.title, 'Nessun canale collegato');
+});
+
 test('syncAgo reads seconds, then minutes, then the longer wording', () => {
   assert.equal(syncAgo('2026-10-25T11:59:58.000Z', NOW), 'adesso');
   assert.equal(syncAgo('2026-10-25T11:59:38.000Z', NOW), '22 s fa');
