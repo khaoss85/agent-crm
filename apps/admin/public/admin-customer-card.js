@@ -768,6 +768,34 @@ export function withNote(loaded, saved, body) {
   return { ...loaded, timeline: { ...loaded.timeline, entries: { ...entries, items: [note, ...entries.items] } } };
 }
 
+/**
+ * backlog:cb348c9fcaeb — a corrected note keeps its place, its writer and
+ * its date, and reads the new wording, like the server's cronologia folds
+ * a correction. @param {any} loaded @param {string} noteId @param {string} body
+ */
+export function withRevisedNote(loaded, noteId, body) {
+  const entries = loaded?.timeline?.entries;
+  if (!entries || !Array.isArray(entries.items)) return loaded;
+  const items = entries.items.map((item) => (item?.entry === 'note' && item.id === noteId
+    ? { ...item, body, revisedAt: new Date().toISOString() }
+    : item));
+  return { ...loaded, timeline: { ...loaded.timeline, entries: { ...entries, items } } };
+}
+
+/** backlog:cb348c9fcaeb — a withdrawn note leaves the cronologia. @param {any} loaded @param {string} noteId */
+export function withoutNote(loaded, noteId) {
+  const entries = loaded?.timeline?.entries;
+  if (!entries || !Array.isArray(entries.items)) return loaded;
+  // The count before the filter (review Muse #867, P2): a shape without
+  // `count` starts from the list as it was, never from the filtered one.
+  const before = Number(entries.count ?? entries.items.length);
+  const items = entries.items.filter((item) => !(item?.entry === 'note' && item.id === noteId));
+  return {
+    ...loaded,
+    timeline: { ...loaded.timeline, entries: { ...entries, count: Math.max(0, before - (entries.items.length - items.length)), items } },
+  };
+}
+
 /** The saved Nome, Cognome and Email on the card, the header and Dettagli. @param {any} loaded @param {{firstName: string, lastName: string, email: string}} typed */
 export function withContactDetails(loaded, typed) {
   const name = [typed.firstName, typed.lastName].map((part) => String(part ?? '').trim()).filter(Boolean).join(' ');
@@ -835,6 +863,37 @@ export function noteRefusalText(error) {
   }
   return humanWriteError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
 }
+
+/**
+ * What a refused «Modifica» or «Elimina» says (backlog:cb348c9fcaeb): each
+ * refusal the server names reads what happened and what to do — never
+ * «Riprova più tardi», which would only meet the same refusal again.
+ * @param {unknown} error @param {string} failed the sentence for a failure the server did not name
+ * @param {'revise' | 'withdraw'} [change] which command was refused
+ */
+export function noteChangeRefusalText(error, failed, change = 'revise') {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  if (code === 'WORK_NOTE_NOT_AUTHOR') return 'Solo chi ha scritto la nota può modificarla o eliminarla.';
+  if (code === 'WORK_NOTE_NOT_FOUND') return 'Questa nota non c’è più: ricarica la scheda.';
+  if (code === 'WORK_NOTE_WITHDRAWN') {
+    return change === 'withdraw' ? 'Questa nota è già stata eliminata.' : 'Questa nota è stata eliminata: non si può più modificare.';
+  }
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'BO_CRM_BODY_REFUSED' || status === 400 || status === 422) {
+    return noteRefusalText(error);
+  }
+  return humanWriteError(error, { failed });
+}
+
+/**
+ * How long «Elimina» waits before the withdrawal is sent: the time the
+ * toast holds «Annulla» (a toast with an action stays 10 s). A withdrawal
+ * on the server is final — it cannot be taken back — so «Annulla» stops
+ * the request instead of reversing it (unlike the Pipeline, whose undo
+ * writes the move back).
+ */
+export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
@@ -985,6 +1044,11 @@ export function createCustomerCardView(deps) {
     const drafts = {};
     const note = root.querySelector('[name="noteBody"]');
     if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    // backlog:cb348c9fcaeb: what is typed in an open «Modifica».
+    const noteEdit = root.querySelector('[name="noteEditBody"]');
+    if (noteEdit && typeof noteEdit.value === 'string') {
+      drafts.noteEdit = { noteId: noteEdit.getAttribute('data-note-id'), value: noteEdit.value };
+    }
     if (root.querySelector('button[data-action="save-details"]')) {
       // Review #612 round 3: only the fields the person changed travel to
       // the new scheda. An untouched field takes the freshly read value, so a
@@ -2960,6 +3024,133 @@ export function createCustomerCardView(deps) {
     }
   }
 
+  /**
+   * backlog:cb348c9fcaeb — «Modifica» and «Elimina» under the operator's own
+   * note. Another member's note shows neither: only who wrote a note
+   * corrects or withdraws it.
+   * @param {any} item @param {{resource: string, id: string}} noteCtx
+   */
+  function noteCommands(item, noteCtx) {
+    const bar = el('p', 'bo-scheda-note-actions');
+    const edit = el('button', 'bo-scheda-note-action', 'Modifica');
+    edit.setAttribute('type', 'button');
+    edit.setAttribute('data-action', 'edit-note');
+    edit.setAttribute('data-note-id', item.id);
+    edit.addEventListener('click', () => {
+      noteEditing = { key: `${noteCtx.resource}/${noteCtx.id}`, noteId: item.id, draft: null, error: '' };
+      repaintIfShown(noteCtx.resource, noteCtx.id);
+      mount.querySelector('[name="noteEditBody"]')?.focus?.();
+    });
+    const drop = el('button', 'bo-scheda-note-action', 'Elimina');
+    drop.setAttribute('type', 'button');
+    drop.setAttribute('data-action', 'withdraw-note');
+    drop.setAttribute('data-note-id', item.id);
+    // The note leaves the screen at once; the withdrawal itself waits for
+    // the «Annulla» window (withdrawNote).
+    drop.addEventListener('click', () => uiBusy(drop, 'Elimino…', async () => {
+      withdrawNote(noteCtx.resource, noteCtx.id, item.id);
+    }));
+    bar.appendChild(edit);
+    bar.appendChild(drop);
+    return bar;
+  }
+
+  /**
+   * The note in place, editable: Invio saves, Maiusc+Invio goes to a new
+   * line, Esc puts the note back as it was — like adding a note.
+   * @param {any} item @param {{resource: string, id: string}} noteCtx
+   */
+  function noteEditor(item, noteCtx) {
+    const editing = /** @type {NonNullable<typeof noteEditing>} */ (noteEditing);
+    const form = el('div', 'bo-scheda-note-form bo-scheda-note-edit');
+    const field = el('textarea', 'bo-scheda-note-input');
+    field.setAttribute('name', 'noteEditBody');
+    field.setAttribute('data-note-id', item.id);
+    field.setAttribute('rows', '2');
+    field.setAttribute('aria-label', 'Modifica la nota');
+    const typed = pendingDrafts?.noteEdit?.noteId === item.id ? pendingDrafts.noteEdit.value : editing.draft;
+    field.value = typeof typed === 'string' ? typed : String(item?.body ?? '');
+    field.addEventListener('input', () => {
+      if (noteEditing !== null && noteEditing.noteId === item.id) noteEditing.draft = String(field.value ?? '');
+    });
+    const row = el('div', 'bo-scheda-form-actions');
+    const save = el('button', undefined, 'Salva');
+    save.setAttribute('type', 'button');
+    save.setAttribute('data-action', 'save-note-edit');
+    const cancel = el('button', undefined, 'Annulla');
+    cancel.setAttribute('type', 'button');
+    cancel.setAttribute('data-action', 'cancel-note-edit');
+    const error = el('small', 'field-error', editing.error ?? '');
+    error.setAttribute('data-note-error', item.id);
+    /** The refusal on the editor on screen (a repaint may have rebuilt it). @param {string} said */
+    const say = (said) => {
+      if (noteEditing !== null && noteEditing.noteId === item.id) noteEditing.error = said;
+      const shown = mount.querySelector(`[data-note-error="${item.id}"]`) ?? error;
+      shown.textContent = said;
+    };
+    const close = () => {
+      noteEditing = null;
+      repaintIfShown(noteCtx.resource, noteCtx.id);
+    };
+    const saveEdit = () => uiBusy(save, 'Salvo…', async () => {
+      if (noteRevising) return;
+      const live = mount.querySelector('[name="noteEditBody"]');
+      const text = String((live?.getAttribute?.('data-note-id') === item.id ? live.value : field.value) ?? '');
+      if (text.trim() === '') {
+        say('Scrivi la nota prima di salvarla. Per toglierla usa «Elimina».');
+        return;
+      }
+      if (text.trim().length > NOTE_MAX) {
+        say(NOTE_TOO_LONG);
+        return;
+      }
+      if (text === String(item?.body ?? '')) {
+        close();
+        return;
+      }
+      noteRevising = true;
+      say('');
+      try {
+        await client.request('/api/customer-hub/notes/revise', {
+          method: 'POST',
+          body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, noteId: item.id, body: text }),
+        });
+        noteEditing = null;
+        // The new wording shows at once; then only the cronologia is read again.
+        const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+          (loaded) => withRevisedNote(loaded, item.id, text));
+        toast('Nota modificata');
+        await refreshed;
+      } catch (failure) {
+        if (noteEditing !== null && noteEditing.noteId === item.id) noteEditing.draft = text;
+        const said = noteChangeRefusalText(failure, 'Nota non modificata. Riprova più tardi.');
+        say(said);
+        toast(said, true);
+      } finally {
+        noteRevising = false;
+      }
+    });
+    save.addEventListener('click', saveEdit);
+    cancel.addEventListener('click', close);
+    field.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape') {
+        event.preventDefault?.();
+        close();
+        return;
+      }
+      if (event?.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+      event.preventDefault?.();
+      void saveEdit();
+    });
+    form.appendChild(field);
+    row.appendChild(save);
+    row.appendChild(cancel);
+    form.appendChild(row);
+    form.appendChild(error);
+    form.appendChild(el('p', 'bo-muted', 'Invio salva, Maiusc+Invio va a capo, Esc annulla.'));
+    return form;
+  }
+
   function timelineBox(box, timeline, noteCtx, profile = null, pipelines = []) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
@@ -2967,8 +3158,14 @@ export function createCustomerCardView(deps) {
     // backlog:5346ab531538: a cancelled appointment reads in the cronologia
     // as its own row, under «Tutti» only (it has no channel), at the moment
     // it was cancelled — the slot left the calendar grid, not the history.
+    // backlog:cb348c9fcaeb: a note whose «Elimina» waits for its «Annulla»
+    // window is already gone from the screen.
+    const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
+    const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
+      && pendingWithdrawals.has(`${timelineKey}#${item.id}`);
     const entries = [
-      ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : []),
+      ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
+        .filter((item) => !withdrawing(item)),
       ...cancelledAppointmentEntries(timeline),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
@@ -3188,8 +3385,16 @@ export function createCustomerCardView(deps) {
           const paper = el('div', 'bo-scheda-note-paper');
           paper.appendChild(el('p', 'bo-scheda-entry-head',
             when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
-          if (typeof item?.body === 'string' && item.body !== '') {
-            paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
+          const mine = myActorId();
+          const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
+            && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
+          if (own && noteEditing !== null && noteEditing.key === timelineKey && noteEditing.noteId === item.id) {
+            paper.appendChild(noteEditor(item, noteCtx));
+          } else {
+            if (typeof item?.body === 'string' && item.body !== '') {
+              paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
+            }
+            if (own) paper.appendChild(noteCommands(item, noteCtx));
           }
           row.appendChild(paper);
           list.appendChild(row);
@@ -4065,6 +4270,9 @@ export function createCustomerCardView(deps) {
     const startSeq = { ...partSeq };
     historyReads.clear();
     rosterRead = null;
+    // Who the operator is, asked again with every full read (review Muse
+    // #867): the id belongs to the space, which may have changed.
+    meRead = null;
     if (key !== shownKey) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
@@ -4080,6 +4288,11 @@ export function createCustomerCardView(deps) {
       channelFilter = 'all';
       noteAuthorFilter = null;
       timelineShown = TIMELINE_PAGE;
+      // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
+      // leaves now — never silently undone by opening another customer —
+      // and an open «Modifica» closes with the scheda it belonged to.
+      flushWithdrawals();
+      noteEditing = null;
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
       // with the same name re-narrows the crumb instead of staying silent.
@@ -4190,6 +4403,9 @@ export function createCustomerCardView(deps) {
    */
   function paint(key, resource, id, loaded) {
     void readRoster();
+    // backlog:cb348c9fcaeb: who the operator is — once per view, so a note
+    // written later already knows it is the operator's own.
+    void readMe();
     const {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
@@ -4266,6 +4482,144 @@ export function createCustomerCardView(deps) {
   const loggedHistoryFailures = new WeakSet();
   /** A note being saved, view-wide (review #793): one POST per note. */
   let noteSaving = false;
+  /**
+   * backlog:cb348c9fcaeb — «Modifica» open on one note: view state, so a
+   * repaint (the roster arriving, another section's re-read) draws the
+   * editor again with what was typed and its last refusal.
+   * @type {{ key: string, noteId: string, draft: string | null, error: string } | null}
+   */
+  let noteEditing = null;
+  /** A correction being saved, view-wide: one POST per tap. */
+  let noteRevising = false;
+  /**
+   * «Elimina» waiting for its «Annulla» window, by `<resource>/<id>#<noteId>`.
+   * The note is hidden at once; the withdrawal leaves when the window ends,
+   * or at once when the scheda opens another customer.
+   * @type {Map<string, { resource: string, id: string, noteId: string, state: 'waiting' | 'sending' }>}
+   */
+  const pendingWithdrawals = new Map();
+  /**
+   * The id this host signs the operator's writes with (`/api/spine/context`
+   * `actor.id`): a note is the operator's own when its `teamAuthorId` is
+   * this id. The id belongs to a space — on the pilot it is the space
+   * binding — so it is read per space (review Muse #867, P2): asked again
+   * at every full read of a scheda and whenever the space changes, never at
+   * a repaint. Unread, failed or read for another space, no note offers
+   * «Modifica» or «Elimina».
+   * @type {{ spaceId: string | null, promise: Promise<string | null> } | null}
+   */
+  let meRead = null;
+  /** @type {{ spaceId: string | null, id: string } | null} */
+  let me = null;
+  /** The operator's actor id in the space on screen, or null. */
+  function myActorId() {
+    return me !== null && me.spaceId === activeSpaceId() ? me.id : null;
+  }
+  function readMe() {
+    const spaceId = activeSpaceId();
+    if (meRead !== null && meRead.spaceId === spaceId) return meRead.promise;
+    const promise = client.request('/api/spine/context').then(
+      (context) => {
+        const id = typeof context?.actor?.id === 'string' ? context.actor.id.trim() : '';
+        return id === '' ? null : id;
+      },
+      (error) => {
+        // Logged with its cause, never its payload; the notes simply show
+        // no commands, and the next full read asks again.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] autore delle note non leggibile', {
+            area: 'scheda-nota-autore',
+            code: error?.code ?? null,
+            name: typeof error?.name === 'string' ? error.name : null,
+            spaceId,
+            status: Number(error?.status ?? 0) || null,
+          });
+        }
+        return null;
+      },
+    );
+    const read = { spaceId, promise };
+    meRead = read;
+    void promise.then((id) => {
+      if (meRead !== read) return;
+      const before = myActorId();
+      me = id === null ? null : { spaceId, id };
+      if (myActorId() === before) return;
+      // The commands arrive (or leave) after the paint: paint once more, no read.
+      if (lastShown !== null && lastShown.key === shownKey) {
+        paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+      }
+    });
+    return promise;
+  }
+  /** The scheda again from what it shows, only when it still shows this customer. @param {string} resource @param {string} id */
+  function repaintIfShown(resource, id) {
+    const key = `${resource}/${id}`;
+    if (lastShown !== null && lastShown.key === key && shownKey === key) paint(key, resource, id, lastShown.loaded);
+  }
+  /** @param {string} pendingKey */
+  async function commitWithdrawal(pendingKey) {
+    const pending = pendingWithdrawals.get(pendingKey);
+    if (!pending || pending.state !== 'waiting') return;
+    pending.state = 'sending';
+    const { resource, id, noteId } = pending;
+    const key = `${resource}/${id}`;
+    try {
+      await client.request('/api/customer-hub/notes/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({ resource, id, noteId }),
+      });
+      pendingWithdrawals.delete(pendingKey);
+      // The note stays out of the cronologia; then only the cronologia is
+      // read again, so the screen is the server's answer.
+      if (lastShown !== null && lastShown.key === key && shownKey === key) {
+        await refreshParts(resource, id, ['timeline'], (loaded) => withoutNote(loaded, noteId));
+      }
+    } catch (error) {
+      pendingWithdrawals.delete(pendingKey);
+      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
+      // The note comes back where it was, then the cronologia is read again.
+      repaintIfShown(resource, id);
+      if (lastShown !== null && lastShown.key === key && shownKey === key) {
+        await refreshParts(resource, id, ['timeline']);
+      }
+    }
+  }
+  /** Every withdrawal still waiting leaves now (the scheda opens another customer). */
+  function flushWithdrawals() {
+    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey);
+  }
+  /**
+   * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
+   * toast for the grace window, the withdrawal sent when it ends.
+   * @param {string} resource @param {string} id @param {string} noteId
+   */
+  function withdrawNote(resource, id, noteId) {
+    const pendingKey = `${resource}/${id}#${noteId}`;
+    if (pendingWithdrawals.has(pendingKey)) return;
+    const pending = { resource, id, noteId, state: /** @type {'waiting' | 'sending'} */ ('waiting') };
+    pendingWithdrawals.set(pendingKey, pending);
+    if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
+    repaintIfShown(resource, id);
+    toast('Nota eliminata', false, {
+      duration: NOTE_WITHDRAW_GRACE_MS,
+      action: {
+        label: 'Annulla',
+        run: () => {
+          // The toast stays while the pointer is on it, so «Annulla» can
+          // come after the withdrawal left: say so, never a silent tap.
+          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
+            toast('La nota è già stata eliminata: non si può più annullare.', true);
+            return;
+          }
+          pendingWithdrawals.delete(pendingKey);
+          repaintIfShown(resource, id);
+          toast('Nota ripristinata');
+        },
+      },
+    });
+    void wait(NOTE_WITHDRAW_GRACE_MS).then(() => commitWithdrawal(pendingKey));
+  }
   /** @type {Array<any> | null} */
   let rosterPeople = null;
   function readRoster() {
