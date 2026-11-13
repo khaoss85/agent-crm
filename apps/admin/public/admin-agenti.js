@@ -42,7 +42,7 @@
 
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
 import { formatAmount, humanWriteError, parseEuroToCents } from './admin-core.js';
-import { el, uiBadge, uiButton, uiEmpty, uiMarkBusy } from './admin-ui.js';
+import { el, uiBadge, uiButton, uiEmpty, uiHold, uiMarkBusy } from './admin-ui.js';
 
 /** How many rows each module read takes: one page, said out loud. */
 export const AGENTI_READ_LIMIT = 200;
@@ -1205,7 +1205,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       draft.text = String(input.value ?? draft.text);
       const cost = form.querySelector(`input[name="cost-${card.sourceKey}"]`);
       if (cost) draft.cost = String(cost.value ?? draft.cost);
-      void sendInstruction(card, false);
+      // The shared wait (admin-cta-busy guard): Affida reads «Invio…» from
+      // the press; the repaint keeps it from draft.busy, and a press that
+      // writes nothing (empty line) gets the button back.
+      const release = uiHold(send, 'Invio…');
+      void sendInstruction(card, false).finally(() => release());
     });
     box.appendChild(form);
     if (draft.unclear) {
@@ -1344,7 +1348,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const row = el(documentNode, 'div', 'bo-seq-btns');
     const submit = uiButton(documentNode, { variant: 'cta', label: locked ? 'Riprova' : 'Crea l’agente', attrs: { type: 'button', 'data-action': 'create-agent' } });
     if (form.busy) uiMarkBusy(submit, 'Creo…');
-    submit.addEventListener('click', () => { void submitNewAgent(); });
+    submit.addEventListener('click', () => {
+      // The shared wait (admin-cta-busy guard): «Creo…» from the press; the
+      // repaint keeps it from form.busy while the create runs.
+      const release = uiHold(submit, 'Creo…');
+      void submitNewAgent().finally(() => release());
+    });
     row.appendChild(submit);
     const cancel = uiButton(documentNode, { variant: 'secondary', label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent' } });
     cancel.disabled = form.busy;
