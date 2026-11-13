@@ -2555,6 +2555,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-composer-ai-pick { min-height: 0; padding: 4px 12px; border: 1px solid var(--agent-soft); border-radius: 999px; background: var(--surface); color: var(--agent-ink); font: inherit; font-weight: 600; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-pick:hover { border-color: var(--agent); }
 .bo-scheda-composer .bo-composer-ai-pick[aria-pressed="true"] { border-color: var(--agent); background: var(--agent); color: var(--surface); }
+/* Voce 1ca42058: ogni versione mostra l'anteprima del testo sotto l'etichetta, leggibile prima della scelta. */
+.bo-scheda-composer .bo-composer-ai-pick { text-align: left; max-width: 230px; border-radius: 12px; }
+.bo-composer-ai-pick-label { display: block; font-weight: 600; }
+.bo-composer-ai-preview { display: block; margin-top: 2px; font-weight: 400; font-size: 11.5px; line-height: 1.4; opacity: .85; white-space: normal; }
 .bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }

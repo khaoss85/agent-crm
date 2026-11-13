@@ -1902,11 +1902,18 @@ export function createCustomerCardView(deps) {
           pickButtons = [];
           choice.appendChild(el('span', undefined, 'Scegli la versione da usare:'));
           for (const version of versions) {
-            const pick = el('button', 'bo-composer-ai-pick', version.label);
+            const pick = el('button', 'bo-composer-ai-pick', '');
             pick.setAttribute('type', 'button');
             pick.setAttribute('data-action', 'composer-ai-pick');
             pick.setAttribute('data-version', version.kind);
             pick.setAttribute('aria-pressed', 'false');
+            // Voce 1ca42058: every version reads before the pick — the full
+            // wording on hover plus a visible excerpt under the label, so the
+            // member sees what each version holds without picking it first.
+            pick.setAttribute('title', version.text);
+            pick.appendChild(el('span', 'bo-composer-ai-pick-label', version.label));
+            const excerpt = version.text.length > 120 ? `${version.text.slice(0, 120)}…` : version.text;
+            pick.appendChild(el('span', 'bo-composer-ai-preview', excerpt));
             // Only a closed or reopened composer retires the versions: a
             // Rigenera in flight leaves them working until the new three.
             pick.addEventListener('click', () => {
@@ -1941,9 +1948,13 @@ export function createCustomerCardView(deps) {
             choice.appendChild(pick);
             pickButtons.push(pick);
           }
-          // A new set after a pick: the field keeps the earlier wording,
-          // none of the new three is selected yet.
-          if (filled !== null) sayDrafted();
+          // Voce 1ca42058 (Dan 13/11): Genera fills the field at once with
+          // the first version, marked as picked, with the «Bozza dell'AI»
+          // line — the member reads a draft right away instead of an empty
+          // field. A new set after a pick keeps the earlier wording instead,
+          // none of the new three selected yet.
+          if (filled === null && versions.length > 0) fill(versions[0].text, versions[0].kind);
+          else if (filled !== null) sayDrafted();
           return;
         }
         // A single-text answer from a pilot before the three-version cure

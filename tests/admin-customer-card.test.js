@@ -3518,10 +3518,10 @@ test('composer AI: a prompt fills message and empty subject, editable, and nothi
   assert.deepEqual(toasts, []);
 });
 
-test('composer AI (backlog:01289e73): three versions offer a choice, never one text at once', async () => {
+test('composer AI (backlog:1ca42058): Genera fills the first version at once, previews read before the pick', async () => {
   const versions = {
     corta: 'Ciao Guido!',
-    lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova con piacere.',
+    lunga: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova in palestra con tutto il team: porta il tappetino e una bottiglia d’acqua, cominciamo puntuali.',
     diretta: 'Guido, ci vediamo giovedì alle 18 per la prova.',
   };
   const client = draftClient({ ...versions, subject: 'Prova di giovedì' });
@@ -3531,15 +3531,28 @@ test('composer AI (backlog:01289e73): three versions offer a choice, never one t
   input.value = 'ricordagli la prova di giovedì';
   go.dispatch('click');
   await flushComposer();
-  assert.equal(area.value, 'Il mio testo', 'no version fills the field before the member picks one');
+  assert.equal(area.value, versions.corta, 'Genera fills the field right away with the first version');
+  assert.equal(subject.value, 'Prova di giovedì');
+  assert.match(panel.textContent, /rileggila e modificala prima di inviare/);
   const picks = panel.findAll('button').filter((node) => node.getAttribute('data-action') === 'composer-ai-pick');
-  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta']);
+  assert.deepEqual(picks.map((node) => node.getAttribute('data-version')), ['corta', 'lunga', 'diretta']);
+  assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['true', 'false', 'false'], 'the filled version reads as selected');
   assert.match(panel.textContent, /Scegli la versione da usare/);
+  for (const [index, kind] of ['corta', 'lunga', 'diretta'].entries()) {
+    assert.equal(picks[index].getAttribute('title'), versions[kind], `${kind} previews its full wording on hover`);
+    const preview = picks[index].findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-preview'));
+    assert.ok(preview, `${kind} shows a visible excerpt`);
+    const excerpt = preview.textContent;
+    assert.ok(versions[kind].startsWith(excerpt.replace(/…$/, '')), `${kind} excerpt previews its wording`);
+  }
+  assert.ok(picks[1].findAll('span').pop().textContent.endsWith('…'), 'a long wording truncates the visible excerpt');
   picks[1].dispatch('click');
   await flushComposer();
   assert.equal(area.value, versions.lunga, 'the picked wording fills the message, editable');
+  assert.deepEqual(aiPicks(panel).map((node) => node.getAttribute('aria-pressed')), ['false', 'true', 'false']);
   assert.equal(subject.value, 'Prova di giovedì');
   assert.equal(go.textContent, 'Rigenera');
+  assert.equal(client.drafts.length, 1, 'a switch never asks the draft route again');
   assert.equal(client.posts.length, 0, 'the draft never sends');
   assert.deepEqual(toasts, []);
   const undo = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
@@ -3597,7 +3610,7 @@ test('composer AI: after a pick the three versions stay, the picked one is marke
   assert.equal(area.value, threeVersions.diretta);
   assert.equal(subject.value, 'Prova di giovedì');
   const picks = aiPicks(panel);
-  assert.deepEqual(picks.map((node) => node.textContent), ['Corta', 'Lunga', 'Diretta'], 'the three versions stay after the pick');
+  assert.deepEqual(picks.map((node) => node.getAttribute('data-version')), ['corta', 'lunga', 'diretta'], 'the three versions stay after the pick');
   assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'true'], 'the picked version reads as selected');
   picks[0].dispatch('click');
   await flushComposer();
