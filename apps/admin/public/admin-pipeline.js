@@ -767,11 +767,13 @@ export function createPipelineBoard(deps) {
       moveLocks.delete(id);
       seatedStages.delete(id);
       const message = moveFailureText(error);
-      if (error?.code === 'STALE_POSITION') {
+      if (error?.code === 'STALE_POSITION' || error?.code === 'STALE_STAGE') {
         // Review Muse #852 (P2): the column changed under this drop. On the
         // pilot the stage write may already have landed before the place was
         // refused (two writes, not one): never guess by putting the card
-        // back — the fresh board says where it is.
+        // back — the fresh board says where it is. STALE_STAGE (backlog
+        // 1541408e8144): someone else moved the card meanwhile, so the card
+        // the person sees is stale the same way — the re-read tells the truth.
         restore = null;
         await renderBoard(pipeline.name, { quiet: true });
       } else if (restore) {
@@ -1823,6 +1825,7 @@ export function createPipelineBoard(deps) {
     if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
+    if (code === 'STALE_STAGE') return "Questa offerta è stata spostata altrove nel frattempo: la pipeline si aggiorna.";
     if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
     if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
