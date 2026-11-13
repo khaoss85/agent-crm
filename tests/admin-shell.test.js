@@ -17,7 +17,9 @@ import {
   loadFixCount,
   resolveBadgeSpaceId,
   defaultSpaces,
+  mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   resolveSpaceShortcut,
   spaceMenuItems,
   buildShellNav,
@@ -195,6 +197,65 @@ test('readSpaces falls back to the single local space, never empty', () => {
   assert.deepEqual(readSpaces({ getItem: () => '[]' }), defaultSpaces());
   const stored = readSpaces({ getItem: () => JSON.stringify([{ id: 'x', name: 'X' }, { id: '', name: '' }]) });
   assert.deepEqual(stored, [{ id: 'x', name: 'X', initials: 'X' }]);
+});
+
+test('backlog:029409ff — mergeSpaces joins the session spaces with the visited ones', () => {
+  // The reported bug: the menu showed only the session space. The primary
+  // source (session profile) leads, visited spaces fill in, blanks and
+  // duplicates collapse — Presti appears next to Prova Validazione B1.
+  const merged = mergeSpaces(
+    [{ id: 'b1', name: 'Prova Validazione B1', initials: 'PR' }],
+    [{ id: 'presti', name: 'Presti' }, { id: 'b1', name: 'B1 duplicato' }, { id: '', name: '' }, null],
+  );
+  assert.deepEqual(merged, [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ]);
+  // With nothing usable the menu still shows the single local space.
+  assert.deepEqual(mergeSpaces([], []), defaultSpaces());
+  assert.deepEqual(mergeSpaces(null, undefined), defaultSpaces());
+});
+
+test('backlog:029409ff — a fresh browser never merges «Spazio locale» into a real session', () => {
+  // Codex P2 on agent-crm#754: readSpaces falls back to defaultSpaces, so a
+  // fresh, missing or corrupt storage merged a fictitious «Spazio locale»
+  // into the session spaces and persisted it. The session merge reads the
+  // stored history without the development fallback instead.
+  const fresh = { getItem: () => null };
+  const corrupt = { getItem: () => 'not json' };
+  assert.deepEqual(readStoredSpaces(null), []);
+  assert.deepEqual(readStoredSpaces(fresh), []);
+  assert.deepEqual(readStoredSpaces(corrupt), []);
+  assert.deepEqual(readStoredSpaces({ getItem: () => '[]' }), []);
+  const sessionSpaces = [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ];
+  for (const storage of [fresh, corrupt]) {
+    const merged = mergeSpaces(sessionSpaces, readStoredSpaces(storage));
+    assert.deepEqual(merged, sessionSpaces);
+    assert.ok(!merged.some((space) => space.id === 'locale'));
+  }
+  // The sessionless shell keeps its single local space fallback.
+  assert.deepEqual(readSpaces(fresh), defaultSpaces());
+});
+
+test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking one picks it', () => {
+  const { sidebar, seen } = renderShell({
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti', name: 'Presti', initials: 'PR' },
+    ],
+  });
+  const names = sidebar.textContent;
+  assert.ok(names.includes('Prova Validazione B1'));
+  assert.ok(names.includes('Presti'));
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  // Two spaces, two rows: the active one plus the other, never one alone.
+  assert.equal(picks.length, 2);
+  const other = picks.find((node) => !((node.className ?? '').includes('active')));
+  other.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['presti']);
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
