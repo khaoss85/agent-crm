@@ -4,6 +4,7 @@ import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { priceBookLabel } from './admin-labels.js';
 
 /**
  * Quote builder Admin (ADR-016), built on the ADR-009 override seam: a small
@@ -301,7 +302,7 @@ export function createQuoteView(deps) {
     const bookSelect = el('select');
     bookSelect.setAttribute('name', 'priceBookId');
     for (const book of books.rows) {
-      const option = el('option', undefined, `${book.name} (${book.currency})`);
+      const option = el('option', undefined, priceBookLabel(book));
       option.setAttribute('value', book.id);
       bookSelect.appendChild(option);
       if (bookSelect.value === undefined || bookSelect.value === '') bookSelect.value = book.id;

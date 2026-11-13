@@ -1,15 +1,23 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
 import { createAssistantPanel } from './admin-assistant.js';
-import { resolveAdminBase } from './admin-base.js';
+import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
 // absolute API path below is prefixed, so the shell works unchanged.
 const ADMIN_BASE = resolveAdminBase();
+// Every /bo in-page link: settle on the base path so links never reload
+// the shell (see canonicalShellPath in admin-base.js).
+try {
+  const settled = canonicalShellPath(window.location, document.querySelector('base')?.getAttribute('href'));
+  if (settled !== null) window.history.replaceState(window.history.state, '', settled);
+} catch {
+  // Best-effort: links still work, they only reload.
+}
 
 // Under a space mount (e.g. `/bo`) the home is the Oggi frame and the
 // framework demo is never rendered (backlog:7eee63a5). The standalone
@@ -524,6 +532,7 @@ import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { moduleScreenLabel } from './admin-labels.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -570,7 +579,9 @@ const pipelineBoard = createPipelineBoard({
   mount: mountGate.owned('pipeline'),
   client: moduleClient,
   submissions,
-  toast,
+  // backlog:3d811389bb4c: the Pipeline's messages are its own — they close
+  // when the person leaves the Pipeline (see the hashchange below).
+  toast: (message, error, options) => toast(message, error, { ...(options ?? {}), scope: 'pipeline' }),
   navigate: (hash) => { window.location.hash = hash; },
   // C3 `Crea con l'AI`: same assistant seam as Clienti and Reporting —
   // the voice opens the BO-F0-04 panel on the pipeline screen.
@@ -646,10 +657,15 @@ const customerCardView = createCustomerCardView({
   mount: mountGate.owned('customer-card'),
   client: moduleClient,
   toast,
+  // backlog:947260f9f036: a withdrawal sent early takes its «Annulla» away.
+  hideToast: (scope) => { if (toaster !== null) toaster.hideScope(scope); },
   navigate: (hash) => { window.location.hash = hash; },
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  // backlog:f48593bb06d4: with the space AI off the composer sends the
+  // titolare to Spazi e accessi and tells the others whom to ask.
+  role: () => shellUser?.role ?? null,
   // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
   // customer here; without the shell storage the buttons only navigate.
   storage: shellStorage,
@@ -1076,6 +1092,8 @@ const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 let agentiView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
+/** The render of the screen opened at boot (backlog:94eabbd4762f). @type {Promise<unknown> | null} */
+let bootScreen = null;
 
 function currentSpaceName() {
   const active = shellSpaces.find((space) => space.id === shellActiveSpace) ?? shellSpaces[0];
@@ -1096,8 +1114,11 @@ function shellScreenFor(target) {
     case 'list':
     case 'new':
     case 'detail':
+      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
+      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
+      // Italian, never the raw module key.
       return target.moduleName
-        ? { id: `module-${target.moduleName}`, label: target.moduleName }
+        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
         : { id: null, label: 'Modulo' };
     // Admin views outside the backoffice prototype: an honest crumb with no
     // sidebar highlight, never the previous screen left stale.
@@ -1109,7 +1130,8 @@ function shellScreenFor(target) {
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
-    case 'offer-detail': return { id: 'pipeline', label: 'Offerta' };
+    // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
+    case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
@@ -1177,7 +1199,9 @@ async function populateNav() {
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
-    await refreshShellCounts();
+    // backlog:94eabbd4762f: the badges read after the screen opened at boot
+    // has read what it shows — never in front of its reads.
+    void afterScreen(bootScreen).then(() => refreshShellCounts()).catch(() => {});
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.
@@ -1436,7 +1460,7 @@ async function route() {
     else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
-    else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId);
+    else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId, { from: target.from ?? null });
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') {
       if (!keepClienti) await clientiListView.render();
@@ -1521,8 +1545,13 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+// backlog:3d811389bb4c: a Pipeline message never follows the person to another page.
+window.addEventListener('hashchange', () => {
+  if (toaster !== null && !/^#\/pipelines?(\/|$)/.test(window.location.hash)) toaster.hideScope('pipeline');
+});
 populateNav();
-route();
+// backlog:94eabbd4762f: the screen opened at boot; the badges wait for it.
+bootScreen = route();
 // backlog:49bd3657b0f8: after a release the tab still runs the old bundle
 // in memory, so the shell polls the served bundle identity — once now, on
 // every navigation and every minute — and shows a persistent notice the

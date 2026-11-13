@@ -288,3 +288,26 @@ test('gli incarichi di un agente senza motore restano visibili «In attesa del m
   const [catalogCard] = buildAgentCards({ agents: [RIAGGANCIO], assignments: [{ ...assignments[0], agentSourceKey: RIAGGANCIO.sourceKey }], runs: [], nowIso: NOW, catalog: CATALOG });
   assert.notEqual(catalogCard.assignments[0].status, ASSIGNMENT_NO_ENGINE_LABEL, 'un agente del catalogo non aspetta il motore');
 });
+
+test('guardia dell’attesa: Affida e Crea l’agente dicono «Invio…»/«Creo…» dal clic e tornano come prima se non scrivono', async () => {
+  const { mount, client } = await paintedView({ agents: [RIAGGANCIO] });
+  const card = mount.querySelector(`article[data-agent="${RIAGGANCIO.sourceKey}"]`);
+  const send = card.querySelector('button[data-action="talk"]');
+  card.querySelector('form').dispatch('submit', {});
+  assert.equal(send.textContent, 'Invio…', 'l’attesa si vede dal clic');
+  assert.equal(send.disabled, true);
+  await flush();
+  assert.equal(send.textContent, 'Affida', 'una riga vuota non scrive: il pulsante torna com’era');
+  assert.equal(send.disabled, false);
+  assert.equal(posts(client, '/api/agents/assign').length, 0);
+
+  button(mount, 'new-agent').dispatch('click', {});
+  const create = button(mount, 'create-agent');
+  create.dispatch('click', {});
+  assert.equal(create.textContent, 'Creo…', 'l’attesa si vede dal clic');
+  await flush();
+  assert.equal(posts(client).length, 0, 'un pannello vuoto non scrive');
+  const again = button(mount, 'create-agent');
+  assert.equal(again.textContent, 'Crea l’agente', 'il pulsante ridipinto è libero');
+  assert.equal(again.disabled, false);
+});

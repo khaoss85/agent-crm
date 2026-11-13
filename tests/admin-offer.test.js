@@ -422,7 +422,12 @@ test('the edit validates before writing and keeps the form on a refused save', a
 
 test('offer routes parse canonically; hostile routes are invalid', async () => {
   assert.deepEqual(parseModuleRoute('#/offerte/off1'), { view: 'offer-detail', offerId: 'off1' });
-  for (const bad of ['#/offerte/', '#/offerte//off1', '#/offerte/a/b', '#/offerte/a%2Fb', '#/offerte/%zz']) {
+  // backlog:96c7b56001ba: opened from a scheda, the route names it.
+  assert.deepEqual(parseModuleRoute('#/offerte/off1/cliente/contact/c1'),
+    { view: 'offer-detail', offerId: 'off1', from: { resource: 'contact', subjectId: 'c1' } });
+  for (const bad of ['#/offerte/', '#/offerte//off1', '#/offerte/a/b', '#/offerte/a%2Fb', '#/offerte/%zz',
+    '#/offerte/a/cliente/contact', '#/offerte/a/altro/contact/c1', '#/offerte/a/cliente/Contact/c1',
+    '#/offerte/a/cliente/contact/c%2F1', '#/offerte/a/cliente/contact/c1/x']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
 });
@@ -741,7 +746,7 @@ test('169cd4bc988c: Crea preventivo retries on the same key, offers a menu for s
   const many = await openPage({ books });
   const select = many.mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Listino del preventivo');
   assert.ok(select, 'several books are a menu');
-  assert.deepEqual(select.findAll('option').map((node) => node.textContent), ['Listino (EUR)', 'Listino US (USD)'],
+  assert.deepEqual(select.findAll('option').map((node) => node.textContent), ['Listino (€)', 'Listino US (USD)'],
     'active books only, the offer currency first');
   select.value = 'pb-usd';
   button(many.mount, 'offer-create-quote').dispatch('click');
@@ -911,4 +916,267 @@ test('a2ea75f705fd: #/offerte/<quote id> opens the offer the quote belongs to, n
   await view.renderOfferDetail('q9');
   assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer behind the quote paints');
   assert.ok(!mount.textContent.includes('non trovata'), 'never «Offerta non trovata» for a quote of an offer');
+});
+
+
+// backlog:a3d3b99c738e (verifica 12/11): the price book menu never says the
+// currency twice — «Manuale EUR (EUR)» reads «Listino manuale (€)».
+test('a3d3b99c738e: the price book menu names each book once, the currency once', async () => {
+  const { priceBookLabel } = await import('../apps/admin/public/admin-labels.js');
+  assert.equal(priceBookLabel({ name: 'Manuale EUR', currency: 'EUR' }), 'Listino manuale (€)');
+  assert.equal(priceBookLabel({ name: 'Listino Presti', currency: 'EUR' }), 'Listino Presti (€)');
+  assert.equal(priceBookLabel({ name: 'Stripe USD', currency: 'USD' }), 'Stripe (USD)');
+  assert.equal(priceBookLabel({ name: '', currency: 'EUR' }), 'Listino (€)');
+  const many = await openPage({ books: [
+    { id: 'pb-man', name: 'Manuale EUR', currency: 'EUR', active: true },
+    { id: 'pb-presti', name: 'Listino Presti', currency: 'EUR', active: true },
+  ] });
+  const select = many.mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Listino del preventivo');
+  const labels = select.findAll('option').map((node) => node.textContent);
+  assert.deepEqual(labels, ['Listino manuale (€)', 'Listino Presti (€)']);
+  assert.ok(labels.every((label) => !/EUR\)?.*\(EUR\)/.test(label)), 'never «Manuale EUR (EUR)»');
+});
+
+// backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s) and
+// backlog:94eabbd4762f (pilota 13/11: 1,8-4 s from the click): every read
+// of the page leaves at once, the offer first — the quotes, the history,
+// the team and the price books never wait for the offer — and each quote's
+// lines and versions leave the moment the quotes land.
+test('94eabbd4762f: the offer page reads at once — offer first, quotes, history and team beside it, then lines, versions and price books', async () => {
+  const base = pageClient();
+  const quotes = [{ ...QUOTE, id: 'q1' }, { ...QUOTE, id: 'q2' }];
+  const pending = [];
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({
+          path,
+          go: () => {
+            if (path.startsWith('/api/modules/quote/records')) return resolve({ items: quotes });
+            if (path.startsWith('/api/modules/quote-line/records') || path.startsWith('/api/modules/quote-version/records')) return resolve({ items: [] });
+            base.request(path, options).then(resolve, reject);
+          },
+        });
+      });
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  const round = async () => {
+    await flushAll(3);
+    const now = pending.splice(0).map((entry) => entry);
+    for (const entry of now) entry.go();
+    await flushAll(3);
+    return now.map((entry) => entry.path.split('?')[0]);
+  };
+  const first = await round();
+  assert.equal(first[0], '/api/opportunities/off1', 'the offer is asked first');
+  assert.deepEqual([...first].sort(), ['/api/audit', '/api/modules/quote/records', '/api/opportunities/off1', '/api/schema', '/api/spine/memberships'],
+    'offer, schema, quotes, history and team together');
+  const second = await round();
+  assert.equal(second.filter((path) => path === '/api/modules/quote-line/records').length, 2, 'both quotes read their lines at once');
+  assert.equal(second.filter((path) => path === '/api/modules/quote-version/records').length, 2, 'and their versions, in the same round');
+  assert.ok(second.includes('/api/modules/price-book/records'), 'the price books with them, never after the paint');
+  while (pending.length > 0) await round();
+  await done;
+  const cards = mount.findAll('div').filter((node) => node.getAttribute('data-quote'));
+  assert.deepEqual(cards.map((node) => node.getAttribute('data-quote')), ['q1', 'q2'], 'cards keep the order the quotes were read');
+  assert.ok(button(mount, 'offer-create-quote'), 'the action is there when the page is');
+});
+
+test('94eabbd4762f: on a host serving two reads at a time the page is complete under 2 s from the click', async () => {
+  const { createReadPool } = await import('./helpers/read-pool.js');
+  const base = pageClient({ record: { contactId: 'c1' } });
+  const quoted = {
+    request(path, options) {
+      if (path.startsWith('/api/modules/quote/records')) return Promise.resolve({ items: [QUOTE] });
+      return base.request(path, options);
+    },
+  };
+  // Pilota 13/11: the offer read alone takes 1-2,2 s; the schema is the
+  // shell's cached one after a click.
+  const pool = createReadPool(quoted, {
+    readers: 2,
+    latency: (path) => (path.startsWith('/api/opportunities/') ? 1000 : 300),
+    cached: (path) => path === '/api/schema',
+  });
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: pool });
+  const ms = await pool.settle(view.renderOfferDetail('off1', { from: null }));
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+  assert.ok(button(mount, 'offer-create-quote'), 'the whole page, its action included');
+  assert.ok(ms < 2000, `complete in ${ms} ms`);
+});
+
+test('94eabbd4762f: a link naming a quote reads that offer’s quotes and history again, by the offer’s own id', async () => {
+  const base = pageClient();
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/opportunities/q9') return Promise.reject(Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' }));
+      if (path === '/api/modules/quote/records/q9') return Promise.resolve({ id: 'q9', opportunityId: 'off1' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('q9');
+  const paths = base.calls.map((call) => call.path);
+  assert.ok(paths.some((path) => path.startsWith('/api/modules/quote/records?') && path.includes('filter.opportunityId=off1')), 'quotes by the offer id');
+  assert.ok(paths.some((path) => path.startsWith('/api/audit') && path.includes('entityId=off1')), 'history by the offer id');
+});
+
+test('d8175e1c3495: the page shows its frame at once as a skeleton, never «Caricamento…», and the paint replaces it', async () => {
+  const base = pageClient();
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const client = { calls: base.calls, request: (path, options) => held.then(() => base.request(path, options)) };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  // Painted in the same tick the page opens, before any answer.
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the skeleton is on screen at once');
+  assert.equal(skeleton.getAttribute('aria-busy'), 'true');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'never a lone loading line');
+  for (const label of ['Offerta', 'Referente', 'Stato', 'Chiusura prevista', 'Preventivo', 'Cronologia']) {
+    assert.ok(mount.textContent.includes(label), `the frame names «${label}»`);
+  }
+  assert.ok(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length >= 10, 'grey bars where values arrive');
+  assert.equal(mount.findAll('p').find((node) => node.getAttribute('role') === 'status')?.textContent, 'Carico l’offerta…', 'the wait is said once');
+  release();
+  await done;
+  await flushAll();
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0, 'the skeleton is gone');
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no bar left');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+});
+
+test('d8175e1c3495: an offer that cannot be read replaces the skeleton with the honest line', async () => {
+  const mount = createMount();
+  const client = { request: () => Promise.reject(Object.assign(new Error('boom'), { status: 500, code: 'BOOM' })) };
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    await view.renderOfferDetail('off1');
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no skeleton over a failure');
+  assert.match(mount.textContent, /Offerta non trovata o non leggibile/);
+});
+
+// backlog:96c7b56001ba (pilota 13/11): opened from the scheda the offer said
+// «← Pipeline» and lit Pipeline in the sidebar; it goes back to the scheda.
+test('96c7b56001ba: opened from a scheda the way back is that scheda, through every re-read of the page', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = pageClient();
+  const view = createOfferDetail({ doc, mount, client, toast: () => {}, navigate: () => {} });
+  const back = () => mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-back');
+  await view.renderOfferDetail('off1', { from: { resource: 'contact', subjectId: 'c1' } });
+  assert.equal(back().textContent, '← Giulia Verdi', 'named after the customer it goes back to');
+  assert.equal(back().getAttribute('href'), '#/customer-card/contact/c1');
+  assert.equal(parseModuleRoute(back().getAttribute('href')).view, 'customer-card', 'the link is a real route');
+  // Salva re-reads the page: the way back stays.
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  await form.__save();
+  await flushAll();
+  assert.equal(back().getAttribute('href'), '#/customer-card/contact/c1', 'Salva keeps the way back');
+  // Another scheda (a company mate) is named plainly.
+  await view.renderOfferDetail('off1', { from: { resource: 'company', subjectId: 'co9' } });
+  assert.equal(back().textContent, '← Scheda cliente');
+  assert.equal(back().getAttribute('href'), '#/customer-card/company/co9');
+  // Opened again from the board: back to the board.
+  await view.renderOfferDetail('off1', { from: null });
+  assert.equal(back().textContent, '← Pipeline');
+  assert.equal(back().getAttribute('href'), '#/pipelines/b2b-sales');
+});
+
+test('96c7b56001ba: the scheda hands its own address to the offer page, and the sidebar stays on Clienti', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /case 'offer-detail': return \{ id: target\.from \? 'clienti' : 'pipeline', label: 'Offerta' \};/,
+    'an offer opened from a scheda keeps Clienti lit');
+  assert.match(app, /offerDetail\.renderOfferDetail\(target\.offerId, \{ from: target\.from \?\? null \}\)/,
+    'the router hands the page where it was opened from');
+});
+
+// backlog:96c7b56001ba: PREVENTIVO said «Ancora nessun preventivo per questa
+// offerta.» for 0,3-1,1 s with neither the price book nor «Crea preventivo».
+test('96c7b56001ba: the quotes section never shows an empty line that changes — the action comes with it', async () => {
+  const base = pageClient();
+  let releaseBooks = () => {};
+  const booksHeld = new Promise((resolve) => { releaseBooks = resolve; });
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-book/records')) return booksHeld.then(() => base.request(path, options));
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer is on screen while the price books read (review Muse #871)');
+  assert.ok(!mount.textContent.includes('Ancora nessun preventivo'), 'no empty line while the price books read');
+  assert.equal(button(mount, 'offer-create-quote'), undefined);
+  const place = mount.findAll('div').find((node) => node.getAttribute('class') === 'offer-quote-create-wait');
+  assert.ok(place && place.getAttribute('aria-busy') === 'true', 'grey bars hold the place of the empty line and the action');
+  releaseBooks();
+  await done;
+  await flushAll();
+  assert.ok(mount.textContent.includes('Ancora nessun preventivo per questa offerta.'));
+  assert.ok(button(mount, 'offer-create-quote'), 'the empty line and «Crea preventivo» arrive together');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-loading') === 'true').length, 0, 'no grey place left');
+});
+
+// Review Muse #871 giro 1 (P1): the price books and each quote's lines and
+// versions are decoration — a slow one never holds the offer itself.
+test('94eabbd4762f: a slow price book or quote line never holds the offer — title, facts and history paint first', async () => {
+  const base = pageClient({ record: {} });
+  const held = [];
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/quote/records?')) return Promise.resolve({ items: [QUOTE] });
+      if (path.startsWith('/api/modules/price-book/records') || path.startsWith('/api/modules/quote-line/records')) {
+        return new Promise((resolve) => { held.push(() => base.request(path, options).then(resolve)); });
+      }
+      if (path.startsWith('/api/audit')) return Promise.resolve({ items: AUDIT });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  let complete = false;
+  const done = view.renderOfferDetail('off1').then(() => { complete = true; });
+  await flushAll();
+  assert.ok(held.length >= 2, 'the price books and the lines are still reading');
+  assert.equal(complete, false);
+  const text = mount.textContent;
+  assert.ok(text.includes('Cucina per Giulia'), 'the title is on screen');
+  assert.ok(text.includes('27.500'), 'the value');
+  assert.ok(text.includes('Referente') && text.includes('Cronologia'), 'the facts and the history');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0, 'the page skeleton is gone');
+  const card = mount.findAll('div').find((node) => node.getAttribute('class') === 'offer-quote' && node.getAttribute('data-loading') === 'true');
+  assert.ok(card, 'the quote card holds its place with grey bars');
+  for (const go of held.splice(0)) go();
+  await done;
+  await flushAll();
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-quote') === 'q1'), 'the card fills its place');
+  assert.ok(button(mount, 'offer-create-quote') || mount.findAll('a').some((node) => node.getAttribute('data-action') === 'offer-open-quote'), 'the quote action arrives');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-loading') === 'true').length, 0, 'no grey place left');
+});
+
+test('96c7b56001ba: unreadable price books say so in one honest line', async () => {
+  const { mount } = await openPage({ books: Object.assign(new Error('boom'), { status: 500, code: 'BOOM' }) });
+  assert.match(mount.textContent, /Listini non leggibili: crea il preventivo più tardi\./);
 });
