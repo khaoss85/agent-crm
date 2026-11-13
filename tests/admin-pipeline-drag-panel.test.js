@@ -165,15 +165,14 @@ test('Dan 11/11: an empty column shows the placeholder too; it follows the point
   assert.equal(slotsIn(mount).length, 0, 'leaving the column removes it');
 });
 
-test('Dan 11/11: the source column offers no placeholder and no drop (a reorder would not survive a reload)', async () => {
+test('67a3116f4f65: with stored positions the source column takes the drop and shows the slot', async () => {
   const { mount } = await board([record('a', 'discovery'), record('b', 'discovery')]);
   startDrag(mount, 'a');
   const discovery = columnOf(mount, 'discovery');
   let prevented = false;
   discovery.dispatch('dragover', { preventDefault() { prevented = true; } });
-  assert.equal(prevented, false, 'the browser shows «not allowed» over the source column');
-  assert.equal(slotsIn(mount).length, 0, 'no placeholder where nothing would be saved');
-  assert.ok(!classes(discovery).includes('drop-target'), 'the source column is not marked');
+  assert.equal(prevented, true, 'a reorder in the same column is a drop now');
+  assert.equal(slotsIn(discovery).length, 1, 'the slot shows where the card would land');
 });
 
 test('Dan 11/11: Esc or a release outside a column (dragend alone) moves nothing and clears the placeholder', async () => {
@@ -211,7 +210,7 @@ test('Dan 11/11: on drop the card sits where the placeholder was, waits for the 
   assert.ok(status && !classes(status).includes('hidden'), 'the wait line sits on the card, outside the keyboard-only row');
   const post = client.calls.find((call) => call.method === 'POST');
   assert.ok(post.path.endsWith('/records/a/actions/move-stage'), 'the existing move-stage write');
-  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery', first: true });
   release();
   await tick();
   await tick();

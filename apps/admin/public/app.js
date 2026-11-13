@@ -579,7 +579,9 @@ const pipelineBoard = createPipelineBoard({
   mount: mountGate.owned('pipeline'),
   client: moduleClient,
   submissions,
-  toast,
+  // backlog:3d811389bb4c: the Pipeline's messages are its own — they close
+  // when the person leaves the Pipeline (see the hashchange below).
+  toast: (message, error, options) => toast(message, error, { ...(options ?? {}), scope: 'pipeline' }),
   navigate: (hash) => { window.location.hash = hash; },
   // C3 `Crea con l'AI`: same assistant seam as Clienti and Reporting —
   // the voice opens the BO-F0-04 panel on the pipeline screen.
@@ -1533,6 +1535,10 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
+// backlog:3d811389bb4c: a Pipeline message never follows the person to another page.
+window.addEventListener('hashchange', () => {
+  if (toaster !== null && !/^#\/pipelines?(\/|$)/.test(window.location.hash)) toaster.hideScope('pipeline');
+});
 populateNav();
 route();
 // backlog:49bd3657b0f8: after a release the tab still runs the old bundle

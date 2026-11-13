@@ -785,7 +785,10 @@ test('BO-F1-08: a hostile excerpt on an available transcript stays text', async 
 });
 
 test('BO-F1-08: without a space or without intelligence composed the card stays honest', async () => {
-  const nospace = stubClient({ calls: CALLS });
+  // Without a space or with a timeline that holds no call, the calls
+  // section stays unavailable. backlog:619b477c0464: a call the cronologia
+  // does show is named there too (see admin-customer-card-calls-source).
+  const nospace = stubClient({ calls: CALLS, timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, items: TIMELINE.entries.items.filter((item) => item.entry !== 'call') } } });
   const mount = await renderCard(nospace);
   assert.ok(mount.textContent.includes('Nessun dato di chiamata registrato'),
     'without a space the calls section stays unavailable');
