@@ -187,24 +187,6 @@ export function serializeCorrespondents(correspondents) {
 }
 
 /**
- * Two «who the team wrote to» bases into one (same item,
- * backlog:095fb37de6bb): every conversation and address either names. The
- * server base covers every customer thread; the page base lends the threads
- * with no customer subject the server never saw. A union never invents —
- * both sides are outbounds the team really sent — and on the threads both
- * readers classify it is exactly the server base.
- * @param {any} first @param {any} second
- * @returns {{ conversations: Set<string>, addresses: Set<string> }}
- */
-export function unionCorrespondents(first, second) {
-  const both = [reviveCorrespondents(first), reviveCorrespondents(second)];
-  return {
-    conversations: new Set(both.flatMap((base) => [...base.conversations])),
-    addresses: new Set(both.flatMap((base) => [...base.addresses])),
-  };
-}
-
-/**
  * Back from the wire into the shape `teamWroteTo` reads (same item,
  * backlog:095fb37de6bb): live Sets pass through untouched, serialized
  * arrays become Sets, anything else reads as nobody ever written to.

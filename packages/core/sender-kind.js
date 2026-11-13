@@ -30,5 +30,4 @@ export {
   serializeCorrespondents,
   teamCorrespondents,
   teamWroteTo,
-  unionCorrespondents,
 } from './src/sender-kind.js';

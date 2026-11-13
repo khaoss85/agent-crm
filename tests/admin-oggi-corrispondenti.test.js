@@ -51,6 +51,63 @@ test('095fb37de6bb: la stessa base decide su entrambe le schermate — un mitten
   assert.equal(unified.notifications.total, 0, 'e non lo archivia tra le notifiche');
 });
 
+/**
+ * Review Muse giro 4 di agent-crm#847 (P1 sul codice qui sopra): la base
+ * unica (unione) era un soprainsieme della base del server — un outbound
+ * solo della pagina verso lo stesso indirizzo ribaltava una notifica del
+ * server in attesa locale, e Oggi la scartava con le righe del server: il
+ * thread spariva da entrambi i gruppi. Ora la base del server vale per i
+ * thread che ha classificato (con soggetto cliente), la pagina per il resto.
+ */
+test('095fb37de6bb review #847 P1: un outbound solo della pagina non cancella una notifica del server', () => {
+  const sender = 'news@sala-attrezzi.it';
+  const inbound = {
+    id: 'm-news', channel: 'email', direction: 'inbound', remoteHandle: sender,
+    subjectResource: 'contact', subjectId: 'c1', conversationId: 'mail:news9',
+    occurredAt: '2026-11-13T09:00:00.000Z',
+    body: 'New October classes are out. Unsubscribe from this list',
+  };
+  // Outbound solo della pagina, in un thread senza soggetto cliente che la
+  // scansione del server non ha mai visto: da solo non deve contare.
+  const pageOnlyOutbound = {
+    id: 'm-out', channel: 'email', direction: 'outbound', remoteHandle: sender,
+    conversationId: 'mail:other', occurredAt: '2026-11-13T08:00:00.000Z', body: 'ciao',
+  };
+  // La scansione del server non ha mai scritto a questo mittente.
+  const shared = reviveCorrespondents(serializeCorrespondents(teamCorrespondents([inbound])));
+  const local = buildInbox({
+    messages: [inbound, pageOnlyOutbound],
+    conversations: [{ id: 'mail:news9', subjectLabel: 'Sala Attrezzi' }],
+    correspondents: shared,
+  });
+  assert.equal(local.total, 0, 'nessuna attesa locale: il server non lo conta tra i Da rispondere');
+  assert.equal(local.notifications.total, 1, 'la notifica resta nel gruppo che Oggi tiene quando il server risponde');
+  assert.equal(local.notifications.rows[0]?.id, 'mail:news9', 'è il thread della newsletter, non un altro');
+});
+
+test('095fb37de6bb review #847 P1: un thread mai visto dal server decide dalla pagina', () => {
+  const sender = 'news@sala-attrezzi.it';
+  // Stesso mittente, ma thread senza soggetto cliente: la scansione non lo
+  // ha classificato, e la pagina ci ha scritto dentro.
+  const inbound = {
+    id: 'm-news', channel: 'email', direction: 'inbound', remoteHandle: sender,
+    conversationId: 'mail:plain', occurredAt: '2026-11-13T09:00:00.000Z',
+    body: 'New October classes are out. Unsubscribe from this list',
+  };
+  const pageOutbound = {
+    id: 'm-out', channel: 'email', direction: 'outbound', remoteHandle: sender,
+    conversationId: 'mail:plain', occurredAt: '2026-11-13T08:00:00.000Z', body: 'ciao',
+  };
+  const shared = reviveCorrespondents(serializeCorrespondents(teamCorrespondents([inbound])));
+  const local = buildInbox({
+    messages: [inbound, pageOutbound],
+    conversations: [{ id: 'mail:plain' }],
+    correspondents: shared,
+  });
+  assert.equal(local.total, 1, 'la pagina ha risposto nel thread: resta una persona in attesa');
+  assert.equal(local.notifications.total, 0, 'e non finisce tra le notifiche');
+});
+
 test('095fb37de6bb: la base attraversa il confine server/browser senza cambiare idea', () => {
   const wire = serializeCorrespondents(teamCorrespondents([OLD_OUTBOUND, INBOUND]));
   assert.ok(Array.isArray(wire.addresses) && wire.addresses.includes(SENDER), 'l’indirizzo viaggia nella risposta');
