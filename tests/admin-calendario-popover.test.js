@@ -359,7 +359,7 @@ test('popover: «Modifica o sposta» opens the existing move form, prefilled, wi
   assert.equal(moves[0].body.id, 'p1');
   const after = popover(mount);
   assert.ok(after, 'the popover stays on the moved event');
-  assert.match(after.textContent, /Spostato a Martedì 11:00–11:45/);
+  assert.match(after.textContent, /Spostato a martedì 10 novembre, 11:00–11:45\./);
   assert.equal(after.querySelector('div[data-role="move-form"]'), null, 'the form folds away after the move');
 });
 

@@ -53,7 +53,10 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
+      // backlog:a2ea75f705fd: like the pilot, the generic records surface
+      // never serves the core offer — only its own route answers.
+      if (path.startsWith('/api/modules/opportunity/records/') && !path.includes('/actions/')) throw Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...record };
       if (path === '/api/opportunities/off1' && options.method === 'PATCH') {
         if (failPatch) throw Object.assign(new Error(failPatch.message), failPatch);
         Object.assign(record, JSON.parse(options.body));
@@ -61,10 +64,10 @@ function stubClient({ record: recordOverride, quotes = [], lines = [], versions 
       }
       if (path.startsWith('/api/modules/quote/records')) {
         if (failLinked) throw Object.assign(new Error(failLinked.message), failLinked);
-        return { items: quotes };
+        return { items: applyModuleFilter(quotes, path) };
       }
-      if (path.startsWith('/api/modules/quote-line/records')) return { items: lines };
-      if (path.startsWith('/api/modules/quote-version/records')) return { items: versions };
+      if (path.startsWith('/api/modules/quote-line/records')) return { items: applyModuleFilter(lines, path) };
+      if (path.startsWith('/api/modules/quote-version/records')) return { items: applyModuleFilter(versions, path) };
       if (path.startsWith('/api/audit')) {
         if (failAudit) throw Object.assign(new Error(failAudit.message), failAudit);
         return { items: audit };
@@ -102,10 +105,25 @@ const VERSION = {
   id: 'v1',
   quoteId: 'q1',
   versionNumber: 1,
+  policy: 'standard',
+  policyVersion: 3,
   policyDecision: 'auto_approve',
   totalsJson: QUOTE.totalsJson,
   currency: 'EUR',
 };
+
+/** Full-module rows the stub narrows by the filter.* query, like the server. */
+function applyModuleFilter(rows, path) {
+  const query = path.includes('?') ? path.slice(path.indexOf('?') + 1) : '';
+  const params = new URLSearchParams(query);
+  return rows.filter((row) => {
+    for (const [key, value] of params) {
+      if (!key.startsWith('filter.')) continue;
+      if (String(row?.[key.slice('filter.'.length)] ?? '') !== value) return false;
+    }
+    return true;
+  });
+}
 
 const AUDIT = [
   { action: 'opportunity.created', actorId: 'maria', actorType: 'user', createdAt: '2026-10-02T09:15:00.000Z' },
@@ -141,6 +159,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Preventivo'), 'the linked quotes paint');
   assert.ok(text.includes('Bozza') && text.includes('una tantum 5.000 €'), 'the quote state and total paint in Italian');
   assert.ok(text.includes('Approvazione automatica'), 'the version policy decision paints in Italian, not as a dash');
+  assert.ok(text.includes('standard@3'), 'the version names the policy that decided it');
   const line = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'quote-line');
   assert.equal(line?.childNodes[0].textContent, 'Pacchetto 10 PT', 'the line names the package, never the SKU');
   assert.equal(line?.childNodes[1].textContent, 'Quantità 2 · sconto 5,00%', 'quantity and an Italian percentage');
@@ -200,6 +219,89 @@ test('a subscription-only quote never paints a zero one-time total', async () =>
   assert.equal(header, '3.200 € ogni 1 mese', 'the header is the recurring group alone');
 });
 
+test('the version row names the deciding policy and honors valued groups', async () => {
+  const recurringVersion = {
+    ...VERSION,
+    id: 'v2',
+    versionNumber: 2,
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+      recurringTotals: [
+        { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320000, discountAmountCents: 0, netAmountCents: 320000 },
+      ],
+    }),
+  };
+  const emptyVersion = {
+    ...VERSION,
+    id: 'v3',
+    versionNumber: 3,
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+      recurringTotals: [],
+    }),
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({
+    doc,
+    mount,
+    client: stubClient({ quotes: [QUOTE], audit: [], versions: [VERSION, recurringVersion, emptyVersion] }),
+  });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('standard@3'), 'the deciding policy paints as name@version');
+  assert.ok(text.includes('3.200 € ogni 1 mese'), 'a recurring version keeps its period');
+  assert.ok(text.includes('Versione 3 · Approvazione automatica · standard@3 · —'), 'a version with no value paints a dash like the header');
+  assert.ok(!text.includes('una tantum 0'), 'no zero one-time total beside a valued group');
+});
+
+test('another parent\u2019s rows never paint: the server-side filter is honored', async () => {
+  const decoyQuote = {
+    ...QUOTE,
+    id: 'qX',
+    opportunityId: 'offX',
+    totalsJson: JSON.stringify({
+      oneTimeTotal: { currency: 'EUR', listAmountCents: 9900000, discountAmountCents: 0, netAmountCents: 9900000 },
+      recurringTotals: [],
+    }),
+  };
+  const decoyLine = { ...LINE, id: 'lX', quoteId: 'qX', offerName: 'ESCA MAIUSCOLA' };
+  const decoyVersion = { ...VERSION, id: 'vX', quoteId: 'qX', versionNumber: 99 };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({
+    doc,
+    mount,
+    client: stubClient({ quotes: [QUOTE, decoyQuote], lines: [LINE, decoyLine], versions: [VERSION, decoyVersion], audit: [] }),
+  });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('99.000 €'), 'the other deal\u2019s quote never paints');
+  assert.ok(!text.includes('ESCA MAIUSCOLA'), 'the other quote\u2019s lines never paint');
+  assert.ok(!text.includes('Versione 99'), 'the other quote\u2019s versions never paint');
+});
+
+test('a full audit page says it is truncated and hides the author', async () => {
+  const audit = new Array(100).fill(null).map((_, index) => ({
+    action: 'opportunity.updated',
+    actorId: 'maria',
+    actorType: 'user',
+    createdAt: `2026-10-${String((index % 28) + 1).padStart(2, '0')}T09:15:00.000Z`,
+  }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOfferDetail({ doc, mount, client: stubClient({ quotes: [], audit }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(text.includes('Mostro solo gli ultimi 100 eventi.'), 'the truncation is disclosed');
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
+  assert.equal(fact('Creata da'), '—', 'no author is read from a partial page');
+});
+
 test('an unreadable audit trail is not an empty one', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -247,7 +349,7 @@ test('a full linked page says it shows only the first rows', async () => {
       enforceAdminWriteGate(path, options);
       this.calls.push(path);
       if (path === '/api/schema') return SCHEMA;
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...offerRecord() };
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...offerRecord() };
       if (path.startsWith('/api/modules/quote/records')) return full;
       if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
       if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
@@ -336,7 +438,7 @@ test('a record read 404 falls back to the board list and the detail opens', asyn
     calls: base.calls,
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
       }
       if (path.startsWith('/api/opportunities?')) return { items: [offerRecord()] };
@@ -356,7 +458,7 @@ test('an offer missing from the board list too still says not found', async () =
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { modules: [] };
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') {
         throw Object.assign(new Error('not found'), { status: 404, code: 'NOT_FOUND' });
       }
       if (path.startsWith('/api/opportunities?')) return { items: [] };
@@ -448,7 +550,10 @@ function pageClient({ record: overrides = {}, schema = LOST_SCHEMA, books = [{ i
         if (createQuote) return createQuote(calls.filter((call) => call.path === path).length);
         return { ok: true, result: { quote: { id: 'q9' } } };
       }
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...record };
+      // backlog:a2ea75f705fd: like the pilot, the generic records surface
+      // never serves the core offer — only its own route answers.
+      if (path.startsWith('/api/modules/opportunity/records/') && !path.includes('/actions/')) throw Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path) && String(options.method ?? 'GET').toUpperCase() === 'GET') return { ...record };
       if (path.startsWith('/api/modules/price-book/records')) {
         if (books instanceof Error) throw books;
         return { items: books };
@@ -750,4 +855,60 @@ test('review #786: an offer outside any board asks Conferma before won or lost, 
   won.mount.findAll('button').find((node) => node.textContent === 'Annulla').dispatch('click');
   await flushAll();
   assert.equal(won.client.writes().length, 0, 'Annulla writes nothing');
+});
+
+
+// backlog:a2ea75f705fd (verifica 12/11, pilota 62654a1): no read that ends
+// in 404, the existing quote is the main action, and the page opens from a
+// quote id as well.
+test('a2ea75f705fd: the page reads the offer on its own route — no generic read that 404s', async () => {
+  const { client } = await openPage();
+  const gets = client.calls.filter((call) => call.method === 'GET').map((call) => call.path);
+  assert.ok(gets.includes('/api/opportunities/off1'), 'the core offer route');
+  assert.ok(!gets.some((path) => path.startsWith('/api/modules/opportunity/records/')), 'never the generic records surface (404 in the pilot)');
+});
+
+test('a2ea75f705fd: with a quote already there, the main action opens it; a new one is the second choice', async () => {
+  const base = pageClient();
+  const withQuote = {
+    calls: base.calls,
+    writes: base.writes,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/quote/records')) return Promise.resolve({ items: [{ ...QUOTE, id: 'q-old', createdAt: '2026-11-01T00:00:00Z' }, { ...QUOTE, id: 'q-new', createdAt: '2026-11-10T00:00:00Z' }] });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: withQuote });
+  await view.renderOfferDetail('off1');
+  await flushAll();
+  const open = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
+  assert.ok(open, 'the open action is there');
+  assert.equal(open.getAttribute('href'), '#/quotes/q-new', 'it opens the newest quote');
+  assert.match(open.getAttribute('class'), /ui-btn-primary/, 'it is the main action');
+  const create = button(mount, 'offer-create-quote');
+  assert.equal(create.textContent, 'Nuovo preventivo');
+  assert.doesNotMatch(String(create.getAttribute('class')), /primary/, 'creating another is the quiet choice');
+
+  const fresh = await openPage();
+  assert.equal(button(fresh.mount, 'offer-create-quote').textContent, 'Crea preventivo', 'without quotes, creating is the main action');
+  assert.match(String(button(fresh.mount, 'offer-create-quote').getAttribute('class')), /primary/);
+  assert.equal(fresh.mount.findAll('a').filter((node) => node.getAttribute('data-action') === 'offer-open-quote').length, 0);
+});
+
+test('a2ea75f705fd: #/offerte/<quote id> opens the offer the quote belongs to, never «Offerta non trovata»', async () => {
+  const base = pageClient();
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/opportunities/q9') return Promise.reject(Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' }));
+      if (path === '/api/modules/quote/records/q9') return Promise.resolve({ id: 'q9', opportunityId: 'off1' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('q9');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer behind the quote paints');
+  assert.ok(!mount.textContent.includes('non trovata'), 'never «Offerta non trovata» for a quote of an offer');
 });

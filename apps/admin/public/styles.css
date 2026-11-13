@@ -405,6 +405,8 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
 .bo-offer .offer-quote-create-line:empty { display: none; }
+/* backlog:a2ea75f705fd: «Apri il preventivo» is a link that reads as the main button. */
+.bo-offer a.offer-quote-open-main { display: inline-flex; align-items: center; text-decoration: none; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -432,6 +434,9 @@ button[aria-busy="true"] { opacity: .6; }
 /* Preventivo (Dan 06/11): un piccolo documento curato a sinistra, il flusso (approvazione, firma, storico) a destra. */
 .quote-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
 .quote-back:hover { color: var(--ink); }
+/* backlog:a2ea75f705fd: from the quote to its offer page. */
+.quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-offer-link:hover { text-decoration: underline; }
 .bo-quote { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 20px; align-items: start; margin-top: 4px; }
 .bo-quote-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 24px; box-shadow: var(--shadow-pop); overflow: hidden; }
 .bo-quote-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--accent); }
@@ -677,15 +682,15 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin: 0 -12px; padding: 6px 12px; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; font-weight: 750; }
-  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 24px; height: 24px; font-size: 10px; }
-  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 13px; line-height: 1.25; }
-  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 11px; line-height: 1.3; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 14px 12px 0; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 28px; height: 28px; font-size: 11px; }
+  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 14px; line-height: 1.2; }
+  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
   .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
-  .bo-main > .bo-topbar + * { margin-top: 4px; }
+  .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
 
@@ -786,7 +791,8 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
  * so it carries the card's own inner margins (like .bo-scheda-timeline);
  * field and button stay inside, the help sentence below them too. */
 .bo-scheda-note-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 14px 20px 20px; }
-.bo-scheda-note-form input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
@@ -1178,6 +1184,8 @@ select.bo-spazi-input { flex: none; }
   border: none; cursor: pointer; background: var(--line);
 }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
+/* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
+.bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
   position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
   border-radius: 50%; background: var(--paper); transition: left .2s;
@@ -1479,16 +1487,19 @@ select.bo-spazi-input { flex: none; }
 .cal-manual .cal-form input { flex-basis: 100%; }
 .cal-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .cal-filter input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
-.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); margin-top: 14px; }
+.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); grid-template-rows: auto repeat(18, 30px); margin-top: 14px; }
 .cal-corner { grid-column: 1; grid-row: 1; }
 .cal-hour { grid-column: 1; font-family: var(--mono); font-size: 10px; color: var(--dim); text-align: right; padding-right: 8px; align-self: start; transform: translateY(-50%); }
 .cal-day-head { grid-row: 1; margin: 0 0 8px; font-size: 12px; color: var(--muted); text-align: center; }
 .cal-day-head .cal-today { display: inline-block; background: var(--ink); color: var(--paper); border-radius: 999px; min-width: 44px; padding: 2px 8px; font-weight: 700; }
-.cal-day { position: relative; display: grid; grid-template-rows: repeat(18, minmax(30px, auto)); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
+/* backlog:7587307d5215: fixed quarter-hour rows (60px an hour) — a row that
+ * grew with its content made hours uneven across columns, so a block no
+ * longer covered its own time. Content clips inside its block instead. */
+.cal-day { position: relative; display: grid; grid-template-rows: repeat(36, 15px); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
 .cal-day:last-child { border-right: 1px solid var(--line); }
 /* backlog:5fbebe8559e9: the compact empty-day row exists only on the phone stack. */
 .cal-day-compact { display: none; }
-.cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
+.cal-grid .cal-event { display: block; width: 100%; min-height: 0; box-sizing: border-box; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
 .cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
@@ -1498,8 +1509,24 @@ select.bo-spazi-input { flex: none; }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }
 .cal-m3 { background: var(--pending-soft); color: var(--ink); }
 .cal-m4 { background: var(--surface-soft); color: var(--ink); }
+/* backlog:7587307d5215: a booking block is a button, and the later
+ * `.ui-btn-secondary` surface painted every block white — a quarter-hour
+ * block vanished into the grid. The block keeps its member tint. */
+.cal-grid .cal-event.cal-m0 { background: var(--data-soft); }
+.cal-grid .cal-event.cal-m1 { background: var(--human-soft); }
+.cal-grid .cal-event.cal-m2 { background: var(--accent-soft); }
+.cal-grid .cal-event.cal-m3 { background: var(--pending-soft); }
+.cal-grid .cal-event.cal-m4 { background: var(--surface-soft); }
 .cal-grid .cal-event.cal-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .cal-grid .cal-event.cal-cancelled { opacity: .55; }
+/* backlog:7587307d5215: the week and the team while they load — grey
+ * placeholders that pulse (the ui-skeleton rhythm), never an empty week. */
+.cal-skeleton { margin: 2px 4px; border-radius: 8px; background: var(--line-soft); }
+.cal-grid.is-loading { cursor: progress; }
+.cal-team-skeleton { padding: 8px 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .cal-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
+}
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
@@ -1521,7 +1548,10 @@ select.bo-spazi-input { flex: none; }
  * selection, on desktop or on the 390 px phone. The «Sposta» form in the
  * detail card is the same move as named fields. */
 .cal-grid .cal-event.is-movable { cursor: grab; touch-action: none; user-select: none; }
-.cal-resize { display: block; height: 10px; margin: 3px -6px -4px; border-radius: 4px; cursor: ns-resize; touch-action: none;
+/* backlog:7587307d5215: the stretch handle sits on the block's real bottom
+ * edge, whatever the block's height, never in the middle of a long block. */
+.cal-grid .cal-event.is-movable { position: relative; }
+.cal-resize { position: absolute; left: 0; right: 0; bottom: 0; display: block; height: 8px; margin: 0; border-radius: 0 0 8px 8px; cursor: ns-resize; touch-action: none;
   background: linear-gradient(to bottom, transparent 4px, rgba(0, 0, 0, .28) 4px, rgba(0, 0, 0, .28) 6px, transparent 6px); }
 .cal-move { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cal-move-title { font-size: 13px; margin: 0 0 8px; }
@@ -1576,6 +1606,8 @@ select.bo-spazi-input { flex: none; }
  * carries its label; a long form scrolls inside, never off screen. */
 .cal-form-pop[data-anchor="grid"] { top: 12px; right: 12px; }
 .cal-form-pop { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+/* backlog:3582d91635cb: the homonym hint beside a suggested customer. */
+.cal-customer-hint { font-weight: 400; color: var(--muted); }
 .cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
 .cal-form .cal-field-wide { flex-basis: 100%; }
 .cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
@@ -1634,7 +1666,8 @@ select.bo-spazi-input { flex: none; }
   .cal-grid .cal-day-compact { display: flex; align-items: center; gap: 10px; grid-column: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
   .cal-day-compact-name { font-weight: 700; text-transform: capitalize; }
   .cal-day-compact > span:not(.cal-day-compact-name) { color: var(--muted); flex: 1; min-width: 0; }
-  .cal-grid .cal-day { grid-template-rows: repeat(18, minmax(22px, auto)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
+  .cal-grid { grid-template-rows: none; }
+  .cal-grid .cal-day { grid-template-rows: repeat(36, 11px); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
 }
 
 /*
@@ -2204,6 +2237,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
 .ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
 .ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
+/* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */
+.pipeline-column .stage-totals { display: contents; }
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
@@ -2579,6 +2614,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+/* backlog:82235e46e3e9: offers and stage moves in «Tutti i contatti» — a quiet system line, not a bubble. */
+.bo-scheda-chan.bo-tile-event { background: var(--agent-soft); color: var(--agent-ink); font-family: inherit; font-size: 14px; }
+.bo-scheda-event-paper { grid-column: 2; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 8px 14px 10px; }
+.bo-scheda-entry .bo-scheda-event-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-weight: 600; }
+.bo-scheda-entry .bo-scheda-event-paper p.bo-scheda-event-body { margin: 2px 0 0; padding: 0; border: 0; background: transparent; color: var(--ink); overflow-wrap: anywhere; }
 .bo-scheda-chips .bo-scheda-chip-note { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; border: 1px dashed color-mix(in srgb, var(--pending) 70%, var(--line)); background: var(--pending-soft); color: var(--pending-ink); cursor: pointer; }
 .bo-scheda-chips .bo-scheda-chip-note[data-active="true"] { border-style: solid; border-color: var(--pending-ink); background: var(--pending-ink); color: var(--surface); }
 .bo-scheda-chips-authors { display: inline-flex; flex-wrap: wrap; gap: 6px; padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-soft); }

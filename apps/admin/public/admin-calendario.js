@@ -26,7 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
-import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect } from './admin-ui.js';
+import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
  * The currently open "Nuovo appuntamento" menu, if any: one live view at a
@@ -238,13 +238,23 @@ export function displayKeys(weekKeys) {
   return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
 }
 
-/** Grid geometry: half-hour rows from 09:00 (inclusive) to 18:00. */
+/**
+ * Grid geometry, 09:00 (inclusive) to 18:00. backlog:7587307d5215: the day
+ * columns are drawn in quarter-hour rows of a FIXED height (CSS), so every
+ * hour is the same height in every column and a block covers exactly its
+ * time — rows that grew with their content drew 11:00–13:00 between about
+ * 11:25 and 12:35. A plain click still picks half an hour.
+ */
 export const GRID_START_MINUTES = 9 * 60;
 /** Customer names read per loaded week for the block titles (backlog:5fbebe8559e9). */
 const WEEK_PROFILE_READS = 40;
 export const GRID_END_MINUTES = 18 * 60;
 export const GRID_SLOT_MINUTES = 30;
-export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_SLOT_MINUTES;
+/** One drawn row, and the step a drag, a stretch or a pick snaps to. */
+export const GRID_ROW_MINUTES = 15;
+export const GRID_ROWS = (GRID_END_MINUTES - GRID_START_MINUTES) / GRID_ROW_MINUTES;
+/** The page grid keeps half-hour rows for the hour labels beside the columns. */
+const GRID_HALF_HOURS = (GRID_END_MINUTES - GRID_START_MINUTES) / 30;
 
 /** Column header `<ddd> <n>` ("lun 19"), null when unparsable. */
 export function dayHead(key) {
@@ -502,7 +512,7 @@ export function romeMinutes(value) {
 }
 
 /**
- * Half-hour grid rows (1-based, inside the day column) for an event: start
+ * Quarter-hour grid rows (1-based, inside the day column) for an event: start
  * row and span, clamped into the 09:00–18:00 body so an out-of-hours booking
  * still paints at the edge with its exact time in the label — never dropped.
  * @param {unknown} startsAt @param {unknown} endsAt
@@ -514,9 +524,9 @@ export function gridRowsFor(startsAt, endsAt) {
     return { row: 1, span: 1 };
   }
   const clampedStart = Math.min(Math.max(startMin, GRID_START_MINUTES), GRID_END_MINUTES);
-  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_SLOT_MINUTES), GRID_END_MINUTES);
-  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES), GRID_ROWS - 1) + 1;
-  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_SLOT_MINUTES)) / GRID_SLOT_MINUTES));
+  const clampedEnd = Math.min(Math.max(endMin, GRID_START_MINUTES + GRID_ROW_MINUTES), GRID_END_MINUTES);
+  const row = Math.min(Math.floor((clampedStart - GRID_START_MINUTES) / GRID_ROW_MINUTES), GRID_ROWS - 1) + 1;
+  const span = Math.max(1, Math.ceil((Math.max(clampedEnd, clampedStart + 1) - (GRID_START_MINUTES + (row - 1) * GRID_ROW_MINUTES)) / GRID_ROW_MINUTES));
   return { row, span: Math.min(span, GRID_ROWS - row + 1) };
 }
 
@@ -906,6 +916,28 @@ export function isCancelledRow(row) {
 }
 
 /**
+ * backlog:3582d91635cb — what tells a homonym apart in the customer
+ * suggestions: a partial email («ad…@example.com»), else the last four
+ * digits of the held phone («tel. …4567»), else the company name; null
+ * when the customer carries none of them. Never the whole address or
+ * number: the hint distinguishes, it does not publish.
+ * @param {any} item one `/api/customer-data/customers` item
+ */
+export function customerHint(item) {
+  const email = typeof item?.email === 'string' ? item.email.trim() : '';
+  const at = email.indexOf('@');
+  if (at > 0 && at < email.length - 1) {
+    const local = email.slice(0, at);
+    return `${local.slice(0, Math.min(2, local.length))}…@${email.slice(at + 1)}`;
+  }
+  const phone = typeof item?.phone?.value === 'string' ? item.phone.value : (typeof item?.phone === 'string' ? item.phone : '');
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length >= 4) return `tel. …${digits.slice(-4)}`;
+  const company = typeof item?.company?.name === 'string' ? item.company.name.trim() : '';
+  return company !== '' ? company : null;
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
  * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
@@ -1116,9 +1148,11 @@ export function weekCovers(week, searchIds) {
  * Overlap lanes per day column: blocks sharing grid rows split the column
  * width instead of painting over each other. Greedy by start time, keyed by
  * the row objects of this render pass, so every entry carries its lane and
- * the column lane count. Lanes follow the PAINTED half-hour rows, not the
- * exact minutes (backlog:5fbebe8559e9): a 10:00–10:45 booking and a
- * 10:45–11:30 proposal both cover the 10:30 row, so they sit side by side.
+ * the column lane count. Lanes follow the PAINTED quarter-hour rows, not the
+ * exact minutes (backlog:5fbebe8559e9, backlog:7587307d5215): a 10:00–10:20
+ * booking covers the 10:15 row, so a 10:15–11:00 proposal sits beside it,
+ * while 10:00–10:45 and 10:45–11:30 touch without sharing a row and stack
+ * in one lane.
  * Events and «✦ Proposta» ghosts share one pass, so a ghost never covers a
  * booking or another ghost.
  * @param {Array<any>} rows
@@ -1281,8 +1315,11 @@ export function createCalendarioView(deps) {
    */
   function trackRetainedDraft() {
     const typedFilter = state.autoTeam === true ? '' : (state.memberFilter ?? '');
-    const manualText = Object.values(state.manual ?? {})
-      .some((value) => String(value ?? '') !== '');
+    // Verifica 12/11: «Hai del testo non salvato» answered even with
+    // nothing typed — the menu default and its price fill the form on
+    // their own. Only what the operator typed counts.
+    const manualText = [...state.manualTyped]
+      .some((name) => String(state.manual?.[name] ?? '') !== '');
     markUnsaved('calendario-draft',
       (state.phrase ?? '') !== ''
       || String(typedFilter) !== ''
@@ -1333,6 +1370,10 @@ export function createCalendarioView(deps) {
     moveNote: '',
     /** True while a reschedule write is in flight: no second move meanwhile. */
     moveBusy: false,
+    /** backlog:7587307d5215 — the roster read in flight: Team shows its skeleton, never «nessuna persona». */
+    membersLoading: false,
+    /** backlog:7587307d5215 — the first week read in flight: the grid shows its skeleton. */
+    weekLoading: false,
     /** The «Modifica o sposta» form shows in the event popover (Dan 11/11). */
     moveOpen: false,
     /** backlog:5346ab531538 — the popover asks «Annullare l'appuntamento?». */
@@ -1387,6 +1428,8 @@ export function createCalendarioView(deps) {
     confirmed: null,
     /** Last manual form values, restored on every re-render. @type {any} */
     manual: null,
+    /** Verifica 12/11: the manual fields the operator typed in — prefilled values (a menu default, its price, a grid selection) are nobody's unsaved text. @type {Set<string>} */
+    manualTyped: new Set(),
     /** The manual form shows once asked for, or once a draft or an edit fills it. */
     manualOpen: false,
     /** The member filter row, painted inside the Team card. @type {any} */
@@ -1502,6 +1545,10 @@ export function createCalendarioView(deps) {
       state.weekError = 'Settimana non valida.';
       return;
     }
+    // backlog:7587307d5215: the first read paints the skeleton at once,
+    // never an empty week that reads as «no appointments».
+    state.weekLoading = true;
+    if (!state.week && mount.querySelector('.cal-wrap') !== null) renderAll();
     try {
       // One row per person, every identity of each listed person: the roster
       // may name sibling subjects after the filter was set (or the filter
@@ -1557,6 +1604,7 @@ export function createCalendarioView(deps) {
         });
       }
     }
+    state.weekLoading = false;
     // Same mount guard as the roster and profile reads below: a late week
     // answer never paints over another screen sharing the mount
     // (backlog:607f33ee).
@@ -1729,9 +1777,11 @@ export function createCalendarioView(deps) {
 
   async function loadMembers() {
     const token = ++memberToken;
+    state.membersLoading = true;
     try {
       const answer = await client.request('/api/spine/memberships');
       if (token !== memberToken) return;
+      state.membersLoading = false;
       state.members = Array.isArray(answer?.items) ? answer.items : [];
       // The roster is the team: with nobody named yet, list the whole
       // space and load its week at once — no typing (backlog:0533362e8efe).
@@ -1748,6 +1798,7 @@ export function createCalendarioView(deps) {
       }
     } catch (error) {
       if (token !== memberToken) return;
+      state.membersLoading = false;
       // Fail-soft UI, but a failure nobody can diagnose blocks review
       // (AGENTS.md): record the sanitized cause with the active space —
       // never the message or personal data, like the profile read below.
@@ -1925,7 +1976,7 @@ export function createCalendarioView(deps) {
     formPop.appendChild(renderManual());
     formPop.addEventListener?.('keydown', (event) => { if (event?.key === 'Escape' || event?.key === 'Esc') closeManual(); });
     main.appendChild(formPop);
-    if (formOpen && state.selection) pop = formPop;
+    if (formOpen) pop = formPop;
     layout.appendChild(rail);
     layout.appendChild(main);
     wrap.appendChild(layout);
@@ -1958,16 +2009,45 @@ export function createCalendarioView(deps) {
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */
   function placePopover(main, pop) {
-    const pick = main.querySelector?.('[data-role="slot-pick"]');
-    if (!pick || typeof pick.getBoundingClientRect !== 'function' || typeof main.getBoundingClientRect !== 'function') return;
+    if (!pop || typeof main.getBoundingClientRect !== 'function') return;
+    const view = doc?.defaultView ?? null;
+    const viewportWidth = Number(view?.innerWidth) || Number(doc?.documentElement?.clientWidth) || 0;
+    const viewportHeight = Number(view?.innerHeight) || Number(doc?.documentElement?.clientHeight) || 0;
     const box = main.getBoundingClientRect();
-    const at = pick.getBoundingClientRect();
-    const width = 340;
-    const right = at.right - box.left + 12;
-    const left = right + width > box.width ? Math.max(0, at.left - box.left - width - 12) : right;
-    const top = Math.max(0, Math.min(at.top - box.top, box.height - 120));
-    pop.setAttribute('style', `left: ${Math.round(left)}px; top: ${Math.round(top)}px`);
+    const size = typeof pop.getBoundingClientRect === 'function' ? pop.getBoundingClientRect() : null;
+    const width = Number(size?.width) || 340;
+    const height = Number(size?.height) || 420;
+    const pick = main.querySelector?.('[data-role="slot-pick"]');
+    if (!pick && (viewportWidth <= 0 || viewportHeight <= 0)) return;
+    // backlog:3582d91635cb: the form never leaves the screen — beside the
+    // picked slot, or at the top right of the grid, then clamped to the
+    // viewport with its live height (customer suggestions open included).
+    if (pick && typeof pick.getBoundingClientRect === 'function') {
+      const at = pick.getBoundingClientRect();
+      if (viewportWidth <= 0 || viewportHeight <= 0) {
+        const right = at.right - box.left + 12;
+        const left = right + width > box.width ? Math.max(0, at.left - box.left - width - 12) : right;
+        pop.setAttribute('style', `left: ${Math.round(left)}px; top: ${Math.round(Math.max(0, at.top - box.top))}px`);
+        return;
+      }
+      const placed = eventPopoverPlacement({ anchor: at, box, width, height, viewportWidth, viewportHeight });
+      pop.setAttribute('style', `left: ${placed.left}px; top: ${placed.top}px`);
+      return;
+    }
+    const margin = 8;
+    const topVp = Math.min(Math.max(box.top + 12, margin), Math.max(margin, viewportHeight - margin - height));
+    const leftVp = Math.min(Math.max(box.right - 12 - width, margin), Math.max(margin, viewportWidth - margin - width));
+    pop.setAttribute('style', `left: ${Math.round(leftVp - box.left)}px; top: ${Math.round(topVp - box.top)}px`);
   }
+
+  /** The open form popover, re-seated after its height changed (suggestions in or out). */
+  function reseatFormPopover() {
+    const pop = mount.querySelector('[data-role="manual-pop"]');
+    const main = mount.querySelector('.cal-main');
+    if (!pop || !main || pop.getAttribute('hidden') !== null) return;
+    placePopover(main, pop);
+  }
+
 
   /**
    * BO-F6-11 fetta 2 (specs/calendario.md C3): the "Nuovo appuntamento" menu.
@@ -2168,6 +2248,18 @@ export function createCalendarioView(deps) {
     if (state.filterRow) panel.appendChild(state.filterRow);
     const named = parseMemberFilter(state.memberFilter);
     const rows = personRows(named, state.hiddenMembers, state.members);
+    if (rows.length === 0 && state.membersLoading) {
+      // backlog:7587307d5215: the roster is on its way — placeholders, one
+      // status line, never the empty state.
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico il team…' }));
+      for (const width of ['70%', '55%', '62%']) {
+        const line = el(doc, 'div', { className: 'cal-team-skeleton', attrs: { 'data-role': 'team-skeleton' } });
+        line.appendChild(uiSkeleton(doc, { width, block: true }));
+        panel.appendChild(line);
+      }
+      return panel;
+    }
     if (rows.length === 0) {
       panel.appendChild(el(doc, 'p', {
         className: 'empty',
@@ -2254,7 +2346,7 @@ export function createCalendarioView(deps) {
   /**
    * BO-F6-11 fetta 4 (specs/calendario.md C13–C16): the prototype time grid —
    * an 09:00–18:00 hour gutter beside five work-day columns, event blocks on
-   * their Rome half-hour rows, the red now-line on the current day. Empty
+   * their Rome quarter-hour rows, the red now-line on the current day. Empty
    * days paint their empty timeline, never a message. DOM order interleaves
    * each day head with its column, so the narrow-screen stack (heads above
    * their day, hours hidden) needs no extra markup.
@@ -2286,12 +2378,27 @@ export function createCalendarioView(deps) {
     return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   }
 
-  /** The half-hour row under a pointer, as Rome minutes clamped to the grid body. */
+  /** The quarter-hour row under a pointer, as Rome minutes clamped to the grid body. */
   function minuteAt(col, event) {
     const rect = typeof col.getBoundingClientRect === 'function' ? col.getBoundingClientRect() : null;
     if (!rect || !(rect.height > 0)) return null;
     const fraction = Math.min(Math.max((Number(event.clientY) - rect.top) / rect.height, 0), 0.9999);
-    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_SLOT_MINUTES;
+    return GRID_START_MINUTES + Math.floor(fraction * GRID_ROWS) * GRID_ROW_MINUTES;
+  }
+
+  /**
+   * The rows a span of Rome minutes covers, as a grid-row value: whole rows
+   * only, so a 20 or 50 minute booking still paints a valid span (review #834).
+   */
+  function rowsOf(start, end) {
+    const first = Math.floor((start - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    const last = Math.ceil((end - GRID_START_MINUTES) / GRID_ROW_MINUTES);
+    return `${first + 1} / span ${Math.max(1, last - first)}`;
+  }
+
+  /** A pick spans at least half an hour from its first row (a plain click). */
+  function pickEnd(anchor, current) {
+    return Math.min(Math.max(Math.max(anchor, current) + GRID_ROW_MINUTES, Math.min(anchor, current) + GRID_SLOT_MINUTES), GRID_END_MINUTES);
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2370,8 +2477,8 @@ export function createCalendarioView(deps) {
     const paint = () => {
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
-      drag.node.setAttribute('style', `grid-row: ${(start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(end - start) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`);
+      const end = pickEnd(drag.anchor, drag.current);
+      drag.node.setAttribute('style', `grid-row: ${rowsOf(start, end)}; grid-column: 1 / -1`);
       drag.node.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
     };
     col.addEventListener('pointerdown', (event) => {
@@ -2459,7 +2566,7 @@ export function createCalendarioView(deps) {
       }
       if (!drag) return;
       const start = Math.min(drag.anchor, drag.current);
-      const end = Math.max(drag.anchor, drag.current) + GRID_SLOT_MINUTES;
+      const end = pickEnd(drag.anchor, drag.current);
       drag = null;
       openSlot(key, start, end);
     });
@@ -2531,7 +2638,7 @@ export function createCalendarioView(deps) {
    * (backlog:3d0fbe7dc8d1): a move keeps its duration and takes the hovered
    * day and hour, a resize keeps its start and day and takes the hovered
    * end on the same column. Both
-   * stay inside the painted 09:00–18:00 hours in half-hour steps; the ghost
+   * stay inside the painted 09:00–18:00 hours in quarter-hour steps; the ghost
    * paints the target range on the hovered column, except a resize ghost,
    * which stays on the origin column (review #757).
    * @param {string} dayKey @param {number} minute @param {any} col
@@ -2539,20 +2646,24 @@ export function createCalendarioView(deps) {
   function retargetEventDrag(dayKey, minute, col) {
     const drag = eventDrag;
     if (!drag) return;
-    const durationMin = Math.max(GRID_SLOT_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(drag.row.endsAt) - Date.parse(drag.row.startsAt)) / 60000));
     if (drag.mode === 'resize') {
       // The stretch stays on the origin day (review #757): sideways motion
       // into another column is ignored, so preview and commit agree.
       if (dayKey !== drag.dayKey) return;
-      const end = Math.min(Math.max(minute + GRID_SLOT_MINUTES, drag.startMin + GRID_SLOT_MINUTES), GRID_END_MINUTES);
+      // backlog:7587307d5215: the bottom edge snaps to the quarter hour.
+      const end = Math.min(Math.max(minute + GRID_ROW_MINUTES, drag.startMin + GRID_ROW_MINUTES), GRID_END_MINUTES);
       if (end === drag.targetEnd) return;
       drag.targetDay = drag.dayKey;
       drag.targetStart = drag.startMin;
       drag.targetEnd = end;
     } else {
       const latest = GRID_END_MINUTES - durationMin;
+      // backlog:7587307d5215: the moved start snaps to the quarter hour,
+      // whatever minute the booking started on; the duration stays whole.
+      const snapped = Math.round((minute - (drag.grabOffset ?? 0)) / GRID_ROW_MINUTES) * GRID_ROW_MINUTES;
       const start = Math.min(
-        Math.max(minute - (drag.grabOffset ?? 0), GRID_START_MINUTES),
+        Math.max(snapped, GRID_START_MINUTES),
         Math.max(GRID_START_MINUTES, latest),
       );
       if (start === drag.targetStart && dayKey === drag.targetDay) return;
@@ -2566,7 +2677,7 @@ export function createCalendarioView(deps) {
       className: 'cal-pick is-dragging cal-drag-ghost',
       attrs: {
         'aria-hidden': 'true',
-        style: `grid-row: ${(drag.targetStart - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${(drag.targetEnd - drag.targetStart) / GRID_SLOT_MINUTES}; grid-column: 1 / -1`,
+        style: `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; grid-column: 1 / -1`,
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
@@ -2685,7 +2796,10 @@ export function createCalendarioView(deps) {
       }
       const day = romeDayKey(row.startsAt);
       state.moveOpen = false;
-      outcome = { text: `Spostato a ${day !== null ? `${dayName(day)} ` : ''}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      // backlog:7587307d5215: the day and the date, like a person says it —
+      // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
+      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
@@ -2741,6 +2855,9 @@ export function createCalendarioView(deps) {
       panel.appendChild(el(doc, 'p', { className: 'empty', text: state.weekError }));
       return panel;
     }
+    // backlog:7587307d5215: while the first week (or the roster that names
+    // it) is read, the grid shows a skeleton — never an empty week.
+    const loadingWeek = !state.week && (state.weekLoading || state.membersLoading);
     if (!state.week) {
       // backlog:29bb3f2c0d64: with nobody to show (a space with no people
       // yet, or no names while the roster is unread) the week still paints
@@ -2755,9 +2872,13 @@ export function createCalendarioView(deps) {
         : (roster.length === 0
           ? 'Nello spazio non c’è ancora nessuna persona: la settimana resta vuota finché il titolare non invita il team.'
           : '');
-      if (line !== '') panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
+      if (line !== '' && !loadingWeek) panel.appendChild(el(doc, 'p', { className: 'empty cal-week-empty', text: line }));
     }
-    const grid = el(doc, 'div', { className: 'cal-grid' });
+    if (loadingWeek) {
+      panel.setAttribute('aria-busy', 'true');
+      panel.appendChild(el(doc, 'p', { className: 'sr-only', attrs: { role: 'status' }, text: 'Carico la settimana…' }));
+    }
+    const grid = el(doc, 'div', { className: loadingWeek ? 'cal-grid is-loading' : 'cal-grid' });
     grid.appendChild(el(doc, 'div', { className: 'cal-corner', attrs: { 'aria-hidden': 'true' } }));
     for (let hour = GRID_START_MINUTES / 60; hour <= GRID_END_MINUTES / 60; hour += 1) {
       const label = el(doc, 'div', {
@@ -2789,7 +2910,9 @@ export function createCalendarioView(deps) {
       // Review #646 round 3: «Nessun appuntamento» is a claim about the day,
       // so it reads the whole loaded week — a day whose only bookings belong
       // to a hidden person keeps its timeline, never the compact row.
-      const empty = rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
+      // Review #834: while the week loads no day is empty yet — the phone
+      // layout would hide its skeletons under «Nessun appuntamento».
+      const empty = !loadingWeek && rows.length === 0 && ghosts.length === 0 && state.selection?.key !== key && !heldDays.has(key);
       const head = el(doc, 'div', {
         className: empty ? 'cal-day-head is-empty' : 'cal-day-head',
         attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 1` },
@@ -2806,7 +2929,7 @@ export function createCalendarioView(deps) {
       grid.appendChild(head);
       const col = el(doc, 'div', {
         className: empty ? 'cal-day is-empty' : 'cal-day',
-        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_ROWS}` },
+        attrs: { style: `grid-column: ${dayIndex + 2}; grid-row: 2 / span ${GRID_HALF_HOURS}` },
       });
       // Events and ghosts share the lanes (backlog:5fbebe8559e9): a ghost
       // never paints over a booking or over another ghost.
@@ -2815,6 +2938,16 @@ export function createCalendarioView(deps) {
       col.setAttribute('style', `${col.getAttribute('style')}; --lanes: ${laneCount}`);
       for (const row of rows) {
         col.appendChild(renderEvent(row, lanes.get(row) ?? { lane: 0, lanes: 1 }));
+      }
+      if (loadingWeek) {
+        // backlog:7587307d5215: two grey placeholder blocks per day while the
+        // week is read, at fixed rows, carrying no text.
+        for (const [start, span] of [[5 + dayIndex * 2, 4], [17 + dayIndex, 6]]) {
+          col.appendChild(el(doc, 'div', {
+            className: 'cal-skeleton',
+            attrs: { 'aria-hidden': 'true', 'data-skeleton': 'true', style: `grid-row: ${start} / span ${span}; grid-column: 1 / -1` },
+          }));
+        }
       }
       // BO-F6-11 fetta 3 (specs/calendario.md C5): the "✦ Proposta" ghosts.
       // One dashed ghost per searched slot on its Rome day, clickable to
@@ -2844,7 +2977,7 @@ export function createCalendarioView(deps) {
           className: 'cal-pick',
           attrs: {
             'data-role': 'slot-pick',
-            style: `grid-row: ${(state.selection.start - GRID_START_MINUTES) / GRID_SLOT_MINUTES + 1} / span ${Math.max(1, (state.selection.end - state.selection.start) / GRID_SLOT_MINUTES)}; grid-column: 1 / -1`,
+            style: `grid-row: ${rowsOf(state.selection.start, state.selection.end)}; grid-column: 1 / -1`,
           },
           text: `${minutesLabel(state.selection.start)}–${minutesLabel(state.selection.end)}`,
         }));
@@ -3518,7 +3651,7 @@ export function createCalendarioView(deps) {
     if (aiOff) {
       input.setAttribute('disabled', 'true');
       find.setAttribute('disabled', 'true');
-    } else if (state.aiLoading) find.setAttribute('disabled', 'true');
+    } else if (state.aiLoading) uiMarkBusy(find, 'Cerco…'); // backlog:07895caaa4be: the button says it is searching
     else find.addEventListener('click', () => void submitAi(String(input.value ?? '')));
     row.appendChild(input);
     row.appendChild(find);
@@ -3984,6 +4117,7 @@ export function createCalendarioView(deps) {
       state.customerItems = [];
       state.customerError = null;
       paintCustomerResults(liveCustomerBox());
+      reseatFormPopover();
       return;
     }
     // The space the search asked in: an answer never paints in another one.
@@ -4015,6 +4149,7 @@ export function createCalendarioView(deps) {
       });
     }
     paintCustomerResults(liveCustomerBox());
+    reseatFormPopover();
   }
 
   /**
@@ -4060,9 +4195,18 @@ export function createCalendarioView(deps) {
         text: 'L’elenco è parziale: potrebbero esserci altri clienti oltre quelli letti.',
       }));
     }
+    // backlog:3582d91635cb: two customers with the same name read apart —
+    // a partial email or phone beside each homonym, never a guess.
+    const nameOf = (item) => (typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome');
+    const seen = new Map();
+    for (const item of state.customerItems) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
     for (const item of state.customerItems) {
-      const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
+      const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item) : null;
+      if (hint !== null) {
+        pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
+      }
       pick.addEventListener('click', () => {
         // Review #690 (P2): the choice ends the search — no pending timer or
         // request in flight reads again after it.
@@ -4191,6 +4335,7 @@ export function createCalendarioView(deps) {
     state.bookingNote = '';
     state.serviceError = '';
     state.manual = null;
+    state.manualTyped.clear();
     state.customerPick = null;
     state.manualOpen = true;
     const day = romeDayKey(appointment?.startsAt);
@@ -4306,6 +4451,7 @@ export function createCalendarioView(deps) {
       }
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(input.value ?? '') };
+        state.manualTyped.add('teamMemberId');
       });
       form.appendChild(fieldBox('Persona del team', input, { wide: true }));
       return input;
@@ -4329,6 +4475,8 @@ export function createCalendarioView(deps) {
       if (shown !== '') select.value = shown;
       const track = () => {
         state.manual = { ...(state.manual ?? {}), teamMemberId: String(select.value ?? '') };
+        // Review #818 (P2): a person the operator chose is their own work.
+        state.manualTyped.add('teamMemberId');
       };
       select.addEventListener('input', track);
       select.addEventListener('change', track);
@@ -4398,6 +4546,7 @@ export function createCalendarioView(deps) {
       if (state.manual?.serviceKey != null) input.value = String(state.manual.serviceKey);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
       form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
@@ -4429,6 +4578,7 @@ export function createCalendarioView(deps) {
       state.manual = { ...(state.manual ?? {}), serviceKey: wanted };
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), serviceKey: String(input.value ?? '') };
+        state.manualTyped.add('serviceKey');
       });
       form.appendChild(fieldBox('Servizio', input, { wide: true }));
       paintUnder(input);
@@ -4449,6 +4599,8 @@ export function createCalendarioView(deps) {
     const track = () => {
       const chosen = bookable.find((entry) => entry.key === String(select.value ?? '')) ?? null;
       state.manual = { ...(state.manual ?? {}), serviceKey: String(select.value ?? '') };
+      // Review #818 (P2): a service the operator chose is their own work.
+      state.manualTyped.add('serviceKey');
       if (chosen !== null && priceInput) {
         priceInput.value = priceText(chosen);
         state.manual = { ...(state.manual ?? {}), price: priceInput.value };
@@ -4513,6 +4665,7 @@ export function createCalendarioView(deps) {
     if (state.manual?.price != null) priceInput.value = String(state.manual.price);
     priceInput.addEventListener('input', () => {
       state.manual = { ...(state.manual ?? {}), price: String(priceInput.value ?? '') };
+      state.manualTyped.add('price');
     });
     // The service is a catalog menu with the default already chosen, never
     // free text (backlog:810ed0bf): the claim sends the menu key the worker
@@ -4535,6 +4688,7 @@ export function createCalendarioView(deps) {
       if (state.manual?.[name] != null) input.value = String(state.manual[name]);
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
+        state.manualTyped.add(name);
       });
       inputs[name] = input;
       // Giorno and Note take the row; Inizio and Fine sit side by side, so
@@ -4928,6 +5082,9 @@ export function createCalendarioView(deps) {
       state.customerPick = freshPick;
       state.manualOpen = true;
     }
+    // backlog:7587307d5215: the roster read starts with this paint, so the
+    // first frame shows the loading skeletons, never «nessuna persona».
+    if (state.members === null) state.membersLoading = true;
     renderAll();
     // The roster arrives beside the week and becomes the team once it
     // lands (auto-fill plus week load inside loadMembers); its failure is

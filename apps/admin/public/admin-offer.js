@@ -96,6 +96,12 @@ function periodLabel(count, interval) {
 const LIST_LIMIT = 200;
 
 /**
+ * Backlog 8dc6d4a456e1: the audit trail is read through this cap; a page
+ * that fills it is truncated, and nothing is derived from a partial page.
+ */
+const AUDIT_LIMIT = 100;
+
+/**
  * Display name of an audit actor: the shared vocabulary in admin-labels.js
  * (backlog c1649d1d), corroborated by this deal's human display values (the
  * referente, the contact or the company the deal stores).
@@ -107,6 +113,17 @@ function actorLabel(entry, record, people = []) {
   const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
   return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+}
+
+/**
+ * backlog:a2ea75f705fd: the quote the offer page opens first — the newest
+ * one by creation, else the last row read — or null without quotes.
+ * @param {Array<any>} rows
+ */
+function latestQuote(rows) {
+  const list = (Array.isArray(rows) ? rows : []).filter((row) => typeof row?.id === 'string' && row.id !== '');
+  if (list.length === 0) return null;
+  return [...list].sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? ''))).at(-1) ?? null;
 }
 
 /** The commercial schema block (same seam as the quote screen). */
@@ -181,15 +198,41 @@ export function createOfferDetail(deps) {
    * @param {string} id
    */
   async function readOffer(id) {
+    // backlog:a2ea75f705fd: the offer is a core record — its own route
+    // (`/api/opportunities/:id`), never the generic records surface, which
+    // never serves core modules and answered 404 on every open (pilota
+    // 12/11, twice per page).
     try {
-      return await client.request(`/api/modules/opportunity/records/${encodeURIComponent(id)}`);
+      return await client.request(`/api/opportunities/${encodeURIComponent(id)}`);
     } catch (error) {
       const status = Number(/** @type {any} */ (error)?.status ?? 0);
       if (status !== 404) throw error;
       const list = await client.request('/api/opportunities?limit=200');
       const found = Array.isArray(list?.items) ? list.items.find((item) => String(item?.id ?? '') === id) : null;
-      if (!found) throw error;
-      return found;
+      if (found) return found;
+      // A link that names the offer by one of its quotes (the scheda's
+      // offer line used to): the quote names its offer, and the page opens
+      // that offer instead of «Offerta non trovata».
+      const viaQuote = await quoteOffer(id);
+      if (viaQuote === null) throw error;
+      return viaQuote;
+    }
+  }
+
+  /** The offer behind a quote id, or null when the id is no quote of an offer. @param {string} id */
+  async function quoteOffer(id) {
+    let quote;
+    try {
+      quote = await client.request(`/api/modules/quote/records/${encodeURIComponent(id)}`);
+    } catch {
+      return null;
+    }
+    const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
+    if (opportunityId === null || opportunityId === id) return null;
+    try {
+      return await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
+    } catch {
+      return null;
     }
   }
 
@@ -204,6 +247,7 @@ export function createOfferDetail(deps) {
     let quotes;
     let auditItems;
     let auditUnreadable = false;
+    let auditTruncated = false;
     /** @type {Array<any>} */
     let people = [];
     try {
@@ -212,9 +256,13 @@ export function createOfferDetail(deps) {
       quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
-          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=100`,
+          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
         );
         auditItems = Array.isArray(audit?.items) ? audit.items : [];
+        // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
+        // the trail order is newest first, so the creation event may sit
+        // past it and the author must not be read from a partial page.
+        auditTruncated = auditItems.length >= AUDIT_LIMIT;
       } catch (error) {
         // The audit trail is decoration: facts, quotes and lines render
         // without it rather than failing the whole detail. An unreadable
@@ -281,8 +329,11 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
 
     // Who created the deal: the actor of its creation event, read through the
-    // same rule as the history (never a technical id); no event, a dash.
-    const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
+    // same rule as the history (never a technical id); no event — or a
+    // truncated page that may hide it — a dash.
+    const createdEvent = !auditTruncated
+      ? (auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null)
+      : null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', personLabel(record.owner, people) ?? '—'],
@@ -318,7 +369,7 @@ export function createOfferDetail(deps) {
     if (quotes.rows.length === 0) {
       quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
     }
-    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token);
+    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token, latestQuote(quotes.rows));
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
@@ -334,6 +385,8 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
     } else if (auditItems.length === 0) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
+    } else if (auditTruncated) {
+      historyPanel.appendChild(el('p', 'muted', `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     }
     for (const entry of auditItems) {
       const line = historyLine(entry, schema, record, people);
@@ -624,7 +677,15 @@ export function createOfferDetail(deps) {
    * button. The new quote opens where its lines are added.
    * @param {any} head @param {any} panel @param {any} record @param {number} token
    */
-  function paintCreateQuote(head, panel, record, token) {
+  /** The main action beside an existing quote: open it. @param {{id: string}} quote */
+  function openQuoteLink(quote) {
+    const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
+    open.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
+    open.setAttribute('data-action', 'offer-open-quote');
+    return open;
+  }
+
+  function paintCreateQuote(head, panel, record, token, existing = null) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
     void client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then((answer) => {
@@ -633,6 +694,10 @@ export function createOfferDetail(deps) {
         .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
         .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
       if (books.length === 0) {
+        if (existing !== null) {
+          head.appendChild(openQuoteLink(existing));
+          return;
+        }
         line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
         panel.appendChild(line);
         return;
@@ -651,7 +716,10 @@ export function createOfferDetail(deps) {
         pickBook = () => String(select.value ?? books[0].id);
         bar.appendChild(node);
       }
-      const create = el('button', 'primary', 'Crea preventivo');
+      // backlog:a2ea75f705fd: with a quote already there, the main action
+      // opens it; a new quote stays possible, as the quiet second choice.
+      if (existing !== null) bar.appendChild(openQuoteLink(existing));
+      const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
       create.setAttribute('type', 'button');
       create.setAttribute('data-action', 'offer-create-quote');
       let busy = false;
@@ -759,8 +827,10 @@ export function createOfferDetail(deps) {
     }
     if (versions.length === 0) panel.appendChild(el('p', 'quote-version quote-version-empty', 'Ancora nessuna versione: nasce quando il preventivo va in approvazione.'));
     for (const version of versions) {
+      const versionTotals = parseTotals(version.totalsJson);
+      const policy = policyTag(version);
       panel.appendChild(el('p', 'quote-version',
-        `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)} · ${money(versionTotalsNet(version), version.currency ?? quote.currency)}`));
+        `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${quoteTotalSummary(versionTotals, version.currency ?? quote.currency)}`));
     }
     return panel;
   }
@@ -808,18 +878,12 @@ function quoteTotalSummary(totals, currency) {
   return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
-/** Net of one frozen version: valued one-time first, then valued recurring. */
-function versionTotalsNet(version) {
-  let totals = {};
-  try {
-    totals = typeof version?.totalsJson === 'string' && version.totalsJson !== '' ? (JSON.parse(version.totalsJson) ?? {}) : {};
-  } catch {
-    totals = {};
-  }
-  if (groupHasValue(totals.oneTimeTotal)) return totals.oneTimeTotal.netAmountCents;
-  if (Array.isArray(totals.recurringTotals)) {
-    const valued = totals.recurringTotals.find((group) => groupHasValue(group));
-    if (valued) return valued.netAmountCents;
-  }
-  return 0;
+/**
+ * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
+ * decided it (`name@version` from the version record), never nothing.
+ */
+function policyTag(version) {
+  return typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
+    ? `${version.policy}@${version.policyVersion}`
+    : null;
 }

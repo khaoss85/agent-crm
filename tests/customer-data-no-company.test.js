@@ -333,7 +333,7 @@ test('POST /api/companies refuses the placeholder key with a 400 (backlog:ac65e4
   assert.equal(isNoCompany(stored), false, 'an HTTP-created company is real');
 });
 
-test('a V11-misflagged row is unflagged through company update, the one recovery path (backlog:ac65e448fcb4, review giro 2 P1)', async (t) => {
+test('a V12-misflagged row is unflagged through company update, the one recovery path (backlog:ac65e448fcb4, review giro 2 P1)', async (t) => {
   const { app } = scene(t);
   const real = await app.services.companies.create({ name: 'Senza azienda', domain: null }, { actor: OPERATOR });
   assert.equal(isNoCompany(real), false, 'created through the company path it is real');

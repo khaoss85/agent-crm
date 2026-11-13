@@ -23,6 +23,7 @@ import {
   readSessionProfile,
   resolveLogoutTarget,
   sessionRoleLabel,
+  spaceMountFor,
 } from '../apps/admin/public/admin-session.js';
 
 const PROFILE = {
@@ -44,6 +45,7 @@ test('a real session profile parses: space, role, name, email, logout', () => {
   const profile = parseSessionProfile(JSON.stringify(PROFILE));
   assert.deepEqual(profile, {
     space: { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    spaces: [{ id: 'presti-group', name: 'Presti Group', initials: 'PR' }],
     role: 'owner',
     name: 'Elena Rinaldi',
     email: 'elena@studioaurora.it',
@@ -113,4 +115,63 @@ test('logout targets the space login; without a session there is no target', () 
   assert.equal(resolveLogoutTarget({ profile: parseSessionProfile(JSON.stringify(PROFILE)) }), '/w/presti-group/auth/logout');
   assert.equal(resolveLogoutTarget({ profile: null }), null);
   assert.equal(resolveLogoutTarget({}), null);
+});
+
+test('backlog:029409ff — the profile carries every space the person can open', () => {
+  // The reported bug: the menu showed only «Prova Validazione B1», never
+  // Presti. With the host list both parse, current space first.
+  const both = parseSessionProfile(JSON.stringify({
+    ...PROFILE,
+    space: { id: 'b1', name: 'Prova Validazione B1' },
+    spaces: [{ id: 'b1', name: 'Prova Validazione B1' }, { id: 'presti', name: 'Presti' }],
+  }));
+  assert.deepEqual(both?.spaces, [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ]);
+  // Blank entries and duplicates collapse; the current space leads even
+  // when the host lists it last or not at all.
+  const messy = parseSessionProfile(JSON.stringify({
+    ...PROFILE,
+    spaces: [
+      { id: 'presti', name: 'Presti' },
+      { id: '', name: '' },
+      null,
+      { id: 'presti', name: 'Presti doppione' },
+      { id: 'b1', name: 'Prova Validazione B1' },
+    ],
+  }));
+  assert.deepEqual(messy?.spaces, [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+  ]);
+  // A host that only knows the current space changes nothing.
+  assert.deepEqual(parseSessionProfile(JSON.stringify(PROFILE))?.spaces, [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+  ]);
+  assert.deepEqual(parseSessionProfile(JSON.stringify({ ...PROFILE, spaces: [] }))?.spaces, [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+  ]);
+  assert.deepEqual(parseSessionProfile(JSON.stringify({ ...PROFILE, spaces: 'presti' }))?.spaces, [
+    { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+  ]);
+});
+
+test('backlog:029409ff — picking a space navigates to its sibling mount, never a guess', () => {
+  const mount = (targetSpaceId) => spaceMountFor({
+    adminBase: '/w/b1/bo',
+    currentSpaceId: 'b1',
+    targetSpaceId,
+  });
+  assert.equal(mount('presti'), '/w/presti/bo');
+  // Same space, local base, unknown base shape or hostile id: no
+  // navigation — the caller keeps the in-tab switch.
+  assert.equal(mount('b1'), null);
+  assert.equal(spaceMountFor({ adminBase: '/bo', currentSpaceId: 'b1', targetSpaceId: 'presti' }), null);
+  assert.equal(spaceMountFor({ adminBase: '/altro/spazio/bo', currentSpaceId: 'b1', targetSpaceId: 'presti' }), null);
+  assert.equal(spaceMountFor({ adminBase: '/w/b1/bo', currentSpaceId: 'b1', targetSpaceId: '../evil' }), null);
+  assert.equal(spaceMountFor({ adminBase: '/w/b1/bo', currentSpaceId: 'b1', targetSpaceId: '..' }), null);
+  assert.equal(spaceMountFor({ adminBase: '/w/b1/bo', currentSpaceId: '', targetSpaceId: 'presti' }), null);
+  assert.equal(spaceMountFor({}), null);
 });

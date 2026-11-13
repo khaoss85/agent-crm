@@ -263,8 +263,23 @@ const DATA_PLANE_MIGRATIONS = [
   },
   {
     version: 11,
+    name: 'opportunity_board_position',
+    // Order of a card inside its pipeline column (backlog:67a3116f4f65).
+    // NOT NULL DEFAULT 0: every existing and new row reads 0, "not placed",
+    // and a board read orders by (board_position, updated_at DESC), so
+    // unplaced cards keep today's newest-first order on top of the placed
+    // ones. Only OpportunityService.positionOnBoard writes it; no NULL, so
+    // SQLite and PostgreSQL order the same without NULLS FIRST/LAST.
+    sql: `
+      ALTER TABLE opportunities ADD COLUMN board_position INTEGER NOT NULL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS opportunities_board_position
+        ON opportunities(pipeline_key, pipeline_stage, board_position);
+    `,
+  },
+  {
+    version: 12,
     name: 'company_placeholder_flag',
-    // Byte-identical to the V11 intent render (checked by
+    // Byte-identical to the V12 intent render (checked by
     // spine-v2-m3a-dialect-intent): the flag behind a contact that names no
     // company (backlog:ac65e448fcb4), plus the one-time repair of the
     // name-based rows agent-crm#654 wrote. Runtime reads use the flag only.

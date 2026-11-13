@@ -71,3 +71,28 @@ test('an agent actor, a bad subject and an empty body refuse', async (t) => {
   const rows = await activities.listWhere({ subjectResource: 'contact', subjectId: contact.id });
   assert.equal(rows.length, 0, 'a refused note writes nothing');
 });
+
+// Production 12/11 (pilota 21ade52): a note written on two lines with
+// Maiusc+Invio was refused 400 VALIDATION_ERROR. A note is plain text that
+// may span lines: it saves and reads back with its line breaks; every other
+// control character is still refused.
+test('backlog:82235e46e3e9 seguito: a note on several lines saves and reads back with its line breaks', async (t) => {
+  const { app, contact, activities } = await scene(t);
+  const recorded = await app.recordSubjectNote({
+    resource: 'contact', id: contact.id, body: 'Richiamare martedì\r\nPreferisce la sera\n\tporta il certificato', actor: OPERATOR,
+  });
+  assert.equal(recorded.body, 'Richiamare martedì\nPreferisce la sera\n\tporta il certificato', 'line breaks stored as \\n');
+  const [row] = await activities.listWhere({ subjectResource: 'contact', subjectId: contact.id });
+  assert.equal(row.body, 'Richiamare martedì\nPreferisce la sera\n\tporta il certificato');
+  const corrected = await app.reviseSubjectNote({
+    resource: 'contact', id: contact.id, noteId: recorded.id, body: 'Prima riga\nSeconda riga', actor: OPERATOR,
+  });
+  assert.equal(corrected.body, 'Prima riga\nSeconda riga', 'a correction may span lines too');
+  for (const bad of ['a\u0000b', 'a\u0007b', 'a b', 'a\u001bb']) {
+    await assert.rejects(
+      () => app.recordSubjectNote({ resource: 'contact', id: contact.id, body: bad, actor: OPERATOR }),
+      (error) => error?.code === 'VALIDATION_ERROR',
+      'other control characters stay refused',
+    );
+  }
+});

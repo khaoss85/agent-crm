@@ -205,12 +205,15 @@ const ICON_PATHS = Object.freeze({
   plus: '<path d="M12 5v14M5 12h14"/>',
   colonne: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+  importa: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
   // Azioni rapide della scheda (prototype 05 Scheda cliente).
   telefono: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
   'telefono-piu': '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/><path d="M18 3v6M15 6h6"/>',
   messaggio: '<path d="M4 5h16v11H9l-5 4z"/>',
   offerta: '<path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/>',
   appuntamento: '<path d="M5 6h14v13H5zM5 10h14M9 4v4M15 4v4"/>',
+  // Voce 2f2d22f2: the prototype's sixth quick action — «✦ Chiedi all'AI».
+  ai: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/>',
   // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
   cestino: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 });
@@ -283,11 +286,12 @@ export function uiButton(doc, options = {}) {
  * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,
  * offerta, persona, spazio, prodotto): a 28 px tile, a bold title and one
  * muted line under it. `kind` picks the tile: `ai` is the violet ✦, `manual`
- * the pencil. Built without `el` normalization so a menu voice never picks
+ * the pencil — or `icon`, when the voice is not a hand-filled form (the
+ * file import, backlog:4968615de0a4). Built without `el` normalization so a menu voice never picks
  * up a chip or button class (design pass 7: every menu read in monospace).
  *
  * @param {any} doc
- * @param {{ kind: 'ai' | 'manual', title: string, line: string, attrs?: Record<string, unknown> }} options
+ * @param {{ kind: 'ai' | 'manual', title: string, line: string, icon?: string, attrs?: Record<string, unknown> }} options
  */
 export function uiAddOption(doc, options) {
   const node = doc.createElement('button');
@@ -301,7 +305,7 @@ export function uiAddOption(doc, options) {
   tile.setAttribute('class', 'ui-add-tile');
   tile.setAttribute('aria-hidden', 'true');
   if (options.kind === 'ai') tile.textContent = '\u2726';
-  else tile.appendChild(uiIcon(doc, 'matita'));
+  else tile.appendChild(uiIcon(doc, typeof options.icon === 'string' && options.icon !== '' ? options.icon : 'matita'));
   node.appendChild(tile);
   const words = doc.createElement('span');
   words.setAttribute('class', 'ui-add-words');

@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import {
-  AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
 } from '../../core/index.js';
 
@@ -1553,10 +1553,12 @@ export async function readTeamWeek({ appointments }, filter) {
  *   held row whose slot cannot be proven fails the suggestion closed, exactly
  *   like it fails the booking — never a silent free slot over a corrupt row.
  * - Nothing is created without confirmation: `proposeBooking` never writes
- *   an appointment row. With the space's `book-appointments` switch on it
- *   answers a draft the caller confirms; with the switch off it records a
- *   `space-ai-proposal` through the permission gate and stops. `confirmBooking`
- *   refuses without `confirmed: true`, re-checks the switch, then books,
+ *   an appointment row. For a person, or with the space's
+ *   `book-appointments` switch on, it answers a draft the caller confirms;
+ *   for an agent with the switch off it records a `space-ai-proposal`
+ *   through the permission gate and stops. `confirmBooking` refuses without
+ *   `confirmed: true`; a person's confirmation books (their Conferma is the
+ *   approval), an agent's re-checks the switch, then books,
  *   advances `booked -> confirmed` and — when the caller names a calendar —
  *   pushes the event through calendar-sync.
  * - An online booking link is idempotent by construction: `bookFromLink`
@@ -1578,6 +1580,26 @@ export async function readTeamWeek({ appointments }, filter) {
 
 /** The BO-F0-06 switch this flow gates agent-initiated bookings on. */
 export const BOOK_APPOINTMENTS_PERMISSION = 'book-appointments';
+
+/**
+ * P1 12/11: whether the booking is a person's own act. The space switch
+ * gates what the agent may do on its own; a human's propose and confirm
+ * never wait behind it — their Conferma is the approval. Agents and the
+ * system stay gated, and so does the public booking link, which reads the
+ * switch itself.
+ *
+ * Review #818 (P0): a person is a `user` the server identified — never the
+ * framework's anonymous actor (`ANONYMOUS_ACTOR`, what an unverified
+ * request or a missing actor normalizes to, itself typed `user`) and never
+ * an empty id. Those stay gated like an agent: the switch decides, and off
+ * means a proposal, never a booking.
+ * @param {{type: string, id: string}} actor
+ */
+function isHumanBooker(actor) {
+  if (actor?.type !== 'user') return false;
+  const id = typeof actor.id === 'string' ? actor.id.trim() : '';
+  return id !== '' && id !== ANONYMOUS_ACTOR.id;
+}
 
 /** The proposal kind recorded when the switch is off. */
 export const PROPOSE_ACTION_KIND = 'book-appointment';
@@ -1837,7 +1859,11 @@ export async function proposeBooking(context, request) {
     );
   }
   const gate = requireFlowPermissionGate(context);
-  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  // P1 12/11: the switch answers «may the agent book on its own». A person
+  // who books is the approval: their draft is always confirmable.
+  const verdict = isHumanBooker(actor)
+    ? { decision: 'allow' }
+    : await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
   if (verdict && verdict.decision === 'allow') {
     return Object.freeze({
       decision: 'confirm-required',
@@ -1911,7 +1937,14 @@ export async function confirmBooking(context, request) {
     calendarPush = calendarSync.pushAppointment.bind(calendarSync);
   }
   const gate = requireFlowPermissionGate(context);
-  const verdict = await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
+  // P1 12/11 (production: every Conferma in a space with the AI off came
+  // back «proposal» and no appointment existed anywhere): the switch
+  // answers «may the agent book on its own». A person who presses Conferma
+  // is the approval, so a human confirmation books; only an agent's (or
+  // the system's) stays a proposal a human approves.
+  const verdict = isHumanBooker(actor)
+    ? { decision: 'allow' }
+    : await gate.gate({ spaceId, permission: BOOK_APPOINTMENTS_PERMISSION });
   if (!verdict || verdict.decision !== 'allow') {
     const proposal = await gate.propose({
       spaceId,
@@ -2294,6 +2327,16 @@ function extractPhraseDraft(text, nowMs) {
       throw new AppError(
         'The workspace AI placed the booking at or before the reference instant: name a future day instead',
         { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.startsAt' } },
+      );
+    }
+    // A draft naming only its end is still a moment: a past endsAt is the
+    // same past booking as a past startsAt, refused with the same code so
+    // the caller names a future day instead.
+    if (draft.startsAt === undefined && draft.endsAt !== undefined && Number.isSafeInteger(nowMs)
+      && Date.parse(draft.endsAt) <= nowMs) {
+      throw new AppError(
+        'The workspace AI placed the booking at or before the reference instant: name a future day instead',
+        { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.endsAt' } },
       );
     }
     if (parsed.durationMinutes !== undefined) {

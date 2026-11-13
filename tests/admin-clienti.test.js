@@ -1025,7 +1025,7 @@ test('754918ad8da7: after Azzera the chips and rows stay until the new page arri
   const chipsRow = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-chips'));
   assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the filter chip shows');
   gated = true;
-  mount.findAll('button').find((node) => node.textContent === 'Azzera' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Azzera filtri' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
   await flush();
   // While the read is in flight nothing jumps: chips and rows stay, the
   // table only reads busy, and no loading line pushes the bar down.
@@ -1135,4 +1135,73 @@ test('ff8bb60f417f: the unfiltered list total feeds the sidebar badge, a filtere
   byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
   await flush();
   assert.equal(totals.length, 1, 'a filtered page never moves the badge');
+});
+
+test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200,00 EUR»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const { mount } = await render(stubClient());
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [marco, anna] = facts(mount);
+  assert.ok(marco.textContent.endsWith('1.200 €'), `got «${marco.textContent}»`);
+  assert.ok(!mount.textContent.includes('EUR'), 'the euro reads as €, never as its code');
+  assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
+});
+
+/* ------------------------------------------------ backlog:4968615de0a4 */
+
+test('4968615de0a4: one way to clear the search — the field’s Azzera; no browser ×, no search chip', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  assert.equal(input.getAttribute('type'), 'text', 'a plain text field: no browser × inside it');
+  assert.equal(input.getAttribute('enterkeyhint'), 'search');
+  input.value = 'milano';
+  input.dispatch('input');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=milano'));
+  const clears = mount.findAll('button').filter((node) => /Azzera/.test(node.textContent) || /Rimuovi filtro «/.test(node.getAttribute('aria-label') ?? ''));
+  assert.deepEqual(clears.map((node) => node.getAttribute('data-action')), ['clear-search'], 'only the field’s Azzera clears the search');
+  assert.equal(toolToggle(mount, 'Filtri').getAttribute('aria-label'), 'Filtri', 'a search is not a filter in the badge');
+  // With a filter on, the chip row clears the filters only.
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const clearFilters = mount.findAll('button').find((node) => node.textContent === 'Azzera filtri');
+  assert.ok(clearFilters, 'the chip row says what it clears');
+  clearFilters.dispatch('click');
+  await flush();
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(!last.includes('canale='), last);
+  assert.ok(last.includes('q=milano'), 'Azzera filtri keeps the search');
+  assert.equal(input.value, 'milano');
+});
+
+test('4968615de0a4: back on Clienti from another page the search starts empty, filters stay', async () => {
+  const client = stubClient();
+  const { mount, view } = await render(client);
+  const input = mount.findAll('input')[0];
+  input.value = 'milano';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'stato:cliente').dispatch('click');
+  await flush();
+  view.invalidate();
+  await view.render();
+  const again = mount.findAll('input')[0];
+  assert.equal(again.value, '', 'the field is empty');
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(!last.includes('q='), `the list reads without the old search: ${last}`);
+  assert.ok(last.includes('stato=cliente'), 'the filters stay, shown as chips');
+  assert.ok(byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Cliente'));
+});
+
+test('4968615de0a4: «Importa da file» has its own file mark, not the pencil of «Compila manualmente»', async () => {
+  const { mount } = await render(stubClient());
+  const tilePath = (action) => byAttr(mount, 'button', 'data-action', action)
+    .findAll('path').map((node) => node.getAttribute('d')).join(' ');
+  assert.notEqual(tilePath('add-import'), tilePath('add-manual'));
+  const { UI_ICONS } = await import('../apps/admin/public/admin-ui.js');
+  assert.ok(UI_ICONS.includes('importa'));
 });

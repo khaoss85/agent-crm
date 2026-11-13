@@ -126,10 +126,10 @@ export class CompanyService {
 
   /**
    * Rewrite a company's name, domain or placeholder flag
-   * (backlog:d271d723, GDPR erasure; backlog:ac65e448fcb4, V11 recovery).
+   * (backlog:d271d723, GDPR erasure; backlog:ac65e448fcb4, V12 recovery).
    * In-process only — no HTTP route reaches it: the customer-data erasure
    * anonymizes an erased company through here instead of leaving its name
-   * readable, and a V11-misflagged row is unflagged through here (the one
+   * readable, and a V12-misflagged row is unflagged through here (the one
    * recovery path for the one-time name repair, which no public write can
    * use to hide a company). The write names only the columns the patch
    * supplies, and the update and its audit row commit together, like the

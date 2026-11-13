@@ -1606,6 +1606,9 @@ export function buildRouter(app) {
         type: query.type,
         companyId: query.companyId,
         limit: parseLimit(query.limit),
+        // backlog:67a3116f4f65: the Pipeline board asks `order=board`
+        // (position, then newest first); every other reader keeps newest first.
+        order: query.order,
       }),
     };
   });

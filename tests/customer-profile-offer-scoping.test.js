@@ -261,3 +261,25 @@ test('an empty-hop probe carries no NUL byte: a PostgreSQL-like store still read
   assert.deepEqual(profile.quotes.items, [], 'a contact with no opportunities holds no quote');
   assert.equal(profile.quotes.count, 0);
 });
+
+// backlog:82235e46e3e9 (review Muse #793): the scheda cronologia shows when
+// each offer was created, and «Storia stati» names its referente — so the
+// profile carries both, read from the opportunity record itself.
+test('82235e46e3e9: profile opportunities carry the record createdAt and owner', async (t) => {
+  const root = project(t, { withCommercial: true });
+  const context = await boot(root, join(root, 'data', 'offer-created-at.sqlite'));
+  t.after(() => context.close());
+  const { app } = context;
+  const company = await app.services.companies.create({ name: 'Palestra', domain: 'palestra.example' }, { actor: ACTOR });
+  const ada = await app.services.contacts.create(
+    { companyId: company.id, firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra.example' }, { actor: ACTOR });
+  const created = await app.services.opportunities.create(
+    { companyId: company.id, contactId: ada.id, name: 'Pacchetto Ada', valueCents: 10000, currency: 'EUR', owner: 'Elena Rinaldi' },
+    { actor: ACTOR });
+  const profile = await app.readCustomerProfile({ actor: ACTOR, resource: 'contact', id: ada.id });
+  const row = profile.opportunities.items.find((item) => item.id === created.id);
+  assert.ok(row, 'the offer is on the card');
+  assert.equal(row.createdAt, created.createdAt, 'the record creation time');
+  assert.ok(Number.isFinite(Date.parse(row.createdAt)));
+  assert.equal(row.owner, 'Elena Rinaldi', 'the referente');
+});

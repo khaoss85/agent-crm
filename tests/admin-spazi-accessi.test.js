@@ -296,6 +296,23 @@ test('with the master AI switch off the screen says spenta and locks the five (b
   }
 });
 
+// backlog:cb1a32dc46b2: with the AI off only the AI's actions become
+// proposals — a person's Conferma books, a person's save saves. The screen
+// never says «ogni azione» any more.
+test('cb1a32dc46b2: with the AI off the screen says only the AI\'s actions become proposals', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /le azioni dell\u2019AI diventano proposte da approvare/);
+  assert.match(rendered, /quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(rendered, /ogni azione diventa una proposta/);
+  assert.match(SPAZI_AI_MASTER.line, /le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(SPAZI_AI_MASTER.line, /ogni azione/);
+});
+
 // backlog:1cfc68175ab7 (giro UX 11/11, punto 34): with the AI off the five
 // stayed green (aria-checked=true, disabled). They decide nothing until the
 // AI is back on: grey and «in pausa», never on.
@@ -325,6 +342,102 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
     'with the AI on a switch that is on reads green');
   assert.equal(onToggles.filter((node) => node.getAttribute('data-paused') === 'true').length, 0);
   assert.doesNotMatch(text(onMount), /In pausa/);
+});
+
+// backlog:1a96094db71d (giro UX 11/11): Spazi e accessi stayed on «Carico…»
+// for more than 10 s — eight reads one after the other, 2,5–4 s each. Now
+// the page paints at once with a skeleton, every read starts together, and
+// the data replaces the skeleton when the reads land.
+test('1a96094db71d: the page paints a skeleton at once and starts every read together', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // Nothing has answered yet: the page is already there.
+  const before = text(mount);
+  assert.match(before, /IMPOSTAZIONI/, 'the tabs paint at once');
+  assert.match(before, /Spazi di lavoro/, 'the header paints at once');
+  assert.match(before, /Team dell\u2019organizzazione/, 'the team card is there');
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton, not «Carico…»');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
+    'no switch to flip before its value is known');
+  const started = pending.map((entry) => entry.path);
+  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers']) {
+    assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
+  }
+  // Release everything (and whatever the answers start), then the data replaces the skeleton.
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
+});
+
+// Review #830 P2: a menu opened while the first reads are pending repaints
+// the mount from inside the view; when the reads land the data must still
+// replace the skeleton, never stay stuck behind it.
+test('1a96094db71d review: a menu opened during loading never leaves the skeleton on screen', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is up');
+  const adder = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  assert.ok(adder, 'the new-space menu toggle is there while loading');
+  adder.dispatch('click', {});
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'still loading after the menu opens');
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the statistic arrives');
+});
+
+test('1a96094db71d: a refresh after a write keeps the screen, never the skeleton', async () => {
+  const { mount, view: v } = view({ client: stubClient({}) });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('role') === 'switch' && node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label);
+  toggle.dispatch('click', {});
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(confirm, 'the confirm step opens');
+  const writing = confirm.dispatch('click', {});
+  void writing;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton flash after a write');
+  await flush();
 });
 
 test('a refused team read renders as a refusal, not an empty team', async () => {
@@ -1290,6 +1403,78 @@ test('7d30fb517785: a refused invite whose reload fails too still shows exactly 
   assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
 });
 
+test('backlog:76ded4e3: the two menus never stay open together, Escape and a click outside close them', async () => {
+  // Second return of 6b44b0e9fcdf (supervisor 2026-11-07.md:58): «+ Nuovo
+  // spazio di lavoro» closed nothing (no Escape, no outside click) and both
+  // menus could sit open at once. The menus share the clienti and
+  // personalizzazione contract: opening one closes the other, Escape
+  // closes, a click outside closes.
+  const doc = createFakeDocument();
+  // The dependency-free fake document carries no listeners: give this one
+  // the listener surface a real document has, so the test exercises the
+  // view's own outside-click wiring instead of a copy of it.
+  const docListeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (docListeners[type] ??= []).push(handler); };
+  const fireDoc = (type, event) => { for (const handler of docListeners[type] ?? []) handler(event); };
+  const mount = createMount();
+  const seen = { toast: [], picked: [], navigated: [] };
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const v = createSpaziAccessiView({
+    doc,
+    mount,
+    client: stubClient({ members: [{ subject: 'owner-1', role: 'owner', status: 'active' }] }),
+    navigate: (hash) => seen.navigated.push(hash),
+    spaces: () => spaces,
+    activeSpaceId: () => SPACE,
+    onPickSpace: (id) => seen.picked.push(id),
+    toast: (message, error = false) => seen.toast.push({ message, error }),
+  });
+  await v.render();
+  await flush();
+  const newSpaceToggle = () => mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  const inviteToggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const newSpaceMenu = () => mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  const inviteMenu = () => mount.querySelector('div[aria-label="Invita persona"]');
+  assert.ok(newSpaceToggle() && inviteToggle(), 'both menu toggles render');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens');
+  assert.equal(newSpaceMenu(), null, 'opening Invita persona closes + Nuovo spazio: never two menus open');
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu reopens');
+  assert.equal(inviteMenu(), null, 'opening + Nuovo spazio closes Invita persona: never two menus open');
+
+  // Codex P2 on #763: after render() the focused toggle is gone, so in a
+  // real browser focus sits on the body and Escape only reaches the
+  // document. The view listens for Escape at document level; this dispatch
+  // proves the document path, not a node-local handler.
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'Escape closes the new-space menu');
+  assert.equal(newSpaceToggle().getAttribute('aria-expanded'), 'false', 'the toggle names the closed menu');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens again');
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(inviteMenu(), null, 'Escape at document level closes the invite menu');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens a third time');
+  fireDoc('click', { target: newSpaceMenu() });
+  await flush();
+  assert.ok(newSpaceMenu(), 'a click inside the menu keeps it open');
+  fireDoc('click', { target: mount });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'a click outside closes the new-space menu');
+  assert.equal(inviteMenu(), null, 'a click outside leaves no menu open');
+});
 // backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
 // C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
 // dei canali. Prima il rosso: sul codice di prima le righe non portano né

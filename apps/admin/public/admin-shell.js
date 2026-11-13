@@ -1,7 +1,7 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
@@ -280,18 +280,20 @@ export function defaultSpaces() {
 }
 
 /**
- * Read user spaces from a storage-like object. Corrupt or missing data
- * falls back to the single local space — never an empty list.
+ * Read the spaces this browser actually stored — visited space mounts —
+ * without any fallback: missing, corrupt or empty data is an empty list,
+ * never a fictitious space. Use it when another source (the session
+ * profile) already names the person's spaces; the development fallback
+ * would leak a «Spazio locale» into a real session and persist it.
  * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
  */
-export function readSpaces(storage) {
-  const fallback = defaultSpaces();
+export function readStoredSpaces(storage) {
   try {
     const raw = storage?.getItem?.(SPACES_KEY);
-    if (typeof raw !== 'string' || raw === '') return fallback;
+    if (typeof raw !== 'string' || raw === '') return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-    const cleaned = parsed
+    if (!Array.isArray(parsed)) return [];
+    return parsed
       .filter((entry) => entry != null && typeof entry.id === 'string' && entry.id !== ''
         && typeof entry.name === 'string' && entry.name !== '')
       .map((entry) => ({
@@ -301,10 +303,60 @@ export function readSpaces(storage) {
           ? entry.initials.slice(0, 2).toUpperCase()
           : entry.name.slice(0, 2).toUpperCase(),
       }));
-    return cleaned.length > 0 ? cleaned : fallback;
   } catch {
-    return fallback;
+    return [];
   }
+}
+
+/**
+ * Read user spaces from a storage-like object. Corrupt or missing data
+ * falls back to the single local space — never an empty list. Sessionless
+ * shell only: under a session use readStoredSpaces so the fallback never
+ * merges into the person's real spaces.
+ * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
+ */
+export function readSpaces(storage) {
+  const stored = readStoredSpaces(storage);
+  return stored.length > 0 ? stored : defaultSpaces();
+}
+
+/**
+ * Join two space lists into one menu list (backlog:029409ff): the primary
+ * source first (the session profile's spaces), then any extra the secondary
+ * source names (spaces this browser already opened, under a session that
+ * only carries the current space). Entries keep the readSpaces shape;
+ * blanks are dropped, duplicates collapse on id, order is stable — the
+ * menu never renders a blank or doubled row, and the result is never
+ * empty: with nothing usable it falls back to the single local space.
+ * @param {unknown} primary
+ * @param {unknown} secondary
+ */
+export function mergeSpaces(primary, secondary) {
+  const clean = (value) => {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (entry === null || typeof entry !== 'object') continue;
+      const id = typeof /** @type {any} */ (entry).id === 'string'
+        ? /** @type {any} */ (entry).id.trim() : '';
+      const name = typeof /** @type {any} */ (entry).name === 'string'
+        ? /** @type {any} */ (entry).name.trim() : '';
+      if (id === '' || name === '') continue;
+      if (out.some((known) => known.id === id)) continue;
+      const initials = typeof /** @type {any} */ (entry).initials === 'string'
+        && /** @type {any} */ (entry).initials.trim() !== ''
+        ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
+        : name.slice(0, 2).toUpperCase();
+      out.push({ id, name, initials });
+    }
+    return out;
+  };
+  const merged = [...clean(primary)];
+  for (const entry of clean(secondary)) {
+    if (merged.some((known) => known.id === entry.id)) continue;
+    merged.push(entry);
+  }
+  return merged.length > 0 ? merged : defaultSpaces();
 }
 
 /**
@@ -968,6 +1020,12 @@ export function renderUnknownRoute({ doc, mount }) {
 }
 
 /**
+ * What the Impostazioni screen says when the «things to fix» count could not
+ * be read (backlog:1d33b335fba0): what is missing, and that it may not be zero.
+ */
+export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -975,22 +1033,56 @@ export function renderUnknownRoute({ doc, mount }) {
  * count above zero, never at zero and never when the count is unknown.
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
-  mount.appendChild(el(
+  const summary = el(
     doc,
     'p',
     'bo-muted',
     unknown
-      ? 'Non è stato possibile leggerle (non è detto che non ce ne siano).'
+      // backlog:1d33b335fba0: say what was not read, in plain words, with
+      // a way to try again — never «leggerle» with nothing it refers to.
+      ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
-  ));
+  );
+  mount.appendChild(summary);
+  if (unknown && typeof onRetry === 'function') {
+    summary.setAttribute('role', 'status');
+    const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'settings-retry');
+    retry.addEventListener('click', () => {
+      void uiBusy(retry, 'Riprovo…', async () => {
+        let count = null;
+        // Review #833 P2: the retry answers the live state, not only the
+        // count — Stato sync may have become available since the first
+        // paint. A bare number keeps the availability the panel had.
+        let available = customerDataAvailable;
+        try {
+          const answer = await onRetry();
+          if (answer !== null && typeof answer === 'object') {
+            count = answer.fixCount ?? null;
+            if (typeof answer.customerDataAvailable === 'boolean') available = answer.customerDataAvailable;
+          } else {
+            count = answer ?? null;
+          }
+        } catch {
+          count = null;
+        }
+        // The operator may have left meanwhile: repaint only the panel
+        // still on screen, never over the screen just opened.
+        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
+      });
+    });
+    mount.appendChild(retry);
+  }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');

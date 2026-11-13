@@ -8,6 +8,7 @@ Two records, four human actions and one declared capability.
 | Requires | **nothing** |
 | Offers | `follow-up@1` |
 | Actions | `work-task.complete`, `work-task.cancel`, `work-task.postpone`, `work-task.add-note` |
+| Operations | `record-subject-note`, `revise-subject-note`, `withdraw-subject-note` — a subject note, its correction and its withdrawal, all appended |
 | Policies | none |
 | ADR | ADR-030 · ExecPlan `docs/plans/activity-task-operations.md` · guide `docs/WORK_TASKS.md` |
 

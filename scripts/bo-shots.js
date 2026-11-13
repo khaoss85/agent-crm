@@ -717,6 +717,8 @@ shellView.update({
 // missing). Await the faces the shell paints before the fixtures run, so
 // the load event — and the screenshot — wait for real glyphs. Rejections
 // settle the wait instead of hanging the harness.
+// backlog:30dc70e6b076: a face loads and decodes in real time; the page
+// pacer (PACE_PRELUDE) keeps the virtual clock from running out meanwhile.
 await Promise.all([
   document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
@@ -906,15 +908,39 @@ await view.render();
 // control, so the shot proves all three steps (drop zone, column match,
 // table check) instead of the empty first step.
 const input = document.querySelector('#view-module input[name="file"]');
+const CSV = 'nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n';
 const transfer = new DataTransfer();
-transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+transfer.items.add(new File([CSV], 'clienti.csv', { type: 'text/csv' }));
 input.files = transfer.files;
+// The demo file's bytes are already here: hand them over without a Blob
+// read. Chromium's virtual clock waits for network fetches, not for Blob
+// I/O, so on a loaded runner the read used to land after the budget and
+// the shot ended with no import-ready (bo:shots import, PR #828 and #833).
+// The view still reads the file through its own file.arrayBuffer() call.
+const bytes = new TextEncoder().encode(CSV);
+Object.defineProperty(input.files[0], 'arrayBuffer', { value: () => Promise.resolve(bytes.buffer.slice(0)) });
 input.dispatchEvent(new Event('change', { bubbles: true }));
-const deadline = Date.now() + 15000;
-while (!document.querySelector('#view-module select[name="mapping-0"]')) {
-  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
+// The mapping step paints once the view's own promise chain settles: wait
+// for that paint, never for a wall-clock deadline that spends the budget.
+await new Promise((resolve, reject) => {
+  const mount = document.getElementById('view-module');
+  const ready = () => mount.querySelector('select[name="mapping-0"]') !== null;
+  if (ready()) { resolve(); return; }
+  const watch = new MutationObserver(() => {
+    if (!ready()) return;
+    watch.disconnect();
+    resolve();
+  });
+  watch.observe(mount, { childList: true, subtree: true });
+  // A refused file paints its own error line instead of the mapping: say
+  // so, never wait for a step that will not come.
+  const refused = mount.querySelector('.customer-data-error');
+  if (refused !== null) {
+    new MutationObserver(() => {
+      if (refused.textContent.trim() !== '') reject(new Error('the import tool refused the demo file: ' + refused.textContent));
+    }).observe(refused, { childList: true, characterData: true, subtree: true });
+  }
+});
 const painted = document.getElementById('view-module');
 document.getElementById('probe').textContent = JSON.stringify({
   back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
@@ -1354,8 +1380,12 @@ export function harnessHtml(name, publicDir) {
   const screen = SCREENS.find((entry) => entry.name === name);
   if (!screen || !screen.module) throw new Error(`bo:shots has no harness for screen "${name}"`);
   return `<!doctype html><html lang="it"><head><meta charset="utf-8">`
+    + PACE_PRELUDE
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-    + `<link rel="stylesheet" href="/styles.css"></head>`
+    + `<link rel="stylesheet" href="/styles.css">`
+    // The text caret blinks on the real clock's beat (see PACE_PRELUDE): a
+    // focused field would show it in one run and not the next.
+    + `<style>* { caret-color: transparent !important; }</style></head>`
     + `<body><main class="bo-shell">`
     + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
     + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
@@ -1370,13 +1400,84 @@ export function harnessHtml(name, publicDir) {
 }
 
 /**
+ * The pacer (backlog:30dc70e6b076). Chromium's `--virtual-time-budget`
+ * keeps the virtual clock still while a network fetch is pending, and only
+ * then: the moment the page waits on anything else with no fetch open — a
+ * webfont decoding, a Blob read, any work off the main thread — the clock
+ * jumps straight to the next timer, and with none pending to the end of
+ * the budget, so the run ends. On a loaded runner such a wait ended shots
+ * before their ready title («import desktop … no import-ready»,
+ * «nuovo-modulo phone …», then «cliente desktop … no cliente-ready» on
+ * #836 and #839). Holding each known wait (#841) cured the waits we knew
+ * of, one by one, and a hold freezes the clock outright: a webfont load
+ * that needs the clock to move then hangs until the hold gives up.
+ *
+ * The cure lives here, once, for every harness: until the harness writes
+ * its `<name>-ready` title (or throws), the page keeps one beat going — a
+ * fetch the shot server answers after PACE_MS of real time, then a virtual
+ * timer of PACE_STEP_MS. While the fetch is pending the clock stands still;
+ * during the timer it can move at most PACE_STEP_MS. So the virtual clock
+ * never runs faster than PACE_STEP_MS per PACE_MS of real time while the
+ * harness works: a wait off the main thread costs its real length, never
+ * the whole budget, and timers, frames and webfonts keep moving. At the
+ * ready title the beat stops and the budget runs out at once, as before.
+ */
+export const VIRTUAL_BUDGET_MS = 8000;
+/** Real time of one beat. */
+export const PACE_MS = 20;
+/** Virtual time one beat may let pass. */
+export const PACE_STEP_MS = 10;
+
+export const PACE_PRELUDE = `<script>
+(() => {
+  const later = window.setTimeout.bind(window);
+  let done = false;
+  const beat = () => {
+    if (done) return;
+    fetch('/__bo-pace').catch(() => {}).then(() => {
+      if (!done) later(beat, ${PACE_STEP_MS});
+    });
+  };
+  const finish = () => { done = true; };
+  new MutationObserver(() => {
+    if (/-ready$/.test(document.title)) finish();
+  }).observe(document.head, { childList: true, subtree: true, characterData: true });
+  // A harness that throws, or a module that does not load, stops the beat:
+  // the run fails at once instead of spending the budget slowly. A missing
+  // image is not the harness failing.
+  window.addEventListener('error', (event) => {
+    if (event instanceof ErrorEvent || event.target instanceof HTMLScriptElement) finish();
+  }, true);
+  window.addEventListener('unhandledrejection', finish);
+  beat();
+})();
+</script>`;
+
+
+/**
  * Serves the public /bo assets and the harness pages on 127.0.0.1 only.
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor) {
+  /** Beats not answered yet: closing the server answers them. */
+  const beats = new Set();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    // backlog:30dc70e6b076: one beat of the page pacer (see PACE_PRELUDE).
+    if (url.pathname === '/__bo-pace') {
+      const answer = () => {
+        clearTimeout(timer);
+        beats.delete(answer);
+        if (res.writableEnded) return;
+        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.end();
+      };
+      const timer = setTimeout(answer, PACE_MS);
+      beats.add(answer);
+      res.on('close', answer);
+      return;
+    }
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1408,6 +1509,10 @@ function startServer(publicDir, pageFor) {
     }
     res.writeHead(404);
     res.end('no');
+  });
+  // A beat pending at shutdown never keeps the process alive.
+  server.on('close', () => {
+    for (const answer of [...beats]) answer();
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -1501,6 +1606,24 @@ export function chromiumFlags(binary) {
   if (probe([])) return [];
   if (probe(['--no-sandbox'])) return ['--no-sandbox'];
   return null;
+}
+
+/**
+ * How far a harness got when its run ended without the ready title: the
+ * title it reached, whether the shell and the view painted, and the last
+ * Chromium stderr line. A red run then says where it stopped instead of
+ * only that it stopped.
+ * @param {{ stdout: string, stderr: string }} dom
+ */
+export function harnessStage(dom) {
+  const out = String(dom.stdout ?? '');
+  const title = out.match(/<title>(.*?)<\/title>/s)?.[1] ?? null;
+  const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
+  const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
+  const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+  return `title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
+    + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
+    + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
 }
 
 /**
@@ -1788,12 +1911,17 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
   const shots = [];
   for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', PHONE]]) {
     const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
+    // Reduced motion: the pacer lets the virtual clock follow the real one
+    // while a harness works, so the moment a looping animation (the Stato
+    // sync dot, a skeleton pulse) starts differs run to run. The still
+    // shows each element at rest, and two runs give the same PNG.
     const run = await runChromium(binary, [
       '--headless',
       ...flags,
       `--screenshot=${file}`,
       `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
       '--hide-scrollbars',
       '--disable-background-networking',
       page,
@@ -1804,15 +1932,16 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
     const dom = await runChromium(binary, [
       '--headless', ...flags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
       '--disable-background-networking',
       page,
     ], 120000);
     if (dom.status !== 0) {
-      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status}`);
+      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status} (stderr: ${(dom.stderr ?? '').slice(-500)})`);
     }
     if (screen.ready !== null && !dom.stdout.includes(`<title>${screen.ready}</title>`)) {
-      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready})`);
+      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready}; ${harnessStage(dom)})`);
     }
     if (screen.module !== null) {
       if (!dom.stdout.includes('id="boSidebar"') || !dom.stdout.includes('id="boTopbar"')) {

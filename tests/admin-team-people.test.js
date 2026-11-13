@@ -300,7 +300,8 @@ function offerClient(roster) {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return SCHEMA;
-      if (path.startsWith('/api/modules/opportunity/records/')) return { ...OFFER };
+      // backlog:a2ea75f705fd: the offer page reads the core route.
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path)) return { ...OFFER };
       if (path === '/api/spine/memberships') return { items: roster };
       if (path.startsWith('/api/opportunities')) return { items: [{ ...OFFER }] };
       if (path.startsWith('/api/audit')) {
