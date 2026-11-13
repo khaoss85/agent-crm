@@ -35,7 +35,7 @@ import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
-import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
+import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo, unionCorrespondents } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
@@ -985,10 +985,17 @@ export const UNREAD_VIEW = 'da-leggere';
  * limit. The «Da leggere» count comes from the same answer's view pills.
  * @param {any} answer GET /api/customer-data/customers?vista=da-rispondere
  * @param {Date} [now]
- * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null } | null}
+ * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null, correspondents: { conversations: Set<string>, addresses: Set<string> } | null } | null}
  */
 export function buildServerReplies(answer, now = new Date()) {
   if (!answer || typeof answer !== 'object' || !Array.isArray(answer.items)) return null;
+  // La base «mai scritto» della scansione (seguito P2 review Muse #821 giro
+  // 4, backlog:095fb37de6bb): gli stessi corrispondenti da cui la vista
+  // decide — l’inbox locale li riusa per le notifiche. Assente sulle risposte
+  // di prima della cura: allora vale la base della pagina, come prima.
+  const correspondents = answer.teamCorrespondents == null
+    ? null
+    : reviveCorrespondents(answer.teamCorrespondents);
   const rows = [];
   for (const item of answer.items.slice(0, INBOX_LIMIT)) {
     const resource = nonEmptyText(item?.subject?.resource ?? item?.resource);
@@ -1019,6 +1026,7 @@ export function buildServerReplies(answer, now = new Date()) {
     totalIsExact: answer.totalIsExact !== false,
     rows,
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
+    correspondents,
   };
 }
 
@@ -1074,9 +1082,12 @@ function realLabel(value) {
  * `notifications`, apart, and never counts as waiting. `ownAddresses` are
  * the space's own mailboxes (`ownMailboxes`). `pendingNames` marks the rows
  * whose name a profile read still has to bring (backlog:bd5e84545021).
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string> }} input
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string>, correspondents?: any }} input
+ * `correspondents` is the server view's scan-wide base
+ * (buildServerReplies, backlog:095fb37de6bb): the same «mai scritto» both
+ * readers decide from. Absent it reads the page, like before.
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [] } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [], correspondents: shared = null } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -1094,10 +1105,14 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
   }
   const waiting = [];
   const automated = [];
-  // Who the team ever wrote to, among the messages read (backlog:bab63e32acdb):
+  // Who the team ever wrote to (backlog:bab63e32acdb, backlog:095fb37de6bb):
   // mass-mail footers count only for a sender nobody answered — per sender,
-  // the server view's rule (review Muse #821).
-  const correspondents = teamCorrespondents(messages);
+  // the server view's rule (review Muse #821). With the server base the
+  // page decides from the whole scan, not its latest 100; without it the
+  // page reads itself, like before.
+  const correspondents = shared == null
+    ? teamCorrespondents(messages)
+    : unionCorrespondents(shared, teamCorrespondents(messages));
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -2439,6 +2454,10 @@ export function createOggiView(deps) {
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    // backlog:095fb37de6bb: the «Notifiche automatiche» group decides from
+    // the server's scan-wide base when it answered — the same «mai scritto»
+    // the waiting rows were decided from — else from the page, like before.
+    const { correspondents: serverCorrespondents, ...serverInbox } = last.replies ?? {};
     const local = !last.inboxComposed
       ? null
       : last.inboxAvailable
@@ -2451,6 +2470,7 @@ export function createOggiView(deps) {
             now: lastMeta.now,
             pendingNames: pendingNames || last.inboxNamesPending === true,
             ownAddresses: ownMailboxes(last.profile, last.connections),
+            correspondents: serverCorrespondents ?? null,
           }),
         }
         : { available: false, total: 0, rows: [] };
@@ -2461,7 +2481,7 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...last.replies, notifications }
+        ? { ...serverInbox, notifications }
         : local;
     renderOggi({
       doc,

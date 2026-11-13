@@ -162,6 +162,67 @@ export function teamWroteTo(correspondents, message) {
   return address !== null && correspondents.addresses.has(address);
 }
 
+/**
+ * The scan-wide «who the team wrote to» across the server/browser boundary
+ * (seguito P2 review Muse #821 giro 4, backlog:095fb37de6bb): Oggi reads
+ * only its latest 100 messages while the server view scans everything, so
+ * the same sender read as «never written to» on one screen and as a
+ * correspondent on the other. The list answer carries this base and Oggi
+ * reuses it for the same rows — one scope for both readers, never two
+ * kept in step by a test. Plain data only (arrays of strings), so it
+ * survives JSON; unknown shapes read as nobody ever written to, never a
+ * crash and never an invented correspondent.
+ * @param {{ conversations?: unknown, addresses?: unknown } | null | undefined} correspondents
+ * @returns {{ conversations: Array<string>, addresses: Array<string> }}
+ */
+export function serializeCorrespondents(correspondents) {
+  const pick = (value) => {
+    const items = value instanceof Set ? [...value] : (Array.isArray(value) ? value : []);
+    return items.filter((entry) => typeof entry === 'string' && entry !== '');
+  };
+  return {
+    conversations: pick(correspondents?.conversations),
+    addresses: pick(correspondents?.addresses),
+  };
+}
+
+/**
+ * Two «who the team wrote to» bases into one (same item,
+ * backlog:095fb37de6bb): every conversation and address either names. The
+ * server base covers every customer thread; the page base lends the threads
+ * with no customer subject the server never saw. A union never invents —
+ * both sides are outbounds the team really sent — and on the threads both
+ * readers classify it is exactly the server base.
+ * @param {any} first @param {any} second
+ * @returns {{ conversations: Set<string>, addresses: Set<string> }}
+ */
+export function unionCorrespondents(first, second) {
+  const both = [reviveCorrespondents(first), reviveCorrespondents(second)];
+  return {
+    conversations: new Set(both.flatMap((base) => [...base.conversations])),
+    addresses: new Set(both.flatMap((base) => [...base.addresses])),
+  };
+}
+
+/**
+ * Back from the wire into the shape `teamWroteTo` reads (same item,
+ * backlog:095fb37de6bb): live Sets pass through untouched, serialized
+ * arrays become Sets, anything else reads as nobody ever written to.
+ * @param {any} value
+ * @returns {{ conversations: Set<string>, addresses: Set<string> }}
+ */
+export function reviveCorrespondents(value) {
+  const sets = (input) => new Set(
+    (Array.isArray(input) ? input : (input instanceof Set ? [...input] : []))
+      .filter((entry) => typeof entry === 'string' && entry !== ''),
+  );
+  if (value !== null && typeof value === 'object') {
+    if (value.conversations instanceof Set && value.addresses instanceof Set) return value;
+    return { conversations: sets(value.conversations), addresses: sets(value.addresses) };
+  }
+  return { conversations: new Set(), addresses: new Set() };
+}
+
 /** Wrapping punctuation around a word of a display name. */
 const WRAPPING = /^[([<\x22\x27]+|[)\]>\x22\x27,;:]+$/g;
 

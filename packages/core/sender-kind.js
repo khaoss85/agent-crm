@@ -25,7 +25,10 @@ export {
   isTechnicalLocalPart,
   labelFromEmail,
   registrableDomain,
+  reviveCorrespondents,
   senderAddress,
+  serializeCorrespondents,
   teamCorrespondents,
   teamWroteTo,
+  unionCorrespondents,
 } from './src/sender-kind.js';
