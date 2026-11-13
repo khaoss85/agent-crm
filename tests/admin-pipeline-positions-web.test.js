@@ -239,7 +239,7 @@ test('review #852: «Annulla» clicked while the landing re-read is in flight wi
   drop();
   await tick();
   assert.equal(client.posts.length, 1, 'the forward write landed; its re-read now waits');
-  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  toasts.find((item) => item.message === 'Spostamento in Prova…').options.action.run();
   await tick();
   assert.deepEqual(order(mount, 'discovery'), ['a'], 'the click puts the card back');
   client.gateReads(null);

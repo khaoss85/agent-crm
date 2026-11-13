@@ -200,6 +200,8 @@ export const MOVE_SLOW_MS = 3000;
 /** d3910a25dbc0: the pause before the single retry of a write that met another one. */
 export const MOVE_RETRY_MS = 250;
 const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
+/** backlog:fd0adcded1c3: the same signal for a board read past MOVE_SLOW_MS. */
+const LOAD_SLOW = 'Ancora un momento: il caricamento è lento.';
 
 /**
  * 67a3116f4f65 (pilot #562): the place code of a move-stage receipt when the
@@ -415,6 +417,8 @@ export function createPipelineBoard(deps) {
     to.records.splice(afterIndex + 1, 0, record);
     paintColumnSummary(fromStage);
     if (toStage !== fromStage) paintColumnSummary(toStage);
+    syncEmptyLine(target);
+    syncEmptyLine(home.parent);
     return () => {
       if (typeof home.parent.insertBefore === 'function') {
         home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent && home.next !== card ? home.next : null);
@@ -424,7 +428,35 @@ export function createPipelineBoard(deps) {
       from.records.splice(Math.min(at, from.records.length), 0, record);
       paintColumnSummary(fromStage);
       if (toStage !== fromStage) paintColumnSummary(toStage);
+      syncEmptyLine(home.parent);
+      syncEmptyLine(target);
     };
+  }
+
+  /**
+   * backlog:fd0adcded1c3: «Trascina qui un'offerta» only on a column with
+   * no card — gone the moment a card lands there (not after the save), back
+   * when its last card leaves.
+   */
+  function syncEmptyLine(column) {
+    if (!column || !column.childNodes || typeof column.getAttribute !== 'function' || column.getAttribute('data-stage') === null) return;
+    const line = [...column.childNodes].find((node) => typeof node.getAttribute === 'function' && node.getAttribute('data-empty-line') === 'true') ?? null;
+    if (cardsIn(column).length) {
+      if (line) line.setAttribute('class', 'empty hidden');
+      return;
+    }
+    if (line) {
+      line.setAttribute('class', 'empty');
+      return;
+    }
+    const fresh = emptyLine();
+    column.appendChild(fresh);
+    const anchor = slotAnchors.get(column);
+    if (!anchor || anchor.parentNode !== column) slotAnchors.set(column, fresh);
+  }
+  /** The line of a column with no card. */
+  function emptyLine() {
+    return el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta", attrs: { 'data-empty-line': 'true' } });
   }
 
   /** Record id → its card node, for every card on the board (open or closed). */
@@ -518,7 +550,8 @@ export function createPipelineBoard(deps) {
       class: 'panel panel-wide pipeline-board-panel pipeline-skeleton',
       attrs: { 'aria-busy': 'true', 'data-skeleton': 'board' },
     });
-    panel.appendChild(el(doc, 'p', { class: 'sr-only', text: 'Caricamento…', attrs: { role: 'status' } }));
+    const status = el(doc, 'p', { class: 'sr-only', text: 'Caricamento…', attrs: { role: 'status' } });
+    panel.appendChild(status);
     const board = el(doc, 'div', { class: 'pipeline-board', attrs: { 'aria-hidden': 'true' } });
     for (const cards of [3, 2, 2, 1]) {
       const column = el(doc, 'div', { class: 'pipeline-column pipeline-skeleton-column' });
@@ -528,6 +561,7 @@ export function createPipelineBoard(deps) {
     }
     panel.appendChild(board);
     mount.appendChild(panel);
+    return { panel, status };
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -573,9 +607,11 @@ export function createPipelineBoard(deps) {
    * only a board read (Riprova) releases it, never a second POST.
    *
    * backlog:3d811389bb4c: the card is seated in its new column first (drop,
-   * Sposta, Cambia fase alike), and only then «Spostata in …» shows — the
-   * message never runs ahead of the card. «Annulla» puts card and message
-   * back at once, whatever the write is still doing (see undoMove).
+   * Sposta, Cambia fase alike), and only then the toast speaks — the
+   * message never runs ahead of the card. backlog:fd0adcded1c3: while the
+   * write runs it says «Spostamento in …»; «Spostata in …» only after the
+   * server's yes. «Annulla» puts card and message back at once, whatever the
+   * write is still doing (see undoMove).
    * @param {{ undo?: boolean, done?: string | null, seated?: boolean, quietToast?: boolean }} [options]
    * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, undone?: true, message?: string }>}
    */
@@ -619,9 +655,13 @@ export function createPipelineBoard(deps) {
         duration: UNDO_TOAST_MS,
       } : undefined;
     }
+    // backlog:fd0adcded1c3: while the write runs the toast only says what is
+    // happening — «Spostata in …» waits for the server's yes, so a failure
+    // never follows a message that said the opposite. «Annulla» is there
+    // from the first moment, as before.
     if (!quietToast) {
-      const said = reorder ? `Ordine aggiornato in ${stageLabel(pipeline, toStage)}.` : `Spostata in ${stageLabel(pipeline, toStage)}.`;
-      toast(done ?? said, false, undoOptions());
+      const where = stageLabel(pipeline, toStage);
+      toast(reorder ? `Aggiornamento dell'ordine in ${where}…` : `Spostamento in ${where}…`, false, undoOptions());
     }
     let settled = false;
     void wait(MOVE_SLOW_MS).then(() => {
@@ -657,12 +697,16 @@ export function createPipelineBoard(deps) {
       // The undo wins: card and numbers go back to the place they left,
       // and only then does the reverse write follow (undoMove).
       if (intent.undone) placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
-      if (unplaced !== null && !intent.undone && !quietToast) {
+      if (!intent.undone && !quietToast) {
         const where = stageLabel(pipeline, toStage);
-        // «Annulla» stays: the stage write stands, so it can still go back.
-        toast(unplaced === 'refused'
-          ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
-          : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
+        // The server said yes: now, and only now, «Spostata in …». «Annulla»
+        // stays: the write stands, so it can still go back.
+        if (unplaced === null) toast(done ?? (reorder ? `Ordine aggiornato in ${where}.` : `Spostata in ${where}.`), false, undoOptions());
+        else {
+          toast(unplaced === 'refused'
+            ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
+            : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
+        }
       }
       settle({ moved: true });
       return { moved: true, ...(intent.undone ? { undone: true } : {}) };
@@ -847,7 +891,17 @@ export function createPipelineBoard(deps) {
     // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
     // the parent node itself — ask it whether it holds the panel.
     if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
-    if (!quiet || !mount.firstChild) showSkeleton();
+    if (!quiet || !mount.firstChild) {
+      const skeleton = showSkeleton();
+      // backlog:fd0adcded1c3: a read still running after MOVE_SLOW_MS says
+      // so in words, like a slow move does on its card — never only the
+      // skeleton for seconds.
+      void wait(MOVE_SLOW_MS).then(() => {
+        if (token !== renderToken || !mount.contains(skeleton.panel)) return;
+        skeleton.status.textContent = LOAD_SLOW;
+        skeleton.status.setAttribute('class', 'pipeline-skeleton-slow');
+      });
+    }
     let pipeline;
     let records;
     let composed = [];
@@ -1022,9 +1076,61 @@ export function createPipelineBoard(deps) {
       else {
         if (!mount.contains(drawer.node)) mount.appendChild(drawer.node);
         if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
+        // The fresh board starts unscrolled: the open card's column (maybe
+        // a new one, after Cambia fase) comes out from under the panel again.
+        keepOpenColumnInView();
       }
     }
     return panel;
+  }
+
+  /** The board that holds room for the offer panel, if any. */
+  let roomBoard = null;
+  /** Space kept between the open card's column and the panel. */
+  const OFFER_ROOM_GAP = 16;
+  /**
+   * backlog:fd0adcded1c3 (seguito di 23f92c6a72ea): beside the board (above
+   * 700 px) the offer panel covered the open card's own column — at 1024
+   * Proposta, at 1280 Pagato — and the board could not scroll it out. Now
+   * the board keeps its column widths, gains room at its end as wide as the
+   * panel, and scrolls just enough to set the column left of the panel.
+   * The full-width sheet (≤700 px) covers the board by design: nothing here.
+   */
+  function keepOpenColumnInView() {
+    if (!drawer) return;
+    const card = cardElements.get(drawer.recordId) ?? null;
+    const column = card?.parentNode ?? null;
+    const board = column?.parentNode ?? null;
+    const measurable = (node) => node && typeof node.getBoundingClientRect === 'function';
+    if (!measurable(column) || !measurable(board) || !measurable(drawer.node)) return;
+    const sheet = drawer.node.getBoundingClientRect();
+    const frame = board.getBoundingClientRect();
+    if (![sheet.left, sheet.width, frame.left, frame.right].every(Number.isFinite) || sheet.width <= 0) return;
+    if (sheet.left <= frame.left + OFFER_ROOM_GAP) { freeOfferRoom(); return; }
+    const covered = frame.right - sheet.left + OFFER_ROOM_GAP;
+    if (covered > 0 && roomBoard !== board) {
+      freeOfferRoom();
+      const width = column.getBoundingClientRect().width;
+      if (Number.isFinite(width) && width > 0) {
+        board.setAttribute('style', `--pipeline-column-width: ${Math.round(width)}px; --pipeline-offer-room: ${Math.ceil(covered)}px`);
+        board.setAttribute('data-offer-room', 'true');
+        roomBoard = board;
+      }
+    }
+    const box = column.getBoundingClientRect();
+    if (![box.left, box.right].every(Number.isFinite)) return;
+    const limit = sheet.left - OFFER_ROOM_GAP;
+    let shift = 0;
+    if (box.right > limit) shift = Math.min(box.right - limit, box.left - frame.left);
+    else if (box.left < frame.left) shift = box.left - frame.left;
+    if (shift !== 0) board.scrollLeft = Math.max(0, Number(board.scrollLeft ?? 0) + shift);
+  }
+  /** Give the board back its own width once the panel closes. */
+  function freeOfferRoom() {
+    if (!roomBoard) return;
+    roomBoard.removeAttribute('data-offer-room');
+    roomBoard.removeAttribute('style');
+    roomBoard = null;
   }
 
   /**
@@ -1743,7 +1849,7 @@ export function createPipelineBoard(deps) {
     column.__drop = (payload) => handleDrop(pipeline, stage.key, payload, column);
 
     if (!records.length) {
-      const empty = el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" });
+      const empty = emptyLine();
       column.appendChild(empty);
       slotAnchors.set(column, empty);
       return column;
@@ -2069,6 +2175,7 @@ export function createPipelineBoard(deps) {
     };
     paintOfferDrawer(pipeline, record);
     mount.appendChild(node);
+    keepOpenColumnInView();
     if (typeof close.focus === 'function') close.focus();
     node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
   }
@@ -2080,6 +2187,7 @@ export function createPipelineBoard(deps) {
     drawer = null;
     detach();
     if (node.parentNode) node.parentNode.removeChild(node);
+    freeOfferRoom();
     if (!refocus) return;
     const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
     if (live && typeof live.focus === 'function') live.focus();
