@@ -3981,6 +3981,99 @@ test('backlog:f48593bb06d4: a draft the gate refused keeps the space off for the
   }
 });
 
+test('backlog:f48593bb06d4: a pending state read is not kept — the next opening asks again', async () => {
+  const answers = [
+    Object.assign(new Error('pending'), { status: 504, code: 'BO_ASSISTANT_PENDING' }),
+    { enabled: false, reason: 'LLM_SPACE_DISABLED' },
+  ];
+  const inner = draftClient({ body: 'x' });
+  let reads = 0;
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path === '/api/assistant/status') {
+        const answer = answers[Math.min(reads, answers.length - 1)];
+        reads += 1;
+        if (answer instanceof Error) throw answer;
+        return answer;
+      }
+      return inner.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const realInfo = console.info;
+  console.info = () => {};
+  try {
+    await createCustomerCardView({ doc, mount, client, spaceId: 'presti', wait: () => Promise.resolve() }).renderCard('contact', 'c1');
+    const write = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email');
+    const panelOf = () => mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+    write().dispatch('click');
+    await flushComposer();
+    assert.equal(aiParts(panelOf()).go.getAttribute('disabled'), null, 'pending: unknown, Genera on');
+    panelOf().findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+    write().dispatch('click');
+    await flushComposer();
+    assert.equal(reads, 2, 'the reopening reads the state again');
+    assert.equal(aiParts(panelOf()).go.getAttribute('disabled'), 'disabled', 'the settled «off» lands');
+  } finally {
+    console.info = realInfo;
+  }
+});
+
+test('backlog:f48593bb06d4: AI off after an AI draft keeps Annulla beside the reason', async () => {
+  const answers = [{ enabled: true }, { enabled: false, reason: 'LLM_SPACE_DISABLED' }];
+  const inner = draftClient({ body: 'Testo dell’AI' });
+  let reads = 0;
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path === '/api/assistant/status') {
+        const answer = answers[Math.min(reads, answers.length - 1)];
+        reads += 1;
+        return answer;
+      }
+      return inner.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client, spaceId: 'presti', wait: () => Promise.resolve() });
+  await view.renderCard('contact', 'c1');
+  const write = () => mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email');
+  const panelOf = () => mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  write().dispatch('click');
+  await flushComposer();
+  const first = aiParts(panelOf());
+  first.area.value = 'Il mio testo';
+  first.input.value = 'più cortese';
+  first.go.dispatch('click');
+  await flushComposer();
+  assert.equal(first.area.value, 'Testo dell’AI');
+  panelOf().findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  // A minute later the space AI reads off (the cache keeps a settled answer
+  // for a minute, so the test drops it by moving the clock).
+  const realNow = Date.now;
+  Date.now = () => realNow() + 61000;
+  try {
+    write().dispatch('click');
+    await flushComposer();
+  } finally {
+    Date.now = realNow;
+  }
+  const panel = panelOf();
+  assert.equal(aiParts(panel).go.getAttribute('disabled'), 'disabled');
+  const line = aiLine(panel);
+  assert.match(line.textContent, /non è attiva in questo spazio/);
+  const undo = line.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'the way back to the person’s text stays with the AI off');
+  undo.dispatch('click');
+  assert.equal(aiParts(panel).area.value, 'Il mio testo');
+  assert.match(aiLine(panel).textContent, /non è attiva in questo spazio/, 'the reason stays after Annulla');
+});
+
 test('backlog:f48593bb06d4: with no usable channel Genera is off at opening with Connettori beside it, and off chips stay inert', async () => {
   const client = composerClient({ connectors: { connectors: [] }, profile: { member: {}, connections: { available: true, reason: null, items: [] } } });
   const { panel } = await openComposerMount({ client });

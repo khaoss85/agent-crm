@@ -989,17 +989,27 @@ export function createCustomerCardView(deps) {
   // anything else (pending, failed, unknown shape) is «unknown», Genera
   // stays and the draft POST still meets the gate. Kept a minute per space;
   // a draft the gate refused updates it, so a reopen paints off at once.
-  /** @type {{ spaceId: string, at: number, promise: Promise<string|null> } | null} */
+  /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null } | null} */
   let spaceAiRead = null;
-  const readSpaceAi = (spaceId) => {
+  // `opening`: a new composer opening reuses only a settled answer — a
+  // pending (504) or failed read was «unknown» for its own opening and is
+  // asked again, never a minute of «unknown» while the worker catches up.
+  // The AI row of the same opening reuses the read in flight.
+  const readSpaceAi = (spaceId, { opening = false } = {}) => {
     if (spaceAiRead !== null && spaceAiRead.spaceId === spaceId
-      && Date.now() - spaceAiRead.at < 60000) return spaceAiRead.promise;
-    const promise = Promise.resolve()
+      && Date.now() - spaceAiRead.at < 60000
+      && !(opening && spaceAiRead.settled === false)) return spaceAiRead.promise;
+    /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null }} */
+    const entry = { spaceId, at: Date.now(), promise: Promise.resolve(null), settled: null };
+    entry.promise = Promise.resolve()
       .then(() => client.request(ASSISTANT_STATUS_PATH))
       .then((status) => {
-        const reason = status?.reason ?? status?.code ?? null;
-        return status?.enabled === false && COMPOSER_AI_OFF_CODES.has(reason) ? reason : null;
+        entry.settled = typeof status?.enabled === 'boolean';
+        if (!entry.settled) return null;
+        const reason = status.reason ?? status.code ?? null;
+        return status.enabled === false && COMPOSER_AI_OFF_CODES.has(reason) ? reason : null;
       }, (error) => {
+        entry.settled = false;
         // A handled «unknown»: one info line with the safe fields, never an error.
         if (typeof console !== 'undefined' && typeof console.info === 'function') {
           console.info('bo-scheda ai state unreadable:', typeof error?.code === 'string' ? error.code : '',
@@ -1007,12 +1017,12 @@ export function createCustomerCardView(deps) {
         }
         return null;
       });
-    spaceAiRead = { spaceId, at: Date.now(), promise };
-    return promise;
+    spaceAiRead = entry;
+    return entry.promise;
   };
   const rememberSpaceAiOff = (spaceId, code) => {
     if (typeof spaceId === 'string' && COMPOSER_AI_OFF_CODES.has(code)) {
-      spaceAiRead = { spaceId, at: Date.now(), promise: Promise.resolve(code) };
+      spaceAiRead = { spaceId, at: Date.now(), promise: Promise.resolve(code), settled: true };
     }
   };
   // The session role: only the titolare is sent to Spazi e accessi, the
@@ -1746,7 +1756,7 @@ export function createCustomerCardView(deps) {
     panel.appendChild(wait);
     // backlog:f48593bb06d4: the AI state starts with the channel reads, in
     // parallel; the AI row reads the same (cached) answer when it paints.
-    void readSpaceAi(spaceId);
+    void readSpaceAi(spaceId, { opening: true });
     // Voce a935af6a6d19: Email also reads the space profile's Gmail link
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
@@ -1859,11 +1869,14 @@ export function createCustomerCardView(deps) {
       go.setAttribute('aria-disabled', 'true');
       if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
     };
-    const off = (code, status = null) => {
-      row.setAttribute('data-off', 'true');
-      switchOff();
-      prompt.setAttribute('readonly', 'readonly');
-      prompt.setAttribute('placeholder', 'L’AI è spenta: scrivi il messaggio qui sotto');
+    // The reason Genera is off, kept so Annulla repaints it (Annulla
+    // survives the off state: the person's text before an AI draft stays
+    // one click away even with the AI switched off).
+    /** @type {{ code: string|null, status: number|null } | null} */
+    let offState = null;
+    const paintOff = () => {
+      if (offState === null) return;
+      const { code, status } = offState;
       say('');
       if (code === 'LLM_SPACE_DISABLED') {
         // Who turns it on: the titolare gets the way there, one click; the
@@ -1879,35 +1892,49 @@ export function createCustomerCardView(deps) {
       } else if (status === 404 || status === 405) {
         line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
       }
+      const kept = baseline();
+      if (kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== '')) appendUndo();
     };
+    const off = (code, status = null) => {
+      row.setAttribute('data-off', 'true');
+      switchOff();
+      prompt.setAttribute('readonly', 'readonly');
+      prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
+      offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
+      paintOff();
+    };
+    // Annulla: back to the person's own text before the first AI draft.
+    function appendUndo() {
+      const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+      back.setAttribute('type', 'button');
+      back.setAttribute('data-action', 'composer-ai-undo');
+      back.addEventListener('click', () => {
+        const kept = baseline();
+        if (kept === null) return;
+        filled = null;
+        markPicked(null);
+        text.value = kept.text;
+        // Muse P2 on #599: with no subject field mounted (channel switched
+        // to WhatsApp) the undone subject goes to the shared draft, so the
+        // AI subject never comes back when Email returns.
+        restoreSubject(kept.subject);
+        setBaseline(null);
+        changed();
+        go.textContent = 'Genera';
+        // With the AI off the reason stays on the line (backlog:f48593bb06d4).
+        if (offState !== null) paintOff();
+        else say('Testo di prima ripristinato.');
+      });
+      line.appendChild(el('span', undefined, ' · '));
+      line.appendChild(back);
+    }
     const say = (sentence, undo = false) => {
       beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
       line.appendChild(el('span', undefined, sentence));
-      if (undo) {
-        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
-        back.setAttribute('type', 'button');
-        back.setAttribute('data-action', 'composer-ai-undo');
-        back.addEventListener('click', () => {
-          const kept = baseline();
-          if (kept === null) return;
-          filled = null;
-          markPicked(null);
-          text.value = kept.text;
-          // Muse P2 on #599: with no subject field mounted (channel switched
-          // to WhatsApp) the undone subject goes to the shared draft, so the
-          // AI subject never comes back when Email returns.
-          restoreSubject(kept.subject);
-          setBaseline(null);
-          changed();
-          go.textContent = 'Genera';
-          say('Testo di prima ripristinato.');
-        });
-        line.appendChild(el('span', undefined, ' · '));
-        line.appendChild(back);
-      }
+      if (undo) appendUndo();
     };
     // No channel to write on: the one way forward is Connettori. Genera is
     // off with this reason beside it from the opening (backlog:f48593bb06d4):
