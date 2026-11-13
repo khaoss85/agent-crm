@@ -1310,7 +1310,8 @@ test('#680 P2-1: profile links counted as connected wait for the first event', a
   await flush();
   assert.ok(mount.textContent.includes('1 di 9 collegati'), 'Calendar votes, the profile-Gmail stand-in does not (backlog:3805161965cd)');
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento'], 'only the quiet Google Calendar waits: head, table and hero agree');
+  assert.ok(!mount.textContent.includes('Quasi tutto sincronizzato'), 'the hero agrees with the count');
 });
 
 test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {

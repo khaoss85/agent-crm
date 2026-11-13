@@ -73,9 +73,13 @@ test('channelState: not linked reads da-completare, da-collegare or non-disponib
   const meta = (configured) => ({ connections: { available: true, items: [{ connector: 'whatsapp', status: 'disconnected' }], meta: { configured } } });
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(true) }).connectRoute, '#/profilo');
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(false) }).state, 'non-disponibile');
-  // A profile link merges like the shared count.
+  // A profile Gmail link merges like the shared count — but the stand-in
+  // is no channel connection (backlog:3805161965cd): Email reads
+  // da-collegare with the email connectRoute, never collegato.
   const profile = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
-  assert.equal(channelState('email', { rows: [], adapters: [], profile }).state, 'collegato');
+  const gmailAlone = channelState('email', { rows: [], adapters: [], profile });
+  assert.equal(gmailAlone.state, 'da-collegare');
+  assert.equal(gmailAlone.connectRoute, '#/profilo', 'Gmail connects on Profilo, the Connettori screen is only the fallback');
   for (const label of Object.values(CHANNEL_STATE_LABELS)) {
     assert.doesNotMatch(label.text, /qui$/, 'no «Non disponibile qui»');
   }

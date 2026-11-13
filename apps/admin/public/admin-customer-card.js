@@ -2,8 +2,8 @@
 
 import { elFor, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
-import { channelState, countedChannel } from './admin-channels-count.js';
-import { matchConnections } from './admin-connectors.js';
+import { channelConnectRoute, channelState, countedChannel } from './admin-channels-count.js';
+import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
@@ -1278,6 +1278,14 @@ export function createCustomerCardView(deps) {
       // stays off with its «collega Gmail» line — the same contract Oggi,
       // Stato sync and Connettori enforce (review giro 4 P1).
       const realLive = live !== null && !synthetic;
+      // Backlog:3805161965cd (giro 5 P1): the Gmail cure names where Email
+      // connects — the email guided flow ('#/connettori/email', the same
+      // destination as Stato sync's Collega), '#/connettori' only when
+      // nothing here names a route. Never a destination the other screens
+      // contradict.
+      const connectRoute = channel === 'email'
+        ? (channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile }) ?? '#/connettori')
+        : null;
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
       // channel with an empty «Da». The profile Gmail alone is linked but
@@ -1293,6 +1301,7 @@ export function createCustomerCardView(deps) {
         linked,
         connected: live !== null && (channel !== 'email' || (sender !== null && realLive)),
         gmailUnlinked,
+        connectRoute,
         connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
         sender,
@@ -2152,8 +2161,12 @@ export function createCustomerCardView(deps) {
       // says to connect Gmail (the send without one fails 409).
       const namesGmail = channels.some((entry) => entry.gmailUnlinked === true && entry.recipient !== null);
       if (offLinked.length === 1 && namesGmail) {
+        // Backlog:3805161965cd (giro 5 P1): the Gmail line lands on the
+        // email guided flow, like Stato sync's Collega — '#/connettori'
+        // only as the fallback. The words name the destination.
+        const gmailRoute = channels.find((entry) => entry.channel === 'email')?.connectRoute ?? '#/connettori';
         offLine.appendChild(el('span', undefined, `${offLinked[0]} in `));
-        offLine.appendChild(link('#/connettori', 'Connettori', 'composer-connectors'));
+        offLine.appendChild(link(gmailRoute, 'Connettori', 'composer-connectors'));
       } else {
         offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
         offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
