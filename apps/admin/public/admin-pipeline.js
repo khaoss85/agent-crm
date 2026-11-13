@@ -112,7 +112,7 @@ function dayOf(value) {
 
 /**
  * BO-F6-10 C8: whether a record created at `createdAt` falls in the last
- * `days` Rome calendar days (today included in the count back), on the
+ * `days` Rome calendar days: today and the `days - 1` days before it, on the
  * same Rome day the Creata column shows. Fail closed on an unreadable day.
  * @param {unknown} createdAt @param {number} days @param {Date} [now]
  */
@@ -121,7 +121,7 @@ export function createdWithin(createdAt, days, now = new Date()) {
   const today = now instanceof Date && !Number.isNaN(now.getTime()) ? ROME_DAY_KEY.format(now) : null;
   if (!days || day === null || today === null) return false;
   const [year, month, date] = today.split('-').map(Number);
-  const cutoff = new Date(Date.UTC(year, month - 1, date - days)).toISOString().slice(0, 10);
+  const cutoff = new Date(Date.UTC(year, month - 1, date - days + 1)).toISOString().slice(0, 10);
   return day >= cutoff;
 }
 
