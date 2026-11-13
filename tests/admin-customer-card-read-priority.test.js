@@ -159,18 +159,61 @@ test('voce 4cd1bbb646d0: card e timeline partono per prime, le altre solo dopo',
   assert.ok(firstWave.every((kind) => kind === 'card' || kind === 'timeline'),
     `only card and timeline start first, got: ${JSON.stringify(client.started)}`);
   assert.ok(firstWave.includes('card') && firstWave.includes('timeline'), 'both card and timeline start first');
-  client.gates.get('card').release.resolve(CARD);
+  // P1 rev-agent-crm-865-10914b18: the second wave starts at the first
+  // paint — the timeline alone opens the gate while the card is still out.
   client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(10);
+  assert.ok(client.started.some((path) => path.startsWith('/api/customer-data/profile/')),
+    'the profile read starts after the first paint, without waiting for the card');
+  assert.ok(mount.textContent.includes('Ciao, vorrei prenotare una prova'), 'the timeline paints while the card is still out');
+  client.gates.get('card').release.resolve(CARD);
   await flush(10);
   const early = mount.textContent;
   assert.ok(early.includes('Ada Rossi'), 'the name paints as soon as card and timeline settle');
   assert.ok(early.includes('Ciao, vorrei prenotare una prova'), 'the timeline paints with the name');
-  assert.ok(client.started.some((path) => path.startsWith('/api/customer-data/profile/')),
-    'the profile read starts only after card and timeline settle');
   client.gates.get('profile').release.resolve(PROFILE);
   await shown;
   await flush(10);
   const full = mount.textContent;
   assert.ok(full.includes('Ada Rossi'), 'the name stays after the later reads land');
   assert.ok(!full.includes('Scheda non disponibile'), 'no failure panel when every read answers');
+});
+
+test('voce 4cd1bbb646d0 P1: a hung card never starves the timeline and the second wave', async () => {
+  // The card promise never settles (TCP stall, no timeout in the client)
+  // and the budget timer is disabled — only the timeline paint may open
+  // the second-wave gate. On the previous head this test hung: the second
+  // wave waited for both first-wave promises.
+  const never = () => new Promise(() => {});
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = recordingClient();
+  const view = createCustomerCardView({ doc, mount, client, wait: never });
+  view.renderCard('contact', 'c-ada');
+  await flush(10);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(10);
+  assert.ok(client.started.some((path) => path.startsWith('/api/customer-data/profile/')),
+    'the profile read starts even though the card never settles');
+  assert.ok(client.started.some((path) => path === '/api/schema'),
+    'the schema read starts even though the card never settles');
+  assert.ok(mount.textContent.includes('Ciao, vorrei prenotare una prova'), 'the timeline paints while the card hangs');
+  client.gates.get('profile').release.resolve(PROFILE);
+  await flush(10);
+  assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'no failure panel while the card is still out');
+});
+
+test('voce 4cd1bbb646d0 P1: the budget opens the second wave when both first-wave reads stall', async () => {
+  // Both card and timeline stay pending; an instant budget fires the gate
+  // so the six secondary reads still start instead of waiting forever.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = recordingClient();
+  const view = createCustomerCardView({ doc, mount, client, wait: () => Promise.resolve() });
+  view.renderCard('contact', 'c-ada');
+  await flush(20);
+  assert.ok(client.started.some((path) => path.startsWith('/api/customer-data/profile/')),
+    'the profile read starts on the budget even when nothing lands');
+  assert.ok(client.started.some((path) => path === '/api/schema'),
+    'the schema read starts on the budget even when nothing lands');
 });

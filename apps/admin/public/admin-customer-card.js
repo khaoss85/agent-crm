@@ -1058,9 +1058,10 @@ export function createCustomerCardView(deps) {
    * its own read is back. Voce 4cd1bbb646d0 (production 13/11: ~11 reads
    * in parallel at open, card and timeline queued behind them — alone they
    * answer in 466 ms and 281 ms, at open the name took 4-6 s): the first
-   * wave is card and timeline alone, and the second wave starts only after
-   * both settle, so the name and the cronologia never wait behind the
-   * secondary reads. No pool limit is raised — the server keeps its single
+   * wave is card and timeline alone, and the second wave starts after the
+   * first of the two paints (or a small budget), so the name and the
+   * cronologia never wait behind the secondary reads. No pool limit is
+   * raised — the server keeps its single
    * reader; the client simply stops crowding it. The final answer is the
    * same shape as before.
    * @param {string} resource @param {string} id
@@ -1092,19 +1093,37 @@ export function createCustomerCardView(deps) {
       pending.delete(part);
       if (typeof onPart === 'function') onPart({ ...loaded }, new Set(pending));
     };
+    // Voce 4cd1bbb646d0, review rev-agent-crm-865-10914b18 (P1): a hung
+    // first-wave read must not starve the second wave. Promise.all over the
+    // two first-wave reads never resolves when one of them never settles
+    // (settle only converts rejections), so every secondary read behind it
+    // never even starts. The second wave starts after the first progressive
+    // paint (one of card/timeline landed) or after a small budget,
+    // whichever comes first — a hung card can delay the name, never the
+    // cronologia and the sections behind it. No pool limit is raised.
+    const FIRST_WAVE_BUDGET_MS = 3000;
+    let wave2go;
+    const wave2gate = new Promise((resolve) => { wave2go = resolve; });
+    // The budget is a backstop only: wait() is injectable (deps.wait), so
+    // tests run this without real time.
+    void wait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
+    const firstTake = (part, settledRead, notComposedIsNull = true) => {
+      take(part, settledRead, notComposedIsNull);
+      wave2go();
+    };
     // Voce 4cd1bbb646d0: first wave — card and timeline alone. The two
     // takes paint the name and the cronologia through onPart before any
     // secondary read even starts, so a slow profile can never hold them
     // (or queue behind them on the server's single reader).
-    await Promise.all([
-      PART_READS.card(encoded).then((read) => take('card', read, false)),
-      PART_READS.timeline(encoded).then((read) => take('timeline', read)),
+    const wave1 = Promise.all([
+      PART_READS.card(encoded).then((read) => firstTake('card', read, false)),
+      PART_READS.timeline(encoded).then((read) => firstTake('timeline', read)),
     ]);
-    // Voce 4cd1bbb646d0: second wave — everything else, only after card
-    // and timeline settle. take() never throws (settle catches), so this
-    // await always runs: a failed card still reads the sections behind it,
-    // exactly like the single wave did before.
-    await Promise.all([
+    // Voce 4cd1bbb646d0: second wave — everything else, after the first
+    // paint of card/timeline (or the budget). take() never throws (settle
+    // catches), so this await always runs: a failed card still reads the
+    // sections behind it, exactly like the single wave did before.
+    const wave2 = wave2gate.then(() => Promise.all([
       PART_READS.profile(encoded).then((read) => take('profile', read)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
@@ -1126,7 +1145,8 @@ export function createCustomerCardView(deps) {
       // exactly like the Pipeline board (the shell shares one schema read).
       // Without them the offer line falls back to the core stage.
       settle(() => client.request('/api/schema')).then((read) => take('pipelines', read, false)),
-    ]);
+    ]));
+    await Promise.all([wave1, wave2]);
     return { ...loaded };
   }
 
