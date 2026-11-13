@@ -12,7 +12,7 @@ import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
-import { ASSISTANT_STATUS_PATH } from './admin-assistant.js';
+import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
 import {
   addFieldForm,
   defineField,
@@ -983,12 +983,13 @@ export function createCustomerCardView(deps) {
     return promise;
   };
   // backlog:f48593bb06d4: the space AI state, from the read the Assistente
-  // panel already probes (GET /api/assistant/status: the pilot answers 200
-  // `{ enabled, reason }` from the worker's own gate). Only a settled «off»
-  // — enabled false with an LLM gate code — switches Genera off at open;
-  // anything else (pending, failed, unknown shape) is «unknown», Genera
-  // stays and the draft POST still meets the gate. Kept a minute per space;
-  // a draft the gate refused updates it, so a reopen paints off at once.
+  // panel already probes (GET /api/assistant/status), decided by the same
+  // gate code the panel reads to say «AI spenta» (assistantStatusCode:
+  // `code`/`reason` of the answer or of its rejection). Off only for an
+  // LLM gate code and never with `enabled: true`; anything else (pending,
+  // failed, no code) is «unknown», Genera stays and the draft POST still
+  // meets the gate. A settled answer is kept a minute per space; a draft
+  // the gate refused updates it, so a reopen paints off at once.
   /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null } | null} */
   let spaceAiRead = null;
   // `opening`: a new composer opening reuses only a settled answer — a
@@ -1004,11 +1005,18 @@ export function createCustomerCardView(deps) {
     entry.promise = Promise.resolve()
       .then(() => client.request(ASSISTANT_STATUS_PATH))
       .then((status) => {
-        entry.settled = typeof status?.enabled === 'boolean';
-        if (!entry.settled) return null;
-        const reason = status.reason ?? status.code ?? null;
-        return status.enabled === false && COMPOSER_AI_OFF_CODES.has(reason) ? reason : null;
+        const code = assistantStatusCode(status);
+        // Settled: the gate said on or off. A 200 with neither (an
+        // unknown shape) is asked again at the next opening.
+        entry.settled = status?.enabled === true || status?.freeQuestions === 'enabled' || COMPOSER_AI_OFF_CODES.has(code);
+        return status?.enabled !== true && COMPOSER_AI_OFF_CODES.has(code) ? code : null;
       }, (error) => {
+        // A gate refusal (403/503 with the LLM code) is a settled «off».
+        const code = assistantStatusCode(error);
+        if (COMPOSER_AI_OFF_CODES.has(code)) {
+          entry.settled = true;
+          return code;
+        }
         entry.settled = false;
         // A handled «unknown»: one info line with the safe fields, never an error.
         if (typeof console !== 'undefined' && typeof console.info === 'function') {

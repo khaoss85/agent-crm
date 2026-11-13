@@ -16,6 +16,7 @@ import {
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { offerStageLabel } from '../apps/admin/public/admin-labels.js';
+import { ASSISTANT_SPACE_DISABLED_NOTICE, FREE_QUESTION_DISABLED_NOTICE, assistantDisabledNotice } from '../apps/admin/public/admin-assistant.js';
 import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
 import { OPPORTUNITY_STAGES } from '../packages/core/src/schema.js';
@@ -3873,48 +3874,83 @@ function aiStateClient(status, answer = { body: 'x' }) {
 }
 const aiLine = (panel) => panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
 
+// Review Muse #870 P1/P2: the «off» shapes are the producers' own, never
+// a shape made up for the composer. GET /api/assistant/status is served
+// by the pilot bridge — accordo-arvo-pilot src/shared/bo-assistant.js,
+// mapGateObserved: 200 { spaceId, enabled: false, reason: <gate code>,
+// model, purposes, custody } — and read by the Assistente panel under the
+// contract of docs/ADMIN.md and tests/admin-assistant.test.js
+// ({ freeQuestions: 'disabled', code | reason }, or a refusal carrying the
+// code). Every shape is checked against the panel's own reader first: the
+// composer and the panel say «AI spenta» on the same answers, and a change
+// of reader breaks both here.
+const assistantOffShapes = (code) => [
+  ['pilot bridge 200', { spaceId: 'presti', enabled: false, reason: code, model: 'gpt-4o-mini', purposes: ['assistant'], custody: 'worker' }],
+  ['panel contract, code', { freeQuestions: 'disabled', code }],
+  ['panel contract, reason', { freeQuestions: 'disabled', reason: code }],
+  ['gate refusal', Object.assign(new Error('refused'), { status: 403, code })],
+];
+
+test('backlog:f48593bb06d4: every producer shape of «AI off» is the one the Assistente panel reads as off', () => {
+  for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
+    assert.equal(assistantDisabledNotice(shape), ASSISTANT_SPACE_DISABLED_NOTICE, name);
+  }
+  for (const [name, shape] of assistantOffShapes('LLM_SECRET_UNAVAILABLE')) {
+    assert.equal(assistantDisabledNotice(shape), FREE_QUESTION_DISABLED_NOTICE, name);
+  }
+});
+
 test('backlog:f48593bb06d4: AI off in the space switches Genera off at opening, with Spazi e accessi for the titolare', async () => {
-  const client = aiStateClient({ spaceId: 'presti', enabled: false, reason: 'LLM_SPACE_DISABLED', model: 'm', purposes: [], custody: 'worker' });
-  const { panel } = await openComposerMount({ client, role: 'owner' });
-  assert.equal(client.statusReads.length, 1, 'one state read at opening');
-  const { input, go } = aiParts(panel);
-  assert.ok(input && go, 'the AI row stays in the composer');
-  assert.equal(go.getAttribute('disabled'), 'disabled', 'Genera is off before any click');
-  assert.equal(go.getAttribute('aria-disabled'), 'true');
-  assert.equal(input.getAttribute('readonly'), 'readonly', 'nothing to type for an AI that is off');
-  const line = aiLine(panel);
-  assert.match(line.textContent, /L’AI non è attiva in questo spazio/);
-  const settings = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-ai-settings');
-  assert.ok(settings, 'the titolare gets the way to turn it on');
-  assert.equal(settings.getAttribute('href'), '#/spazi-accessi');
-  assert.equal(settings.textContent, 'accendila da Spazi e accessi');
-  go.dispatch('click');
-  input.dispatch('keydown', { key: 'Enter' });
-  await flushComposer();
-  assert.equal(client.drafts.length, 0, 'no draft request, no «Scrivo…» wait, with the AI known off');
-  assert.ok(aiParts(panel).area, 'the message field stays for writing by hand');
-  assert.ok(!panel.textContent.includes('LLM_'), 'no code on screen');
+  for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
+    const client = aiStateClient(shape);
+    const { panel } = await openComposerMount({ client, role: 'owner' });
+    assert.equal(client.statusReads.length, 1, `${name}: one state read at opening`);
+    const { input, go } = aiParts(panel);
+    assert.ok(input && go, `${name}: the AI row stays in the composer`);
+    assert.equal(go.getAttribute('disabled'), 'disabled', `${name}: Genera is off before any click`);
+    assert.equal(go.getAttribute('aria-disabled'), 'true');
+    assert.equal(input.getAttribute('readonly'), 'readonly', 'nothing to type for an AI that is off');
+    const line = aiLine(panel);
+    assert.match(line.textContent, /L’AI non è attiva in questo spazio/, name);
+    const settings = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-ai-settings');
+    assert.ok(settings, `${name}: the titolare gets the way to turn it on`);
+    assert.equal(settings.getAttribute('href'), '#/spazi-accessi');
+    assert.equal(settings.textContent, 'accendila da Spazi e accessi');
+    go.dispatch('click');
+    input.dispatch('keydown', { key: 'Enter' });
+    await flushComposer();
+    assert.equal(client.drafts.length, 0, `${name}: no draft request, no «Scrivo…» wait, with the AI known off`);
+    assert.ok(aiParts(panel).area, 'the message field stays for writing by hand');
+    assert.ok(!panel.textContent.includes('LLM_'), 'no code on screen');
+  }
 });
 
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
-  const client = aiStateClient({ enabled: false, reason: 'LLM_SPACE_DISABLED' });
-  const { panel } = await openComposerMount({ client, role: 'member' });
-  const line = aiLine(panel);
-  assert.match(line.textContent, /Per accenderla chiedi al titolare\./);
-  assert.equal(line.findAll('a').length, 0, 'no link to a screen the member cannot change');
-  assert.equal(aiParts(panel).go.getAttribute('disabled'), 'disabled');
+  for (const [name, shape] of assistantOffShapes('LLM_SPACE_DISABLED')) {
+    const client = aiStateClient(shape);
+    const { panel } = await openComposerMount({ client, role: 'member' });
+    const line = aiLine(panel);
+    assert.match(line.textContent, /Per accenderla chiedi al titolare\./, name);
+    assert.equal(line.findAll('a').length, 0, `${name}: no link to a screen the member cannot change`);
+    assert.equal(aiParts(panel).go.getAttribute('disabled'), 'disabled', name);
+  }
 });
 
 test('backlog:f48593bb06d4: a missing key reads off at opening too', async () => {
-  const client = aiStateClient({ enabled: false, reason: 'LLM_SECRET_UNAVAILABLE' });
-  const { panel } = await openComposerMount({ client, role: 'owner' });
-  assert.match(aiLine(panel).textContent, /L’AI non è ancora configurata/);
-  assert.equal(aiParts(panel).go.getAttribute('disabled'), 'disabled');
+  for (const [name, shape] of assistantOffShapes('LLM_SECRET_UNAVAILABLE')) {
+    const client = aiStateClient(shape);
+    const { panel } = await openComposerMount({ client, role: 'owner' });
+    assert.match(aiLine(panel).textContent, /L’AI non è ancora configurata/, name);
+    assert.equal(aiParts(panel).go.getAttribute('disabled'), 'disabled', name);
+  }
 });
 
 test('backlog:f48593bb06d4: an unknown AI state keeps Genera on, with no reason on screen and no console.error', async () => {
   const states = [
-    { spaceId: 'presti', enabled: true, model: 'm', purposes: [], custody: 'worker' },
+    // The pilot bridge with the AI on (mapGateObserved, 200 enabled: true).
+    { spaceId: 'presti', enabled: true, model: 'gpt-4o-mini', purposes: ['assistant'], custody: 'worker' },
+    // The panel contract without a gate code: suggest-only, not «off».
+    { freeQuestions: 'disabled' },
     Object.assign(new Error('pending'), { status: 504, code: 'BO_ASSISTANT_PENDING' }),
     Object.assign(new Error('down'), { status: 502, code: 'BO_ASSISTANT_STATUS_FAILED' }),
     { enabled: false }, // a gate answer without an LLM reason is not «off»
@@ -3984,7 +4020,7 @@ test('backlog:f48593bb06d4: a draft the gate refused keeps the space off for the
 test('backlog:f48593bb06d4: a pending state read is not kept — the next opening asks again', async () => {
   const answers = [
     Object.assign(new Error('pending'), { status: 504, code: 'BO_ASSISTANT_PENDING' }),
-    { enabled: false, reason: 'LLM_SPACE_DISABLED' },
+    assistantOffShapes('LLM_SPACE_DISABLED')[0][1],
   ];
   const inner = draftClient({ body: 'x' });
   let reads = 0;
@@ -4023,7 +4059,10 @@ test('backlog:f48593bb06d4: a pending state read is not kept — the next openin
 });
 
 test('backlog:f48593bb06d4: AI off after an AI draft keeps Annulla beside the reason', async () => {
-  const answers = [{ enabled: true }, { enabled: false, reason: 'LLM_SPACE_DISABLED' }];
+  const answers = [
+    { spaceId: 'presti', enabled: true, model: 'gpt-4o-mini', purposes: ['assistant'], custody: 'worker' },
+    assistantOffShapes('LLM_SPACE_DISABLED')[1][1],
+  ];
   const inner = draftClient({ body: 'Testo dell’AI' });
   let reads = 0;
   const client = {
