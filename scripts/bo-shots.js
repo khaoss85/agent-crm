@@ -416,11 +416,13 @@ const DEMO_REPORT = {
   metrics: { modelVersion: 1 },
   truncated: false,
   kpis: [
-    { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000,00 EUR', sub: '6 preventivi aperti' },
-    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000,00 EUR' },
-    { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000,00 EUR', sub: '2 chiusure' },
-    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 perse' },
-    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000,00 EUR', sub: '2 preventivi' },
+    // Review #761: displays come from the server formatter (never a
+    // hand-typed «EUR»), counts with the server's singular for one.
+    { id: 'open-value', label: 'Valore pipeline aperto', display: formatMinor(2600000, 'EUR'), sub: '6 preventivi aperti' },
+    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: formatMinor(2600000, 'EUR') },
+    { id: 'won-period', label: 'Vinte in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 chiusure' },
+    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
+    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 preventivi' },
   ],
   funnel: [
     { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },

@@ -8,6 +8,7 @@ import { MODULE_NAMES, euro, moduleScreenLabel, plainAmount, plural } from '../a
 import { createdWithin } from '../apps/admin/public/admin-pipeline.js';
 import { formatMoney } from '../apps/admin/public/admin-reporting.js';
 import { pluralize } from '../apps/admin/public/admin-personalizzazione.js';
+import { buildDashboardModel, formatMinor } from '../packages/analytics/src/dashboard.js';
 
 /**
  * Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): money, counts and screen
@@ -37,6 +38,42 @@ test('9236684c96a7: Reporting (Valore pipeline aperto, Preventivi aperti) reads 
   assert.equal(seen(formatMoney(108000, 'EUR')), '1.080,00 €');
   assert.equal(seen(formatMoney(108000)), '1.080,00 €');
   assert.equal(formatMoney(1.5, 'EUR'), 'n.d.');
+});
+
+/** Dashboard rows as the registry returns them (stage, currency, close date). */
+const dashRow = (stage, totalMinor, count, close = '2026-11-10') => ({
+  'opportunity.owner': 'alice', 'opportunity.stage': stage, 'opportunity.currency': 'EUR',
+  'opportunity.expectedCloseDate': close, totalMinor, count,
+});
+const QUERY_NOV = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR' });
+
+test('review #761: the Reporting top cards are served with «€» and grouped thousands', () => {
+  // The cards print kpi.display as served: the server formatter must agree
+  // with the client euro() — «1.080,00 €», never «1080,00 €» nor «EUR».
+  assert.equal(seen(formatMinor(108000, 'EUR')), '1.080,00 €');
+  assert.equal(seen(formatMinor(2600000, 'EUR')), '26.000,00 €');
+  const rows = [dashRow('qualification', 108000, 1), dashRow('won', 108000, 1), dashRow('lost', 5000, 1)];
+  const model = buildDashboardModel({ byStage: { rows }, schedule: { rows } }, [], QUERY_NOV, '2026-11-13T00:00:00.000Z');
+  const byId = Object.fromEntries(model.kpis.map((kpi) => [kpi.id, kpi]));
+  for (const id of ['open-value', 'won-period', 'closing-period']) {
+    assert.equal(seen(byId[id].display), '1.080,00 €', `${id} reads «1.080,00 €»`);
+    assert.doesNotMatch(byId[id].display, /EUR/, `${id} never shows the ISO code`);
+  }
+  assert.equal(seen(byId['open-count'].sub), '1.080,00 €');
+  assert.equal(seen(formatMoney(108000)), seen(byId['open-value'].display), 'cards and charts read the same figure');
+});
+
+test('review #761: Reporting card counts take the singular only for exactly one', () => {
+  const one = [dashRow('qualification', 1000, 1), dashRow('won', 1000, 1), dashRow('lost', 1000, 1)];
+  const model = buildDashboardModel({ byStage: { rows: one }, schedule: { rows: one } }, [], QUERY_NOV, '2026-11-13T00:00:00.000Z');
+  const byId = Object.fromEntries(model.kpis.map((kpi) => [kpi.id, kpi]));
+  assert.equal(byId['win-rate'].sub, '1 vinta, 1 persa');
+  assert.equal(byId['open-value'].sub, '1 preventivo aperto');
+  assert.equal(byId['won-period'].sub, '1 chiusura');
+  assert.equal(byId['closing-period'].sub, '1 preventivo');
+  const many = [dashRow('won', 1000, 2), dashRow('lost', 1000, 1)];
+  const mixed = buildDashboardModel({ byStage: { rows: many }, schedule: { rows: many } }, [], QUERY_NOV, '2026-11-13T00:00:00.000Z');
+  assert.equal(mixed.kpis.find((kpi) => kpi.id === 'win-rate').sub, '2 vinte, 1 persa');
 });
 
 test('famiglia F8: plural() takes the singular only for exactly one', () => {
