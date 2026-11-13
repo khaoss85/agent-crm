@@ -169,7 +169,8 @@ test('review Muse #799: an undo that fails on a filtered-out card still says so'
   await tick(6);
   const last = toasts[toasts.length - 1];
   assert.equal(last.error, true, 'the failed undo toasts');
-  assert.equal(last.message, 'Spostamento non riuscito. Riprova più tardi.');
+  // backlog:3d811389bb4c: the toast says where the card stays.
+  assert.equal(last.message, 'Non sono riuscito a riportarla in Richiesta info: resta in Prova.');
 });
 
 // ---- The shell toast's clock ----------------------------------------------

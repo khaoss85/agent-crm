@@ -537,8 +537,9 @@ export function createPipelineBoard(deps) {
       // The toast that said «Spostata» is replaced by the truth — unless the
       // person already undid it: the card is where they wanted it.
       if (!intent.undone) toast(message, true);
-      settle({ failed: true, message });
-      return { failed: true, message };
+      const waking = wakeWaitText(error) !== null;
+      settle({ failed: true, message, waking });
+      return { failed: true, message, waking };
     }
   }
 
@@ -564,10 +565,16 @@ export function createPipelineBoard(deps) {
     if (!first?.moved) return;
     const back = await runMove(pipeline, id, toStage, fromStage, undefined, { undo: false, seated: true, quietToast: true });
     if (back.failed || back.busy) {
-      // The server kept the card where the first move put it.
+      // The server kept the card where the first move put it: card and
+      // column numbers go back there together, and the toast says what
+      // happened in plain words (backlog:3d811389bb4c).
       placeCardNow(id, fromStage, toStage);
-      if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
-      else toast(back.message, true);
+      if (back.busy) {
+        toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+      } else {
+        const resta = `Non sono riuscito a riportarla in ${stageLabel(pipeline, fromStage)}: resta in ${stageLabel(pipeline, toStage)}.`;
+        toast(back.waking ? `${resta} Il servizio si sta avviando: riprova tra qualche secondo.` : resta, true);
+      }
     }
     // Review Muse #809: a queued undo is announced whether or not its card is on screen.
     if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);

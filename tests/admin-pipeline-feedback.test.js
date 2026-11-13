@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPipelineBoard, MOVE_SLOW_MS } from '../apps/admin/public/admin-pipeline.js';
-import { createToastController } from '../apps/admin/public/admin-ui.js';
+// Namespace imports: on the code before this voice the file still loads, so
+// every test fails on its own assertion (the behaviour), never on a
+// missing export.
+import * as pipelineModule from '../apps/admin/public/admin-pipeline.js';
+import * as ui from '../apps/admin/public/admin-ui.js';
+
+const { createPipelineBoard } = pipelineModule;
+const MOVE_SLOW_MS = pipelineModule.MOVE_SLOW_MS ?? 3000;
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -112,7 +118,7 @@ test('3d811389bb4c: a move still running after 3 s says so on its card', async (
   const { mount } = await board([record('a', 'discovery')], {
     wait: (ms) => (ms === MOVE_SLOW_MS ? new Promise((resolve) => { slow = resolve; }) : new Promise(() => {})),
   });
-  assert.equal(MOVE_SLOW_MS, 3000);
+  assert.equal(pipelineModule.MOVE_SLOW_MS, 3000, 'the slow signal comes after 3 s');
   const card = cardOf(mount, 'a');
   card.__select.value = 'demo';
   void card.__move();
@@ -141,7 +147,8 @@ test('3d811389bb4c: a Pipeline toast closes when the person leaves the page; oth
   const doc = createFakeDocument();
   const node = createMount();
   node.setAttribute('class', 'toast hidden');
-  const toaster = createToastController(doc, node, { setTimer: () => ({}), clearTimer: () => {}, now: () => 0 });
+  const toaster = ui.createToastController(doc, node, { setTimer: () => ({}), clearTimer: () => {}, now: () => 0 });
+  assert.equal(typeof toaster.hideScope, 'function', 'the toast knows which screen raised it');
   toaster.show('Spostata in Prova.', false, { scope: 'pipeline', action: { label: 'Annulla', run: () => {} } });
   toaster.hideScope('clienti');
   assert.ok(!node.classList.contains('hidden'), 'another screen\'s close leaves it');
@@ -155,8 +162,9 @@ test('3d811389bb4c: a Pipeline toast closes when the person leaves the page; oth
 test('3d811389bb4c: the shell closes the Pipeline\'s messages on a route change', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
-  assert.match(app, /scope: 'pipeline'/, 'the Pipeline toasts carry their screen');
-  assert.match(app, /addEventListener\('hashchange', \(\) => \{\s*if \(toaster !== null && !\/\^#\\\/pipelines\?/, 'a route change away from the Pipeline closes them');
+  assert.ok(app.includes("scope: 'pipeline'"), 'the Pipeline toasts carry their screen');
+  assert.ok(/addEventListener\('hashchange', \(\) => \{\s*if \(toaster !== null && !\/\^#\\\/pipelines\?/.test(app),
+    'a route change away from the Pipeline closes them');
 });
 
 test('3d811389bb4c: while the board loads, a skeleton of columns and cards — the words only for a screen reader', async () => {
@@ -178,4 +186,42 @@ test('3d811389bb4c: while the board loads, a skeleton of columns and cards — t
   release();
   await loading;
   assert.equal(mount.findAll('section').find((n) => n.getAttribute('data-skeleton') === 'board'), undefined, 'the board replaces it');
+});
+
+test('3d811389bb4c: an undo the server refuses puts card and numbers back in the new column, with a clear message', async () => {
+  const { mount, client, events } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  const count = (stage) => mount.findAll('span').find((n) => n.getAttribute('data-count') === stage).textContent;
+  const card = cardOf(mount, 'a');
+  card.__select.value = 'demo';
+  void card.__move();
+  await tick();
+  client.posts[0].answer();
+  await tick(8);
+  assert.deepEqual([where(mount, 'a'), count('discovery'), count('demo')], ['demo', '0', '2'], 'moved');
+  events.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  await tick(8);
+  assert.deepEqual([where(mount, 'a'), count('discovery'), count('demo')], ['discovery', '1', '1'], 'undone on screen at once');
+  client.posts[1].fail(Object.assign(new Error('boom'), { status: 500, code: 'INTERNAL' }));
+  await tick(8);
+  assert.deepEqual([where(mount, 'a'), count('discovery'), count('demo')], ['demo', '0', '2'], 'card and numbers back where the server has them');
+  const last = events[events.length - 1];
+  assert.equal(last.error, true);
+  assert.equal(last.message, 'Non sono riuscito a riportarla in Richiesta info: resta in Prova.');
+});
+
+test('3d811389bb4c: an undo refused by a waking workspace says so in plain words', async () => {
+  const { mount, client, events } = await board([record('a', 'discovery')]);
+  const card = cardOf(mount, 'a');
+  card.__select.value = 'demo';
+  void card.__move();
+  await tick();
+  client.posts[0].answer();
+  await tick(8);
+  events.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  await tick(8);
+  client.posts[1].fail(Object.assign(new Error('Spazio di lavoro in avvio'), { status: 503, code: 'WORKSPACE_STARTING' }));
+  await tick(8);
+  assert.equal(where(mount, 'a'), 'demo');
+  assert.equal(events[events.length - 1].message,
+    'Non sono riuscito a riportarla in Richiesta info: resta in Prova. Il servizio si sta avviando: riprova tra qualche secondo.');
 });
