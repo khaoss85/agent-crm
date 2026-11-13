@@ -20,6 +20,24 @@
 import { uiButton, uiEmpty, uiLoading } from './admin-ui.js';
 
 /**
+ * backlog:94eabbd4762f — what the shell reads for itself (the sidebar
+ * badges) waits for the screen the person opened: on a cold deep link the
+ * badge reads used to leave with the screen's first answer and queue in
+ * front of its reads on a host that serves one or two at a time (pilota
+ * 13/11: the offer page 4,6-5,9 s from a direct link). Resolves when
+ * `screen` settles, either way, or after `capMs` — a screen that never
+ * finishes never keeps the badges away for good. Never rejects.
+ *
+ * @param {Promise<unknown> | null | undefined} screen the routed screen's render
+ * @param {{ capMs?: number, wait?: (ms: number) => Promise<unknown> }} [options]
+ * @returns {Promise<void>}
+ */
+export function afterScreen(screen, { capMs = 5000, wait = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
+  const settled = Promise.resolve(screen).then(() => {}, () => {});
+  return Promise.race([settled, Promise.resolve(wait(capMs)).then(() => {}, () => {})]);
+}
+
+/**
  * Clear the mount and show the loading state for `label` (the screen name
  * the breadcrumb already shows).
  *

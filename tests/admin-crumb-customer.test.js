@@ -42,7 +42,10 @@ test('fe9be5f0af4a: the card naming the customer before the shell re-syncs keeps
 test('fe9be5f0af4a: app.js routes both crumb writers through the remembered name', () => {
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
   const sync = app.slice(app.indexOf('function syncShell(target)'), app.indexOf('async function refreshShellCounts'));
-  assert.match(sync, /screenLabel: customerCrumbLabel\(target, [^\n]+, customerTitle\)/, 'syncShell paints the remembered name');
+  assert.match(sync, /screenLabel: customerCrumbLabel\(target, [^\n]+, rememberedCustomerTitle\(\)\)/, 'syncShell paints the remembered name');
+  // Review Muse #878: the name belongs to its space and is forgotten when the scheda is left.
+  assert.match(app, /customerTitle\.space === \(shellActiveSpace \?\? null\)/);
+  assert.match(app, /customerCardView\.invalidate\(\);\n[^]*?customerTitle = null;/);
   const hook = app.slice(app.indexOf('onCustomerTitle: (name) =>'), app.indexOf('onCustomerTitle: (name) =>') + 900);
   assert.match(hook, /customerTitle = target\.view === 'customer-card'/, 'the card hook remembers the name for its customer');
   assert.ok(app.indexOf('let customerTitle = null;') < app.indexOf('const customerCardView = createCustomerCardView({'),

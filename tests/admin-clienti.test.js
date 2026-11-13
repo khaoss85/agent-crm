@@ -480,7 +480,7 @@ test('Ultimo contatto of today reads «oggi HH:MM», a call names no excerpt', a
     'no excerpt is invented for a call');
 });
 
-test('a hostile excerpt stays text, and no contact still reads «mai»', async () => {
+test('a hostile excerpt stays text, and no contact reads «nessun messaggio»', async () => {
   // backlog:22d4dd0f, C16+C23: hostile server text never becomes markup.
   const hostileRow = {
     ...ROW_MARCO,
@@ -498,10 +498,10 @@ test('a hostile excerpt stays text, and no contact still reads «mai»', async (
   assert.ok(cards[0].textContent.includes('<img src=x onerror=alert(1)>'), 'the hostile text still reads as text');
   // backlog:fe9be5f0af4a: no message or call reads «nessun messaggio» and
   // says what counts, never a bare «mai» beside a customer with notes.
-  assert.ok(cards[1].textContent.includes('nessun messaggio'), 'no contact reads «nessun messaggio»');
   const none = cards[1].findAll('span').find((node) => node.textContent === 'nessun messaggio');
+  assert.ok(none, 'the empty-contact cell reads exactly «nessun messaggio»');
   assert.equal(none.getAttribute('title'), 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
-  assert.ok(!cards[1].textContent.includes('mai'));
+  assert.equal(cards[1].findAll('span').filter((node) => node.textContent === 'mai').length, 0, 'never a bare «mai» cell');
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {

@@ -423,12 +423,19 @@ export function parseModuleRoute(hash) {
   // Offer detail route: #/offerte/<id> (backlog:ef92f728). The deal page
   // behind the pipeline card's Apri button — same canonical discipline as
   // module detail routes; anything else is invalid, not a lookup.
+  // backlog:96c7b56001ba: opened from a scheda the route names it —
+  // #/offerte/<id>/cliente/<resource>/<id> — so «←» goes back there.
   if (rawParts.length && rawParts[0] === 'offerte') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
-    if (rawParts.length !== 2) return { view: 'invalid' };
+    if (rawParts.length !== 2 && !(rawParts.length === 5 && rawParts[2] === 'cliente')) return { view: 'invalid' };
     const offerId = safeDecode(rawParts[1]);
     if (offerId === null || offerId === '' || offerId.includes('/')) return { view: 'invalid' };
-    return { view: 'offer-detail', offerId };
+    if (rawParts.length === 2) return { view: 'offer-detail', offerId };
+    const resource = safeDecode(rawParts[3]);
+    const subjectId = safeDecode(rawParts[4]);
+    if (resource === null || !/^[a-z][a-z0-9-]*$/.test(resource)) return { view: 'invalid' };
+    if (subjectId === null || subjectId === '' || subjectId.includes('/')) return { view: 'invalid' };
+    return { view: 'offer-detail', offerId, from: { resource, subjectId } };
   }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
