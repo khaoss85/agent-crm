@@ -768,6 +768,33 @@ export function withNote(loaded, saved, body) {
   return { ...loaded, timeline: { ...loaded.timeline, entries: { ...entries, items: [note, ...entries.items] } } };
 }
 
+/**
+ * backlog:82235e46e3e9 — after Modifica the edited note is corrected in
+ * place (one statement per note, like the server edit), and after Elimina
+ * the row reads the «Nota eliminata» tombstone. The re-read that follows
+ * replaces this copy with the server's row.
+ */
+export function withEditedNote(loaded, noteId, body) {
+  const entries = loaded?.timeline?.entries;
+  if (!entries || !Array.isArray(entries.items)) return loaded;
+  return {
+    ...loaded,
+    timeline: {
+      ...loaded.timeline,
+      entries: {
+        ...entries,
+        items: entries.items.map((row) => (
+          row?.entry === 'note' && row?.id === noteId ? { ...row, body } : row
+        )),
+      },
+    },
+  };
+}
+
+export function withDeletedNote(loaded, noteId) {
+  return withEditedNote(loaded, noteId, null);
+}
+
 /** The saved Nome, Cognome and Email on the card, the header and Dettagli. @param {any} loaded @param {{firstName: string, lastName: string, email: string}} typed */
 export function withContactDetails(loaded, typed) {
   const name = [typed.firstName, typed.lastName].map((part) => String(part ?? '').trim()).filter(Boolean).join(' ');
@@ -2960,6 +2987,63 @@ export function createCustomerCardView(deps) {
     const shownOffer = quotes[0] ?? offers[0] ?? null;
     const historyId = historyTarget(shownOffer, quotes.length > 0);
     const historyName = offers.find((row) => row?.id === historyId)?.name ?? null;
+    // backlog:82235e46e3e9: the scheda's Modifica and Elimina on a note.
+    // One inline editor and one inline delete confirm at a time — the state
+    // lives here, beside the list, so a repaint (the roster arriving) drops
+    // a half-open editor instead of posting it twice. A save or a delete
+    // writes through the submission client, toasts, and re-reads the
+    // cronologia: the row on screen is the server's row.
+    let editingNoteId = null;
+    let confirmingDeleteId = null;
+    let noteWriteBusy = false;
+    const saveNoteEdit = (noteId, text) => {
+      if (noteWriteBusy) return Promise.resolve();
+      const body = String(text ?? '').trim();
+      if (body === '') {
+        toast('La nota non può essere vuota.');
+        return Promise.resolve();
+      }
+      noteWriteBusy = true;
+      return (async () => {
+        try {
+          await client.request(`/api/customer-hub/notes/${encodeURIComponent(noteId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body }),
+          });
+          editingNoteId = null;
+          drawList();
+          toast('Nota aggiornata');
+          await refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+            (loaded) => withEditedNote(loaded, noteId, body));
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Nota non aggiornata. Riprova più tardi.' }), true);
+        } finally {
+          noteWriteBusy = false;
+        }
+      })();
+    };
+    const removeNote = (noteId) => {
+      if (noteWriteBusy) return Promise.resolve();
+      noteWriteBusy = true;
+      return (async () => {
+        try {
+          await client.request(
+            `/api/customer-hub/notes/${encodeURIComponent(noteId)}`
+            + `?resource=${encodeURIComponent(noteCtx.resource)}&id=${encodeURIComponent(noteCtx.id)}`,
+            { method: 'DELETE' },
+          );
+          confirmingDeleteId = null;
+          drawList();
+          toast('Nota eliminata');
+          await refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+            (loaded) => withDeletedNote(loaded, noteId));
+        } catch (error) {
+          toast(humanReadError(error, { failed: 'Nota non eliminata. Riprova più tardi.' }), true);
+        } finally {
+          noteWriteBusy = false;
+        }
+      })();
+    };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
       const events = channelFilter === 'all' ? [...offerEvents, ...stageEvents] : [];
@@ -3056,10 +3140,88 @@ export function createCustomerCardView(deps) {
           mark.setAttribute('aria-hidden', 'true');
           row.appendChild(mark);
           const paper = el('div', 'bo-scheda-note-paper');
+          // backlog:82235e46e3e9: an eliminated note stays a row — the
+          // framework has no storage delete — reading «Nota eliminata»
+          // where the text was, with no actions left on it.
+          const gone = item?.body == null;
+          const head = gone ? 'Nota eliminata' : 'Nota';
           paper.appendChild(el('p', 'bo-scheda-entry-head',
-            when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
-          if (typeof item?.body === 'string' && item.body !== '') {
+            when ? `${head} · ${author} · ${when}` : `${head} · ${author}`));
+          if (!gone && typeof item?.body === 'string' && item.body !== '') {
             paper.appendChild(el('p', 'bo-scheda-note-body', readableText(item.body)));
+          }
+          const noteId = typeof item?.id === 'string' ? item.id : '';
+          const noteSubject = noteCtx !== null && typeof noteCtx === 'object'
+            && typeof noteCtx.resource === 'string' && typeof noteCtx.id === 'string'
+            ? noteCtx : null;
+          if (!gone && noteId !== '' && noteSubject !== null) {
+            if (editingNoteId === noteId) {
+              // Modifica: the row becomes an inline editor with the current
+              // text — Invio saves, Esc drops the draft, like the add field.
+              const editor = el('textarea', 'bo-scheda-note-edit');
+              editor.setAttribute('name', 'noteEditBody');
+              editor.setAttribute('aria-label', 'Modifica la nota');
+              editor.value = String(item.body ?? '');
+              editor.addEventListener('keydown', (event) => {
+                if (event?.key === 'Escape') {
+                  editingNoteId = null;
+                  drawList();
+                  return;
+                }
+                if (event?.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+                event.preventDefault?.();
+                void saveNoteEdit(noteId, editor.value);
+              });
+              paper.appendChild(editor);
+              const save = el('button', undefined, 'Salva');
+              save.setAttribute('type', 'button');
+              save.setAttribute('data-action', 'note-edit-save');
+              save.setAttribute('data-note-id', noteId);
+              save.addEventListener('click', () => { void saveNoteEdit(noteId, editor.value); });
+              paper.appendChild(save);
+            } else {
+              const edit = el('button', undefined, 'Modifica');
+              edit.setAttribute('type', 'button');
+              edit.setAttribute('data-action', 'note-edit');
+              edit.setAttribute('data-note-id', noteId);
+              edit.addEventListener('click', () => {
+                editingNoteId = noteId;
+                confirmingDeleteId = null;
+                drawList();
+              });
+              paper.appendChild(edit);
+              if (confirmingDeleteId === noteId) {
+                // Elimina asks inline, never a native dialog: the confirm
+                // clears the text through the managed delete, leaving the
+                // «Nota eliminata» tombstone above.
+                const confirm = el('button', undefined, 'Conferma eliminazione');
+                confirm.setAttribute('type', 'button');
+                confirm.setAttribute('data-action', 'note-delete-confirm');
+                confirm.setAttribute('data-note-id', noteId);
+                confirm.addEventListener('click', () => { void removeNote(noteId); });
+                paper.appendChild(confirm);
+                const cancel = el('button', undefined, 'Annulla');
+                cancel.setAttribute('type', 'button');
+                cancel.setAttribute('data-action', 'note-delete-cancel');
+                cancel.setAttribute('data-note-id', noteId);
+                cancel.addEventListener('click', () => {
+                  confirmingDeleteId = null;
+                  drawList();
+                });
+                paper.appendChild(cancel);
+              } else {
+                const del = el('button', undefined, 'Elimina');
+                del.setAttribute('type', 'button');
+                del.setAttribute('data-action', 'note-delete');
+                del.setAttribute('data-note-id', noteId);
+                del.addEventListener('click', () => {
+                  confirmingDeleteId = noteId;
+                  editingNoteId = null;
+                  drawList();
+                });
+                paper.appendChild(del);
+              }
+            }
           }
           row.appendChild(paper);
           list.appendChild(row);

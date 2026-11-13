@@ -15,6 +15,7 @@ import {
   createFollowUp,
   isUniqueConflict,
   optionalSafeText,
+  noteBodyText,
   postponeDueAt,
   postponeKey,
   recordActivity,
@@ -298,7 +299,7 @@ export function buildAddNoteAction(moduleNames) {
     input: [{ name: 'body', type: 'string', required: true, hint: 'The note. Plain text, at most 1000 characters.' }],
     async execute({ record, input, actor, modules, now }) {
       requireHumanActor(actor, 'Adding a note');
-      const body = safeText(input.body, 'body', bounds.noteBody);
+      const body = noteBodyText(input.body, 'body', bounds.noteBody);
       const activities = activityService(modules, names.activity);
       const activity = await recordActivity({ activities, actor }, {
         sourceKey: null,
@@ -411,7 +412,7 @@ export function buildRecordSubjectNoteOperation(moduleNames) {
             code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
           });
         }
-        const body = safeText(request?.body, 'body', bounds.noteBody);
+        const body = noteBodyText(request?.body, 'body', bounds.noteBody);
         const activities = resolveModule(runtime.modules, names.activity)?.service;
         if (!activities || typeof activities.createManaged !== 'function') {
           throw new AppError('The work package is installed without its activity record', {
@@ -499,7 +500,7 @@ export function buildEditSubjectNoteOperation(moduleNames) {
             code: 'WORK_NOTE_SUBJECT_INVALID', status: 400,
           });
         }
-        const body = safeText(request?.body, 'body', bounds.noteBody);
+        const body = noteBodyText(request?.body, 'body', bounds.noteBody);
         const activities = resolveModule(runtime.modules, names.activity)?.service;
         const row = await loadSubjectNote(activities, {
           resource: subject.resource, id: subject.id, noteId: request?.noteId,

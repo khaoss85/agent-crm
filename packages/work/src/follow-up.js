@@ -58,6 +58,8 @@ const MAX_REASON = 300;
 const MAX_ID = 200;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+// Note bodies allow `\n`: everything else `safeText` refuses stays refused.
+const NOTE_CONTROL_RE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
 const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
@@ -105,6 +107,28 @@ function safeText(value, field, max) {
 function optionalSafeText(value, field, max) {
   if (value === undefined || value === null || value === '') return null;
   return safeText(value, field, max);
+}
+
+/**
+ * backlog:82235e46e3e9 (verifier 12/11): a two-line note posted from the
+ * scheda died 400 — `safeText` refuses every line break, so «Maiusc+Invio
+ * a capo» could never be saved. A note body is plain text, and plain text
+ * holds line breaks: this twin of `safeText` allows `\n` (a `\r\n` or lone
+ * `\r` reads as one `\n`, the way a textarea posts) and refuses every
+ * other control character. Titles, reasons and subjects stay single-line
+ * through `safeText` — only note bodies read here.
+ * @param {unknown} value @param {string} field @param {number} max
+ */
+function noteBodyText(value, field, max) {
+  if (typeof value !== 'string') throw new ValidationError(`${field} is required`, { field });
+  const folded = value.replace(/\r\n?/g, '\n');
+  const trimmed = folded.trim();
+  if (trimmed === '') throw new ValidationError(`${field} is required`, { field });
+  if (trimmed.length > max) throw new ValidationError(`${field} must be at most ${max} characters`, { field });
+  if (NOTE_CONTROL_RE.test(trimmed)) {
+    throw new ValidationError(`${field} must not contain control characters`, { field });
+  }
+  return trimmed;
 }
 
 /**
@@ -765,4 +789,4 @@ export const bounds = Object.freeze({
   reason: MAX_REASON,
 });
 
-export { safeText, optionalSafeText };
+export { safeText, optionalSafeText, noteBodyText };

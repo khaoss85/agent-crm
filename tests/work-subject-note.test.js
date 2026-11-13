@@ -50,6 +50,36 @@ test('a note records kind, subject and body, readable beside the subject', async
   assert.equal(both.length, 2, 'both statements persist');
 });
 
+/**
+ * Voce 82235e46e3e9 (verifier 12/11, repro): a note written with
+ * Maiusc+Invio died 400 — «Scrittura del pannello rifiutata» — because the
+ * line break failed safe text. The break is the acceptance: Invio saves,
+ * Maiusc+Invio goes to a new line. Red before the cure (400), green after
+ * (the two lines persist and read back); other controls still refuse.
+ */
+test('a two-line note saves its line break, other controls still refuse', async (t) => {
+  const { app, contact, activities } = await scene(t);
+  const recorded = await app.recordSubjectNote({
+    resource: 'contact', id: contact.id, body: 'Verifica 793 riga uno\nriga due 21ade52', actor: OPERATOR,
+  });
+  assert.equal(recorded.body, 'Verifica 793 riga uno\nriga due 21ade52', 'the break survives the write');
+  const rows = await activities.listWhere({ subjectResource: 'contact', subjectId: contact.id });
+  assert.equal(rows[0].body, 'Verifica 793 riga uno\nriga due 21ade52', 'and the read');
+  const folded = await app.recordSubjectNote({
+    resource: 'contact', id: contact.id, body: 'uno\r\ndue', actor: OPERATOR,
+  });
+  assert.equal(folded.body, 'uno\ndue', 'a carriage return reads as one line break');
+  await assert.rejects(
+    () => app.recordSubjectNote({
+      resource: 'contact', id: contact.id, body: 'uno\ttab', actor: OPERATOR,
+    }),
+    (error) => error?.status === 400 && /control characters/.test(error?.message ?? ''),
+    'a tab still refuses 400 and writes nothing',
+  );
+  const kept = await activities.listWhere({ subjectResource: 'contact', subjectId: contact.id });
+  assert.equal(kept.length, 2, 'the refused note writes nothing');
+});
+
 test('an agent actor, a bad subject and an empty body refuse', async (t) => {
   const { app, contact, activities } = await scene(t);
   await assert.rejects(
