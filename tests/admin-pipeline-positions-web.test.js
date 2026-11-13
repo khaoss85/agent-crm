@@ -33,7 +33,7 @@ const record = (id, stage) => ({
   pipelineKey: 'b2b-sales', pipelineStage: stage,
 });
 
-function server(initial, { onPost = null } = {}) {
+function server(initial, { onPost = null, answer = null } = {}) {
   let records = initial.map((item) => ({ ...item }));
   const posts = [];
   const reads = [];
@@ -61,6 +61,13 @@ function server(initial, { onPost = null } = {}) {
         const at = body.afterId ? column.findIndex((item) => item.id === body.afterId) + 1 : 0;
         column.splice(at, 0, moved);
         records = [...column, ...others];
+        if (answer) {
+          // Like the pilot when the place was not saved: the stage moved,
+          // the card sits on top of its new column.
+          const placed = { ...moved };
+          records = [placed, ...records.filter((item) => item.id !== id)];
+          return answer;
+        }
         return { ok: true };
       }
       reads.push(path);
@@ -275,4 +282,38 @@ test('review #852: STALE_POSITION never puts the card back by guess — the fres
   assert.deepEqual(order(mount, 'demo'), ['a', 'b'], 'the card shows where the server has it (Prova)');
   assert.deepEqual(order(mount, 'discovery'), []);
   assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.');
+});
+
+// ---- 67a3116f4f65 with pilot #562: a stage saved without its place ----------
+
+for (const [code, text] of [
+  ['refused', 'Spostata in Prova, ma la colonna era cambiata: la card è in cima.'],
+  ['unavailable', 'Spostata in Prova, ma qui il posto nella colonna non si salva: la card è in cima.'],
+]) {
+  test(`67a3116f4f65: a receipt with placement '${code}' is never a silent «saved» — the card is on top and the toast says so`, async () => {
+    const { mount, client, toasts } = await board([record('a', 'discovery'), record('b', 'demo'), record('c', 'demo')], {
+      answer: { saved: { id: 'a', pipelineStage: 'demo', placement: code }, spaceId: 's1' },
+    });
+    // Dropped between b and c…
+    const { drop } = drag(mount, 'a', 'demo', 140);
+    drop();
+    await tick(10);
+    assert.deepEqual(client.posts[0], { toStage: 'demo', fromStage: 'discovery', afterId: 'b' });
+    // …but the place was not saved: after the re-read the card is on top.
+    assert.deepEqual(order(mount, 'demo'), ['a', 'b', 'c']);
+    const last = toasts[toasts.length - 1];
+    assert.equal(last.message, text);
+    assert.equal(last.options?.action?.label, 'Annulla', 'the move can still be undone');
+  });
+}
+
+test('67a3116f4f65: a receipt without a place code (the core, or a saved place) adds no warning', async () => {
+  const { mount, toasts } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  const { drop } = drag(mount, 'a', 'demo', 0);
+  drop();
+  await tick(10);
+  assert.ok(!toasts.some((item) => item.message.includes('la card è in cima')));
+  assert.equal(pipelineModule.placementNotSaved({ ok: true }), null);
+  assert.equal(pipelineModule.placementNotSaved({ saved: { placement: 'refused' } }), 'refused');
+  assert.equal(pipelineModule.placementNotSaved({ id: 'a', placement: 'unavailable' }), 'unavailable', 'the row the write client unwraps');
 });

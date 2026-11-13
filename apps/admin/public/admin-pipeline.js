@@ -177,6 +177,22 @@ export const MOVE_SLOW_MS = 3000;
 export const MOVE_RETRY_MS = 250;
 const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
 
+/**
+ * 67a3116f4f65 (pilot #562): the place code of a move-stage receipt when the
+ * stage was saved but the place was not — 'refused' or 'unavailable' — else
+ * null. The pilot answers { saved: { …row, placement }, spaceId }, which
+ * the /bo write client unwraps to the row (unwrapBoWriteAnswer); both shapes
+ * are read. The core's own move-stage writes stage and place together and
+ * carries no such code.
+ * @param {unknown} answer
+ */
+export function placementNotSaved(answer) {
+  const record = answer !== null && typeof answer === 'object' ? /** @type {any} */ (answer) : {};
+  const row = record.saved !== null && typeof record.saved === 'object' ? record.saved : record;
+  const code = row?.placement;
+  return code === 'refused' || code === 'unavailable' ? code : null;
+}
+
 /** d3910a25dbc0: the server's «two writes met» answer (PostgreSQL 40001/40P01 → 409 CONFLICT, transient). */
 export function isTransientConflict(error) {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
@@ -561,9 +577,9 @@ export function createPipelineBoard(deps) {
     /** @type {(outcome: any) => void} */
     let settle = () => {};
     const outcomeOf = new Promise((resolve) => { settle = resolve; });
-    if (!quietToast) {
-      const said = reorder ? `Ordine aggiornato in ${stageLabel(pipeline, toStage)}.` : `Spostata in ${stageLabel(pipeline, toStage)}.`;
-      toast(done ?? said, false, undoable ? {
+    /** The «Annulla» toast options — reused when a later toast replaces the first one. */
+    function undoOptions() {
+      return undoable ? {
         action: {
           label: 'Annulla',
           run: () => {
@@ -577,7 +593,11 @@ export function createPipelineBoard(deps) {
           },
         },
         duration: UNDO_TOAST_MS,
-      } : undefined);
+      } : undefined;
+    }
+    if (!quietToast) {
+      const said = reorder ? `Ordine aggiornato in ${stageLabel(pipeline, toStage)}.` : `Spostata in ${stageLabel(pipeline, toStage)}.`;
+      toast(done ?? said, false, undoOptions());
     }
     let settled = false;
     void wait(MOVE_SLOW_MS).then(() => {
@@ -587,16 +607,22 @@ export function createPipelineBoard(deps) {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
     });
     try {
+      let answer;
       try {
-        await postMove(pipeline, id, fromStage, toStage, reason, placement);
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
       } catch (error) {
         // d3910a25dbc0: two moves in one column met on the server
         // (PostgreSQL SERIALIZABLE answers 409 CONFLICT, transient): one
         // quiet retry, then the person hears it in plain words.
         if (!isTransientConflict(error)) throw error;
         await retryPause();
-        await postMove(pipeline, id, fromStage, toStage, reason, placement);
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
       }
+      // 67a3116f4f65 (pilot #562): the stage is saved but the place is not —
+      // the receipt says so ('refused': the column changed in between;
+      // 'unavailable': this space cannot store places). Never a silent
+      // «saved»: after the re-read below the card sits on top, and we say so.
+      const unplaced = placement !== null ? placementNotSaved(answer) : null;
       settled = true;
       moveLocks.delete(id);
       // An undone move does not repaint its landing: the reverse write is
@@ -607,6 +633,13 @@ export function createPipelineBoard(deps) {
       // The undo wins: card and numbers go back to the place they left,
       // and only then does the reverse write follow (undoMove).
       if (intent.undone) placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+      if (unplaced !== null && !intent.undone && !quietToast) {
+        const where = stageLabel(pipeline, toStage);
+        // «Annulla» stays: the stage write stands, so it can still go back.
+        toast(unplaced === 'refused'
+          ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
+          : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
+      }
       settle({ moved: true });
       return { moved: true, ...(intent.undone ? { undone: true } : {}) };
     } catch (error) {
@@ -698,7 +731,8 @@ export function createPipelineBoard(deps) {
     }
     const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
     try {
-      await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+      // The answer is the receipt: the pilot says there whether the place was saved.
+      return await client.request(path, { method: 'POST', body: JSON.stringify(input) });
     } catch (error) {
       // The failure log names the request (backlog:2f72000d4a4d) even when
       // the client did not stamp it.
