@@ -657,6 +657,8 @@ const customerCardView = createCustomerCardView({
   mount: mountGate.owned('customer-card'),
   client: moduleClient,
   toast,
+  // backlog:947260f9f036: a withdrawal sent early takes its «Annulla» away.
+  hideToast: (scope) => { if (toaster !== null) toaster.hideScope(scope); },
   navigate: (hash) => { window.location.hash = hash; },
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).

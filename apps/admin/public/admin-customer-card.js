@@ -895,6 +895,9 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
+const NOTE_TOAST_SCOPE = 'scheda-nota';
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -913,6 +916,9 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // backlog:947260f9f036: the shell hides a toast of one owner (its scope),
+  // so an «Annulla» that no longer works never stays on screen.
+  const hideToast = typeof deps.hideToast === 'function' ? deps.hideToast : () => {};
   // The composer's poll-back pause (BO_SEND_PENDING): injectable so tests
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
@@ -4640,8 +4646,14 @@ export function createCustomerCardView(deps) {
       }
     }
   }
-  /** Every withdrawal still waiting leaves now (the scheda opens another customer). */
+  /**
+   * Every withdrawal still waiting leaves now (the scheda opens another
+   * customer, or the same one again after another screen): its «Annulla»
+   * would no longer work, so the toast that offers it leaves too.
+   */
   function flushWithdrawals() {
+    if (pendingWithdrawals.size === 0) return;
+    hideToast(NOTE_TOAST_SCOPE);
     for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey);
   }
   /**
@@ -4657,6 +4669,7 @@ export function createCustomerCardView(deps) {
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
     toast('Nota eliminata', false, {
+      scope: NOTE_TOAST_SCOPE,
       duration: NOTE_WITHDRAW_GRACE_MS,
       action: {
         label: 'Annulla',

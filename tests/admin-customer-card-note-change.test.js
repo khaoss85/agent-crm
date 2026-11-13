@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   NOTE_WITHDRAW_GRACE_MS,
@@ -131,14 +132,16 @@ async function open(client = fakeClient(), spaceId = 'spazio-prova') {
   const doc = createFakeDocument();
   const mount = createMount();
   const toasts = [];
+  const hidden = [];
   const timer = manualWait();
   const view = createCustomerCardView({
     doc, mount, client, spaceId, wait: timer.wait,
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
+    hideToast: (scope) => hidden.push(scope),
   });
   await view.renderCard('contact', 'c1');
   await flush();
-  return { mount, view, client, toasts, timer };
+  return { mount, view, client, toasts, timer, hidden };
 }
 
 /** The note row in the cronologia that shows `text`, or undefined. */
@@ -336,6 +339,31 @@ test('cb348c9fcaeb: opening another customer sends a waiting withdrawal at once'
   await view.renderCard('contact', 'c2');
   await flush();
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+});
+
+// backlog:947260f9f036: leaving the scheda and coming back to the same
+// customer is a new opening (the skeleton at once): like opening another
+// customer, a waiting withdrawal leaves at once and its «Annulla» toast
+// leaves with it — never an Annulla that no longer works.
+test('947260f9f036: back on the same customer after another screen, a waiting withdrawal is sent and its Annulla leaves', async () => {
+  const { mount, view, client, toasts, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  const scope = toasts[0].options.scope;
+  assert.ok(typeof scope === 'string' && scope !== '', 'the Annulla toast has an owner the shell can hide');
+  assert.deepEqual(hidden, [], 'nothing hidden while the window is open');
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.deepEqual(hidden, [scope], 'the Annulla toast leaves when the withdrawal is sent');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays gone');
+});
+
+test('947260f9f036: the shell hides the scheda toast by its owner', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const wiring = /const customerCardView = createCustomerCardView\(\{([\s\S]*?)\n\}\);/.exec(app);
+  assert.ok(wiring && /hideToast: \(scope\) => \{ if \(toaster !== null\) toaster\.hideScope\(scope\); \}/.test(wiring[1]));
 });
 
 test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
