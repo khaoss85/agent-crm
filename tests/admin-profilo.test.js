@@ -329,3 +329,82 @@ test('backlog:1cfc68175ab7 an empty name never leaves the browser', async () => 
   assert.ok(!calls.some((call) => call.method !== 'GET'), 'no write on an empty name');
   assert.match(mount.textContent, /Scrivi un nome prima di salvare/);
 });
+
+// main rossa 60c5fc51 (tests/admin-cta-busy.test.js): Salva of the profile
+// name shows the /bo write wait — «Salvo…», disabled, Annulla off — while
+// the PATCH is in flight, like every other write button (#775, #831).
+test('backlog:1cfc68175ab7 Salva shows «Salvo…» and locks the form while the name is written', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let releasePatch;
+  const patches = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        patches.push(path);
+        await new Promise((resolve) => { releasePatch = resolve; });
+        return { member: { name: 'Elena Presti' } };
+      }
+      return { member: { name: patches.length > 0 ? 'Elena Presti' : 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({ doc, mount, client, member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }) });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
+  const save = mount.findAll('button').find((node) => node.textContent === 'Salva');
+  save.dispatch('click');
+  await flush();
+  assert.equal(save.textContent, 'Salvo…', 'the button says it is saving');
+  assert.equal(save.disabled, true, 'no second click on a write in flight');
+  assert.equal(save.getAttribute('aria-busy'), 'true');
+  assert.equal(mount.findAll('button').find((node) => node.textContent === 'Annulla').disabled, true, 'Annulla waits too');
+  save.dispatch('click');
+  await flush();
+  assert.equal(patches.length, 1, 'one write, whatever the clicks');
+  releasePatch();
+  await flush(20);
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
+});
+
+// Muse P2 on #849: after the PATCH succeeds the reread is still in flight;
+// a click on Salva then must not start a second write.
+test('backlog:1cfc68175ab7 a click or Enter during the reread after Salva writes nothing more', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let releaseRead = null;
+  const patches = [];
+  let gets = 0;
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        patches.push(path);
+        return { member: { name: 'Elena Presti' } };
+      }
+      gets += 1;
+      if (patches.length > 0) await new Promise((resolve) => { releaseRead = resolve; });
+      return { member: { name: patches.length > 0 ? 'Elena Presti' : 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({ doc, mount, client, member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }) });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
+  const save = mount.findAll('button').find((node) => node.textContent === 'Salva');
+  save.dispatch('click');
+  await flush();
+  assert.ok(releaseRead, 'the reread is in flight');
+  save.dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').dispatch('keydown', { key: 'Enter' });
+  await flush();
+  assert.equal(patches.length, 1, 'no second write while the reread runs');
+  releaseRead();
+  await flush(20);
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
+});

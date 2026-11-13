@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, UI_BUSY_LOCKED, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, parseEuroToCents } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
@@ -73,19 +73,9 @@ export function bpsLabel(bps) {
   return `${text}%`;
 }
 
-/**
- * Parse a euro amount typed by the operator ("12,50" or "12.50") into
- * integer cents. Fail-closed: anything that is not a non-negative amount
- * with at most two decimals reads null and the form refuses to send.
- * @param {unknown} raw
- */
-export function parseEuroToCents(raw) {
-  if (typeof raw !== 'string') return null;
-  const normalized = raw.trim().replace(',', '.');
-  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
-  const cents = Math.round(Number(normalized) * 100);
-  return Number.isSafeInteger(cents) ? cents : null;
-}
+// parseEuroToCents lives in admin-core (backlog:1f7cb20d3c30: Agenti reads
+// the same euro amounts); re-exported so existing imports keep working.
+export { parseEuroToCents };
 
 /**
  * One sentence of backoffice free text becomes one product aisle: the first
