@@ -757,7 +757,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
 
   const post = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
-  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery', first: true }); // 67a3116f4f65: a drop carries its place in the column
   assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 

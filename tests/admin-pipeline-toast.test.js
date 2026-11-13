@@ -127,7 +127,7 @@ test('2f72000d4a4d: «Annulla» pressed while the move is being written undoes i
   client.posts[0].answer();
   await tick(6);
   assert.equal(client.posts.length, 2);
-  assert.deepEqual(client.posts[1].body, { toStage: 'discovery', fromStage: 'demo' }, 'the reverse move');
+  assert.deepEqual(client.posts[1].body, { toStage: 'discovery', fromStage: 'demo', first: true }, 'the reverse move, back to the place it left');
   client.posts[1].answer();
   await tick(6);
   assert.ok(toasts.some((item) => item.message === 'Riportata in Richiesta info.'));

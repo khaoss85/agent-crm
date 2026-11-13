@@ -173,7 +173,16 @@ export const MOVE_PENDING_MS = 15000;
 export const UNDO_TOAST_MS = 10000;
 /** backlog:3d811389bb4c: after this long a move still being written says so on its card. */
 export const MOVE_SLOW_MS = 3000;
+/** d3910a25dbc0: the pause before the single retry of a write that met another one. */
+export const MOVE_RETRY_MS = 250;
 const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
+
+/** d3910a25dbc0: the server's «two writes met» answer (PostgreSQL 40001/40P01 → 409 CONFLICT, transient). */
+export function isTransientConflict(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  return record.code === 'CONFLICT' && (record.status === 409 || record.status === undefined)
+    && record.details !== null && typeof record.details === 'object' && record.details.transient === true;
+}
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -261,6 +270,14 @@ export function createPipelineBoard(deps) {
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
 
+  /** d3910a25dbc0: the short pause before the one retry of a met write (injectable for tests). */
+  const retryPause = typeof deps.retryWait === 'function'
+    ? () => deps.retryWait(MOVE_RETRY_MS)
+    : () => new Promise((resolve) => {
+      const timer = /** @type {any} */ (setTimeout(resolve, MOVE_RETRY_MS));
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+
   /** Guard against stale async responses overwriting a newer board. */
   let renderToken = 0;
 
@@ -332,33 +349,69 @@ export function createPipelineBoard(deps) {
    * or null when the card is not on the board (a filter hides it).
    * @param {string} id @param {string} fromStage @param {string} toStage
    */
-  function placeCardNow(id, fromStage, toStage) {
-    const card = cardNodes.get(id)?.card ?? null;
+  function placeCardNow(id, fromStage, toStage, placement = null) {
+    const card = cardElements.get(id) ?? null;
     const from = columnSummaries.get(fromStage);
     const to = columnSummaries.get(toStage);
-    const target = columnNodes.find((node) => node.getAttribute('data-stage') === toStage) ?? null;
+    const target = columnOfStage(toStage);
     if (!card || !card.parentNode || !from || !to || !target || typeof target.insertBefore !== 'function') return null;
     const record = from.records.find((candidate) => String(candidate.id) === id);
     if (!record) return null;
     const home = { parent: card.parentNode, next: card.nextSibling ?? null };
-    const anchor = slotAnchors.get(target) ?? null;
-    target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+    // 67a3116f4f65: the card lands right after `afterId`, or first.
+    const afterCard = placement?.afterId ? cardElements.get(placement.afterId) ?? null : null;
+    let reference;
+    if (afterCard && afterCard.parentNode === target) {
+      reference = afterCard.nextSibling ?? null;
+      if (reference === card) reference = card.nextSibling ?? null;
+    } else {
+      reference = cardsIn(target).find((node) => node !== card) ?? slotAnchors.get(target) ?? null;
+      if (reference && reference.parentNode !== target) reference = null;
+    }
+    target.insertBefore(card, reference);
     const at = from.records.indexOf(record);
     from.records.splice(at, 1);
-    to.records.unshift(record);
+    const afterIndex = placement?.afterId ? to.records.findIndex((candidate) => String(candidate.id) === placement.afterId) : -1;
+    to.records.splice(afterIndex + 1, 0, record);
     paintColumnSummary(fromStage);
-    paintColumnSummary(toStage);
+    if (toStage !== fromStage) paintColumnSummary(toStage);
     return () => {
       if (typeof home.parent.insertBefore === 'function') {
-        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent && home.next !== card ? home.next : null);
       }
       const back = to.records.indexOf(record);
       if (back >= 0) to.records.splice(back, 1);
       from.records.splice(Math.min(at, from.records.length), 0, record);
       paintColumnSummary(fromStage);
-      paintColumnSummary(toStage);
+      if (toStage !== fromStage) paintColumnSummary(toStage);
     };
   }
+
+  /** Record id → its card node, for every card on the board (open or closed). */
+  const cardElements = new Map();
+  /** The live column of a stage, or null. */
+  function columnOfStage(stageKey) {
+    return columnNodes.find((node) => node.getAttribute('data-stage') === stageKey) ?? null;
+  }
+  /** The cards of a column in screen order (never the slot, never the empty line). */
+  function cardsIn(column) {
+    const children = column?.childNodes ? [...column.childNodes] : [];
+    return children.filter((node) => typeof node.getAttribute === 'function'
+      && node.getAttribute('data-record') !== null
+      && String(node.getAttribute('class') ?? '').split(/\s+/).includes('pipeline-card'));
+  }
+  /** Where a card sits in its column: the card before it, or first. */
+  function placementOf(id) {
+    const card = cardElements.get(id) ?? null;
+    if (!card || !card.parentNode) return { afterId: null };
+    const cards = cardsIn(card.parentNode);
+    const at = cards.indexOf(card);
+    return { afterId: at > 0 ? String(cards[at - 1].getAttribute('data-record')) : null };
+  }
+  /** Whether this board stores a card's place in its column (the opportunity module). */
+  const positionsOf = (pipeline) => pipeline?.module === 'opportunity';
+  /** The last placement the slot showed: its column and the card it follows. */
+  let slotPlacement = null;
 
   /** Column → the node the slot sits before: the first card, or the empty line. */
   const slotAnchors = new Map();
@@ -370,15 +423,36 @@ export function createPipelineBoard(deps) {
     }
     return slot;
   }
-  /** Seat the placeholder at the top of `column`, as tall as the dragged card. */
-  function showSlot(column) {
+  /**
+   * Seat the placeholder where the card would land, as tall as the dragged
+   * card. 67a3116f4f65: between two cards, under the pointer — the first
+   * card whose middle is below it; with no measure (or no positions on this
+   * board) on top, like before. Remembers the card it follows for the drop.
+   */
+  function showSlot(column, clientY = null, positions = true) {
     const node = dropSlot();
     const height = drag && drag.height > 0 ? Math.round(drag.height) : 0;
     if (height > 0) node.setAttribute('style', `height: ${height}px`);
     else node.removeAttribute('style');
-    const anchor = slotAnchors.get(column) ?? null;
-    if (node.parentNode === column && (anchor === null ? true : node.nextSibling === anchor)) return;
-    column.insertBefore(node, anchor && anchor.parentNode === column ? anchor : null);
+    const cards = cardsIn(column).filter((card) => card.getAttribute('data-record') !== drag?.id);
+    let index = 0;
+    if (positions && Number.isFinite(clientY)) {
+      index = cards.length;
+      for (const [at, card] of cards.entries()) {
+        const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+        if (!box || !Number.isFinite(box.top) || !Number.isFinite(box.height)) { index = 0; break; }
+        if (clientY < box.top + box.height / 2) { index = at; break; }
+      }
+    }
+    const before = index < cards.length ? cards[index] : null;
+    const reference = before
+      ?? (cards.length ? cards[cards.length - 1].nextSibling ?? null : slotAnchors.get(column) ?? null);
+    slotPlacement = {
+      stage: column.getAttribute('data-stage'),
+      afterId: index > 0 ? String(cards[index - 1].getAttribute('data-record')) : null,
+    };
+    if (node.parentNode === column && node.nextSibling === reference) return;
+    column.insertBefore(node, reference && reference.parentNode === column ? reference : null);
   }
   /** Take the placeholder off the board (idempotent: drop and dragend both call it). */
   function hideSlot() {
@@ -465,34 +539,41 @@ export function createPipelineBoard(deps) {
    * @param {{ undo?: boolean, done?: string | null, seated?: boolean, quietToast?: boolean }} [options]
    * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, undone?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null, seated = false, quietToast = false } = {}) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null, seated = false, quietToast = false, placement = null } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
+    const reorder = toStage === fromStage;
+    // Where the card was, for «Annulla» (67a3116f4f65): the card before it, or first.
+    const origin = placementOf(id);
     // The card and its column numbers move first; `restore` brings both back.
-    let restore = seated ? null : placeCardNow(id, fromStage, toStage);
+    let restore = seated ? null : placeCardNow(id, fromStage, toStage, placement);
     for (const view of moveViewsOf(id)) view.start();
     const working = (key) => {
       const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
       return type === 'open' || type === 'renewal';
     };
-    const undoable = undo && working(fromStage) && working(toStage);
+    // A reorder inside a column can always go back; a stage move only
+    // between working stages (a won or lost offer never reopens).
+    const undoable = undo && (reorder || (working(fromStage) && working(toStage)));
     /** Set by «Annulla»: the card is already back; this move only finishes its write. */
     const intent = { undone: false };
     /** @type {(outcome: any) => void} */
     let settle = () => {};
     const outcomeOf = new Promise((resolve) => { settle = resolve; });
     if (!quietToast) {
-      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+      const said = reorder ? `Ordine aggiornato in ${stageLabel(pipeline, toStage)}.` : `Spostata in ${stageLabel(pipeline, toStage)}.`;
+      toast(done ?? said, false, undoable ? {
         action: {
           label: 'Annulla',
           run: () => {
             intent.undone = true;
             // Card, numbers and message go back together, now — on the
-            // board as it is (a re-read may have replaced the card node).
+            // board as it is (a re-read may have replaced the card node),
+            // to the very place the card left (67a3116f4f65).
             restore = null;
-            placeCardNow(id, toStage, fromStage);
-            void undoMove(pipeline, id, fromStage, toStage, outcomeOf);
+            placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+            void undoMove(pipeline, id, fromStage, toStage, outcomeOf, positionsOf(pipeline) ? origin : null, placement);
           },
         },
         duration: UNDO_TOAST_MS,
@@ -506,7 +587,16 @@ export function createPipelineBoard(deps) {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
     });
     try {
-      await postMove(pipeline, id, fromStage, toStage, reason);
+      try {
+        await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      } catch (error) {
+        // d3910a25dbc0: two moves in one column met on the server
+        // (PostgreSQL SERIALIZABLE answers 409 CONFLICT, transient): one
+        // quiet retry, then the person hears it in plain words.
+        if (!isTransientConflict(error)) throw error;
+        await retryPause();
+        await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      }
       settled = true;
       moveLocks.delete(id);
       // An undone move does not repaint its landing: the reverse write is
@@ -533,6 +623,8 @@ export function createPipelineBoard(deps) {
       moveLocks.delete(id);
       if (restore) { restore(); restore = null; }
       const message = moveFailureText(error);
+      // The column changed under this drop: the fresh board shows the truth.
+      if (error?.code === 'STALE_POSITION') void renderBoard(pipeline.name, { quiet: true });
       for (const view of moveViewsOf(id)) view.fail(message);
       // The toast that said «Spostata» is replaced by the truth — unless the
       // person already undid it: the card is where they wanted it.
@@ -550,25 +642,27 @@ export function createPipelineBoard(deps) {
    * write lands, the reverse write runs; every outcome that disagrees with
    * the screen says so and puts the card where the server has it.
    */
-  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
-    toast(`Riportata in ${stageLabel(pipeline, fromStage)}.`);
+  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf, origin = null, landed = null) {
+    toast(toStage === fromStage ? 'Ordine ripristinato.' : `Riportata in ${stageLabel(pipeline, fromStage)}.`);
     const first = await outcomeOf;
     if (first?.failed) return; // the first move never landed: the card is right where it is
     if (first?.pending) {
       // Review Muse #809: a move the server still holds cannot be undone yet
       // — never a silent drop of the undo: say so; the card shows where the
       // queued move will land, the board re-read (Riprova) tells the truth.
-      placeCardNow(id, fromStage, toStage);
+      placeCardNow(id, fromStage, toStage, landed);
       toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
       return;
     }
     if (!first?.moved) return;
-    const back = await runMove(pipeline, id, toStage, fromStage, undefined, { undo: false, seated: true, quietToast: true });
+    const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
+      undo: false, seated: true, quietToast: true, placement: origin,
+    });
     if (back.failed || back.busy) {
       // The server kept the card where the first move put it: card and
       // column numbers go back there together, and the toast says what
       // happened in plain words (backlog:3d811389bb4c).
-      placeCardNow(id, fromStage, toStage);
+      placeCardNow(id, fromStage, toStage, landed);
       if (back.busy) {
         toast('Questa offerta si sta già spostando: riprova tra poco.', true);
       } else {
@@ -581,9 +675,14 @@ export function createPipelineBoard(deps) {
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
-  async function postMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function postMove(pipeline, recordId, fromStage, toStage, reason, placement = null) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
+    // 67a3116f4f65: the place in the column rides the same write.
+    if (placement && positionsOf(pipeline)) {
+      if (placement.afterId) input.afterId = placement.afterId;
+      else input.first = true;
+    }
     const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
     try {
       await client.request(path, { method: 'POST', body: JSON.stringify(input) });
@@ -611,8 +710,9 @@ export function createPipelineBoard(deps) {
    */
   async function handleDrop(pipeline, toStage, payload, column = null) {
     // The slot only previews: whatever happens next, it leaves the board.
-    const slotWasIn = slot && slot.parentNode === column ? column : null;
+    const shown = slot && slot.parentNode === column && slotPlacement?.stage === toStage ? slotPlacement : null;
     hideSlot();
+    slotPlacement = null;
     let parsed;
     try {
       parsed = JSON.parse(payload);
@@ -621,7 +721,14 @@ export function createPipelineBoard(deps) {
     }
     const recordId = typeof parsed?.id === 'string' ? parsed.id : null;
     const fromStage = typeof parsed?.fromStage === 'string' ? parsed.fromStage : null;
-    if (!recordId || !fromStage || toStage === fromStage) return;
+    if (!recordId || !fromStage) return;
+    const positions = positionsOf(pipeline);
+    // 67a3116f4f65: the place the slot showed (first, or after a card).
+    const placement = positions ? { afterId: shown?.afterId ?? null } : null;
+    if (toStage === fromStage) {
+      // A drop back where the card already is changes nothing: no write, no message.
+      if (!positions || placementOf(recordId).afterId === placement.afterId) return;
+    }
     const record = cached.records.find((candidate) => candidate.id === recordId);
     if (!record || record.pipelineStage !== fromStage) {
       toast('Questa card è cambiata nel frattempo — la pagina si aggiorna.', true);
@@ -630,7 +737,13 @@ export function createPipelineBoard(deps) {
     }
     const target = pipeline.stages.find((stage) => stage.key === toStage);
     if (!target) return;
-    if (stageNeedsConfirm(target)) {
+    const source = pipeline.stages.find((stage) => stage.key === fromStage);
+    if (toStage !== fromStage && source && source.type !== 'open' && source.type !== 'renewal') {
+      // A refused drop says why instead of bouncing in silence.
+      toast(`Un'offerta chiusa non cambia più fase: resta in ${stageLabel(pipeline, fromStage)}.`, true);
+      return;
+    }
+    if (toStage !== fromStage && stageNeedsConfirm(target)) {
       const revealed = revealConfirm(pipeline, record, fromStage, toStage);
       if (!revealed) {
         toast(target.type === 'lost'
@@ -641,23 +754,9 @@ export function createPipelineBoard(deps) {
     }
     // Review #657: a drop rides the card's own move — the same lock,
     // «Spostamento in corso…» and pending «Non ancora confermato» + Riprova
-    // as Sposta, so a queued move never reads as a failure.
-    const controls = cardNodes.get(recordId);
-    if (controls && typeof controls.move === 'function') {
-      // backlog:07d29c0d1b06: card, count and totals move together now,
-      // and come back together on a failure (runMove's toast names it).
-      // runMove seats the card (and its numbers) before the message, and
-      // brings both back on a failure (backlog:3d811389bb4c).
-      await controls.move(toStage);
-      return;
-    }
-    try {
-      await postMove(pipeline, recordId, fromStage, toStage);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
-    } catch (error) {
-      toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
-    }
+    // as Sposta. runMove seats the card and its numbers where the slot was,
+    // then speaks (backlog:3d811389bb4c), and brings both back on a failure.
+    await runMove(pipeline, recordId, fromStage, toStage, undefined, { placement });
   }
 
   /**
@@ -700,7 +799,8 @@ export function createPipelineBoard(deps) {
       // The board currently supports the core opportunity module's list
       // endpoint; a generated staged module would use its records route.
       const listPath = pipeline.module === 'opportunity'
-        ? `/api/opportunities?limit=${BOARD_LIMIT}`
+        // 67a3116f4f65: the board order — position, then newest first.
+        ? `/api/opportunities?limit=${BOARD_LIMIT}&order=board`
         : `/api/modules/${encodeURIComponent(pipeline.module)}/records?limit=${BOARD_LIMIT}`;
       records = (await client.request(listPath)).items ?? [];
       try {
@@ -747,6 +847,7 @@ export function createPipelineBoard(deps) {
     const { pipeline, pipelines, records } = cached;
     clear();
     cardNodes.clear();
+    cardElements.clear();
     columnNodes.length = 0;
     slotAnchors.clear();
     columnSummaries.clear();
@@ -1500,6 +1601,9 @@ export function createPipelineBoard(deps) {
     const wake = wakeWaitText(error);
     if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
+    if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
+    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
+    if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
   }
@@ -1540,13 +1644,15 @@ export function createPipelineBoard(deps) {
     // can paint the dashed outline; the dragged card is attenuated the same way.
     columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
-      // Dan 11/11: the source column takes no drop — a reorder would not
-      // survive a reload (no stored position). Without preventDefault the
+      // Dan 11/11: without stored positions the source column takes no drop
+      // — a reorder would not survive a reload. Without preventDefault the
       // browser shows «not allowed» and a release there moves nothing.
-      if (drag && drag.fromStage === stage.key) return;
+      // 67a3116f4f65: on a board that stores positions the source column
+      // takes the drop too — a reorder now survives a reload.
+      if (drag && drag.fromStage === stage.key && !positionsOf(pipeline)) return;
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
-      if (drag) showSlot(column);
+      if (drag) showSlot(column, Number(event?.clientY), positionsOf(pipeline));
     });
     column.addEventListener('dragleave', (event) => {
       // Entering a child card still hovers this column: only a true exit
@@ -1584,6 +1690,7 @@ export function createPipelineBoard(deps) {
       class: 'pipeline-card',
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
+    cardElements.set(String(record.id), card);
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
     // backlog:7b2203e69826: the customer the offer is for — the contact,
     // else the company — never «Senza azienda».
