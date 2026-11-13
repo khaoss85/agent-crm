@@ -1188,12 +1188,13 @@ export function createCustomerCardView(deps) {
     /** The pilot's profile mailbox merged as a connection row: never a route. */
     const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
-    // Voce a935af6a6d19: the profile Google link counts for Email. The
-    // Connettori screen links channel connections (one row per account),
-    // while Profilo links the operator's Gmail mailbox — without this the
-    // composer says «non collegato» on a space whose mailbox is linked.
-    // A revoked, errored or unreadable link changes nothing: only a
-    // `connected` Gmail item with a mailbox connects the channel.
+    // Voce a935af6a6d19: the profile Google link names the space mailbox.
+    // Backlog:3805161965cd (Codex P2 su #563): it never connects Email by
+    // itself — without an active channel connection the send fails 409
+    // CHANNEL_CONNECTION_NOT_ACTIVE. Only a `connected` Gmail item with a
+    // mailbox keeps the channel linked, so the composer names Gmail (not
+    // the generic line) while Email stays off. A revoked, errored or
+    // unreadable link changes nothing.
     const items = Array.isArray(profile?.connections?.items) && profile.connections.available === true
       ? profile.connections.items
       : [];
@@ -1226,8 +1227,9 @@ export function createCustomerCardView(deps) {
       const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
       const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
-      // queues on); the profile Gmail mailbox only fills the gap, with no
-      // key — the server still needs its own email connection to send.
+      // queues on). The profile Gmail mailbox never stands in for it:
+      // without an active row Email stays off (backlog:3805161965cd), and
+      // `linked` only keeps the Gmail-specific off line.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
       // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
       // connections as an active email row (`profile:gmail`). Its account is
@@ -1246,14 +1248,19 @@ export function createCustomerCardView(deps) {
       const synthetic = live !== null && isSyntheticRow(live);
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
-      // channel with an empty «Da».
+      // channel with an empty «Da». The profile Gmail alone is linked but
+      // never connected: the send without a channel connection fails 409
+      // CHANNEL_CONNECTION_NOT_ACTIVE (backlog:3805161965cd, Codex P2 su
+      // #563), so Email stays off and never the default on the mailbox.
       const linked = live !== null || gmailLinked;
+      const gmailUnlinked = channel === 'email' && live === null && gmailSender !== null;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
         linked,
-        connected: linked && (channel !== 'email' || sender !== null),
+        connected: live !== null && (channel !== 'email' || sender !== null),
+        gmailUnlinked,
         connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
         sender,
@@ -2076,8 +2083,11 @@ export function createCustomerCardView(deps) {
         chip.setAttribute('data-off', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
         // Voce 8ce25b0f445f: the address reads in the line too, not only in
-        // the title — a phone has no hover.
-        offLinked.push(`${entry.label} (${entry.recipient})`);
+        // the title — a phone has no hover. Backlog:3805161965cd: the
+        // profile-only Email names its own cure right in its segment.
+        offLinked.push(entry.gmailUnlinked === true
+          ? `${entry.label} (${entry.recipient}): collega Gmail`
+          : `${entry.label} (${entry.recipient})`);
       } else {
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
@@ -2105,8 +2115,17 @@ export function createCustomerCardView(deps) {
     if (spaceUnlinked) {
       offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
     } else if (offLinked.length > 0) {
-      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
-      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      // Backlog:3805161965cd: the profile Gmail alone names its own cure —
+      // Email stays off until its channel connection exists, and the line
+      // says to connect Gmail (the send without one fails 409).
+      const namesGmail = channels.some((entry) => entry.gmailUnlinked === true && entry.recipient !== null);
+      if (offLinked.length === 1 && namesGmail) {
+        offLine.appendChild(el('span', undefined, `${offLinked[0]} in `));
+        offLine.appendChild(link('#/connettori', 'Connettori', 'composer-connectors'));
+      } else {
+        offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
     }
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);

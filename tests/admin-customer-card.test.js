@@ -2717,23 +2717,49 @@ test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
 });
 
-// Voce a935af6a6d19 (acceptance 1): Gmail linked in the space profile, no
-// email channel connection — Email reads connected and names its sender.
-test('a935af6a6d19: with Gmail linked in the profile Email is connected and shows its sender', async () => {
+// Voce a935af6a6d19: the space profile links the operator's Gmail mailbox
+// while no email channel connection exists — the owner's 03/11 case.
+// Backlog:3805161965cd (Codex P2 su #563): Gmail linked in the profile
+// but no active channel connection — Email stays off and never the
+// default (the send without one fails 409 CHANNEL_CONNECTION_NOT_ACTIVE),
+// and the composer says to connect Gmail.
+test('3805161965cd: profile-only Gmail leaves Email off and names Gmail', async () => {
   const { panel } = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
   });
   const text = panel.textContent;
-  assert.ok(text.includes('daniele.pelleri@gmail.com'), 'the linked mailbox reads as the sender');
   assert.ok(text.includes('guido@palestra-esempio.it'), 'the customer email still reads as the recipient');
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
-  assert.equal(byValue('email').getAttribute('disabled'), null, 'Email is selectable on the profile Gmail link');
+  assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without a channel connection stays off');
   assert.equal(byValue('whatsapp').getAttribute('disabled'), 'disabled', 'WhatsApp without a connection stays off');
-  const links = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
-  assert.ok(links.length > 0, 'the truly unlinked channels still link to Connettori');
+  assert.ok(text.includes('collega Gmail'), 'the composer says to connect Gmail');
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the Gmail cure links to Connettori');
+  assert.equal(link.getAttribute('href'), '#/connettori');
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
-  assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing sendable Invia stays disabled');
+  assert.equal(send.textContent, 'Invia', 'Email is never the default on the mailbox alone');
+});
+
+// Backlog:3805161965cd: with a usable channel beside the profile Gmail,
+// the usable channel is the default — never Email.
+test('3805161965cd: beside an active WhatsApp the default is WhatsApp, not Email', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ channel: 'whatsapp', status: 'active', connectionKey: 'wa-1' }] },
+      profile: COMPOSER_GMAIL_PROFILE,
+    }),
+  });
+  const text = panel.textContent;
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without a channel connection stays off');
+  assert.equal(byValue('whatsapp').getAttribute('disabled'), null, 'the active WhatsApp stays usable');
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.equal(send.getAttribute('disabled'), null, 'Invia stays available on the usable channel');
+  assert.equal(send.textContent, 'Invia su WhatsApp', 'the default is WhatsApp, never Email');
+  assert.ok(text.includes('collega Gmail'), 'the off Email still says to connect Gmail');
 });
 
 // Voce eaa84ccafc53: the pilot merges the profile mailbox into the
@@ -2758,11 +2784,13 @@ test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', 
   assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
 });
 
-test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; a key never does', async () => {
+// Backlog:3805161965cd: without the email row the profile Gmail alone no
+// longer fills «Da» — Email is off, so no sender is named.
+test('eaa84ccafc53: without the email row the profile Gmail alone names no sender; a key never does', async () => {
   const old = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
   });
-  assert.equal(fromValueOf(old.panel), 'daniele.pelleri@gmail.com', 'the old shape is unchanged');
+  assert.equal(fromValueOf(old.panel), '', 'profile-only Gmail is off: «Da» stays empty');
   const keyOnly = await openComposerMount({
     client: composerClient({
       connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: 'profile:gmail', status: 'active' }] },
