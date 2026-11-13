@@ -1976,6 +1976,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-top .actions .badge:nth-child(2) { background: var(--agent-soft); color: var(--agent-ink); }
 .bo-rep .pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0; margin: 8px 0 0; }
 .bo-rep .pipeline-forecast .bo-rep-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; margin: 12px 0 10px; }
+/* Review #761: a label that wraps («In chiusura in novembre 2026») must not
+   push its amount below the others: each card spans three rows of the
+   metrics grid (label, amount, sub) and shares them, so amounts line up. */
+.bo-rep .metric { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
 .bo-rep .metric strong { font-size: clamp(20px, 2.2vw, 26px); line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .bo-rep-grid .forecast-total { font-size: 15px; letter-spacing: 0; }
 .bo-rep-grid > .pipeline-forecast .lede, .bo-rep-grid > .pipeline-forecast p:not(.forecast-total) { font-size: 13px; }

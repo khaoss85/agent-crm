@@ -1089,6 +1089,15 @@ function modelFor(path) {
     const month = shiftMonth(period, index - last);
     return { ...entry, month, label: monthLabel(month) };
   });
+  // Like channelWeeksOf(period) on the server: the four Monday-start weeks
+  // opening the asked month, labels «2 nov», never a fixed «28 set … 19 ott».
+  const first = Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1);
+  const monday = first - ((new Date(first).getUTCDay() + 6) % 7) * 86400000;
+  const dayLabel = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  model.channels = { ...model.channels, weeks: model.channels.weeks.map((slot, index) => {
+    const start = new Date(monday + index * 7 * 86400000);
+    return { week: start.toISOString().slice(0, 10), label: dayLabel.format(start).replace(/\\./g, '') };
+  }) };
   if (model.csv) model.csv = { filename: 'reporting-' + period + '.csv', content: model.csv.content.replace(MODEL.period.slice(0, 7), period) };
   return model;
 }

@@ -164,3 +164,8 @@ test('review #761: the Creata filter reads the Rome day the column shows', () =>
   assert.equal(createdWithin('not a day', 7, now), false);
   assert.equal(createdWithin('2026-11-10T10:00:00.000Z', 0, now), false);
 });
+
+test('review #761: Reporting cards share label/amount/sub rows, so a wrapped label never drops its amount', () => {
+  const css = source('styles.css');
+  assert.match(css, /\.bo-rep \.metric \{ display: grid; grid-row: span 3; grid-template-rows: subgrid;/);
+});
