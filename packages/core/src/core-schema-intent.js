@@ -548,6 +548,24 @@ const V10_STATEMENTS = [
   },
 ];
 
+/** @type {any[]} */
+const V11_STATEMENTS = [
+  {
+    kind: 'addColumn',
+    table: 'opportunities',
+    column: integer('board_position', { notNull: true, defaultSql: '0' }),
+  },
+  {
+    kind: 'createIndex',
+    ifNotExists: true,
+    name: 'opportunities_board_position',
+    table: 'opportunities',
+    columns: ['pipeline_key', 'pipeline_stage', 'board_position'],
+    layout: 'multiline',
+    leading: 'single',
+  },
+];
+
 /**
  * Authoritative core schema intent. SQLite SQL is rendered from this structure
  * and must hash to the released checksums; PostgreSQL SQL is rendered from the
@@ -564,6 +582,7 @@ export const CORE_SCHEMA_INTENT = Object.freeze([
   Object.freeze({ version: 8, name: 'schema_migrations_checksum', plane: 'ledger', statements: Object.freeze(V8_STATEMENTS) }),
   Object.freeze({ version: 9, name: 'spine_durable_jobs', plane: 'data', statements: Object.freeze(V9_STATEMENTS) }),
   Object.freeze({ version: 10, name: 'spine_reconcilable_job_recovery', plane: 'data', statements: Object.freeze(V10_STATEMENTS) }),
+  Object.freeze({ version: 11, name: 'opportunity_board_position', plane: 'data', statements: Object.freeze(V11_STATEMENTS) }),
 ]);
 
 /**

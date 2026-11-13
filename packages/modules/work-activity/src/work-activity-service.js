@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import {
   enumValue,
+  requiredBoolean,
   requiredInteger,
   requiredIsoDate,
   requiredString,
@@ -27,7 +28,7 @@ export class WorkActivityService {
     this.manifest = Object.freeze({
       name: "work-activity",
       table: "work_activities",
-      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"kind","column":"kind","type":"enum"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"taskId","column":"task_id","type":"string"},{"name":"body","column":"body","type":"string"},{"name":"occurredAt","column":"occurred_at","type":"timestamp"},{"name":"actorType","column":"actor_type","type":"enum"},{"name":"actorId","column":"actor_id","type":"string"},{"name":"sourcePackage","column":"source_package","type":"string"},{"name":"sourceAction","column":"source_action","type":"string"},{"name":"seq","column":"seq","type":"integer"}]),
+      fields: Object.freeze([{"name":"sourceKey","column":"source_key","type":"string"},{"name":"kind","column":"kind","type":"enum"},{"name":"subjectResource","column":"subject_resource","type":"string"},{"name":"subjectId","column":"subject_id","type":"string"},{"name":"taskId","column":"task_id","type":"string"},{"name":"body","column":"body","type":"string"},{"name":"occurredAt","column":"occurred_at","type":"timestamp"},{"name":"actorType","column":"actor_type","type":"enum"},{"name":"actorId","column":"actor_id","type":"string"},{"name":"sourcePackage","column":"source_package","type":"string"},{"name":"sourceAction","column":"source_action","type":"string"},{"name":"seq","column":"seq","type":"integer"},{"name":"revisesId","column":"revises_id","type":"string"},{"name":"withdrawn","column":"withdrawn","type":"boolean"}]),
     });
   }
 
@@ -81,6 +82,8 @@ export class WorkActivityService {
       sourcePackage: null,
       sourceAction: null,
       seq: null,
+      revisesId: null,
+      withdrawn: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -120,6 +123,12 @@ export class WorkActivityService {
     if (Object.hasOwn(patch, 'seq')) {
       workActivity.seq = patch.seq === null ? null : requiredInteger(patch.seq, 'seq');
     }
+    if (Object.hasOwn(patch, 'revisesId')) {
+      workActivity.revisesId = patch.revisesId === null ? null : requiredString(patch.revisesId, 'revisesId');
+    }
+    if (Object.hasOwn(patch, 'withdrawn')) {
+      workActivity.withdrawn = patch.withdrawn === null ? null : requiredBoolean(patch.withdrawn, 'withdrawn');
+    }
 
     this.#mutation(() => {
       this.database.storage.sync.execute({
@@ -137,6 +146,8 @@ export class WorkActivityService {
           { column: 'source_package', value: workActivity.sourcePackage },
           { column: 'source_action', value: workActivity.sourceAction },
           { column: 'seq', value: workActivity.seq },
+          { column: 'revises_id', value: workActivity.revisesId },
+          { column: 'withdrawn', value: workActivity.withdrawn === null ? null : workActivity.withdrawn ? 1 : 0 },
           { column: 'created_at', value: workActivity.createdAt },
           { column: 'updated_at', value: workActivity.updatedAt }
         ],
@@ -204,7 +215,7 @@ export class WorkActivityService {
 
   /** @param {Record<string, unknown>} filters */
   #where(filters) {
-    const columns = {"id":"id","sourceKey":"source_key","kind":"kind","subjectResource":"subject_resource","subjectId":"subject_id","taskId":"task_id","body":"body","occurredAt":"occurred_at","actorType":"actor_type","actorId":"actor_id","sourcePackage":"source_package","sourceAction":"source_action","seq":"seq"};
+    const columns = {"id":"id","sourceKey":"source_key","kind":"kind","subjectResource":"subject_resource","subjectId":"subject_id","taskId":"task_id","body":"body","occurredAt":"occurred_at","actorType":"actor_type","actorId":"actor_id","sourcePackage":"source_package","sourceAction":"source_action","seq":"seq","revisesId":"revises_id","withdrawn":"withdrawn"};
     /** @type {string[]} */
     const predicates = [];
     for (const [field, value] of Object.entries(filters ?? {})) {
@@ -293,6 +304,16 @@ export class WorkActivityService {
         assignments.push({ column: 'seq', value: value });
         changes.seq = value;
       }
+      if (Object.hasOwn(patch, 'revisesId')) {
+        const value = patch.revisesId === null ? null : requiredString(patch.revisesId, 'revisesId');
+        assignments.push({ column: 'revises_id', value: value });
+        changes.revisesId = value;
+      }
+      if (Object.hasOwn(patch, 'withdrawn')) {
+        const value = patch.withdrawn === null ? null : requiredBoolean(patch.withdrawn, 'withdrawn');
+        assignments.push({ column: 'withdrawn', value: value === null ? null : value ? 1 : 0 });
+        changes.withdrawn = value;
+      }
 
     if (!assignments.length) return this.get(id);
     assignments.push({ column: 'updated_at', value: nowIso() });
@@ -333,6 +354,8 @@ function mapWorkActivityRow(row) {
     sourcePackage: row.source_package,
     sourceAction: row.source_action,
     seq: row.seq,
+    revisesId: row.revises_id,
+    withdrawn: row.withdrawn === null ? null : row.withdrawn === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

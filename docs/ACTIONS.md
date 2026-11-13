@@ -214,8 +214,21 @@ await client.module('opportunity').action(id, 'move-stage', {
   toStage: 'proposal',
   fromStage: 'demo',   // optional optimistic check → 409 STALE_STAGE on mismatch
   reason: '…',         // required when the target stage type is 'lost'
+  afterId: 'opp_123',  // optional board placement: land right after this card
+  // first: true,      // …or at the top of the target column (not both)
 });
 ```
+
+Board position (backlog:67a3116f4f65, migration v11): `afterId` or
+`first: true` places the card inside the target column through
+`OpportunityService.positionOnBoard`, in the action's transaction and audited
+on the moved card. With a placement, `toStage` equal to the current stage is a
+reorder (no `SAME_STAGE`, stage fields untouched, terminal columns included).
+A card that is not in the target column → `409 STALE_POSITION`. Without a
+placement a move lands unplaced (`boardPosition: 0`), on top of the column.
+`GET /api/opportunities?order=board` reads the board order (position, then
+newest first); the plain list stays newest first. A module whose service has
+no board positions refuses a placement with 400.
 
 Rules: open→open/won/lost only; same-stage → `409 SAME_STAGE`; terminal
 stages refuse (`409 TERMINAL_STAGE`, no reopen); corrupt state refuses

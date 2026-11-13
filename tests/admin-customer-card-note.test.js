@@ -52,7 +52,7 @@ const PROFILE = {
 
 const ROSTER = { items: [{ subject: 'google|118', displayName: 'Elena Rinaldi', email: 'elena@studio.it' }] };
 
-function fakeClient({ timeline = entries([MESSAGE]), profile = PROFILE, audit = [], roster = ROSTER } = {}) {
+function fakeClient({ timeline = entries([MESSAGE]), profile = PROFILE, audit = [], roster = ROSTER, noteRefusal = null } = {}) {
   const writes = [];
   const reads = [];
   return {
@@ -64,6 +64,7 @@ function fakeClient({ timeline = entries([MESSAGE]), profile = PROFILE, audit = 
       if (method !== 'GET') {
         const body = options.body ? JSON.parse(String(options.body)) : null;
         writes.push({ path, method, body });
+        if (path === '/api/customer-hub/notes' && noteRefusal !== null) throw noteRefusal;
         if (path === '/api/customer-hub/notes') return { id: `n${writes.length}`, body: body.body, actorId: 'google|118', occurredAt: '2026-11-11T10:00:00.000Z' };
         return { ok: true };
       }
@@ -245,4 +246,29 @@ test('82235e46e3e9: a repaint while the note is saving never posts it twice', as
   assert.equal(client.writes.length, 1, 'the rebuilt field does not post the same note again');
   releasePost();
   await flush();
+});
+
+// Production 12/11 (pilota 21ade52): a note on two lines answered 400
+// VALIDATION_ERROR and the scheda said «Nota non salvata. Riprova più
+// tardi.» — retrying the same text is refused again. A validation refusal
+// says what to correct.
+test('82235e46e3e9 seguito: a refused note says what to correct, never «Riprova più tardi»', async () => {
+  const refusal = Object.assign(new Error('body must not contain control characters'), { status: 400, code: 'VALIDATION_ERROR' });
+  const { mount, toasts } = await open(fakeClient({ noteRefusal: refusal }));
+  noteField(mount).value = 'Una nota';
+  byAction(mount, 'add-note').dispatch('click');
+  await flush();
+  assert.ok(!mount.textContent.includes('Riprova più tardi'), 'never «Riprova più tardi» for a refused text');
+  assert.ok(mount.textContent.includes('La nota contiene caratteri non ammessi'), 'it names what to correct');
+  assert.equal(noteField(mount).value, 'Una nota', 'the text stays to be corrected');
+  assert.ok(toasts.some((text) => text.includes('caratteri non ammessi')));
+});
+
+test('82235e46e3e9 seguito: a note over 1000 characters is stopped before sending, with the limit', async () => {
+  const { mount, client } = await open();
+  noteField(mount).value = 'a'.repeat(1001);
+  byAction(mount, 'add-note').dispatch('click');
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing posted');
+  assert.ok(mount.textContent.includes('La nota è troppo lunga: al massimo 1000 caratteri.'));
 });

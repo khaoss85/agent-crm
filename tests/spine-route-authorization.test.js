@@ -104,6 +104,9 @@ const GUARDED = [
   // unverified caller and a viewer.
   ['PATCH', '/api/contacts/no-such-id', { firstName: 'A' }],
   ['POST', '/api/customer-hub/notes', { resource: 'contact', id: 'x', body: 'hi' }],
+  // backlog:82235e46e3e9: note correction and withdrawal gate records.write too.
+  ['POST', '/api/customer-hub/notes/revise', { resource: 'contact', id: 'x', noteId: 'n', body: 'hi' }],
+  ['POST', '/api/customer-hub/notes/withdraw', { resource: 'contact', id: 'x', noteId: 'n' }],
   ['GET', '/api/opportunities'],
   ['POST', '/api/opportunities', { companyId: 'x', name: 'D', valueCents: 1, currency: 'EUR', owner: 'o' }],
   ['GET', '/api/approvals'],
