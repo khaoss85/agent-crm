@@ -1870,7 +1870,7 @@ export function buildRouter(app) {
   // ---- Production Spine (ADR-038) --------------------------------------
   // Bounded on purpose: who am I, which tenant, who else is a member, and what
   // the roles mean. No token, no secret, no password, no invitation flow.
-  router.add('GET', '/api/spine/context', async ({ identity, organizationId }) => {
+  router.add('GET', '/api/spine/context', async ({ identity, organizationId, actor }) => {
     if (!app.spine) {
       throw new NotFoundError('Operation', 'production spine');
     }
@@ -1881,6 +1881,12 @@ export function buildRouter(app) {
     return {
       ...app.spine.describe(),
       identity: app.spine.identityEvidence(identity),
+      // backlog:cb348c9fcaeb: the actor this host signs the caller's writes
+      // with (`actorId` on a note), so the scheda offers «Modifica» and
+      // «Elimina» on the caller's own notes only. A host whose writes carry
+      // another id than the identity subject (a space binding) answers
+      // that id here.
+      actor: actor && typeof actor.id === 'string' ? { type: actor.type, id: actor.id } : null,
       organization,
       membership,
       permissions: membership ? membership.permissions : [],
