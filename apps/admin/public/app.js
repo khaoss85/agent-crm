@@ -1063,6 +1063,18 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
+      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
+      // agents from the same teammate-agent module read the Agenti screen
+      // makes — the hand-written agent suggests like the catalogue ones.
+      async agents() {
+        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
+        const params = new URLSearchParams({ limit: '201' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
+        else return null;
+        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
     },
     onPickSpace: (id) => {
       pickSpace(id);
