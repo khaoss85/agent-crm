@@ -1403,6 +1403,78 @@ test('7d30fb517785: a refused invite whose reload fails too still shows exactly 
   assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
 });
 
+test('backlog:76ded4e3: the two menus never stay open together, Escape and a click outside close them', async () => {
+  // Second return of 6b44b0e9fcdf (supervisor 2026-11-07.md:58): «+ Nuovo
+  // spazio di lavoro» closed nothing (no Escape, no outside click) and both
+  // menus could sit open at once. The menus share the clienti and
+  // personalizzazione contract: opening one closes the other, Escape
+  // closes, a click outside closes.
+  const doc = createFakeDocument();
+  // The dependency-free fake document carries no listeners: give this one
+  // the listener surface a real document has, so the test exercises the
+  // view's own outside-click wiring instead of a copy of it.
+  const docListeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (docListeners[type] ??= []).push(handler); };
+  const fireDoc = (type, event) => { for (const handler of docListeners[type] ?? []) handler(event); };
+  const mount = createMount();
+  const seen = { toast: [], picked: [], navigated: [] };
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const v = createSpaziAccessiView({
+    doc,
+    mount,
+    client: stubClient({ members: [{ subject: 'owner-1', role: 'owner', status: 'active' }] }),
+    navigate: (hash) => seen.navigated.push(hash),
+    spaces: () => spaces,
+    activeSpaceId: () => SPACE,
+    onPickSpace: (id) => seen.picked.push(id),
+    toast: (message, error = false) => seen.toast.push({ message, error }),
+  });
+  await v.render();
+  await flush();
+  const newSpaceToggle = () => mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  const inviteToggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const newSpaceMenu = () => mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  const inviteMenu = () => mount.querySelector('div[aria-label="Invita persona"]');
+  assert.ok(newSpaceToggle() && inviteToggle(), 'both menu toggles render');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens');
+  assert.equal(newSpaceMenu(), null, 'opening Invita persona closes + Nuovo spazio: never two menus open');
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu reopens');
+  assert.equal(inviteMenu(), null, 'opening + Nuovo spazio closes Invita persona: never two menus open');
+
+  // Codex P2 on #763: after render() the focused toggle is gone, so in a
+  // real browser focus sits on the body and Escape only reaches the
+  // document. The view listens for Escape at document level; this dispatch
+  // proves the document path, not a node-local handler.
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'Escape closes the new-space menu');
+  assert.equal(newSpaceToggle().getAttribute('aria-expanded'), 'false', 'the toggle names the closed menu');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens again');
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(inviteMenu(), null, 'Escape at document level closes the invite menu');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens a third time');
+  fireDoc('click', { target: newSpaceMenu() });
+  await flush();
+  assert.ok(newSpaceMenu(), 'a click inside the menu keeps it open');
+  fireDoc('click', { target: mount });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'a click outside closes the new-space menu');
+  assert.equal(inviteMenu(), null, 'a click outside leaves no menu open');
+});
 // backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
 // C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
 // dei canali. Prima il rosso: sul codice di prima le righe non portano né

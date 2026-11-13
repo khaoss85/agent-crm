@@ -528,6 +528,44 @@ export function createSpaziAccessiView(deps) {
     /** @type {string | null} */ fixSpace: null,
   };
 
+  // The two pop-up menus (C20 new-space, C21 invite): one open at a time,
+  // Escape closes, a click outside closes — the same contract as the clienti
+  // and personalizzazione menus (MEM_ACC_REUSE: no parallel invention).
+  // Documents without addEventListener (the dependency-free fake DOM of the
+  // unit tests) skip the outside closer; the toggles, the voices and Escape
+  // still work there.
+  /** Currently rendered menu nodes, rebuilt on every render. */
+  const liveMenuWraps = [];
+  function closeMenus() {
+    if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
+    state.newSpaceMenuOpen = false;
+    state.inviteMenuOpen = false;
+    render();
+  }
+  function trackMenuWrap(node) {
+    liveMenuWraps.push(node);
+    node.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+    });
+  }
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('click', (event) => {
+      let node = event?.target ?? null;
+      while (node) {
+        if (liveMenuWraps.includes(node)) return;
+        node = node.parentNode ?? null;
+      }
+      closeMenus();
+    });
+    // Codex P2 on #763: render() removes the focused toggle, so in a real
+    // browser focus falls back to the body and Escape never reaches the
+    // menu/toggle keydown handlers. Listen at document level, where Escape
+    // always lands however the menu was opened.
+    doc.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+    });
+  }
+
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
@@ -838,10 +876,18 @@ export function createSpaziAccessiView(deps) {
       },
     });
     adderToggle.disabled = state.busy;
-    adderToggle.addEventListener('click', () => {
-      state.newSpaceMenuOpen = !state.newSpaceMenuOpen;
+    adderToggle.addEventListener('click', (event) => {
+      // The opening click bubbles to the document in a real browser: stop
+      // it, or the outside closer would shut the menu just opened.
+      event?.stopPropagation?.();
+      const willOpen = !state.newSpaceMenuOpen;
+      state.newSpaceMenuOpen = willOpen;
+      if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
+    });
+    adderToggle.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
@@ -861,6 +907,7 @@ export function createSpaziAccessiView(deps) {
       });
       menu.appendChild(aiVoice);
       menu.appendChild(manualVoice);
+      trackMenuWrap(menu);
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
@@ -909,15 +956,20 @@ export function createSpaziAccessiView(deps) {
     // Manual entry opens the existing inline spine form below; the AI voice
     // stays honest (no invention) until a capability exists.
     const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
-    inviteToggle.addEventListener('click', () => {
+    inviteToggle.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
       if (state.inviteMenuOpen) {
         state.inviteMenuOpen = false;
       } else if (state.inviteOpen) {
         state.inviteOpen = false;
       } else {
         state.inviteMenuOpen = true;
+        state.newSpaceMenuOpen = false;
       }
       render();
+    });
+    inviteToggle.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
     });
     teamHead.appendChild(inviteToggle);
     section.appendChild(teamHead);
@@ -937,6 +989,7 @@ export function createSpaziAccessiView(deps) {
       });
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);
+      trackMenuWrap(inviteMenu);
       section.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
@@ -1275,6 +1328,7 @@ export function createSpaziAccessiView(deps) {
 
   function paint() {
     refusalPainted = false;
+    liveMenuWraps.length = 0;
     clear();
     const space = activeSpace();
     mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', fixCount: state.fixCount, navigate: typeof navigate === 'function' ? navigate : () => {} }));
