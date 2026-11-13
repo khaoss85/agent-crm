@@ -496,7 +496,12 @@ test('a hostile excerpt stays text, and no contact still reads «mai»', async (
   const cards = mount.findAll('article');
   assert.equal(cards[0].findAll('img').length, 0, 'the excerpt never becomes an element');
   assert.ok(cards[0].textContent.includes('<img src=x onerror=alert(1)>'), 'the hostile text still reads as text');
-  assert.ok(cards[1].textContent.includes('mai'), 'no contact still reads «mai»');
+  // backlog:fe9be5f0af4a: no message or call reads «nessun messaggio» and
+  // says what counts, never a bare «mai» beside a customer with notes.
+  assert.ok(cards[1].textContent.includes('nessun messaggio'), 'no contact reads «nessun messaggio»');
+  const none = cards[1].findAll('span').find((node) => node.textContent === 'nessun messaggio');
+  assert.equal(none.getAttribute('title'), 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
+  assert.ok(!cards[1].textContent.includes('mai'));
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {

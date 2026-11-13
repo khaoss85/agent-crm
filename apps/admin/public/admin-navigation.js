@@ -137,3 +137,23 @@ export function createMountGate(mount) {
     },
   };
 }
+
+/**
+ * backlog:fe9be5f0af4a — the breadcrumb of a customer card keeps the
+ * customer's name. Production 13/11, one reload in three: the card read
+ * named the customer («Clienti / <nome>»), then the shell's schema read
+ * landed and re-synced the screen to plain «Clienti»; the card emits its
+ * name once per customer, so the crumb stayed without it. The shell now
+ * remembers the name the card gave for the routed customer, and every
+ * re-sync of that same card paints it again.
+ *
+ * @param {{ view?: string, resource?: string, subjectId?: string } | null | undefined} target the routed screen
+ * @param {string} label the screen's own label («Clienti»)
+ * @param {{ resource: string, id: string, name: string | null } | null} remembered the card's last name, for the card it named
+ * @returns {string}
+ */
+export function customerCrumbLabel(target, label, remembered) {
+  if (!target || target.view !== 'customer-card' || !remembered) return label;
+  if (remembered.resource !== target.resource || remembered.id !== target.subjectId) return label;
+  return typeof remembered.name === 'string' && remembered.name !== '' ? `${label} / ${remembered.name}` : label;
+}

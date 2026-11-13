@@ -172,6 +172,10 @@ export function bindAdminMutations(client, deps = {}) {
       body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
       idempotencyKey: options.idempotencyKey,
       headers: { ...(options.headers ?? {}), 'Idempotency-Key': options.idempotencyKey },
+      // backlog:fe9be5f0af4a: a write sent while the page goes away (a note
+      // withdrawal on pagehide) outlives the page, with the same headers
+      // and the same submission key as any other write.
+      ...(options.keepalive === true ? { keepalive: true } : {}),
     }),
   });
   return {
@@ -193,6 +197,7 @@ export function bindAdminMutations(client, deps = {}) {
             method,
             body,
             key: typeof options.idempotencyKey === 'string' ? options.idempotencyKey : undefined,
+            ...(options.keepalive === true ? { keepalive: true } : {}),
           }).then(unwrapBoWriteAnswer);
         }
         return client.request(path, options);
@@ -227,6 +232,7 @@ export function createSubmissionController(options) {
    *   method?: string,
    *   body?: unknown,
    *   key?: string,
+   *   keepalive?: boolean,
    * }} spec
    */
   function submit(spec) {
@@ -256,6 +262,7 @@ export function createSubmissionController(options) {
         method,
         body: spec.body,
         idempotencyKey: key,
+        ...(spec.keepalive === true ? { keepalive: true } : {}),
       }))
       .then((result) => {
         forget(key);

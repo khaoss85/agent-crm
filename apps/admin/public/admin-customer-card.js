@@ -956,6 +956,30 @@ export function createCustomerCardView(deps) {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
+  /**
+   * backlog:fe9be5f0af4a (production 13/11: after «Modifica» the focus was
+   * on the page body): the cursor in the field, at the end of its text —
+   * now if the field is on the page, and again once the paint that builds
+   * it has landed.
+   * @param {any} field
+   */
+  const focusAtEnd = (field) => {
+    if (!field) return;
+    const place = () => {
+      if (field.isConnected === false) return;
+      if (typeof field.focus === 'function') field.focus();
+      const end = String(field.value ?? '').length;
+      try {
+        if (typeof field.setSelectionRange === 'function') field.setSelectionRange(end, end);
+      } catch {
+        // An email input refuses a selection: the focus alone is enough.
+      }
+    };
+    place();
+    setTimeout(place, 0);
+  };
+  /** Whether `node` holds the focus of the page. @param {any} node */
+  const hasFocus = (node) => node !== null && node !== undefined && doc?.activeElement === node;
   const el = elFor(doc); // BO-F6-02: shared element builder.
   // backlog:e381c48581fa: the space's channel state, read once per space
   // (GET /api/connectors plus GET /api/profile, the same pair Connettori
@@ -1114,7 +1138,7 @@ export function createCustomerCardView(deps) {
     // backlog:cb348c9fcaeb: what is typed in an open «Modifica».
     const noteEdit = root.querySelector('[name="noteEditBody"]');
     if (noteEdit && typeof noteEdit.value === 'string') {
-      drafts.noteEdit = { noteId: noteEdit.getAttribute('data-note-id'), value: noteEdit.value };
+      drafts.noteEdit = { noteId: noteEdit.getAttribute('data-note-id'), value: noteEdit.value, focused: hasFocus(noteEdit) };
     }
     if (root.querySelector('button[data-action="save-details"]')) {
       // Review #612 round 3: only the fields the person changed travel to
@@ -1126,6 +1150,8 @@ export function createCustomerCardView(deps) {
         if (input && typeof input.value === 'string' && input.value !== input.getAttribute('data-initial')) {
           drafts.details[name] = input.value;
         }
+        // backlog:fe9be5f0af4a: the field the cursor was in keeps it.
+        if (hasFocus(input)) drafts.detailsFocus = name;
       }
     }
     // Review Muse #835 (P2): a custom field being edited, or a field being
@@ -2878,7 +2904,11 @@ export function createCustomerCardView(deps) {
         while (box.firstChild) box.removeChild(box.firstChild);
         details(box, card, profile, editCtx, profileError);
       };
-      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
+      edit.addEventListener('click', () => {
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        // backlog:fe9be5f0af4a: the cursor in the first field, at the end.
+        focusAtEnd(box.querySelector('input[name="firstName"]'));
+      });
       box.appendChild(edit);
       if (pendingDrafts && pendingDrafts.details) {
         const typed = pendingDrafts.details;
@@ -2886,6 +2916,9 @@ export function createCustomerCardView(deps) {
         for (const name of Object.keys(typed)) {
           const input = box.querySelector(`input[name="${name}"]`);
           if (input) input.value = typed[name];
+        }
+        if (typeof pendingDrafts.detailsFocus === 'string') {
+          focusAtEnd(box.querySelector(`input[name="${pendingDrafts.detailsFocus}"]`));
         }
         return;
       }
@@ -3209,9 +3242,8 @@ export function createCustomerCardView(deps) {
     edit.setAttribute('data-action', 'edit-note');
     edit.setAttribute('data-note-id', item.id);
     edit.addEventListener('click', () => {
-      noteEditing = { key: `${noteCtx.resource}/${noteCtx.id}`, noteId: item.id, draft: null, error: '' };
+      noteEditing = { key: `${noteCtx.resource}/${noteCtx.id}`, noteId: item.id, draft: null, error: '', focus: true };
       repaintIfShown(noteCtx.resource, noteCtx.id);
-      mount.querySelector('[name="noteEditBody"]')?.focus?.();
     });
     const drop = el('button', 'bo-scheda-note-action', 'Elimina');
     drop.setAttribute('type', 'button');
@@ -3245,6 +3277,12 @@ export function createCustomerCardView(deps) {
     field.addEventListener('input', () => {
       if (noteEditing !== null && noteEditing.noteId === item.id) noteEditing.draft = String(field.value ?? '');
     });
+    // backlog:fe9be5f0af4a: just opened, or the cursor was in it before a
+    // repaint rebuilt it — the cursor goes (back) to the end of the text.
+    if (editing.focus === true || (pendingDrafts?.noteEdit?.noteId === item.id && pendingDrafts.noteEdit.focused === true)) {
+      editing.focus = false;
+      focusAtEnd(field);
+    }
     const row = el('div', 'bo-scheda-form-actions');
     const save = el('button', undefined, 'Salva');
     save.setAttribute('type', 'button');
@@ -3555,8 +3593,12 @@ export function createCustomerCardView(deps) {
           mark.setAttribute('aria-hidden', 'true');
           row.appendChild(mark);
           const paper = el('div', 'bo-scheda-note-paper');
+          // backlog:fe9be5f0af4a: a corrected note says so, with the hour of
+          // the correction beside the hour of the note.
+          const revisedWhen = typeof item?.revisedAt === 'string' ? timeParts(item.revisedAt) : null;
+          const revised = typeof item?.revisedAt === 'string' ? ` · modificata${revisedWhen ? ` ${revisedWhen}` : ''}` : '';
           paper.appendChild(el('p', 'bo-scheda-entry-head',
-            when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
+            `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`));
           const mine = myActorId();
           const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
             && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
@@ -4658,7 +4700,7 @@ export function createCustomerCardView(deps) {
    * backlog:cb348c9fcaeb — «Modifica» open on one note: view state, so a
    * repaint (the roster arriving, another section's re-read) draws the
    * editor again with what was typed and its last refusal.
-   * @type {{ key: string, noteId: string, draft: string | null, error: string } | null}
+   * @type {{ key: string, noteId: string, draft: string | null, error: string, focus?: boolean } | null}
    */
   let noteEditing = null;
   /** A correction being saved, view-wide: one POST per tap. */
@@ -4729,8 +4771,8 @@ export function createCustomerCardView(deps) {
     const key = `${resource}/${id}`;
     if (lastShown !== null && lastShown.key === key && shownKey === key) paint(key, resource, id, lastShown.loaded);
   }
-  /** @param {string} pendingKey */
-  async function commitWithdrawal(pendingKey) {
+  /** @param {string} pendingKey @param {{ keepalive?: boolean }} [options] */
+  async function commitWithdrawal(pendingKey, { keepalive = false } = {}) {
     const pending = pendingWithdrawals.get(pendingKey);
     if (!pending || pending.state !== 'waiting') return;
     pending.state = 'sending';
@@ -4740,6 +4782,8 @@ export function createCustomerCardView(deps) {
       await client.request('/api/customer-hub/notes/withdraw', {
         method: 'POST',
         body: JSON.stringify({ resource, id, noteId }),
+        // Sent while the page goes away: the request outlives it.
+        ...(keepalive ? { keepalive: true } : {}),
       });
       pendingWithdrawals.delete(pendingKey);
       // The note stays out of the cronologia; then only the cronologia is
@@ -4757,9 +4801,28 @@ export function createCustomerCardView(deps) {
       }
     }
   }
-  /** Every withdrawal still waiting leaves now (the scheda opens another customer). */
-  function flushWithdrawals() {
-    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey);
+  /**
+   * Every withdrawal still waiting leaves now: the scheda opens another
+   * customer, or the page goes away (`keepalive`).
+   * @param {{ keepalive?: boolean }} [options]
+   */
+  function flushWithdrawals(options = {}) {
+    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey, options);
+  }
+  // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
+  // window lost the withdrawal — the timer died with the page and the note
+  // came back. Leaving the page (pagehide) or hiding it (visibilitychange,
+  // the last event a mobile browser is sure to fire) sends what is still
+  // waiting at once, through the same /bo write client, with keepalive.
+  const pageWindow = deps.pageWindow ?? (typeof window === 'undefined' ? null : window);
+  const sendOnLeave = () => flushWithdrawals({ keepalive: true });
+  if (pageWindow && typeof pageWindow.addEventListener === 'function') {
+    pageWindow.addEventListener('pagehide', sendOnLeave);
+  }
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState === 'hidden') sendOnLeave();
+    });
   }
   /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
