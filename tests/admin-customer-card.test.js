@@ -4484,9 +4484,11 @@ test('another customer clears at once and starts from Tutti', async () => {
   const release = hold(client);
   const other = view.renderCard('contact', 'c2');
   await new Promise((resolve) => setImmediate(resolve));
-  // Backlog 608aa14d554c: only the loading state is left, never the old scheda.
+  // Backlog 608aa14d554c: only the new scheda's loading state is left, never
+  // the old scheda — backlog:1a96094db71d: its skeleton, not a line.
   assert.equal(mount.childNodes.length, 1, 'the previous customer never stays up under another id');
-  assert.equal(mount.childNodes[0].getAttribute('role'), 'status', 'the new scheda shows its loading state');
+  assert.equal(mount.childNodes[0].getAttribute('aria-busy'), 'true', 'the new scheda shows its loading state');
+  assert.ok(!mount.textContent.includes('Guido Presti'), 'no name of the previous customer');
   release();
   await other;
   const active = mount.findAll('button').find((node) => node.getAttribute('data-active') === 'true');
@@ -4511,11 +4513,14 @@ test('backlog:5a40c73e54aa: another customer keeps the router loading line, neve
   const other = view.renderCard('contact', 'c2');
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(!mount.textContent.includes('Guido Presti'), 'the previous customer never stays up under another id');
-  assert.equal(mount.childNodes.length, 1, 'only the loading line stays, never a blank page');
-  assert.ok(mount.textContent.includes('Carico'), 'the page shows loading while the read runs');
+  assert.equal(mount.childNodes.length, 1, 'only the loading state stays, never a blank page');
+  // backlog:1a96094db71d: the scheda's skeleton replaces the router line.
+  assert.equal(mount.childNodes[0].getAttribute('aria-busy'), 'true', 'the page shows loading while the read runs');
+  assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars, never blank');
   release();
   await other;
   assert.ok(!mount.textContent.includes('Carico Scheda…'), 'the card replaces the loading line');
+  assert.ok(!mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton left');
 });
 
 test('a slower older re-read never overwrites a newer one', async () => {
@@ -4928,33 +4933,179 @@ test('composer AI: other words during the read-back supersede it, the same words
   assert.equal(area.value, 'Ciao Guido, il listino è in allegato.', 'the superseded read never overwrites the newer draft');
 });
 
-test('608aa14d554c: a scheda opened from a direct link shows the loading state before its data arrives', async () => {
-  /** @type {Array<() => void>} */
+/**
+ * backlog:1a96094db71d: a client whose reads each wait for their own
+ * release, by path — the test lands them one at a time, like production
+ * (12/11: profile 2.4 s, card 5.4 s, timeline 7 s).
+ */
+function heldByPath(options = {}) {
+  const base = stubClient(options);
+  /** @type {Array<{ path: string, release: () => void }>} */
   const held = [];
-  const base = stubClient();
   const client = {
     ...base,
-    request(path, options) {
+    request(path, opts) {
       return new Promise((resolve, reject) => {
-        held.push(() => base.request(path, options).then(resolve, reject));
+        held.push({ path, release: () => base.request(path, opts).then(resolve, reject) });
       });
     },
   };
-  const doc = createFakeDocument();
+  const land = async (prefix) => {
+    for (const entry of held.filter((row) => row.path.startsWith(prefix))) {
+      held.splice(held.indexOf(entry), 1);
+      entry.release();
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  return { client, held, land };
+}
+
+/** A section card by its title, or undefined. @param {any} mount @param {string} title */
+const sectionTitled = (mount, title) => mount.findAll('h4')
+  .find((node) => node.textContent === title)?.parentNode;
+const isSkeleton = (box) => box?.getAttribute('data-loading') === 'true';
+
+test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link shows its structure at once, never a blank mount', async () => {
+  const { client, held } = heldByPath();
   const mount = createMount();
-  const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
-  const loading = () => mount.findAll('div').find((node) => node.getAttribute('role') === 'status'
-    && (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-loading'));
-  assert.ok(loading(), 'the loading state is painted at once, not a blank mount');
-  assert.equal(loading().textContent, 'Carico la scheda…');
-  assert.equal(loading().getAttribute('aria-busy'), 'true');
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  // Before any read answers: the scheda's skeleton, not a «Carico…» line.
+  const panel = mount.firstChild;
+  assert.ok(panel, 'the structure is painted at once, not a blank mount');
+  assert.equal(panel.getAttribute('aria-busy'), 'true');
+  assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', 'Prossimi passi', 'Offerta', 'Prossimo appuntamento']) {
+    assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
+  }
+  assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
+  assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(held.length > 0, 'the reads are still in flight');
-  assert.ok(loading(), 'the loading state stays while the reads are pending');
-  for (const release of held.splice(0)) release();
+  assert.ok(held.length >= 7, 'every read is in flight at once');
+  for (const entry of held.splice(0)) entry.release();
   await rendering;
-  assert.ok(!loading(), 'the scheda replaces the loading state');
+  assert.equal(mount.firstChild.getAttribute('aria-busy'), null, 'the scheda is no longer busy');
+  assert.ok(!mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton left');
   assert.ok(mount.textContent.includes(CARD.name), 'the scheda painted');
+});
+
+test('backlog:1a96094db71d: each section fills as its own read lands, the slow ones keep their skeleton', async () => {
+  const { client, held, land } = heldByPath();
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // The profile lands first (2.4 s on production): Prossimi passi fills,
+  // the cronologia and the header still wait for theirs.
+  await land('/api/customer-data/profile/');
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile alone');
+  assert.ok(isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia still waits for its read');
+  assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the card');
+  assert.ok(!mount.textContent.includes(CARD.name), 'no name before the card read');
+
+  // The card lands: the header names the customer, Dettagli fills.
+  await land('/api/customer-hub/card/');
+  assert.ok(mount.textContent.includes(CARD.name), 'the header shows the customer');
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
+  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimo appuntamento')), 'the appointment waits for the cronologia');
+  assert.equal(mount.firstChild.getAttribute('aria-busy'), 'true', 'still busy while reads are out');
+
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia painted');
+  assert.equal(mount.findAll('h4').filter((node) => node.textContent === 'Dettagli').length, 1, 'one Dettagli, never a skeleton beside it');
+});
+
+test('backlog:1a96094db71d: a card read that fails after other sections landed shows the error panel, never a half scheda', async () => {
+  const { client, held, land } = heldByPath({ cardError: Object.assign(new Error('down'), { status: 500, code: 'UNKNOWN' }) });
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  await land('/api/customer-data/profile/');
+  await land('/api/customer-hub/card/');
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the error panel takes the screen');
+  assert.ok(!mount.textContent.includes('Prossimi passi'), 'no section of a scheda that cannot be read');
+});
+
+test('review Muse #835 (P2): a custom field being edited keeps its typing while the other sections land', async () => {
+  const defs = [{ key: 'amico', label: 'Amico', type: 'testo' }];
+  const { client, held, land } = heldByPath({ fieldDefs: defs, fieldValues: [] });
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  await land('/api/customer-data/fields');
+  const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico');
+  assert.ok(edit, 'the custom fields are there before the rest');
+  edit.dispatch('click');
+  const typed = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'campo:amico');
+  typed().value = 'Mario Rossi';
+  await land('/api/customer-hub/card/');
+  assert.equal(typed()?.value, 'Mario Rossi', 'a section landing keeps the open editor and its typing');
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.equal(typed()?.value, 'Mario Rossi', 'the full answer keeps it too');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-field-value'), 'Salva is still there');
+});
+
+test('review Muse #835 (P2): a field being added keeps its typing while the other sections land', async () => {
+  const { client, held, land } = heldByPath({ fieldDefs: [], fieldValues: [] });
+  const mount = createMount();
+  const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  await land('/api/customer-data/fields');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-field').dispatch('click');
+  const label = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'nuovo-campo-label');
+  label().value = 'Amico';
+  await land('/api/customer-hub/card/');
+  for (const entry of held.splice(0)) entry.release();
+  await rendering;
+  assert.equal(label()?.value, 'Amico', 'the new field form survives the repaints with its text');
+});
+
+test('review Muse #835 (P2): a partial paint that throws is logged with its cause, and the scheda still paints', async () => {
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const { client, held, land } = heldByPath();
+    const doc = createFakeDocument();
+    const make = doc.createElement;
+    let boom = false;
+    doc.createElement = (tag) => {
+      if (boom) throw Object.assign(new Error('fault with Guido Presti inside'), { code: 'BOOM' });
+      return make(tag);
+    };
+    const mount = createMount();
+    const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+    await new Promise((resolve) => setImmediate(resolve));
+    boom = true;
+    await land('/api/customer-data/profile/');
+    boom = false;
+    for (const entry of held.splice(0)) entry.release();
+    await rendering;
+    assert.ok(mount.textContent.includes(CARD.name), 'the full answer still paints');
+  } finally {
+    console.error = original;
+  }
+  const lines = logged.filter(([label]) => label === '[bo] scheda parziale non disegnata');
+  assert.equal(lines.length, 1, 'logged once');
+  assert.deepEqual(lines[0][1], { area: 'scheda-parziale', code: 'BOOM', name: 'Error', spaceId: null }, 'cause only, never the message or data');
+});
+
+test('backlog:1a96094db71d: re-reading the customer on screen never falls back to the skeleton', async () => {
+  const client = gatedClient();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount, client });
+  await view.renderCard('contact', 'c1');
+  const release = hold(client);
+  const again = view.renderCard('contact', 'c1');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(mount.textContent.includes(CARD.name), 'the scheda stays up');
+  assert.ok(!mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton over what is known');
+  release();
+  await again;
 });
 
 const PLACED_QUOTE_PROFILE = {

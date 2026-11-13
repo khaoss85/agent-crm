@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiBusy, uiIcon, uiLoading } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
@@ -973,6 +973,25 @@ export function createCustomerCardView(deps) {
         }
       }
     }
+    // Review Muse #835 (P2): a custom field being edited, or a field being
+    // added, keeps its typing through a repaint — the sections of a first
+    // read now land one by one, so the editor can be open while the rest
+    // arrives.
+    const editing = root.querySelector('.bo-campo-editing');
+    if (editing) {
+      const key = editing.getAttribute('data-editing-field');
+      const control = typeof editing.querySelector === 'function'
+        ? editing.querySelector(`[data-field-key="${key}"]`) : null;
+      drafts.field = { key, value: String(control?.value ?? '') };
+    }
+    const adding = root.querySelector('.bo-campo-add');
+    if (adding) {
+      drafts.fieldAdd = {};
+      for (const name of ['nuovo-campo-label', 'nuovo-campo-tipo', 'nuovo-campo-opzioni']) {
+        const input = adding.querySelector(`[name="${name}"]`);
+        if (input && typeof input.value === 'string') drafts.fieldAdd[name] = input.value;
+      }
+    }
     return Object.keys(drafts).length > 0 ? drafts : null;
   }
 
@@ -1004,61 +1023,72 @@ export function createCustomerCardView(deps) {
     profile: (encoded) => settle(() => client.request(`/api/customer-data/profile/${encoded}`)),
   });
 
-  async function load(resource, id) {
+  /** Every read of the scheda, none landed yet (backlog:1a96094db71d). */
+  const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines']);
+
+  /**
+   * The scheda's reads, all in flight at once. backlog:1a96094db71d: with
+   * `onPart` the caller hears each read as it lands (production 12/11: the
+   * card answered in 5.4 s, the cronologia in 7 s, and the scheda waited for
+   * the slowest before painting anything), so a section fills the moment
+   * its own read is back. The final answer is the same shape as before.
+   * @param {string} resource @param {string} id
+   * @param {((loaded: any, pending: Set<string>) => void) | null} [onPart]
+   */
+  async function load(resource, id, onPart = null) {
     const encoded = `${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
     const spaceId = activeSpaceId();
-    const [card, timelineRaw, profileRaw, enrichmentRaw, callsRaw, fieldDefsRaw, fieldValuesRaw, schemaRaw] = await Promise.all([
-      PART_READS.card(encoded),
-      PART_READS.timeline(encoded),
-      PART_READS.profile(encoded),
+    const loaded = {
+      card: null, cardError: null, timeline: null, timelineError: null,
+      profile: null, profileError: null, enrichment: null, enrichmentError: null,
+      calls: null, callsError: null, fieldDefs: null, fieldDefsError: null,
+      fieldValues: null, fieldValuesError: null, pipelines: [],
+    };
+    const pending = PART_NAMES_PENDING();
+    // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
+    // retry — the package is not composed for this reader, so the read stays
+    // null and the section keeps its honest not-composed state. Only a
+    // non-404 failure names the retry error on the section. The card is the
+    // identity source: its failure is the scheda's.
+    const take = (part, settledRead, notComposedIsNull = true) => {
+      const settled = notComposedIsNull ? nullOn404(settledRead) : settledRead;
+      if (part === 'pipelines') {
+        loaded.pipelines = Array.isArray(settled.value?.pipelines) ? settled.value.pipelines : [];
+      } else {
+        loaded[part] = settled.value;
+        loaded[`${part}Error`] = settled.error;
+      }
+      pending.delete(part);
+      if (typeof onPart === 'function') onPart({ ...loaded }, new Set(pending));
+    };
+    await Promise.all([
+      PART_READS.card(encoded).then((read) => take('card', read, false)),
+      PART_READS.timeline(encoded).then((read) => take('timeline', read)),
+      PART_READS.profile(encoded).then((read) => take('profile', read)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
       // yet answers 404, and the scheda must stay honest about the section
       // instead of failing the whole card.
-      settle(() => client.request(`/api/customer-data/enriched/${encoded}`)),
+      settle(() => client.request(`/api/customer-data/enriched/${encoded}`)).then((read) => take('enrichment', read)),
       // Without intelligence composed (honest 404) or without a space the
       // calls read stays unavailable — never a failed card.
-      spaceId === null
-        ? { value: null, error: null }
-        : settle(() => client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)),
+      (spaceId === null
+        ? Promise.resolve({ value: null, error: null })
+        : settle(() => client.request(`/api/call-intelligence/calls/${encoded}?spaceId=${encodeURIComponent(spaceId)}`)))
+        .then((read) => take('calls', read)),
       // Custom fields (backlog:434cc39a): the space-wide definitions with
       // this customer's values. An older server without the routes answers
       // 404, and the section hides instead of failing the card.
-      settle(() => fetchFieldDefs(client)),
-      settle(() => fetchFieldValues(client, resource, id)),
+      settle(() => fetchFieldDefs(client)).then((read) => take('fieldDefs', read)),
+      settle(() => fetchFieldValues(client, resource, id)).then((read) => take('fieldValues', read)),
       // Backlog a551982c06eb: the composed pipelines name the offer's stage
       // exactly like the Pipeline board (the shell shares one schema read).
       // Without them the offer line falls back to the core stage.
-      settle(() => client.request('/api/schema')),
+      settle(() => client.request('/api/schema')).then((read) => take('pipelines', read, false)),
     ]);
-    // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
-    // retry — the package is not composed for this reader, so the read stays
-    // null and the section keeps its honest not-composed state. Only a
-    // non-404 failure names the retry error on the section.
-    const timeline = nullOn404(timelineRaw);
-    const profile = nullOn404(profileRaw);
-    const enrichment = nullOn404(enrichmentRaw);
-    const calls = nullOn404(callsRaw);
-    const fieldDefs = nullOn404(fieldDefsRaw);
-    const fieldValues = nullOn404(fieldValuesRaw);
-    return {
-      card: card.value,
-      cardError: card.error,
-      timeline: timeline.value,
-      timelineError: timeline.error,
-      profile: profile.value,
-      profileError: profile.error,
-      enrichment: enrichment.value,
-      enrichmentError: enrichment.error,
-      calls: calls.value,
-      callsError: calls.error,
-      fieldDefs: fieldDefs.value,
-      fieldDefsError: fieldDefs.error,
-      fieldValues: fieldValues.value,
-      fieldValuesError: fieldValues.error,
-      pipelines: Array.isArray(schemaRaw.value?.pipelines) ? schemaRaw.value.pipelines : [],
-    };
+    return { ...loaded };
   }
+
 
   function header(panel, card, resource, id) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
@@ -2702,7 +2732,7 @@ export function createCustomerCardView(deps) {
     const add = el('button', undefined, '+ Aggiungi campo');
     add.setAttribute('type', 'button');
     add.setAttribute('data-action', 'add-field');
-    add.addEventListener('click', () => {
+    const openAdd = (draft = null) => {
       if (box.querySelector?.('.bo-campo-add')) return;
       const form = addFieldForm(el, {
         onDefine: async (input) => {
@@ -2716,18 +2746,38 @@ export function createCustomerCardView(deps) {
         await renderCard(ctx.resource, ctx.id);
       });
       box.appendChild(form.wrap);
-    });
+      if (draft !== null) {
+        for (const [name, value] of Object.entries(draft)) {
+          const input = form.wrap.querySelector?.(`[name="${name}"]`);
+          if (input) {
+            input.value = value;
+            // The type select shows the options field for «Scelta».
+            if (typeof input.dispatchEvent === 'function' && typeof Event === 'function') input.dispatchEvent(new Event('change'));
+            else input.dispatch?.('change');
+          }
+        }
+      }
+    };
+    add.addEventListener('click', () => openAdd());
     box.appendChild(add);
+    // Review Muse #835 (P2): what was being typed comes back after a repaint.
+    const kept = pendingDrafts;
+    if (kept?.fieldAdd) openAdd(kept.fieldAdd);
+    const editingDef = kept?.field ? ctx.defs.find((def) => def?.key === kept.field.key) : null;
+    if (editingDef) renderFieldForm(box, ctx, editingDef, kept.field.value);
     return true;
   }
 
   /** In-place edit of one custom-field value: Salva rewrites the single row. */
-  function renderFieldForm(box, ctx, def) {
+  function renderFieldForm(box, ctx, def, draft = undefined) {
     while (box.firstChild) box.removeChild(box.firstChild);
+    box.setAttribute('data-editing-field', String(def?.key ?? ''));
+    const classes = String(box.getAttribute('class') ?? '');
+    if (!classes.split(/\s+/).includes('bo-campo-editing')) box.setAttribute('class', `${classes} bo-campo-editing`.trim());
     box.appendChild(el('h4', undefined, 'Campi personalizzati'));
     const rows = Array.isArray(ctx.values) ? ctx.values : [];
     const current = rows.find((row) => row?.key === def?.key)?.value ?? null;
-    const entry = fieldControl(el, def, current);
+    const entry = fieldControl(el, def, draft !== undefined ? draft : current);
     box.appendChild(entry.wrap);
     const row = el('div', 'bo-scheda-form-actions');
     const save = el('button', undefined, 'Salva');
@@ -3657,13 +3707,17 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
-    void readHistory(targetId).then(
+    const historyRead = readHistory(targetId);
+    void historyRead.then(
       ({ items, people }) => fill(items, people),
       (error) => {
         // Review giro 1 (P2): the rejection cause reaches on-call, like the
         // detail does — area, code, name, space and status only, never
         // payload or PII.
-        logHistoryFailure(error);
+        if (!loggedHistoryFailures.has(historyRead)) {
+          loggedHistoryFailures.add(historyRead);
+          logHistoryFailure(error);
+        }
         if (loading.parentNode) loading.textContent = 'Storia stati non leggibile.';
       },
     );
@@ -3888,6 +3942,8 @@ export function createCustomerCardView(deps) {
   // land: only the newest paints, so the scheda never holds two Dettagli
   // forms whose Salva would both write.
   let cardRenderToken = 0;
+  /** A first read of a customer paints its sections as they land (backlog:1a96094db71d). */
+  let progressive = false;
 
   async function renderCard(resource, id) {
     const key = `${resource}/${id}`;
@@ -3904,10 +3960,12 @@ export function createCustomerCardView(deps) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
       // line, so a direct link stayed blank for the whole read (5.8 s on
-      // production). The loading state shows at once; show() replaces it.
+      // production). backlog:1a96094db71d: a loading line alone still left
+      // 5-12 s of nothing to read — the scheda's structure shows at once
+      // (paintPartial below) and each section fills as its own read lands.
       while (mount.firstChild) mount.removeChild(mount.firstChild);
-      mount.appendChild(uiLoading(doc, { label: 'la scheda' }));
       shownKey = null;
+      progressive = true;
       shownSides = [];
       retainedDrafts = null;
       channelFilter = 'all';
@@ -3918,12 +3976,52 @@ export function createCustomerCardView(deps) {
       // with the same name re-narrows the crumb instead of staying silent.
       resetTitle();
     }
+    const firstVisit = progressive;
+    progressive = false;
+    if (firstVisit) heldFailures = { token: renderToken, drops: [] };
+    try {
+      await finishRender(key, resource, id, renderToken, startSeq, firstVisit);
+    } finally {
+      releaseHeldFailures(renderToken);
+    }
+  }
+
+  /**
+   * The reads of renderCard and the paint of what they answered.
+   * @param {string} key @param {string} resource @param {string} id
+   * @param {number} renderToken @param {Record<string, number>} startSeq
+   * @param {boolean} firstVisit
+   */
+  async function finishRender(key, resource, id, renderToken, startSeq, firstVisit) {
     // Voce 908f2eb9bbfb, review round 2: the load itself must never throw
     // out of here — a synchronous throw (a throwing spaceId thunk, a hostile
     // id) used to blank the scheda with neither the card nor the error panel.
     let loaded;
+    // A partial paint is a courtesy: if it ever throws, the scheda waits for
+    // the full answer like before instead of failing the read.
+    let partials = firstVisit;
+    const partialPaint = (partial, pending) => {
+      if (!partials || renderToken !== cardRenderToken || pending.size === 0) return;
+      try {
+        paintPartial(key, resource, id, partial, pending);
+      } catch (error) {
+        // Review Muse #835 (P2): the cause reaches on-call — name, code and
+        // the space only, never a value — so a stalled progressive load is
+        // never mistaken for slow reads.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] scheda parziale non disegnata', {
+            area: 'scheda-parziale',
+            code: /** @type {any} */ (error)?.code ?? null,
+            name: typeof /** @type {any} */ (error)?.name === 'string' ? /** @type {any} */ (error).name : null,
+            spaceId: activeSpaceId(),
+          });
+        }
+        partials = false;
+      }
+    };
+    partialPaint(null, PART_NAMES_PENDING());
     try {
-      loaded = await load(resource, id);
+      loaded = await load(resource, id, firstVisit ? partialPaint : null);
     } catch (error) {
       loaded = { card: null, cardError: error };
     }
@@ -3956,6 +4054,27 @@ export function createCustomerCardView(deps) {
   }
 
   /**
+   * C13: the re-read behind `Aggiorna` — the same enriched route the load
+   * uses, with the same honest 404. Anything else still rejects, so the
+   * button toasts the Italian retry instead of inventing rows.
+   * @param {string} key @param {string} resource @param {string} id
+   */
+  function enrichmentReloader(key, resource, id) {
+    const enrichedPath = `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
+    return () => client.request(enrichedPath).catch((error) => {
+      if (error && error.status === 404) return null;
+      throw error;
+    }).then((fresh) => {
+      // Review #787 (P2): what Aggiorna read is what the scheda now shows —
+      // a later repaint after a write keeps it, never the older copy.
+      if (lastShown !== null && lastShown.key === key) {
+        lastShown = { ...lastShown, loaded: { ...lastShown.loaded, enrichment: fresh, enrichmentError: null } };
+      }
+      return fresh;
+    });
+  }
+
+  /**
    * Builds the scheda from what was read (renderCard) or from what the
    * scheda already shows plus one write (refreshParts): the typing in
    * progress, the open windows, the filters and the scroll stay.
@@ -3967,21 +4086,7 @@ export function createCustomerCardView(deps) {
       enrichment, enrichmentError, calls, callsError,
       fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
     } = loaded;
-    // C13: the re-read behind `Aggiorna` — the same enriched route the load
-    // uses, with the same honest 404. Anything else still rejects, so the
-    // button toasts the Italian retry instead of inventing rows.
-    const enrichedPath = `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}`;
-    const reloadEnrichment = () => client.request(enrichedPath).catch((error) => {
-      if (error && error.status === 404) return null;
-      throw error;
-    }).then((fresh) => {
-      // Review #787 (P2): what Aggiorna read is what the scheda now shows —
-      // a later repaint after a write keeps it, never the older copy.
-      if (lastShown !== null && lastShown.key === key) {
-        lastShown = { ...lastShown, loaded: { ...lastShown.loaded, enrichment: fresh, enrichmentError: null } };
-      }
-      return fresh;
-    });
+    const reloadEnrichment = enrichmentReloader(key, resource, id);
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
     if (key === shownKey && retainedDrafts !== null) {
       pendingDrafts = { ...retainedDrafts, ...(pendingDrafts ?? {}) };
@@ -4014,8 +4119,9 @@ export function createCustomerCardView(deps) {
       const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
       read = readRoster().then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
       historyReads.set(targetId, read);
-      // A failed read is not kept: the next paint asks again.
-      read.catch(() => { if (historyReads.get(targetId) === read) historyReads.delete(targetId); });
+      // A failed read is not kept: the next paint asks again (after the
+      // sections of a first read have landed, backlog:1a96094db71d).
+      read.catch(() => holdOrDrop(() => { if (historyReads.get(targetId) === read) historyReads.delete(targetId); }));
     }
     return read;
   }
@@ -4028,6 +4134,27 @@ export function createCustomerCardView(deps) {
    * @type {Promise<Array<any>> | null}
    */
   let rosterRead = null;
+  /**
+   * backlog:1a96094db71d: while a first read paints its sections as they
+   * land, a failed roster or «Storia stati» read stays failed until the
+   * last part is in — the partial paints never ask (and log) it again.
+   * @type {{ token: number, drops: Array<() => void> } | null}
+   */
+  let heldFailures = null;
+  /** @param {() => void} drop */
+  function holdOrDrop(drop) {
+    if (heldFailures === null) drop();
+    else heldFailures.drops.push(drop);
+  }
+  /** @param {number} token */
+  function releaseHeldFailures(token) {
+    if (heldFailures === null || heldFailures.token !== token) return;
+    const { drops } = heldFailures;
+    heldFailures = null;
+    for (const drop of drops) drop();
+  }
+  /** Each failed «Storia stati» read is logged once, however many paints show it. */
+  const loggedHistoryFailures = new WeakSet();
   /** A note being saved, view-wide (review #793): one POST per note. */
   let noteSaving = false;
   /** @type {Array<any> | null} */
@@ -4038,7 +4165,7 @@ export function createCustomerCardView(deps) {
         (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
         (error) => {
           logHistoryFailure(error, 'scheda-stati-roster');
-          if (rosterRead === read) rosterRead = null;
+          holdOrDrop(() => { if (rosterRead === read) rosterRead = null; });
           return [];
         },
       );
@@ -4065,6 +4192,42 @@ export function createCustomerCardView(deps) {
   function writerName(id) {
     if (typeof id !== 'string' || id.trim() === '') return null;
     return rosterName(id.trim()) ?? teamName(id);
+  }
+
+  /**
+   * backlog:1a96094db71d — the scheda while its reads land: the structure
+   * at once (header, the three columns, every section card with grey bars),
+   * then each section the moment its own read is back. A card read that
+   * fails waits for the end, where the error panel takes the screen as
+   * before; a section never shows a value it has not read.
+   * @param {string} key @param {string} resource @param {string} id
+   * @param {any} partial what has landed, or null for nothing yet
+   * @param {Set<string> | null} pending the reads still in flight, null for all
+   */
+  function paintPartial(key, resource, id, partial, pending) {
+    const waiting = pending ?? PART_NAMES_PENDING();
+    if (partial?.cardError) return;
+    if (partial?.card) emitTitle(partial.card.name ?? null);
+    pendingDrafts = key === shownKey ? readDrafts(mount) : null;
+    try {
+      buildAndShow(key, resource, id, {
+        ...(partial ?? {}),
+        reloadEnrichment: enrichmentReloader(key, resource, id),
+        pipelines: partial?.pipelines ?? [],
+        pending: waiting,
+      });
+    } finally {
+      pendingDrafts = null;
+    }
+  }
+
+  /** A section card still waiting for its read: its title and grey bars. @param {any} box @param {string} title */
+  function skeletonSection(box, title) {
+    box.setAttribute('aria-busy', 'true');
+    box.setAttribute('data-loading', 'true');
+    box.appendChild(el('h4', undefined, title));
+    for (const width of ['80%', '62%', '70%']) box.appendChild(uiSkeleton(doc, { width, block: true }));
+    return true;
   }
 
   /** What the scheda on screen was built from (backlog:2a214b66fe12). */
@@ -4139,9 +4302,26 @@ export function createCustomerCardView(deps) {
     card, timeline, timelineError, profile, profileError,
     enrichment, enrichmentError, calls, callsError,
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+    pending = null,
   }) {
     const panel = el('div', 'bo-scheda');
-    header(panel, card, resource, id);
+    if (pending !== null && pending.size > 0) {
+      panel.setAttribute('aria-busy', 'true');
+      panel.setAttribute('data-loading', 'true');
+    }
+    // backlog:1a96094db71d: a part still in flight paints its section as a
+    // skeleton (the same card, its title, grey bars), never an empty claim.
+    const waits = (...parts) => pending !== null && parts.some((part) => pending.has(part));
+    if (waits('card')) {
+      const head = el('div', 'bo-scheda-head');
+      head.setAttribute('data-loading', 'true');
+      head.setAttribute('aria-busy', 'true');
+      head.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+      head.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+      panel.appendChild(head);
+    } else {
+      header(panel, card, resource, id);
+    }
     const grid = el('div', 'bo-scheda-grid');
     // Dan 06/11: the side columns stay put while the conversation scrolls.
     const left = el('div', 'bo-scheda-col bo-scheda-col-side');
@@ -4154,18 +4334,29 @@ export function createCustomerCardView(deps) {
       const shown = fn(box, ...args);
       if (shown !== false && box.childNodes.length > 0) col.appendChild(box);
     };
-    section(left, '', quickActions, card, {
-      resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
-    }, { numbers: schedaNumbers(card, profile, timeline) });
-    section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
-    section(left, '', details, card, profile, { resource, id }, profileError);
+    const skeleton = (col, cls, title) => section(col, cls, skeletonSection, title);
+    if (waits('card', 'profile', 'timeline')) skeleton(left, '', 'Azioni rapide');
+    else {
+      section(left, '', quickActions, card, {
+        resource, id, contactCompanyId: profile?.identity?.contact?.companyId ?? null,
+      }, { numbers: schedaNumbers(card, profile, timeline) });
+    }
+    if (waits('profile', 'timeline')) skeleton(left, '', 'Identità collegate');
+    else section(left, '', linkedIdentities, profile, timeline, profileError, timelineError);
+    if (waits('card', 'profile')) skeleton(left, '', 'Dettagli');
+    else section(left, '', details, card, profile, { resource, id }, profileError);
     // Custom fields (backlog:434cc39a): a failed defs/values read hides the
     // section, never the scheda — like enrichment above.
-    if (!fieldDefsError && !fieldValuesError) {
+    if (waits('fieldDefs', 'fieldValues')) {
+      // No skeleton: the section may well hide itself once read.
+    } else if (!fieldDefsError && !fieldValuesError) {
       section(left, '', customFields, { defs: fieldDefs, values: fieldValues, resource, id });
     }
-    section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
-    if (timelineError) {
+    if (waits('enrichment')) skeleton(left, '', "Arricchito dall'AI");
+    else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
+    if (waits('timeline', 'profile', 'pipelines')) {
+      skeleton(center, 'bo-scheda-card-timeline', 'Tutti i contatti');
+    } else if (timelineError) {
       section(center, 'bo-scheda-card-timeline', (box) => {
         box.appendChild(el('h4', undefined, 'Tutti i contatti'));
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
@@ -4173,7 +4364,10 @@ export function createCustomerCardView(deps) {
     } else {
       section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines);
     }
-    if (callsError) {
+    if (waits('calls')) {
+      skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');
+      skeleton(right, '', 'Chiamate');
+    } else if (callsError) {
       section(right, 'bo-scheda-ai', (box) => {
         box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
         readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
@@ -4186,9 +4380,12 @@ export function createCustomerCardView(deps) {
       section(right, 'bo-scheda-ai', aiSummary, calls);
       section(right, '', callsBox, calls);
     }
-    section(right, '', nextSteps, profile, profileError, { resource, id });
-    section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
-    section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
+    if (waits('profile')) skeleton(right, '', 'Prossimi passi');
+    else section(right, '', nextSteps, profile, profileError, { resource, id });
+    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
+    if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
