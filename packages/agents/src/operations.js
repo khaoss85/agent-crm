@@ -3,6 +3,12 @@
 import { AppError, ConflictError, nowIso, withTimeout } from '../../core/index.js';
 import { agentMentionName } from './catalog.js';
 import {
+  buildSquadOverview,
+  checkSquadInput,
+  decodeSquadRow,
+  squadMemberAgentName,
+} from './squads.js';
+import {
   AGENTS_DOMAIN,
   AGENT_APPLY_PERMISSION,
   AGENT_APPLY_TIMEOUT_MS,
@@ -336,6 +342,7 @@ export function createAgentOperations(options = {}) {
   const agents = () => trusted(modules, 'teammate-agent');
   const assignments = () => trusted(modules, 'teammate-assignment');
   const runs = () => trusted(modules, 'teammate-run');
+  const squads = () => trusted(modules, 'teammate-squad');
 
   /**
    * Create one row keyed by a caller source key, replaying the winner when a
@@ -1111,5 +1118,118 @@ export function createAgentOperations(options = {}) {
     });
   }
 
-  return { createAgent, createAssignment, runDue, approveRun, rejectRun, reviseRun };
+  /**
+   * Create one squad (backlog:0d2d8f2e): from a ready-made template, from a
+   * free-text brief matched to a template by keywords, or from an explicit
+   * plan. The member agents and their routines are created through the
+   * existing create-agent / create-assignment operations, so a squad never
+   * duplicates the agent engine: every member answers in the squad's name
+   * (`<squad> · <member>`), and a retry replays each row by its key.
+   */
+  async function createSquad(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireAgentActor(record.actor, 'Creating a squad');
+    const input = checkSquadInput(record);
+    const at = now();
+    const memberKeys = input.members.map((member) => `${input.sourceKey}:member:${member.key}`);
+    const memberRows = [];
+    for (let index = 0; index < input.members.length; index += 1) {
+      const member = input.members[index];
+      const made = await createAgent({
+        actor,
+        spaceId: input.spaceId,
+        sourceKey: memberKeys[index],
+        name: squadMemberAgentName(input.name, member.name),
+        role: member.role,
+        instructions: member.instructions,
+        ...(member.spendingCapCents === null ? {} : { spendingCapCents: member.spendingCapCents }),
+      });
+      memberRows.push(made.agent);
+    }
+    const routineRows = [];
+    for (let index = 0; index < input.routines.length; index += 1) {
+      const routine = input.routines[index];
+      const memberIndex = input.members.findIndex((member) => member.key === routine.memberKey);
+      const made = await createAssignment({
+        actor,
+        spaceId: input.spaceId,
+        sourceKey: `${input.sourceKey}:routine:${routine.memberKey}:${index}`,
+        agentSourceKey: memberKeys[memberIndex],
+        phrase: routine.phrase,
+        ...(routine.plan === null ? {} : { plan: routine.plan }),
+        ...(routine.costPerRunCents === 0 ? {} : { costPerRunCents: routine.costPerRunCents }),
+      });
+      routineRows.push(made.assignment);
+    }
+    const made = await createOrReplay(squads(), input.spaceId, input.sourceKey, {
+      sourceKey: input.sourceKey,
+      spaceId: input.spaceId,
+      name: input.name,
+      objective: input.objective,
+      metricName: input.metric.name,
+      metricTarget: input.metric.target,
+      metricUnit: input.metric.unit,
+      membersJson: JSON.stringify(input.members.map((member, index) => ({
+        key: member.key,
+        agentSourceKey: memberKeys[index],
+        name: member.name,
+        role: member.role,
+      }))),
+      phasesJson: JSON.stringify(input.phases),
+      sourcesJson: JSON.stringify(input.sources),
+      outputsJson: JSON.stringify(input.outputs),
+      ...(input.spendingCapCents === null ? {} : { spendingCapCents: input.spendingCapCents }),
+      ...(input.templateSlug === null ? {} : { templateSlug: input.templateSlug }),
+      ...(input.brief === null ? {} : { brief: input.brief }),
+      status: 'active',
+      decidedAt: at,
+      actorType: actor.type,
+      actorId: actor.id,
+      sourcePackage: AGENTS_DOMAIN,
+      sourceAction: 'create-squad',
+    }, actor);
+    return {
+      duplicate: made.duplicate,
+      squad: decodeSquadRow(made.row),
+      members: memberRows,
+      routines: routineRows,
+    };
+  }
+
+  /**
+   * The per-squad view (backlog:0d2d8f2e §2), read from production rows:
+   * backlog A, routines, backlog B (the proposals the owner approves through
+   * approve-run / reject-run / revise-run) and the advisor metric against
+   * the objective. Counts come from rows, never stored.
+   */
+  async function readSquadOverview(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const spaceId = checkSpaceId(record.spaceId);
+    const sourceKey = typeof record.squadSourceKey === 'string' && record.squadSourceKey.trim() !== ''
+      ? record.squadSourceKey
+      : (() => { throw new AppError('squadSourceKey is required', { code: 'SQUAD_KEY_REQUIRED', status: 400 }); })();
+    const row = (await squads().listWhere({ spaceId, sourceKey }))[0] ?? null;
+    if (!row) {
+      throw new AppError('Unknown squad in this space', { code: 'SQUAD_UNKNOWN', status: 404 });
+    }
+    const squad = decodeSquadRow(row);
+    const memberKeys = squad.members.map((member) => member?.agentSourceKey).filter((key) => typeof key === 'string');
+    const spaceAgents = await agents().listWhere({ spaceId });
+    const memberAgents = spaceAgents.filter((agent) => memberKeys.includes(agent?.sourceKey));
+    const memberAssignments = memberKeys.length === 0
+      ? []
+      : await assignments().listWhere({ spaceId, agentSourceKey: memberKeys });
+    const memberRuns = memberKeys.length === 0
+      ? []
+      : await runs().listWhere({ spaceId, agentSourceKey: memberKeys });
+    return buildSquadOverview({
+      squad,
+      agents: memberAgents,
+      assignments: memberAssignments,
+      runs: memberRuns,
+      now: now(),
+    });
+  }
+
+  return { createAgent, createAssignment, createSquad, readSquadOverview, runDue, approveRun, rejectRun, reviseRun };
 }
