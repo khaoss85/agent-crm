@@ -663,14 +663,41 @@ const MONEY_FORMATS = new Map();
  */
 export function euro(minor, currency = 'EUR') {
   if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
-  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : '';
-  const code = /^[A-Z]{3}$/.test(raw) ? raw : 'EUR';
+  // null/undefined/'' are a missing code; any other non-string is malformed.
+  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : (currency == null ? '' : '?');
+  // Missing currency reads as EUR; a code that is malformed, unknown to
+  // this runtime or not formattable fails closed (review #761 P1): the
+  // grouped amount with no symbol, never a thrown error nor a presumed €.
+  const code = raw === '' ? 'EUR' : raw;
+  if (!isKnownCurrency(code)) return plainAmount(minor);
   let format = MONEY_FORMATS.get(code);
   if (format === undefined) {
-    format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
+    try {
+      format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
+    } catch {
+      return plainAmount(minor);
+    }
     MONEY_FORMATS.set(code, format);
   }
   return format.format(minor / 100);
+}
+
+/**
+ * Whether a currency code is a well-formed ISO code this runtime lists
+ * (Intl.supportedValuesOf when present; the shape alone on older ones).
+ * @param {string} code
+ */
+let KNOWN_CURRENCIES;
+function isKnownCurrency(code) {
+  if (!/^[A-Z]{3}$/.test(code)) return false;
+  if (KNOWN_CURRENCIES === undefined) {
+    try {
+      KNOWN_CURRENCIES = typeof Intl.supportedValuesOf === 'function' ? new Set(Intl.supportedValuesOf('currency')) : null;
+    } catch {
+      KNOWN_CURRENCIES = null;
+    }
+  }
+  return KNOWN_CURRENCIES === null || KNOWN_CURRENCIES.has(code);
 }
 
 /** Grouped amount with no currency symbol, built once. */

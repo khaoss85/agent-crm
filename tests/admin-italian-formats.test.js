@@ -30,8 +30,28 @@ test('9236684c96a7: euro() groups the thousands always, cents always shown', () 
   assert.equal(seen(euro(-108050)), '-1.080,50 €');
   assert.equal(seen(euro(0, 'USD')), '0,00 USD');
   assert.equal(seen(euro(108000, 'eur')), '1.080,00 €', 'a lower-case code is the same currency');
-  assert.equal(seen(euro(108000, 'not a code')), '1.080,00 €', 'an unreadable code falls back to EUR');
+  assert.equal(seen(euro(108000, 'not a code')), '1.080,00', 'an unreadable code: bare amount, never a presumed € (review #761 P1)');
+  assert.equal(seen(euro(108000, '')), '1.080,00 €', 'a missing code is EUR');
   for (const bad of [1.5, NaN, Infinity, '108000', null, undefined]) assert.equal(euro(bad), null, `never a guessed figure: ${bad}`);
+});
+
+test('review #761 P1: euro() never throws on an unknown or unformattable currency', () => {
+  for (const code of ['XYZ', 'QQQ', 'E1R', 'EURO', 42, {}]) {
+    assert.doesNotThrow(() => euro(108000, code), `no throw for ${String(code)}`);
+    assert.equal(seen(euro(108000, code)), '1.080,00', `${String(code)}: grouped amount, no symbol`);
+  }
+  // Even a runtime whose formatter refuses a listed code fails closed.
+  const Original = Intl.NumberFormat;
+  Intl.NumberFormat = function Refusing(locale, options) {
+    if (options && options.currency === 'CHF') throw new RangeError('Invalid currency code');
+    return new Original(locale, options);
+  };
+  try {
+    assert.equal(seen(euro(108000, 'CHF')), '1.080,00');
+  } finally {
+    Intl.NumberFormat = Original;
+  }
+  assert.equal(seen(formatMoney(108000, 'XYZ')), '1.080,00', 'Reporting reads the same, never an error');
 });
 
 test('9236684c96a7: Reporting (Valore pipeline aperto, Preventivi aperti) reads «1.080,00 €»', () => {
