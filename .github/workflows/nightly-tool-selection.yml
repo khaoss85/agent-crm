@@ -5,16 +5,19 @@ name: Nightly tool-selection matrix
 # receipt tests on every CI run and skips the 21 worktree-heavy cells unless the
 # variable is set. This job sets it, so the whole matrix still runs daily, off
 # peak, on the same self-hosted runner — coverage is moved, not removed.
-# Launched once a night (01:17-04:59Z) by the Accordo supervisor on the server: the systemd user timer
-# accordo-night runs night-supervisor.sh every 600 s, which calls nightly-matrix.sh run (owner GO 13/11). The
-# launcher lives outside this repo, in the supervisor tools on the CI server
-# (~/dev/_handoff/accordo-minimal-supervisor/tools/nightly-matrix.sh). It dispatches at most once a night and only when no run of that night exists; a
-# night with no successful run is reported as NOT DONE in the supervisor round. The GitHub schedule fired ~7 h
-# late every day (10-13/11) and could run twice next to it, so it is removed here. Keeping the launcher outside
-# this repo is the owner decision of 13/11 (GO to the supervisor: reuse the existing accordo-night round, no
-# in-repo trigger, no double run); the window guard of #855 is gone with the schedule it guarded.
+# Two launchers, one run a night (owner GO 13/11: one run a night after 01:17Z, idempotent, no double with the
+# GitHub event). The server launcher (accordo-night round -> nightly-matrix.sh, outside this repo) dispatches at
+# 01:17Z unless a run of that night exists. The GitHub schedule stays as the in-repo fallback: a scheduled run
+# skips when it starts outside 00:00-04:59 UTC (it came ~7 h late every day 10-13/11) or when another run of
+# this workflow was already created this UTC night, so the two never run twice.
 on:
+  schedule:
+    - cron: '17 1 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: nightly-tool-selection
@@ -26,9 +29,31 @@ jobs:
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Late or duplicate scheduled runs skip in seconds instead of holding a runner, with a warning; the
+      # supervisor round reports a night without a successful run as NOT DONE. A manual dispatch always runs.
+      - id: window
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          h=$((10#$(date -u +%H)))
+          run=true
+          if [ "${{ github.event_name }}" = schedule ]; then
+            if [ "$h" -ge 5 ]; then
+              run=false; echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04"
+            else
+              others=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
+                --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length") || others=0
+              if [ "${others:-0}" -gt 0 ]; then run=false; echo "::notice::nightly matrix already launched tonight ($others other run(s)); this scheduled run skips"; fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - run: npm ci
-      - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
+      - if: steps.window.outputs.run == 'true'
+        run: npm ci
+      - if: steps.window.outputs.run == 'true'
+        run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
