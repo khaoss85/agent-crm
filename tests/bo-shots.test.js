@@ -31,8 +31,10 @@ import {
   BO_SCREENS,
   SCREENS,
   SHELL_SCREENS,
+  SHOT_MAX_ATTEMPTS,
   USAGE,
   assertProbe,
+  checkShotSize,
   chromiumFlags,
   chromiumRuns,
   findChromium,
@@ -40,6 +42,7 @@ import {
   parseArgs,
   readPngSize,
   readProbe,
+  shotFloor,
 } from '../scripts/bo-shots.js';
 
 const root = join(fileURLToPath(import.meta.url), '..', '..');
@@ -205,6 +208,40 @@ test('parseArgs refuses unknown screens and flags', () => {
   assert.throws(() => parseArgs(['--screen']), /needs one of/);
   assert.throws(() => parseArgs(['--out']), /needs a directory/);
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
+});
+
+test('below-floor shots are retaken once, never lowered (backlog:418b90704674)', () => {
+  // One retry only: the first shot plus exactly one retake, then the run
+  // fails naming the screen. The floors themselves never move down.
+  assert.equal(SHOT_MAX_ATTEMPTS, 2, 'first shot plus exactly one retry');
+  assert.equal(shotFloor('desktop'), 20000, 'the desktop floor stays at 20000 bytes');
+  assert.equal(shotFloor('phone'), 10000, 'the phone floor stays at 10000 bytes');
+  assert.throws(() => shotFloor('tablet'), /no byte floor/, 'unknown viewports have no floor');
+});
+
+test('checkShotSize gates existence and dimensions, never the floor', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-size-'));
+  const header = Buffer.from('89504e470d0a1a0a', 'hex');
+  const length = Buffer.alloc(4);
+  const kind = Buffer.from('IHDR', 'ascii');
+  const dimensions = Buffer.alloc(8);
+  dimensions.writeUInt32BE(1440, 0);
+  dimensions.writeUInt32BE(1800, 4);
+  const file = join(dir, 'shot.png');
+  writeFileSync(file, Buffer.concat([header, length, kind, dimensions]));
+  const shot = checkShotSize(file, 'oggi', 'desktop', { width: 1440, height: 1800 });
+  assert.equal(shot.width, 1440);
+  assert.equal(shot.height, 1800);
+  // A wrong size is deterministic from --window-size, never a paint race:
+  // it throws at once and names the screen, without consuming the retake.
+  assert.throws(
+    () => checkShotSize(file, 'oggi', 'phone', { width: 390, height: 1600 }),
+    /oggi phone: the PNG is 1440x1800, expected 390x1600/,
+  );
+  assert.throws(
+    () => checkShotSize(join(dir, 'missing.png'), 'oggi', 'desktop', { width: 1440, height: 1800 }),
+    /oggi desktop: .* without writing the screenshot/,
+  );
 });
 
 test('readPngSize reads dimensions and refuses non-PNG output', () => {

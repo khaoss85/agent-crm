@@ -776,6 +776,41 @@ if (diagEl) {
 
 const MIN_BYTES = Object.freeze({ desktop: 20000, phone: 10000 });
 
+// First shot plus exactly one retake of a below-floor PNG, then fail naming
+// the screen (backlog:418b90704674). The floor itself never moves down.
+export const SHOT_MAX_ATTEMPTS = 2;
+
+/**
+ * Painted-bytes floor for a viewport kind.
+ * @param {string} kind
+ */
+export function shotFloor(kind) {
+  if (kind === 'desktop') return MIN_BYTES.desktop;
+  if (kind === 'phone') return MIN_BYTES.phone;
+  throw new Error(`bo:shots has no byte floor for viewport "${kind}"`);
+}
+
+/**
+ * PNG existence plus dimensions for a screenshot file. A below-floor byte
+ * count is NOT thrown here: that is the paint race the caller retakes once,
+ * while dimensions come straight from `--window-size` and are deterministic,
+ * so they throw at once.
+ * @param {string} file
+ * @param {string} screenName
+ * @param {string} kind
+ * @param {{ width: number, height: number }} viewport
+ */
+export function checkShotSize(file, screenName, kind, viewport) {
+  if (!existsSync(file)) {
+    throw new Error(`${screenName} ${kind}: chromium exits 0 without writing the screenshot`);
+  }
+  const shot = readPngSize(file);
+  if (shot.width !== viewport.width || shot.height !== viewport.height) {
+    throw new Error(`${screenName} ${kind}: the PNG is ${shot.width}x${shot.height}, expected ${viewport.width}x${viewport.height}`);
+  }
+  return shot;
+}
+
 /** @param {string} name */
 function fixtureScript(name) {
   switch (name) {
@@ -1930,11 +1965,16 @@ export function assertProbe(name, probe) {
 /**
  * Renders one screen at both viewports. Throws on the first failed proof:
  * a missing PNG, a wrong width, a too-small file (nothing painted), a
- * harness that never finished, demo text missing from the painted DOM, or
- * a probe that proves an empty or half-painted render. The PNG and the DOM
- * proof come from two Chromium runs over the same harness URL with the
- * same fixtures under a frozen virtual clock, so both runs paint the same
- * logical page state and the PNG is gated on the probe of that state.
+ * harness that never finished, demo text missing from the painted DOM, a
+ * probe that proves an empty or half-painted render, a missing PNG, a wrong
+ * width, or a too-small file (nothing painted). The DOM proof and the PNG
+ * come from two Chromium runs over the same harness URL with the same
+ * fixtures under a frozen virtual clock, so both runs paint the same
+ * logical page state — and the proof run goes first: the screenshot is only
+ * taken after the harness signalled its `<name>-ready` title, never on a
+ * half-drawn page. A below-floor PNG is retaken exactly once and then fails
+ * naming the screen; the floor itself never moves down.
+ * (backlog:418b90704674).
  * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
  */
 async function renderScreen({ binary, flags, port, screen, outDir }) {
@@ -1951,24 +1991,8 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
   const shots = [];
   for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', PHONE]]) {
     const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
-    // Reduced motion: the pacer lets the virtual clock follow the real one
-    // while a harness works, so the moment a looping animation (the Stato
-    // sync dot, a skeleton pulse) starts differs run to run. The still
-    // shows each element at rest, and two runs give the same PNG.
-    const run = await runChromium(binary, [
-      '--headless',
-      ...flags,
-      `--screenshot=${file}`,
-      `--window-size=${viewport.width},${viewport.height}`,
-      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
-      '--force-prefers-reduced-motion',
-      '--hide-scrollbars',
-      '--disable-background-networking',
-      page,
-    ], 120000);
-    if (run.status !== 0) {
-      throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
-    }
+    // The proof run goes first (backlog:418b90704674): only a harness that
+    // signalled its ready title gets photographed, never a half-drawn page.
     const dom = await runChromium(binary, [
       '--headless', ...flags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
@@ -2011,16 +2035,35 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
         throw new Error(`${screen.name} ${kind}: the painted screen misses its demo data (${JSON.stringify(expected)})`);
       }
     }
-    if (!existsSync(file)) {
-      throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} without writing the screenshot`);
+    // Reduced motion: the pacer lets the virtual clock follow the real one
+    // while a harness works, so the moment a looping animation (the Stato
+    // sync dot, a skeleton pulse) starts differs run to run. The still
+    // shows each element at rest, and two runs give the same PNG.
+    // A below-floor PNG is a paint race, so it gets exactly one retake and
+    // then fails naming the screen; the floor itself never moves down.
+    const take = () => runChromium(binary, [
+      '--headless',
+      ...flags,
+      `--screenshot=${file}`,
+      `--window-size=${viewport.width},${viewport.height}`,
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
+      '--hide-scrollbars',
+      '--disable-background-networking',
+      page,
+    ], 120000);
+    const floor = shotFloor(kind);
+    let shot = null;
+    for (let attempt = 1; attempt <= SHOT_MAX_ATTEMPTS; attempt += 1) {
+      const run = await take();
+      if (run.status !== 0) {
+        throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
+      }
+      shot = checkShotSize(file, screen.name, kind, viewport);
+      if (shot.bytes >= floor || attempt === SHOT_MAX_ATTEMPTS) break;
     }
-    const shot = readPngSize(file);
-    if (shot.width !== viewport.width || shot.height !== viewport.height) {
-      throw new Error(`${screen.name} ${kind}: the PNG is ${shot.width}x${shot.height}, expected ${viewport.width}x${viewport.height}`);
-    }
-    const floor = kind === 'desktop' ? MIN_BYTES.desktop : MIN_BYTES.phone;
     if (shot.bytes < floor) {
-      throw new Error(`${screen.name} ${kind}: the PNG holds ${shot.bytes} bytes, below the ${floor}-byte painted floor`);
+      throw new Error(`${screen.name} ${kind}: the PNG holds ${shot.bytes} bytes, below the ${floor}-byte painted floor (retaken once)`);
     }
     shots.push({ file, width: shot.width, height: shot.height, bytes: shot.bytes, viewport: kind });
     console.log(`  ✓ ${screen.name} ${kind} ${shot.width}×${shot.height} ${shot.bytes} bytes`);
