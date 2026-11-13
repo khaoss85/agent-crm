@@ -882,6 +882,38 @@ export function buildRouter(app) {
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
 
+  // Scheda cliente note «Modifica» and «Elimina» (backlog:82235e46e3e9):
+  // the same enumerated-adapter shape as the notes route above. Neither
+  // rewrites a row: the work operations append a correction or a withdrawal
+  // naming the original note, so the timeline shows the latest wording or
+  // hides the note while every version stays on record. Fixed paths with
+  // the note in the body, so a gateway allowlist names them one by one.
+  for (const [path, method, label] of [
+    ['/api/customer-hub/notes/revise', 'reviseSubjectNote', 'subject note revision'],
+    ['/api/customer-hub/notes/withdraw', 'withdrawSubjectNote', 'subject note withdrawal'],
+  ]) {
+    router.add('POST', path, async ({ body, actor, identity, organizationId }) => {
+      const decision = await gate(app, identity, organizationId, 'records.write');
+      if (typeof app[method] !== 'function') {
+        throw new NotFoundError('Operation', label);
+      }
+      const input = recordInput(body);
+      // The role is the authorization decision's, never the caller's: only
+      // the note's writer or the space owner may change a note.
+      delete input.actorRole;
+      if (input.resource === 'contact') {
+        await app.services.contacts.get(String(input.id ?? ''));
+      } else if (input.resource === 'company') {
+        await app.services.companies.get(String(input.id ?? ''));
+      } else {
+        throw new ValidationError(`a ${label} needs resource contact or company`, { field: 'resource' });
+      }
+      const actorRole = typeof decision?.role === 'string' ? decision.role : null;
+      return respond(method === 'withdrawSubjectNote' ? 200 : 201,
+        await app[method]({ ...stripServerControlledKeys(input), actor, actorRole }));
+    });
+  }
+
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial
   // it. Same enumerated-adapter shape as the notes route: the kernel owns
@@ -1598,6 +1630,9 @@ export function buildRouter(app) {
         type: query.type,
         companyId: query.companyId,
         limit: parseLimit(query.limit),
+        // backlog:67a3116f4f65: the Pipeline board asks `order=board`
+        // (position, then newest first); every other reader keeps newest first.
+        order: query.order,
       }),
     };
   });

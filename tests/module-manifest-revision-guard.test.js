@@ -170,7 +170,7 @@ const RECORDED = Object.freeze({
   "space-ai-proposal": { revision: 1, sqlite: "d18e8ceb73e207974215fae3fcb5190e48b68dcca130f183e927cde6feef16d3", pg: "97887405896a53fd187b8e647fbecd09aaaae10bc39f51fed8c23e97baac8e0e" },
   "space-package": { revision: 1, sqlite: "386e216d5a4410b264a32f73b6fc61a642a850b00ed27563b12af710628415ef", pg: "814768de0269ccf4b0bfcf98e07b393e16b67846f0a7d754e315947061cda04b" },
   "space-permission-override": { revision: 1, sqlite: "162686fdf7779342733fcfe0e921e223f11ee22906f76bbc4411f4341745c45b", pg: "a34bf6b440900c52f149b72a36164fc6d280dbdc1e8b85ccf121d0466d453f41" },
-  "work-activity": { revision: 2, sqlite: "42270f60cda19a00a619e349b9139484d6f7422dfb530806a253b6cb020d0fe2", pg: "105d69c5ce69c1f200ed4317d33112f5f3d3be9bc4bc79520100518e64279895" },
+  "work-activity": { revision: 3, sqlite: "aa509c31e538c28f2579fd3475c57d31df99fef68c301fd42658b38e2e474c36", pg: "776da1b75bd448e829e297c80431f0ec0938e4bd9145711b7cb9be5ac5e494bd" },
   "work-task": { revision: 1, sqlite: "42f2f15c58bfebce0e745d9090e23461202d0aba60df85446688f7a99b1085a3", pg: "3c3114ed031a0208c2c1abeb12026ef8502086923d88f87ef8d27bbc3e88c887" },
 });
 
@@ -303,12 +303,12 @@ test('a revision bump without history fails the history contract', () => {
   assertRevisionHistoryContract('guard-probe-module', 1);
   // Modules with real history stay covered by it.
   assertRevisionHistoryContract('data-quality-issue', 2);
-  assertRevisionHistoryContract('work-activity', 2);
+  assertRevisionHistoryContract('work-activity', 3);
   assertRevisionHistoryContract('calendar-sync-state', 2);
   // A covering history that is short for the revision fails too.
   assert.throws(
-    () => assertRevisionHistoryContract('work-activity', 3),
-    /ships 1 revision\(s\) of history; expected 2/,
+    () => assertRevisionHistoryContract('work-activity', 4),
+    /ships 2 revision\(s\) of history; expected 3/,
   );
 });
 

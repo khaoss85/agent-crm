@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -810,6 +810,30 @@ export function withOfferStage(loaded, opportunityId, kind, stage) {
         && (row.opportunityStage != null || row.opportunityPipelineStage != null), joined),
     },
   };
+}
+
+/** The longest note the server keeps (work `bounds.noteBody`). */
+const NOTE_MAX = 1000;
+const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri.`;
+
+/**
+ * What a refused note says (backlog:82235e46e3e9 seguito, production
+ * 12/11): a validation refusal names what to correct, never «Riprova più
+ * tardi» — retrying the same text would be refused again. Anything else
+ * keeps the write's own wording.
+ * @param {unknown} error
+ */
+export function noteRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'BO_CRM_BODY_REFUSED' || status === 400 || status === 422) {
+    const said = String(record.message ?? '');
+    if (/at most|between 1 and/i.test(said)) return NOTE_TOO_LONG;
+    if (/control characters/i.test(said)) return 'La nota contiene caratteri non ammessi: riscrivila come testo semplice.';
+    return `La nota non è stata accettata: scrivi un testo semplice, da 1 a ${NOTE_MAX} caratteri.`;
+  }
+  return humanWriteError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
 }
 
 export function createCustomerCardView(deps) {
@@ -3361,6 +3385,10 @@ export function createCustomerCardView(deps) {
           noteError.textContent = 'Scrivi la nota prima di aggiungerla.';
           return;
         }
+        if (String(noteInput.value).trim().length > NOTE_MAX) {
+          noteError.textContent = NOTE_TOO_LONG;
+          return;
+        }
         noteSaving = true;
         noteError.textContent = '';
         try {
@@ -3378,8 +3406,9 @@ export function createCustomerCardView(deps) {
           mount.querySelector('[name="noteBody"]')?.focus?.();
           await refreshed;
         } catch (error) {
-          noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
-          toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
+          const said = noteRefusalText(error);
+          noteError.textContent = said;
+          toast(said, true);
         } finally {
           noteSaving = false;
         }
@@ -3515,22 +3544,29 @@ export function createCustomerCardView(deps) {
       line.appendChild(el('span', 'bo-scheda-sep', ' · '));
       line.appendChild(el('span', 'bo-scheda-offer-state', offerStatus));
     }
-    // Voce cf340b571e98: a quote row opens its detail (righe, totale, stato,
-    // storia) — the line is a link to #/quotes/<id>. An opportunity without
-    // a quote has no detail screen, so its fallback line stays plain text.
-    const quoteId = fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // backlog:a2ea75f705fd: the offer line opens the offer page
+    // (#/offerte/<opportunity id>) — stato, valore, preventivi e storia in
+    // one place — for a quote row (its offer) and an offer row alike. Only
+    // a quote that names no offer keeps its own detail (#/quotes/<id>).
+    const offerId = fromQuote
+      ? (typeof first?.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null)
+      : (typeof first?.id === 'string' && first.id !== '' ? first.id : null);
+    const quoteOnly = offerId === null && fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    const offerHref = offerId !== null
+      ? `#/offerte/${encodeURIComponent(offerId)}`
+      : (quoteOnly !== null ? `#/quotes/${encodeURIComponent(quoteOnly)}` : null);
     // Voce 59def6cb805d (C25): the prototype's big amount, read from the
     // server total the profile carries — never summed here. No figure (a
     // recurring quote, a record without a value, an empty draft) shows none.
     const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
       && typeof first?.currency === 'string' && first.currency !== ''
       ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
-    if (quoteId === null) {
+    if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
-      link.setAttribute('href', `#/quotes/${encodeURIComponent(quoteId)}`);
+      link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
       box.appendChild(link);
@@ -4407,7 +4443,11 @@ export function createCustomerCardView(deps) {
     }
     if (waits('enrichment')) skeleton(left, '', "Arricchito dall'AI");
     else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
-    if (waits('timeline', 'profile', 'pipelines')) {
+    // Voce 908f2eb9bbfb (AC-3): the cronologia paints from the timeline read
+    // alone — timelineBox only takes optional extras from the profile
+    // (company name, offers, quotes, all null-safe), so a slow profile never
+    // holds the entries hostage.
+    if (waits('timeline')) {
       skeleton(center, 'bo-scheda-card-timeline', 'Tutti i contatti');
     } else if (timelineError) {
       section(center, 'bo-scheda-card-timeline', (box) => {

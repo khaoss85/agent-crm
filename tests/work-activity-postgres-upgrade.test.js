@@ -94,8 +94,16 @@ test('a revision-1 database composes with the current framework through the prod
     const ledger = await check.query('SELECT name FROM accordo.module_migrations WHERE name LIKE \'%work_activit%\' ORDER BY name');
     assert.deepEqual(
       ledger.rows.map((row) => row.name),
-      ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2'],
+      // backlog:82235e46e3e9: revision 3 adds the note correction columns.
+      ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2', 'pg_evolve_work_activities_r3'],
     );
+    const added = await check.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'accordo' AND table_name = 'work_activities' AND column_name IN ('revises_id', 'withdrawn')
+       ORDER BY column_name`,
+    );
+    assert.deepEqual(added.rows.map((row) => row.column_name), ['revises_id', 'withdrawn'],
+      'the revision 3 columns exist after the upgrade');
     const columns = await check.query(
       `SELECT column_name FROM information_schema.columns
        WHERE table_schema = 'accordo' AND table_name = 'work_activities' AND column_name = 'seq'`,
@@ -126,6 +134,25 @@ test('a revision-1 database composes with the current framework through the prod
     seq: 1,
   }, { actor: { type: 'user', id: 'operator-1' } });
   assert.equal(written.seq, 1);
+  // backlog:82235e46e3e9: and a withdrawal row through the revision 3 columns.
+  const withdrawal = await service.createManaged({
+    sourceKey: 'note-withdrawal:legacy-1',
+    kind: 'note',
+    subjectResource: 'contact',
+    subjectId: 'contact-1',
+    taskId: null,
+    body: null,
+    occurredAt: '2026-10-18T09:00:00.000Z',
+    actorType: 'user',
+    actorId: 'operator-1',
+    sourcePackage: 'work',
+    sourceAction: 'withdraw-subject-note',
+    seq: 2,
+    revisesId: 'legacy-1',
+    withdrawn: true,
+  }, { actor: { type: 'user', id: 'operator-1' } });
+  assert.equal(withdrawal.revisesId, 'legacy-1');
+  assert.equal(withdrawal.withdrawn, true);
 });
 
 test('a hand-built history that disagrees with the checked-in one refuses loudly', { timeout: 300_000 }, async (t) => {
