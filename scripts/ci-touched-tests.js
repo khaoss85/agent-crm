@@ -136,7 +136,8 @@
  * fail-closed case left), 2 unusable input.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { availableParallelism, cpus } from 'node:os';
 import { spawn } from 'node:child_process';
 import { spawnGit } from './git-env.js';
 import { dirname, join, normalize } from 'node:path';
@@ -1097,6 +1098,11 @@ export function runTestShards(
     /** @type {string[]} */
     const failedFiles = [];
     let settled = false;
+    // Assigned below once the bound is armed. Declared first so a timer
+    // that fires synchronously (an injected one may) finds a callable
+    // cancel instead of a temporal-dead-zone ReferenceError.
+    /** @type {() => void} */
+    let cancelTimer = () => {};
     const settle = (
       /** @type {{ status: number, timedOut: boolean, remaining: string[], completedShards: number, elapsedSec: number, partSec: number[], failedFiles: string[] }} */ result,
     ) => {
@@ -1112,7 +1118,7 @@ export function runTestShards(
       const handle = setTimeout(fire, ms);
       return () => clearTimeout(handle);
     });
-    const cancelTimer = startTimer(() => {
+    const cancel = startTimer(() => {
       for (const child of children) {
         try {
           child.kill('SIGKILL');
@@ -1130,6 +1136,8 @@ export function runTestShards(
         failedFiles: [...failedFiles],
       });
     }, options.timeoutSec * 1000);
+    // Fired already (settled): nothing left to cancel later, cancel now.
+    if (settled) cancel(); else cancelTimer = cancel;
     const startNext = (/** @type {number} */ part) => {
       const tag = `touched ${part + 1}/${parts}`;
       if (settled) return;
@@ -1196,13 +1204,83 @@ export function runTestShards(
         if (status !== 0) failedFiles.push(...files);
         const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
         process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
-        options.onJobDone?.(files, status);
+        try {
+          options.onJobDone?.(files, status);
+        } catch (error) {
+          // An observer must never stall its part: log and keep draining.
+          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        }
         startNext(part);
       });
     };
     for (let part = 0; part < parts; part += 1) startNext(part);
   });
   return done;
+}
+
+/**
+ * The busy rule (backlog:3d560518f3e2, the core's external-ci #1004 for this
+ * gate): a run that timed out while the machine was full did not prove the
+ * tests slow, the machine was. "Full" = load1 above `factor` × CPUs at the
+ * run's start or at its bound. Pure: unit-tested.
+ * @param {{ loadStart: number | null, loadEnd: number | null, cpus: number, factor?: number }} input
+ * @returns {{ busy: boolean, threshold: number }}
+ */
+export function busyVerdict({ loadStart, loadEnd, cpus: cpuCount, factor = BUSY_LOAD_FACTOR }) {
+  const threshold = Math.round(cpuCount * factor * 10) / 10;
+  const readings = [loadStart, loadEnd].filter((value) => typeof value === 'number' && Number.isFinite(value));
+  return { busy: readings.some((value) => value > threshold), threshold };
+}
+
+/** load1 is "full" above this many times the CPU count. */
+export const BUSY_LOAD_FACTOR = 1.5;
+
+/**
+ * load1 from a loadavg file (`/proc/loadavg` by default, `CI_LOADAVG_FILE`
+ * in tests), or null where there is none (macOS, a bad file).
+ * @param {string} [file]
+ * @returns {number | null}
+ */
+export function readLoad1(file = process.env.CI_LOADAVG_FILE || '/proc/loadavg') {
+  try {
+    const value = Number(readFileSync(file, 'utf8').trim().split(/\s+/)[0]);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The CPU count the rule scales by (`CI_CPU_COUNT` in tests). */
+export function cpuCount() {
+  const forced = Number(process.env.CI_CPU_COUNT);
+  if (Number.isInteger(forced) && forced > 0) return forced;
+  return typeof availableParallelism === 'function' ? availableParallelism() : cpus().length;
+}
+
+/**
+ * Decide a red timeout's fate and say it. A timeout with a failed file, or on
+ * a machine under the bound, stays red. A timeout on a full machine is
+ * "busy": with `busyFile` set (the parallel gate sets it, once) the decision
+ * is written there, atomically, for the gate's single retry. The exit stays
+ * nonzero either way: only the retry can turn it green.
+ * @param {{ loadStart: number | null, loadEnd: number | null, cpus: number, failedFiles: string[], remaining: string[], busyFile?: string }} input
+ * @returns {{ busy: boolean, threshold: number, line: string }}
+ */
+export function decideTimeout({ loadStart, loadEnd, cpus: cpuTotal, failedFiles, remaining, busyFile }) {
+  const { busy: full, threshold } = busyVerdict({ loadStart, loadEnd, cpus: cpuTotal });
+  const busy = full && failedFiles.length === 0;
+  const loads = `load1 ${loadStart ?? 'n/a'} at start, ${loadEnd ?? 'n/a'} at the bound (busy above ${threshold} = ${BUSY_LOAD_FACTOR} x ${cpuTotal} CPUs)`;
+  let decision;
+  if (failedFiles.length > 0) decision = 'red: a file failed, the load does not matter';
+  else if (!full) decision = 'red: the machine was not full, the tests were slow';
+  else if (!busyFile) decision = 'red: busy, but this run is already the retry (or the gate does not retry)';
+  else decision = 'busy: not counted as red, the gate retries the touched tests once when the load drops';
+  if (busy && busyFile) {
+    const pending = `${busyFile}.${process.pid}`;
+    writeFileSync(pending, `${JSON.stringify({ loadStart, loadEnd, threshold, cpus: cpuTotal, remaining })}\n`);
+    renameSync(pending, busyFile);
+  }
+  return { busy: busy && Boolean(busyFile), threshold, line: `ci-touched-tests: timed out with ${loads}: ${decision}.` };
 }
 
 /**
@@ -1674,6 +1752,7 @@ async function main() {
         : `ci-touched-tests: running ${queue.length} test file(s) (${plan.tests.length} core plus ${bonus.length} bonus draining nearest-first while the bound allows) in ${parts} parallel part(s) sharing one queue, bound ${runBudget}s.\n`,
     );
   }
+  const loadStart = readLoad1();
   const run = await runTestShards(queue, { parts, timeoutSec: runBudget, cwd: root });
   if (run.timedOut) {
     const what = plan.kind === 'fallback' ? 'default fast suite' : 'selected run';
@@ -1697,6 +1776,15 @@ async function main() {
       );
       process.exit(0);
     }
+    const decision = decideTimeout({
+      loadStart,
+      loadEnd: readLoad1(),
+      cpus: cpuCount(),
+      failedFiles: run.failedFiles,
+      remaining: run.remaining,
+      busyFile: process.env.CI_TOUCHED_BUSY_FILE || undefined,
+    });
+    process.stdout.write(`${decision.line}\n`);
     process.stderr.write(
       `ci-touched-tests: ${what} did not finish in ${runBudget}s — failing red, not hanging the lock. `
         + `${coreRemaining.length} core file(s) remaining: ${coreRemaining.join(', ') || '(none reported)'}; `

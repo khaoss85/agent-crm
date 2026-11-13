@@ -7,7 +7,7 @@ import {
 } from '../packages/commercial/src/price-rules.js';
 import { VAT_RATE_BPS } from '../packages/commercial/src/money.js';
 import { suggestQuoteLines } from '../packages/commercial/src/quote-suggest.js';
-import { project, boot } from './helpers/contracts-project.js';
+import { project, boot } from './helpers/contracts-project-cache.js';
 
 /**
  * BO-F2-04 — catalog price rules evaluated by the package, never by the

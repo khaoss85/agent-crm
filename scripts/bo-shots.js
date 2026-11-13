@@ -717,12 +717,17 @@ shellView.update({
 // missing). Await the faces the shell paints before the fixtures run, so
 // the load event — and the screenshot — wait for real glyphs. Rejections
 // settle the wait instead of hanging the harness.
-await Promise.all([
+// backlog:30dc70e6b076: a face loads and decodes in real time, and the
+// virtual clock does not wait for it — on a loaded runner the budget ran
+// out mid-wait and the harness never reached its ready title («nuovo-modulo
+// phone … no nuovo-modulo-ready»). The wait runs inside the shot server's
+// hold, which keeps virtual time still until the faces settle.
+await window.__boHold(Promise.all([
   document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('400 12px "Spline Sans Mono"', 'STUDIO AURORA / OGGI 0123456789'),
-]).catch(() => {});
-await document.fonts.ready.catch(() => {});
+]).catch(() => {}));
+await window.__boHold(document.fonts.ready.catch(() => {}));
 const diagEl = document.getElementById('bodiag');
 if (diagEl) {
   let cssRules = -1;
@@ -906,15 +911,39 @@ await view.render();
 // control, so the shot proves all three steps (drop zone, column match,
 // table check) instead of the empty first step.
 const input = document.querySelector('#view-module input[name="file"]');
+const CSV = 'nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n';
 const transfer = new DataTransfer();
-transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+transfer.items.add(new File([CSV], 'clienti.csv', { type: 'text/csv' }));
 input.files = transfer.files;
+// The demo file's bytes are already here: hand them over without a Blob
+// read. Chromium's virtual clock waits for network fetches, not for Blob
+// I/O, so on a loaded runner the read used to land after the budget and
+// the shot ended with no import-ready (bo:shots import, PR #828 and #833).
+// The view still reads the file through its own file.arrayBuffer() call.
+const bytes = new TextEncoder().encode(CSV);
+Object.defineProperty(input.files[0], 'arrayBuffer', { value: () => Promise.resolve(bytes.buffer.slice(0)) });
 input.dispatchEvent(new Event('change', { bubbles: true }));
-const deadline = Date.now() + 15000;
-while (!document.querySelector('#view-module select[name="mapping-0"]')) {
-  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
+// The mapping step paints once the view's own promise chain settles: wait
+// for that paint, never for a wall-clock deadline that spends the budget.
+await new Promise((resolve, reject) => {
+  const mount = document.getElementById('view-module');
+  const ready = () => mount.querySelector('select[name="mapping-0"]') !== null;
+  if (ready()) { resolve(); return; }
+  const watch = new MutationObserver(() => {
+    if (!ready()) return;
+    watch.disconnect();
+    resolve();
+  });
+  watch.observe(mount, { childList: true, subtree: true });
+  // A refused file paints its own error line instead of the mapping: say
+  // so, never wait for a step that will not come.
+  const refused = mount.querySelector('.customer-data-error');
+  if (refused !== null) {
+    new MutationObserver(() => {
+      if (refused.textContent.trim() !== '') reject(new Error('the import tool refused the demo file: ' + refused.textContent));
+    }).observe(refused, { childList: true, characterData: true, subtree: true });
+  }
+});
 const painted = document.getElementById('view-module');
 document.getElementById('probe').textContent = JSON.stringify({
   back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
@@ -1216,7 +1245,13 @@ const client = {
       return { spaceId: 'spazio-1', overrides: [] };
     }
     if (path.indexOf('/api/connectors') === 0) {
-      return { connectors: [{ status: 'active' }, { status: 'active' }, { status: 'revoked' }] };
+      // Real rows name their channel: the space card counts linked channels
+      // with the shared count (backlog:e381c48581fa), two here.
+      return { connectors: [
+        { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
+        { channel: 'email', connectionKey: 'mail-1', status: 'active' },
+        { channel: 'instagram', connectionKey: 'ig-1', status: 'revoked' },
+      ] };
     }
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
@@ -1276,7 +1311,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
   unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
-    .filter((node) => node.textContent.includes('Non disponibile')).length,
+    .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
     case 'componenti': return `
@@ -1360,17 +1395,83 @@ export function harnessHtml(name, publicDir) {
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
     + `<div id="bodiag" hidden></div>`
+    + HOLD_PRELUDE
     + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
 }
+
+/**
+ * The hold (backlog:30dc70e6b076). Chromium's `--virtual-time-budget`
+ * stops the virtual clock while a network fetch is pending, and only
+ * then: work that takes real time without a fetch — a webfont decoding, a
+ * Blob read — races a clock that keeps running, and on a loaded runner the
+ * budget ran out first, so a harness never reached its ready title.
+ * `window.__boHold(promise)` opens a fetch the shot server answers when
+ * the page reports the promise settled: virtual time stands still exactly
+ * for that wait, never longer. Virtual timers (`setTimeout`) are not held,
+ * so a harness that steps a view with them keeps working; the budget
+ * itself stays 8000 ms. The server answers any hold after HOLD_CAP_MS of
+ * real time, so a promise that never settles cannot hang a run.
+ */
+export const HOLD_PRELUDE = `<script>
+window.__boHold = (promise) => {
+  const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  fetch('/__bo-hold?t=' + token).catch(() => {});
+  const release = () => fetch('/__bo-release?t=' + token).catch(() => {});
+  return Promise.resolve(promise).finally(release);
+};
+</script>`;
+
+/** Real-time cap of one hold: a wait that never settles still ends. */
+export const HOLD_CAP_MS = 30000;
+
 
 /**
  * Serves the public /bo assets and the harness pages on 127.0.0.1 only.
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor) {
+  /** @type {Map<string, any>} pending holds by token */
+  const holds = new Map();
+  /** Tokens released before their hold arrived: the hold answers at once. */
+  const released = new Set();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    // backlog:30dc70e6b076: the hold keeps Chromium's virtual time still
+    // while the page waits on real-time work (see HOLD_PRELUDE).
+    if (url.pathname === '/__bo-hold' || url.pathname === '/__bo-release') {
+      const token = url.searchParams.get('t') ?? '';
+      const answer = (reply) => {
+        if (reply.writableEnded) return;
+        reply.writeHead(204, { 'cache-control': 'no-store' });
+        reply.end();
+      };
+      if (url.pathname === '/__bo-release') {
+        const held = holds.get(token);
+        if (held !== undefined) {
+          holds.delete(token);
+          answer(held);
+        } else {
+          released.add(token);
+        }
+        answer(res);
+        return;
+      }
+      if (released.delete(token)) {
+        answer(res);
+        return;
+      }
+      holds.set(token, res);
+      const cap = setTimeout(() => {
+        holds.delete(token);
+        answer(res);
+      }, HOLD_CAP_MS);
+      res.on('close', () => {
+        clearTimeout(cap);
+        holds.delete(token);
+      });
+      return;
+    }
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1402,6 +1503,11 @@ function startServer(publicDir, pageFor) {
     }
     res.writeHead(404);
     res.end('no');
+  });
+  // A cap timer pending at shutdown never keeps the process alive.
+  server.on('close', () => {
+    for (const reply of holds.values()) if (!reply.writableEnded) reply.end();
+    holds.clear();
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -1709,7 +1815,7 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 active connectors,
+      // C7: both cards paint the real statistic (2 linked channels,
       // 2 rendered members, exact total 3). A card that cannot count paints
       // no row, so the gate requires both rows here.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
@@ -1735,8 +1841,8 @@ export function assertProbe(name, probe) {
       if (probe.openers !== n) {
         throw new Error(`connettori: the probe lists ${String(probe.openers)} row openers, expected ${n}`);
       }
-      // A channel with no adapter in the composition reads «Non disponibile
-      // qui» and offers no Collega (Telegram in the demo data). Every other
+      // A channel with no adapter and no link reads «Non ancora disponibile»
+      // (the shared channel state, backlog:e381c48581fa) and offers no Collega (Telegram in the demo data). Every other
       // row offers one.
       const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
       if (probe.flows !== connectable) {

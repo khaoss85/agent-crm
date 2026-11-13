@@ -60,21 +60,3 @@ export function openSchedaWindow(options) {
   panel.appendChild(foot);
   return { panel, body, foot, shut, gone };
 }
-
-/**
- * The waiting state of a confirm button while its write is in flight: no
- * second click, `aria-busy`, and a word that says what is happening
- * («Prenoto…», «Salvo…»). The returned function puts the button back.
- * @param {any} button @param {string} busyText
- */
-export function holdButton(button, busyText) {
-  const idle = button.textContent;
-  button.setAttribute('disabled', 'disabled');
-  button.setAttribute('aria-busy', 'true');
-  button.textContent = busyText;
-  return () => {
-    button.removeAttribute('disabled');
-    button.setAttribute('aria-busy', 'false');
-    button.textContent = idle;
-  };
-}

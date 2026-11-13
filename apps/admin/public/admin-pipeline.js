@@ -47,12 +47,11 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { offerStageLabel, personLabel, teamPeople } from './admin-labels.js';
+import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
-/** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
 const OFF_PIPELINE_LISTED = 50;
 
 /**
@@ -70,6 +69,24 @@ const MONTHS_IT = [
   'gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
+
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Review #789: the sort key of a date column is the same Rome day the cell
+ * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
+ * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
+ * @param {unknown} value
+ */
+export function romeDayKey(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  return ROME_DAY_KEY.format(new Date(time));
+}
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
@@ -89,6 +106,23 @@ function dayOf(value) {
 function ownerInitials(name) {
   const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
+ * The customer an offer is for, as the scheda names it (backlog:fb47ab99b6ee):
+ * the contact, else the company — never a placeholder company standing in
+ * for a contact. Null when the offer names nobody.
+ * @param {Record<string, any>} record
+ */
+export function customerOf(record) {
+  const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+  if (contact !== '') return contact;
+  const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  // «Senza azienda» is the scheda's placeholder company, not a customer —
+  // in any case or spacing, the same normalization as the scheda's
+  // shownCompanyName (NFC, collapsed spaces, lower case; review #789, #799).
+  const placeholder = company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+  return company !== '' && !placeholder ? company : null;
 }
 
 /**
@@ -135,6 +169,8 @@ const CREATED_OPTIONS = [
 
 /** How long a stage move may stay in flight before the card says it is not confirmed yet. */
 export const MOVE_PENDING_MS = 15000;
+/** backlog:2f72000d4a4d: how long the «Annulla» toast stays at least (the shell pauses it under the pointer). */
+export const UNDO_TOAST_MS = 10000;
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -203,7 +239,7 @@ export function readStageConfirm(panel, target) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean, options?: {action?: {label: string, run: () => void}}) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -227,6 +263,8 @@ export function createPipelineBoard(deps) {
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
+  /** Lista sort (backlog:fb47ab99b6ee): the clicked header and its direction; null = server order. */
+  const listSort = { key: /** @type {string | null} */ (null), dir: /** @type {'asc' | 'desc'} */ ('asc') };
   /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, pipelines: [], records: [] };
   /** The team as people (famiglia F5): names the referente, never its id. */
@@ -258,6 +296,67 @@ export function createPipelineBoard(deps) {
   let drag = null;
   /** Record id → its card's Apri button, where closing the panel hands focus back. */
   const openButtons = new Map();
+  /**
+   * backlog:07d29c0d1b06: each column's count and per-currency totals, kept
+   * with the records they describe, so a card that moves before the server
+   * answers (a drop, an Annulla) takes its count and value along — and a
+   * failure brings both back together.
+   * @type {Map<string, { records: Array<Record<string, any>>, count: any, totals: any }>}
+   */
+  const columnSummaries = new Map();
+
+  /** Repaint one column's count and totals from its records. */
+  function paintColumnSummary(stageKey) {
+    const summary = columnSummaries.get(stageKey);
+    if (!summary) return;
+    summary.count.textContent = String(summary.records.length);
+    while (summary.totals.firstChild) summary.totals.removeChild(summary.totals.firstChild);
+    /** @type {Map<string, number>} */
+    const totals = new Map();
+    for (const record of summary.records) {
+      if (!Number.isSafeInteger(record.valueCents)) continue;
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
+    }
+    for (const [currency, total] of [...totals.entries()].sort()) {
+      summary.totals.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
+    }
+  }
+
+  /**
+   * Move one card on screen, before the server answers: the card to the top
+   * of the target column and its record from one column's count and totals
+   * to the other's. Returns `undo` that puts card and numbers back together,
+   * or null when the card is not on the board (a filter hides it).
+   * @param {string} id @param {string} fromStage @param {string} toStage
+   */
+  function placeCardNow(id, fromStage, toStage) {
+    const card = cardNodes.get(id)?.card ?? null;
+    const from = columnSummaries.get(fromStage);
+    const to = columnSummaries.get(toStage);
+    const target = columnNodes.find((node) => node.getAttribute('data-stage') === toStage) ?? null;
+    if (!card || !card.parentNode || !from || !to || !target || typeof target.insertBefore !== 'function') return null;
+    const record = from.records.find((candidate) => String(candidate.id) === id);
+    if (!record) return null;
+    const home = { parent: card.parentNode, next: card.nextSibling ?? null };
+    const anchor = slotAnchors.get(target) ?? null;
+    target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
+    const at = from.records.indexOf(record);
+    from.records.splice(at, 1);
+    to.records.unshift(record);
+    paintColumnSummary(fromStage);
+    paintColumnSummary(toStage);
+    return () => {
+      if (typeof home.parent.insertBefore === 'function') {
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
+      }
+      const back = to.records.indexOf(record);
+      if (back >= 0) to.records.splice(back, 1);
+      from.records.splice(Math.min(at, from.records.length), 0, record);
+      paintColumnSummary(fromStage);
+      paintColumnSummary(toStage);
+    };
+  }
+
   /** Column → the node the slot sits before: the first card, or the empty line. */
   const slotAnchors = new Map();
   /** The dashed placeholder, one for the whole board, built on first use. */
@@ -334,11 +433,27 @@ export function createPipelineBoard(deps) {
    * read (Riprova) releases it, never a second POST.
    * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
     for (const view of moveViewsOf(id)) view.start();
+    // backlog:2f72000d4a4d: the toast comes at once, with the card already
+    // in its new place — not after the write (4 s on the pilot) — and keeps
+    // «Annulla» (backlog:7b2203e69826) for at least 10 s. Only between
+    // working stages: a won or lost offer never reopens (TERMINAL_STAGE).
+    const working = (key) => {
+      const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+      return type === 'open' || type === 'renewal';
+    };
+    const undoable = undo && working(fromStage) && working(toStage);
+    /** @type {(outcome: any) => void} */
+    let settle = () => {};
+    const outcomeOf = new Promise((resolve) => { settle = resolve; });
+    toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+      action: { label: 'Annulla', run: () => { void undoMove(pipeline, id, fromStage, toStage, outcomeOf); } },
+      duration: UNDO_TOAST_MS,
+    } : undefined);
     let settled = false;
     void wait(MOVE_PENDING_MS).then(() => {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
@@ -347,8 +462,8 @@ export function createPipelineBoard(deps) {
       await postMove(pipeline, id, fromStage, toStage, reason);
       settled = true;
       moveLocks.delete(id);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
       await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      settle({ moved: true });
       return { moved: true };
     } catch (error) {
       settled = true;
@@ -359,24 +474,69 @@ export function createPipelineBoard(deps) {
         // queue a duplicate or meet a stale-stage refusal.
         console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
         moveLocks.set(id, 'queued');
-        for (const view of moveViewsOf(id)) view.unconfirmed();
+        const views = moveViewsOf(id);
+        for (const view of views) view.unconfirmed();
+        // A card no view shows (filtered out) still says where it stands.
+        if (!views.length) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+        settle({ pending: true });
         return { pending: true };
       }
       moveLocks.delete(id);
       const message = moveFailureText(error);
       for (const view of moveViewsOf(id)) view.fail(message);
+      // The toast that said «Spostata» is replaced by the truth.
+      toast(message, true);
+      settle({ failed: true, message });
       return { failed: true, message };
     }
+  }
+
+  /**
+   * «Annulla» (review Muse #799, P2): the reverse move, never fire-and-forget.
+   * It waits for the first move to land (a click while it is still being
+   * written undoes it as soon as it lands), then every outcome says so — a
+   * failure, a queued undo or a busy card toasts even when no card shows it
+   * (a filter hides it).
+   */
+  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
+    toast(`Riporto in ${stageLabel(pipeline, fromStage)}…`);
+    const first = await outcomeOf;
+    if (first?.pending) {
+      // Review Muse #809: a move the server still holds cannot be undone yet
+      // — never a silent drop of the undo: say so, the board re-read
+      // (Riprova) tells where the card is.
+      toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
+      return;
+    }
+    if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
+    // backlog:07d29c0d1b06: the card and its column numbers go back together
+    // at once; a refused undo puts both where the server says they are.
+    const restore = placeCardNow(id, toStage, fromStage);
+    const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
+      undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
+    });
+    if ((back.failed || back.busy) && restore) restore();
+    if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+    // Review Muse #809: a queued undo is announced whether or not its card is on screen.
+    if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
   }
 
   /** POST one move-stage transition — shared by the Move button and drops. */
   async function postMove(pipeline, recordId, fromStage, toStage, reason) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
-    await client.request(
-      `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`,
-      { method: 'POST', body: JSON.stringify(input) },
-    );
+    const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
+    try {
+      await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+    } catch (error) {
+      // The failure log names the request (backlog:2f72000d4a4d) even when
+      // the client did not stamp it.
+      if (error !== null && typeof error === 'object' && Object.isExtensible(error)) {
+        if (typeof error.method !== 'string') error.method = 'POST';
+        if (typeof error.path !== 'string') error.path = path;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -425,19 +585,11 @@ export function createPipelineBoard(deps) {
     // as Sposta, so a queued move never reads as a failure.
     const controls = cardNodes.get(recordId);
     if (controls && typeof controls.move === 'function') {
-      const card = controls.card;
-      const target = column ?? slotWasIn;
-      // Where the card was, to put it back on a failure.
-      const home = card && card.parentNode ? { parent: card.parentNode, next: card.nextSibling ?? null } : null;
-      if (card && target && typeof target.insertBefore === 'function') {
-        const anchor = slotAnchors.get(target) ?? null;
-        target.insertBefore(card, anchor && anchor.parentNode === target ? anchor : null);
-      }
+      // backlog:07d29c0d1b06: card, count and totals move together now,
+      // and come back together on a failure (runMove's toast names it).
+      const restore = placeCardNow(recordId, fromStage, toStage);
       const outcome = await controls.move(toStage);
-      if ((outcome?.failed || outcome?.busy) && card && home && typeof home.parent.insertBefore === 'function') {
-        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent ? home.next : null);
-        if (outcome.failed) toast(outcome.message, true);
-      }
+      if ((outcome?.failed || outcome?.busy) && restore) restore();
       return;
     }
     try {
@@ -519,6 +671,9 @@ export function createPipelineBoard(deps) {
       state.owner = '';
       state.stage = '';
       state.created = '';
+      // Review #789: the Lista sort is part of the board's view state too.
+      listSort.key = null;
+      listSort.dir = 'asc';
     }
     cached = { pipeline, pipelines: composed, records };
     // A fresh read is the truth a queued move waited for: it releases it.
@@ -535,6 +690,7 @@ export function createPipelineBoard(deps) {
     cardNodes.clear();
     columnNodes.length = 0;
     slotAnchors.clear();
+    columnSummaries.clear();
     openButtons.clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
@@ -546,7 +702,7 @@ export function createPipelineBoard(deps) {
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
     // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
-    // the read hits the cap every count below is a lower bound, never exact.
+    // the read is truncated the counts below are lower bounds.
     const truncated = records.length >= BOARD_LIMIT;
     const visible = placed.filter((record) => matchesFilters(record, state));
 
@@ -916,17 +1072,27 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
-   * excluded by documented behavior, never silently hidden. The count
-   * still names how many offers live on the other boards, and when the
-   * space composes more than one pipeline a selector replaces the old
-   * "(non mostrata)" line — every composed pipeline is one choice away.
-   * With a single composed pipeline the legacy links stay, so an
-   * out-of-band record still names where the operator can go see it. A
-   * key outside the route grammar cannot be linked: it stays in the
-   * count, never in an href. Every value renders as text, never HTML.
+   * Pipeline switch (backlog:1cb4cc48, review accordo-muse-review on #727):
+   * records of other pipelines are excluded by documented behavior, never
+   * silently hidden. The count still names how many offers live on the other
+   * boards (renderOffPipeline, one click per offer to its #/offerte page),
+   * and when the space composes more than one pipeline a selector offers
+   * every composed pipeline — each one renders a real board, one choice away.
+   * A key the schema does not compose (unknown, keyless, or outside the route
+   * grammar) never becomes a pipeline choice or a #/pipelines link: the
+   * destination would not render (renderBoard resolves against `composed`
+   * only). Those offers stay reachable through the disclosure list. Choices
+   * come from the schema, never from the truncated record read, so a
+   * BOARD_LIMIT read cannot make them partial; the lower-bound wording
+   * («almeno N») lives on the counts (backlog 13f43804). Every value renders
+   * as text, never HTML.
+   * DECISION (to be confirmed): with a single composed pipeline and only
+   * unresolvable off-board offers there is no one-choice selector — the
+   * disclosure list is the actionable path to the offer pages.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
+   * @param {string} pipelineName
+   * @param {number} offPipeline
    * @param {boolean} truncated whether the read hit BOARD_LIMIT (counts are lower bounds)
    */
   function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline, truncated) {
@@ -934,11 +1100,12 @@ export function createPipelineBoard(deps) {
     if (offPipeline > 0) {
       box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated));
     }
-    if (composedPipelineNames(pipelines).length > 1) {
+    const composed = composedPipelineNames(pipelines);
+    if (composed.length > 1) {
       const selectId = 'pipeline-switch';
       box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
       const select = el(doc, 'select', { attrs: { id: selectId } });
-      for (const name of composedPipelineNames(pipelines)) {
+      for (const name of composed) {
         const defined = pipelines.find((candidate) => candidate?.name === name);
         const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
         select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
@@ -951,17 +1118,7 @@ export function createPipelineBoard(deps) {
         }
       });
       box.appendChild(select);
-      return box;
     }
-    const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
-      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
-      .sort();
-    others.forEach((key, index) => {
-      box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));
-      const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
-      link.textContent = `Vedi ${key}`;
-      box.appendChild(link);
-    });
     return box;
   }
 
@@ -991,18 +1148,21 @@ export function createPipelineBoard(deps) {
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
     const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
     for (const record of others) {
-      const item = el(doc, 'li');
+      // Backlog 169cd4bc988c: one row per offer in the /bo dress — its name
+      // opens its page, then who it is for (never «Senza azienda») and its
+      // stato capitalised («Proposta», never the bare «proposta»).
+      const item = el(doc, 'li', { class: 'pipeline-off-item' });
       const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
       const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
-      const stage = offerStageLabel(pipelines, record);
-      const text = stage ? `${name} · ${stage}` : name;
       if (id === null) {
-        item.appendChild(el(doc, 'span', { text }));
+        item.appendChild(el(doc, 'span', { class: 'pipeline-off-name', text: name }));
       } else {
-        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
-        link.textContent = text;
-        item.appendChild(link);
+        item.appendChild(el(doc, 'a', { class: 'pipeline-off-name', text: name, attrs: { href: `#/offerte/${encodeURIComponent(id)}` } }));
       }
+      const customer = offerCustomer(record);
+      const stage = upperFirst(offerStageLabel(pipelines, record));
+      const facts = [customer?.name ?? null, stage].filter((part) => typeof part === 'string' && part !== '');
+      if (facts.length > 0) item.appendChild(el(doc, 'span', { class: 'pipeline-off-meta', text: ` · ${facts.join(' · ')}` }));
       list.appendChild(item);
     }
     if (offPipeline > others.length) {
@@ -1091,8 +1251,8 @@ export function createPipelineBoard(deps) {
     // open offer shares one currency (Codex P2 on #467).
     const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
       ? ownerText(riskiest.owner)
-      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
-        ? riskiest.companyName
+      : openCurrencies.size === 1 && customerName(riskiest)
+        ? customerName(riskiest)
         : null;
     if (riskName) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
@@ -1102,27 +1262,50 @@ export function createPipelineBoard(deps) {
 
   /**
    * Read-only Lista table over the same filtered records (moves stay on Kanban).
-   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
-   * state pill with its dot, the value, the stage probability, the expected
-   * close, the creation day and the referente (BO-F6-10 C20). Values are set
-   * through textContent/setAttribute only, never innerHTML.
+   * Headers follow the prototype order (BO-F6-10 C19) plus Cliente
+   * (backlog:fb47ab99b6ee); every row shows the state pill with its dot, the
+   * value, the stage probability, the expected close, the creation day and the
+   * referente by the person's name (BO-F6-10 C20). Dates read «11 nov 2026».
+   * Each header sorts the list (click again to reverse), like a spreadsheet;
+   * the sort lives in the view and survives filters. Values are set through
+   * textContent/setAttribute only, never innerHTML.
    */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
-      headRow.appendChild(el(doc, 'th', { text: label }));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    const stageRank = new Map(pipeline.stages.map((stage, index) => [stage.key, index]));
+    const columns = listColumns(stageOf, stageRank);
+    for (const column of columns) {
+      const active = listSort.key === column.key;
+      const th = el(doc, 'th', {
+        attrs: { 'aria-sort': active ? (listSort.dir === 'asc' ? 'ascending' : 'descending') : 'none', 'data-sort-key': column.key },
+      });
+      const button = el(doc, 'button', {
+        class: 'pipeline-sort',
+        text: column.label,
+        attrs: { type: 'button', 'data-action': 'sort-list', 'data-sort': column.key },
+      });
+      button.addEventListener('click', () => {
+        if (listSort.key === column.key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else {
+          listSort.key = column.key;
+          listSort.dir = 'asc';
+        }
+        renderAll(renderToken);
+      });
+      th.appendChild(button);
+      headRow.appendChild(th);
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
     // card — the name is the link (keyboard, new tab), the whole row clicks.
     const detailed = pipeline.module === 'opportunity';
-    for (const record of visible) {
+    for (const record of sortedForList(visible, columns)) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       const name = String(record.name ?? record.id);
@@ -1150,13 +1333,14 @@ export function createPipelineBoard(deps) {
       } else {
         row.appendChild(el(doc, 'td', { text: name }));
       }
+      row.appendChild(el(doc, 'td', { text: customerOf(record) ?? '—' }));
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
       row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—' }));
       body.appendChild(row);
     }
@@ -1168,6 +1352,47 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
+  /**
+   * The Lista columns: label, sort key and the value each one sorts by
+   * (null sorts last whatever the direction, like a spreadsheet's blanks).
+   * @param {Map<string, any>} stageOf @param {Map<string, number>} stageRank
+   */
+  function listColumns(stageOf, stageRank) {
+    const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim().toLocaleLowerCase('it') : null);
+    return [
+      { key: 'name', label: 'Offerta', value: (record) => text(record.name) },
+      { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
+      { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
+      { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
+      { key: 'probability', label: 'Probabilità', value: (record) => stageProbability(stageOf.get(record.pipelineStage)) },
+      { key: 'close', label: 'Chiusura', value: (record) => romeDayKey(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => romeDayKey(record.createdAt) },
+      {
+        key: 'owner', label: 'Referente',
+        value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
+      },
+    ];
+  }
+
+  /** The visible records in the chosen Lista order; the server order without a sort. */
+  function sortedForList(visible, columns) {
+    const column = columns.find((candidate) => candidate.key === listSort.key);
+    if (!column) return visible;
+    const sign = listSort.dir === 'desc' ? -1 : 1;
+    return visible
+      .map((record, index) => ({ record, index, value: column.value(record) }))
+      .sort((left, right) => {
+        if (left.value === null && right.value === null) return left.index - right.index;
+        if (left.value === null) return 1;
+        if (right.value === null) return -1;
+        const order = typeof left.value === 'number' && typeof right.value === 'number'
+          ? left.value - right.value
+          : String(left.value).localeCompare(String(right.value), 'it');
+        return order === 0 ? left.index - right.index : sign * order;
+      })
+      .map((entry) => entry.record);
+  }
+
   /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
   function renderStagePill(stage, stageKey) {
     const pill = el(doc, 'span', { class: 'pill' });
@@ -1176,11 +1401,16 @@ export function createPipelineBoard(deps) {
     return pill;
   }
 
+  /** A stage's probability when it is a real percentage (0-100), else null: one rule for the cell and its sort. */
+  function stageProbability(stage) {
+    const probability = stage?.probability;
+    return typeof probability === 'number' && probability >= 0 && probability <= 100 ? probability : null;
+  }
+
   /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
   function probabilityText(stage) {
-    const probability = stage?.probability;
-    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
-    return `${probability}%`;
+    const probability = stageProbability(stage);
+    return probability === null ? '—' : `${probability}%`;
   }
 
   /**
@@ -1199,14 +1429,30 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
+  /**
+   * backlog:2f72000d4a4d: the shared /bo write-failure line — «[bo] scrittura
+   * fallita POST <percorso> · <stato> <codice>: messaggio» — the format of
+   * admin-core's reportFailure, which #808 exports as logWriteFailure. Until
+   * that lands on main the board writes the same line here; then this
+   * becomes a call to logWriteFailure.
+   */
+  function logMoveFailure(record, code, message) {
+    if (typeof console === 'undefined' || typeof console.error !== 'function') return;
+    const method = typeof record.method === 'string' ? record.method.toUpperCase() : 'POST';
+    const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
+    const status = typeof record.status === 'number' ? record.status : null;
+    const outcome = [status === null ? '' : String(status), code || 'UNKNOWN'].filter((part) => part !== '').join(' ');
+    const request = path !== null ? ` ${method} ${path}` : '';
+    console.error(`[bo] scrittura fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
+      { code: code || 'UNKNOWN', status, message, method, path });
+  }
+
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    if (typeof console !== 'undefined' && typeof console.error === 'function') {
-      console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
-    }
+    logMoveFailure(record, code, message);
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
@@ -1233,19 +1479,16 @@ export function createPipelineBoard(deps) {
     header.appendChild(el(doc, 'span', { class: `stage-dot type-${stage.type}` }));
     header.appendChild(el(doc, 'h3', { text: stage.label }));
     header.appendChild(el(doc, 'span', { class: `stage-type stage-${stage.type}`, text: badge }));
-    header.appendChild(el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } }));
+    const count = el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } });
+    header.appendChild(count);
     column.appendChild(header);
 
-    // Per-currency totals — deliberately one line per currency.
-    /** @type {Map<string, number>} */
-    const totals = new Map();
-    for (const record of records) {
-      if (!Number.isSafeInteger(record.valueCents)) continue;
-      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
-    }
-    for (const [currency, total] of [...totals.entries()].sort()) {
-      column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
-    }
+    // Per-currency totals — deliberately one line per currency — in a box
+    // the column repaints when a card moves before the server answers.
+    const totalsBox = el(doc, 'div', { class: 'stage-totals', attrs: { 'data-totals': stage.key } });
+    column.appendChild(totalsBox);
+    columnSummaries.set(stage.key, { records: [...records], count, totals: totalsBox });
+    paintColumnSummary(stage.key);
 
     // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
     // can paint the dashed outline; the dragged card is attenuated the same way.
@@ -1296,15 +1539,20 @@ export function createPipelineBoard(deps) {
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-    card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
+    // backlog:7b2203e69826: the customer the offer is for — the contact,
+    // else the company — never «Senza azienda».
+    card.appendChild(el(doc, 'p', { class: 'card-company', text: customerName(record) ?? '—' }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
+      // backlog:7b2203e69826: the initials name the person — on hover and
+      // for a screen reader («Referente: Guido Presti»).
+      const who = `Referente: ${ownerText(record.owner)}`;
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
         text: ownerInitials(ownerText(record.owner)),
-        attrs: { title: ownerText(record.owner) },
+        attrs: { title: who, 'aria-label': who },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
@@ -1352,6 +1600,18 @@ export function createPipelineBoard(deps) {
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
+      // backlog:7b2203e69826: the whole card opens the panel, like a Trello
+      // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
+      // click, and a click that ends a text selection stays on the board.
+      card.setAttribute('data-openable', 'true');
+      card.addEventListener('click', (event) => {
+        const target = event?.target ?? null;
+        if (target && typeof target.closest === 'function'
+          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+        const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+        if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+        go();
+      });
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1517,11 +1777,10 @@ export function createPipelineBoard(deps) {
 
   /** The customer's name as the scheda shows it: the contact, else the company. */
   function customerName(record) {
-    for (const value of [record?.contactName, record?.companyName]) {
-      if (typeof value === 'string' && value.trim() !== '') return value.trim();
-    }
-    return null;
+    // One rule with the Lista (review Muse #799): customerOf.
+    return customerOf(record);
   }
+
 
   /**
    * Apri on a card: the offer panel over the board. Opening never
@@ -1660,12 +1919,27 @@ export function createPipelineBoard(deps) {
     const selectId = `drawer-move-${record.id}`;
     box.appendChild(el(doc, 'label', { text: 'Cambia fase', attrs: { for: selectId } }));
     const row = el(doc, 'div', { class: 'bo-pipeline-offer-move-row' });
+    // backlog:2f72000d4a4d: the menu starts on the offer's own stage (marked
+    // «attuale»), never on the first stage of the pipeline; Sposta waits
+    // until another stage is chosen.
     const select = el(doc, 'select', { attrs: { id: selectId } });
     for (const target of pipeline.stages) {
-      if (target.key === stage.key) continue;
-      select.appendChild(el(doc, 'option', { text: target.label ?? target.key, attrs: { value: target.key } }));
+      const current = target.key === stage.key;
+      const option = el(doc, 'option', {
+        text: current ? `${target.label ?? target.key} (attuale)` : (target.label ?? target.key),
+        attrs: { value: target.key },
+      });
+      if (current) option.setAttribute('selected', 'selected');
+      select.appendChild(option);
     }
+    select.value = stage.key;
     const go = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button', 'data-action': 'drawer-move' } });
+    const syncGo = () => {
+      if (moveLocks.has(String(record.id))) return;
+      go.disabled = select.value === stage.key;
+    };
+    select.addEventListener('change', syncGo);
+    syncGo();
     row.appendChild(select);
     row.appendChild(go);
     box.appendChild(row);
@@ -1689,7 +1963,7 @@ export function createPipelineBoard(deps) {
       node.setAttribute('class', text ? base : `${base} hidden`);
     };
     const lockControls = (on) => {
-      go.disabled = on;
+      go.disabled = on || select.value === stage.key;
       go.setAttribute('aria-busy', on ? 'true' : 'false');
       confirmPanel.yes.disabled = on;
     };
@@ -1728,6 +2002,7 @@ export function createPipelineBoard(deps) {
     go.addEventListener('click', () => {
       if (moveLocks.has(id)) return;
       const toStage = select.value;
+      if (toStage === stage.key) return; // the current stage is where it is
       const target = pipeline.stages.find((candidate) => candidate.key === toStage);
       if (!target) return;
       if (stageNeedsConfirm(target)) {

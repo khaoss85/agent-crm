@@ -1,5 +1,7 @@
 // @ts-check
 
+import { NO_REPLY_WORD, isAutomatedSender, isNotificationMessage } from './admin-sender-kind.js';
+
 /**
  * Shared operator vocabulary for message and call states (voce 52854fd292a3).
  *
@@ -112,8 +114,12 @@ export function readableName(value) {
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
 
-/** A trailing no-reply marker (`Noreply`, `NO-REPLY`), any case (production 10/11). */
-const NO_REPLY_WORD = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
+/**
+ * The sender rule lives in the kernel (core/sender-kind.js); the /bo shell
+ * reads its byte-identical copy and re-exports it here for the screens
+ * (backlog:bab63e32acdb, backlog:c2bf6b206d96).
+ */
+export { isAutomatedSender, isNotificationMessage };
 
 /**
  * Display name from a read-only customer profile
@@ -478,6 +484,42 @@ export function offerStageLabel(pipelines, offer) {
     }
   }
   return offerStateLabel(offer.stage);
+}
+
+/**
+ * Backlog 169cd4bc988c: who one offer (opportunity row) is for, and where
+ * their scheda lives — the contact first, else the company. The reserved
+ * «Senza azienda» a contact without Azienda sits under, and any stored
+ * placeholder company (`Unknown (…)`), name nobody: the same rule as the
+ * scheda's shownCompanyName, so no screen reads «Per Senza azienda». Null
+ * when the offer names no one.
+ * @param {any} offer
+ * @returns {{ name: string, href: string | null } | null}
+ */
+export function offerCustomer(offer) {
+  const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
+  const contactName = text(offer?.contactName);
+  const contactId = text(offer?.contactId);
+  if (contactName !== null) {
+    return { name: contactName, href: contactId !== null ? `#/customer-card/contact/${encodeURIComponent(contactId)}` : null };
+  }
+  const company = text(offer?.companyName);
+  const companyId = text(offer?.companyId);
+  const reserved = company !== null && company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+  if (company === null || reserved || readableName(company.replace(/\([^)]*\)/g, ' ')) === null) return null;
+  return { name: company, href: companyId !== null ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null };
+}
+
+/**
+ * Backlog 169cd4bc988c: a state word as a heading or a list shows it —
+ * «Proposta», never the bare «proposta» — the first letter upper-cased,
+ * the rest untouched. Null stays null.
+ * @param {string | null | undefined} text
+ * @returns {string | null}
+ */
+export function upperFirst(text) {
+  if (typeof text !== 'string' || text === '') return text ?? null;
+  return text.charAt(0).toLocaleUpperCase('it-IT') + text.slice(1);
 }
 
 /**

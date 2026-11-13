@@ -262,11 +262,15 @@ test('BO-F6-08 fetta 1: the search bar shows the prototype placeholder and an Az
   input.value = 'milano';
   input.dispatch('input');
   assert.ok(!clear.classList.contains('hidden'), 'typing reveals Azzera');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 2, 'Invio searches at once');
+  assert.ok(client.calls[1].includes('q=milano'), client.calls[1]);
   clear.dispatch('click');
   await flush();
   assert.equal(input.value, '', 'Azzera empties the field');
-  assert.equal(client.calls.length, 2, 'Azzera reloads the list');
-  assert.ok(!client.calls[1].includes('q='), `the search is gone: ${client.calls[1]}`);
+  assert.equal(client.calls.length, 3, 'Azzera reloads the list');
+  assert.ok(!client.calls[2].includes('q='), `the search is gone: ${client.calls[2]}`);
 });
 
 test('BO-F6-08 fetta 2: the toolbar is three prototype icons with their counts', async () => {
@@ -918,4 +922,286 @@ test('da leggere: a new message lights the row up on the quiet re-read, no reloa
   pending.shift().fn();
   await flush();
   assert.equal(client.calls.length, 2, 'an invalidated list never re-reads');
+});
+
+/* ------------------------------------------- backlog:754918ad8da7 (punti 8-10) */
+
+const timers = () => {
+  const queue = [];
+  return { queue, schedule: (fn, ms) => { queue.push({ fn, ms }); return queue.length; }, fire() { const all = queue.splice(0); for (const t of all) t.fn(); } };
+};
+
+test('754918ad8da7: the sort toggle reads «Ordina: X» and the menu ticks the active order', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const sort = toolToggle(mount, 'Ordina');
+  assert.ok(sort.textContent.includes('Ordina: Ultimo contatto'), `the toggle names the order on screen: «${sort.textContent}»`);
+  sort.dispatch('click');
+  const active = byAttr(mount, 'button', 'data-sort', 'recent');
+  const other = byAttr(mount, 'button', 'data-sort', 'name');
+  assert.equal(active.getAttribute('aria-checked'), 'true');
+  assert.ok(active.textContent.startsWith('✓'), `the active order carries the ✓: «${active.textContent}»`);
+  assert.equal(other.getAttribute('aria-checked'), 'false');
+  assert.ok(!other.textContent.includes('✓'));
+  other.dispatch('click');
+  await flush();
+  const after = toolToggle(mount, 'Ordina');
+  assert.ok(after.textContent.includes('Ordina: Nome A–Z'), `the toggle follows the pick: «${after.textContent}»`);
+  after.dispatch('click');
+  assert.equal(byAttr(mount, 'button', 'data-sort', 'name').getAttribute('aria-checked'), 'true');
+  assert.ok(byAttr(mount, 'button', 'data-sort', 'name').textContent.startsWith('✓'));
+  // The channel and status filters tick their choice the same way.
+  toolToggle(mount, 'Filtri').dispatch('click');
+  assert.equal(byAttr(mount, 'button', 'data-filter', 'canale:all').getAttribute('aria-checked'), 'true');
+  assert.ok(byAttr(mount, 'button', 'data-filter', 'stato:all').textContent.startsWith('✓'));
+});
+
+test('754918ad8da7: the list filters while typing, once, and the field keeps its node and value', async () => {
+  const client = stubClient();
+  const clock = timers();
+  const { mount } = await render(client, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  const input = mount.findAll('input')[0];
+  for (const text of ['m', 'mi', 'mil']) {
+    input.value = text;
+    input.dispatch('input');
+  }
+  assert.equal(client.calls.length, 1, 'no read per keystroke');
+  assert.equal(clock.queue.length, 3);
+  assert.ok(clock.queue.every((entry) => entry.ms === 300), 'one quiet time, like the Calendario');
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 2, 'only the last keystroke reads');
+  assert.ok(client.calls[1].includes('q=mil'), client.calls[1]);
+  assert.equal(mount.findAll('input')[0], input, 'the field is never rebuilt, so focus and caret stay');
+  assert.equal(input.value, 'mil');
+  // Enter drops the pending keystroke read: one read, never two.
+  input.value = 'milano';
+  input.dispatch('input');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 3, 'Invio searches at once and the pending read is dropped');
+  assert.ok(client.calls[2].includes('q=milano'));
+});
+
+test('754918ad8da7: the Colonne menu stays open between ticks and repaints the table', async () => {
+  const { mount } = await render(stubClient());
+  const menus = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-menu'));
+  toolToggle(mount, 'Colonne').dispatch('click');
+  const menu = menus()[3];
+  assert.ok(!menu.classList.contains('hidden'), 'the columns menu opens');
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'the menu stays open after a tick');
+  assert.equal(menus()[3], menu, 'the same menu, never a rebuilt one');
+  byAttr(mount, 'button', 'data-column', 'telefono').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'and after a second tick');
+  assert.ok(byAttr(mount, 'button', 'data-column', 'email').textContent.startsWith('✓'));
+  assert.equal(byAttr(mount, 'button', 'data-column', 'email').getAttribute('aria-checked'), 'true');
+  const heads = mount.findAll('span').filter((node) => node.getAttribute('class') === 'bo-clienti-th').map((node) => node.textContent);
+  assert.ok(heads.includes('Email') && heads.includes('Telefono'), `the table shows the ticked columns: ${heads}`);
+  assert.equal(toolToggle(mount, 'Colonne').getAttribute('aria-label'), 'Colonne: 6 di 8 visibili');
+  assert.ok(toolToggle(mount, 'Colonne').textContent.includes('6/8'));
+  byAttr(mount, 'button', 'data-action', 'reset-columns').dispatch('click');
+  assert.ok(!menu.classList.contains('hidden'), 'Ripristina keeps the menu open too');
+  assert.ok(byAttr(mount, 'button', 'data-column', 'email').textContent.startsWith('○'));
+  // Escape still closes it.
+  menu.dispatch('keydown', { key: 'Escape' });
+  assert.ok(menu.classList.contains('hidden'));
+});
+
+test('754918ad8da7: after Azzera the chips and rows stay until the new page arrives, then change once', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const chipsRow = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-chips'));
+  assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the filter chip shows');
+  gated = true;
+  mount.findAll('button').find((node) => node.textContent === 'Azzera filtri' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
+  await flush();
+  // While the read is in flight nothing jumps: chips and rows stay, the
+  // table only reads busy, and no loading line pushes the bar down.
+  assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the chip row stays while loading');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no loading line above the bar');
+  const body = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-body'));
+  assert.equal(body.getAttribute('aria-busy'), 'true');
+  release();
+  await flush();
+  assert.ok(!chipsRow().textContent.includes('WhatsApp'), 'the chip goes with the new page');
+  assert.equal(body.getAttribute('aria-busy'), null);
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
+test('754918ad8da7: the status line sits under the bar, so an empty page never pushes the search down', async () => {
+  const client = stubClient({ pages: [{ customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true }] });
+  const { mount } = await render(client);
+  const panel = mount.findAll('section').find((node) => node.getAttribute('class') === 'bo-clienti');
+  const kids = panel.childNodes.map((node) => String(node.getAttribute('class') ?? ''));
+  const at = (cls) => kids.findIndex((value) => value.split(/\s+/).includes(cls));
+  assert.ok(at('bo-clienti-status') > at('bo-clienti-search'), `status after the search: ${kids}`);
+  assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
+  assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
+});
+
+test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
+  const client = stubClient();
+  const clock = timers();
+  const { mount, view } = await render(client, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  const input = mount.findAll('input')[0];
+  input.value = 'mil';
+  input.dispatch('input');
+  view.invalidate();
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, 1, 'no read for a screen the operator left');
+  assert.equal(view.getState().q, '', 'the left screen keeps its query');
+  // Route re-entry before the timer fires: the old keystroke dies too.
+  input.value = 'mil';
+  input.dispatch('input');
+  await view.render();
+  const reads = client.calls.length;
+  clock.fire();
+  await flush();
+  assert.equal(client.calls.length, reads, 'the previous frame’s keystroke never reads');
+});
+
+test('754918ad8da7 review giro 1: Cerca/Invio retries a failed read with the same query', async () => {
+  let fail = false;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options) => {
+    if (fail) {
+      client.calls.push(path);
+      throw Object.assign(new Error('boom'), { status: 500 });
+    }
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  const form = mount.findAll('form')[0];
+  input.value = 'milano';
+  fail = true;
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 2);
+  assert.match(mount.textContent, /Riprova/, 'the failure reads as an Italian retry');
+  fail = false;
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 3, 'the same query reads again on Invio');
+  assert.ok(client.calls[2].includes('q=milano'));
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the retry paints the list');
+  // Invio on the query already on screen reads again too (explicit).
+  form.dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(client.calls.length, 4);
+});
+
+/* ------------------------------------------------ backlog:ff8bb60f417f (punti 11-12) */
+
+test('ff8bb60f417f: one initials rule for list, scheda and creation — never «?»', async () => {
+  const { customerInitials } = await import('../apps/admin/public/admin-core.js');
+  assert.equal(customerInitials('Guido Presti'), 'GP');
+  assert.equal(customerInitials('UX Esplorativo 1111 B'), 'UB', 'first and last lettered word, like the scheda');
+  assert.equal(customerInitials('UX Esplorativo 1111'), 'UE', 'a last word without letters never reads «?»');
+  assert.equal(customerInitials('anna'), 'A');
+  assert.equal(customerInitials('1111'), '·');
+  assert.equal(customerInitials(''), '·');
+  const row = { ...ROW_MARCO, name: 'UX Esplorativo 1111 B' };
+  const client = stubClient();
+  client.request = async () => ({ customerListContract: 1, items: [row], total: 1, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS });
+  const { mount } = await render(client);
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-clienti-avatar');
+  assert.equal(avatar.textContent, 'UB', 'the list reads what the scheda reads');
+  const card = readFileSync(new URL('../apps/admin/public/admin-customer-card.js', import.meta.url), 'utf8');
+  assert.match(card, /bo-scheda-avatar', customerInitials\(/, 'the scheda avatar uses the same helper');
+});
+
+test('ff8bb60f417f: the unfiltered list total feeds the sidebar badge, a filtered page never does', async () => {
+  const totals = [];
+  const client = stubClient();
+  const { mount } = await render(client, { onTotal: (total) => totals.push(total) });
+  assert.deepEqual(totals, [{ count: 2, exact: true }], 'the list total is the badge');
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  assert.equal(totals.length, 1, 'a filtered page never moves the badge');
+});
+
+test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200,00 EUR»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const { mount } = await render(stubClient());
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [marco, anna] = facts(mount);
+  assert.ok(marco.textContent.endsWith('1.200 €'), `got «${marco.textContent}»`);
+  assert.ok(!mount.textContent.includes('EUR'), 'the euro reads as €, never as its code');
+  assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
+});
+
+/* ------------------------------------------------ backlog:4968615de0a4 */
+
+test('4968615de0a4: one way to clear the search — the field’s Azzera; no browser ×, no search chip', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  assert.equal(input.getAttribute('type'), 'text', 'a plain text field: no browser × inside it');
+  assert.equal(input.getAttribute('enterkeyhint'), 'search');
+  input.value = 'milano';
+  input.dispatch('input');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=milano'));
+  const clears = mount.findAll('button').filter((node) => /Azzera/.test(node.textContent) || /Rimuovi filtro «/.test(node.getAttribute('aria-label') ?? ''));
+  assert.deepEqual(clears.map((node) => node.getAttribute('data-action')), ['clear-search'], 'only the field’s Azzera clears the search');
+  assert.equal(toolToggle(mount, 'Filtri').getAttribute('aria-label'), 'Filtri', 'a search is not a filter in the badge');
+  // With a filter on, the chip row clears the filters only.
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const clearFilters = mount.findAll('button').find((node) => node.textContent === 'Azzera filtri');
+  assert.ok(clearFilters, 'the chip row says what it clears');
+  clearFilters.dispatch('click');
+  await flush();
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(!last.includes('canale='), last);
+  assert.ok(last.includes('q=milano'), 'Azzera filtri keeps the search');
+  assert.equal(input.value, 'milano');
+});
+
+test('4968615de0a4: back on Clienti from another page the search starts empty, filters stay', async () => {
+  const client = stubClient();
+  const { mount, view } = await render(client);
+  const input = mount.findAll('input')[0];
+  input.value = 'milano';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'stato:cliente').dispatch('click');
+  await flush();
+  view.invalidate();
+  await view.render();
+  const again = mount.findAll('input')[0];
+  assert.equal(again.value, '', 'the field is empty');
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(!last.includes('q='), `the list reads without the old search: ${last}`);
+  assert.ok(last.includes('stato=cliente'), 'the filters stay, shown as chips');
+  assert.ok(byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Cliente'));
+});
+
+test('4968615de0a4: «Importa da file» has its own file mark, not the pencil of «Compila manualmente»', async () => {
+  const { mount } = await render(stubClient());
+  const tilePath = (action) => byAttr(mount, 'button', 'data-action', action)
+    .findAll('path').map((node) => node.getAttribute('d')).join(' ');
+  assert.notEqual(tilePath('add-import'), tilePath('add-manual'));
+  const { UI_ICONS } = await import('../apps/admin/public/admin-ui.js');
+  assert.ok(UI_ICONS.includes('importa'));
 });

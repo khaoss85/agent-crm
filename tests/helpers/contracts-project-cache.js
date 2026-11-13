@@ -60,6 +60,7 @@ export function project(t, options = {}) {
 const templates = new Map();
 /** @type {string | undefined} */
 let templateParent;
+let uncachedBuilds = 0;
 
 /**
  * How long a process waits for another process's build before building alone
@@ -99,23 +100,32 @@ export function stableKey(value) {
 }
 
 /**
- * An option set is shareable when `stableKey` names its build exactly: plain
- * data round-trips through the key, but two different functions stringify to
- * the same key hole, so any function opts the whole build out of sharing.
- * Pure: unit-tested.
+ * An option set is cacheable — per process and across processes — only when
+ * `stableKey` names its build exactly, i.e. it is plain JSON-like data:
+ * strings, finite numbers, booleans, null/undefined, arrays and plain
+ * objects. Anything else stringifies lossily (two functions, two Maps, two
+ * Dates or two class instances can share one key, a BigInt throws), so such
+ * an option set is never cached: every call builds fresh, exactly like the
+ * original helper. Pure: unit-tested.
  * @param {unknown} options
  * @returns {boolean}
  */
 export function optionsShareable(options) {
   const seen = new Set();
+  /** @param {unknown} value @returns {boolean} */
   const walk = (value) => {
-    if (typeof value === 'function') return false;
-    if (value && typeof value === 'object') {
-      if (seen.has(value)) return true;
-      seen.add(value);
-      return Object.values(value).every(walk);
-    }
-    return true;
+    if (value === null || value === undefined) return true;
+    const kind = typeof value;
+    if (kind === 'string' || kind === 'boolean') return true;
+    if (kind === 'number') return Number.isFinite(value);
+    if (kind !== 'object') return false; // function, symbol, bigint
+    if (seen.has(value)) return false; // a cycle has no finite key
+    seen.add(value);
+    if (Array.isArray(value)) return value.every(walk);
+    const proto = Object.getPrototypeOf(value);
+    if (proto !== Object.prototype && proto !== null) return false;
+    if (Object.getOwnPropertySymbols(value).length > 0) return false;
+    return Object.values(/** @type {object} */ (value)).every(walk);
   };
   return walk(options ?? {});
 }
@@ -148,7 +158,7 @@ function isDirectory(path) {
  * The job-scoped share for this checkout, or null. `RUNNER_TEMP` is the
  * scratch directory the CI job's parallel parts share (the runner wipes it
  * with the job, so entries never go stale); the HEAD sha keys the build, and
- * any difference from HEAD over exactly the paths `buildProject` copies
+ * any difference from HEAD over exactly the paths the original build copies
  * disables sharing for the whole process.
  * @returns {{ base: string, sha: string } | null}
  */
@@ -174,8 +184,10 @@ function sharingScope() {
 }
 
 /**
- * Take over a build lock its holder outlived, so a killed builder wedges
- * neither its key nor the files waiting on it.
+ * Take over a build lock its holder outlived. Safe even when the holder is
+ * in fact still alive: builds never write into the shared directory, they
+ * publish with one same-directory rename (`publishBuild`), so two builders
+ * can only race to that rename, and the loser keeps the winner's build.
  * @param {string} lock
  * @returns {boolean} true when this process now holds the lock.
  */
@@ -191,16 +203,14 @@ function takeOverStaleLock(lock) {
 }
 
 /**
- * One build per key across test processes (backlog:3d560518f3e2). The
- * per-process cache above still rebuilds the same template in every test
- * file: the 41 files importing this helper each paid the 15-70 s build, about
- * 2 250 part-seconds of builds alone — past what the fast gate's 4 x 420 s
- * run budget can hold even when every test passes (agent-crm#731). The first
- * process publishes its build under the job scratch dir keyed by HEAD sha
- * plus the option key; the others copy from it. The `.ready` sidecar marks a
- * complete build: a directory without one is a crashed build, rebuilt, never
- * reused. Fail-open throughout — null on any doubt — so the caller falls back
- * to the per-process build.
+ * One build per key across test processes (backlog:3d560518f3e2). The first
+ * process builds and publishes under the job scratch dir keyed by HEAD sha
+ * plus the option key; the others copy from it. The template directory only
+ * ever appears whole, by an atomic rename inside its own parent directory,
+ * so "the directory exists" means "a complete build". The lock only saves
+ * duplicate work. The `.ready` sidecar records sha and key for the log.
+ * Fail-open throughout — null on any doubt — so the caller falls back to a
+ * per-process build.
  * @param {object} options
  * @param {string} key
  * @returns {string | null} the shared template directory, or null.
@@ -209,17 +219,8 @@ function sharedTemplate(options, key) {
   const scope = sharingScope();
   if (!scope || !optionsShareable(options)) return null;
   const dir = join(scope.base, templateDirName(scope.sha, key));
-  const ready = `${dir}.ready`;
   const lock = `${dir}.lock`;
-  /** @returns {boolean} */
-  const usable = () => {
-    try {
-      return existsSync(ready) && isDirectory(dir);
-    } catch {
-      return false;
-    }
-  };
-  if (!usable()) {
+  if (!isDirectory(dir)) {
     let mine = false;
     try {
       mkdirSync(lock);
@@ -229,34 +230,33 @@ function sharedTemplate(options, key) {
     }
     if (mine) {
       try {
-        if (!usable()) {
-          rmSync(dir, { recursive: true, force: true });
-          rmSync(ready, { force: true });
-          buildProject(dir, options);
-          writeFileSync(ready, JSON.stringify({ sha: scope.sha, key, builtAt: new Date().toISOString() }));
+        if (!isDirectory(dir)) publishBuild(scope.base, dir, options);
+        const ready = `${dir}.ready`;
+        if (isDirectory(dir) && !existsSync(ready)) {
+          const pending = `${ready}.${process.pid}`;
+          writeFileSync(pending, JSON.stringify({ sha: scope.sha, key, builtAt: new Date().toISOString() }));
+          renameSync(pending, ready);
         }
       } catch {
-        rmSync(dir, { recursive: true, force: true });
-        rmSync(ready, { force: true });
+        // Fail open: the caller builds per process.
       } finally {
         rmSync(lock, { recursive: true, force: true });
       }
     } else {
       const deadline = Date.now() + SHARE_WAIT_MS;
-      while (Date.now() < deadline && !usable()) {
+      while (Date.now() < deadline && !isDirectory(dir)) {
         // The holder removes the lock however it ends: lock gone without a
-        // marker is a failed or reaped build, so fall back at once instead
-        // of waiting out the whole bound for a builder that will not come.
+        // published build is a failed or reaped build, so fall back at once.
         if (!existsSync(lock)) break;
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
       }
     }
   }
-  return usable() ? dir : null;
+  return isDirectory(dir) ? dir : null;
 }
 
 /**
- * One build per key. `buildProject` is synchronous (spawnSync all the way
+ * One build per key. `publishBuild` is synchronous (spawnSync all the way
  * down), so two builds can never interleave inside one process: the first
  * call fills the map before any other call can run, and every later call for
  * the same key copies that one build. Across processes the shared template
@@ -266,6 +266,17 @@ function sharedTemplate(options, key) {
  * @param {object} options
  */
 function projectTemplate(options) {
+  if (templateParent === undefined) {
+    templateParent = mkdtempSync(join(tmpdir(), 'accordo-contracts-templates-'));
+    const parent = templateParent;
+    process.once('exit', () => rmSync(parent, { recursive: true, force: true }));
+  }
+  if (!optionsShareable(options)) {
+    // No exact key: never cached, built fresh for this call.
+    const root = join(templateParent, `uncached-${uncachedBuilds += 1}`);
+    publishBuild(templateParent, root, options);
+    return root;
+  }
   const key = stableKey(options ?? {});
   const cached = templates.get(key);
   if (cached && existsSync(cached)) return cached;
@@ -274,35 +285,50 @@ function projectTemplate(options) {
     templates.set(key, shared);
     return shared;
   }
-  if (templateParent === undefined) {
-    templateParent = mkdtempSync(join(tmpdir(), 'accordo-contracts-templates-'));
-    const parent = templateParent;
-    process.once('exit', () => rmSync(parent, { recursive: true, force: true }));
-  }
-  const root = join(templateParent, String(templates.size));
+  const root = join(templateParent, `cached-${templates.size}`);
   rmSync(root, { recursive: true, force: true });
-  buildProject(root, options);
+  publishBuild(templateParent, root, options);
   templates.set(key, root);
   return root;
 }
 
 /**
- * Build one project into `dir` with the ORIGINAL helper's `project()` — the
- * real CLI and module factory, byte for byte the build every uncached test
- * gets — then move it into place.
+ * Build one project with the ORIGINAL helper's `project()` — the real CLI and
+ * module factory, byte for byte the build every uncached test gets — and
+ * publish it at `dir` with ONE atomic rename. The build is first staged in a
+ * private directory under `parent` (the parent of `dir`, so the final rename
+ * never crosses filesystems); only staging may copy across filesystems.
+ * Returns true when this call published `dir`; false when another builder
+ * published it first (this build is discarded, theirs is used).
+ * @param {string} parent the directory `dir` lives in
  * @param {string} dir an absent directory the project ends up in
  * @param {object} options
+ * @returns {boolean}
  */
-function buildProject(dir, options) {
+export function publishBuild(parent, dir, options, build = buildFreshProject) {
   /** @type {Array<() => void>} */
   const cleanups = [];
-  const built = buildFreshProject({ after: (fn) => { cleanups.push(fn); } }, options);
+  const staging = mkdtempSync(join(parent, '.accordo-contracts-staging-'));
   try {
-    renameSync(built, dir);
-  } catch {
-    // Another filesystem (tmpdir vs RUNNER_TEMP): copy instead of rename.
-    cpSync(built, dir, { recursive: true });
+    const built = build({ after: (fn) => { cleanups.push(fn); } }, options);
+    const staged = join(staging, 'project');
+    try {
+      renameSync(built, staged);
+    } catch {
+      // Another filesystem (tmpdir vs RUNNER_TEMP): copy into the private
+      // staging dir; nobody reads it until the rename below.
+      cpSync(built, staged, { recursive: true });
+    }
+    try {
+      renameSync(staged, dir);
+      return true;
+    } catch (error) {
+      const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+      if ((code === 'EEXIST' || code === 'ENOTEMPTY') && isDirectory(dir)) return false;
+      throw error;
+    }
   } finally {
     for (const cleanup of cleanups) cleanup();
+    rmSync(staging, { recursive: true, force: true });
   }
 }

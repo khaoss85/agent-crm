@@ -58,6 +58,8 @@ function fakeClient({ catalog = CATALOG, members = MEMBERS, slots = SLOTS, confi
     async request(path, options = {}) {
       const method = String(options.method ?? 'GET').toUpperCase();
       calls.push({ path, method, body: options.body ? JSON.parse(options.body) : null, key: options.idempotencyKey ?? null });
+      // The framework on its own serves no bookable services list (review #805 giro 2).
+      if (path === '/api/appointments/services') throw Object.assign(new Error('Not Found'), { status: 404 });
       if (path === '/api/catalog/products?limit=200') {
         if (catalog instanceof Error) throw catalog;
         return catalog;
@@ -154,9 +156,17 @@ test('Nuovo appuntamento: the person\'s free slots come from suggest-slots, futu
   assert.equal(url.searchParams.get('slotMinutes'), '30');
   assert.equal(url.searchParams.get('from'), NOW.toISOString());
   assert.equal(url.searchParams.get('to'), '2026-11-19T06:00:00.000Z', 'the next seven days');
+  // Verifica 12/11: one chip per day with free hours, then that day's hours.
+  const dayChips = () => panel.findAll('button').filter((button) => button.getAttribute('data-day') !== null);
+  assert.deepEqual(dayChips().map((chip) => [chip.getAttribute('data-day'), chip.textContent]),
+    [['2026-11-12', 'gio 12 nov'], ['2026-11-13', 'ven 13 nov']], 'the days with room, never only today');
+  assert.equal(dayChips()[0].getAttribute('aria-pressed'), 'true', 'the first day is chosen');
   assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')),
-    ['2026-11-12T09:00:00.000Z', '2026-11-13T13:00:00.000Z'], 'the past and the night are not offered');
+    ['2026-11-12T09:00:00.000Z'], 'the past and the night are not offered');
   assert.equal(chips(panel)[0].textContent, 'gio 12 nov · 10:00–10:30', 'Rome time with the weekday');
+  dayChips()[1].dispatch('click');
+  assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')), ['2026-11-13T13:00:00.000Z'],
+    'another day shows its own hours');
 
   selectNamed(panel, 'duration').value = '60';
   selectNamed(panel, 'duration').dispatch('change');
@@ -398,7 +408,7 @@ test('review #776: opening Nuovo appuntamento keeps the Scrivi draft for when it
   const mount = createMount();
   await createCustomerCardView({ doc: createFakeDocument(), mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
   const action = (name) => mount.findAll('button').find((node) => node.getAttribute('data-action') === name);
-  action('compose-message').dispatch('click');
+  action('compose-email').dispatch('click');
   await flush();
   const text = mount.findAll('textarea')[0];
   text.value = 'Ciao Guido, ti scrivo per';
@@ -407,7 +417,7 @@ test('review #776: opening Nuovo appuntamento keeps the Scrivi draft for when it
   await flush();
   assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-appointment-panel') === 'open'));
   action('appointment-cancel').dispatch('click');
-  action('compose-message').dispatch('click');
+  action('compose-email').dispatch('click');
   await flush();
   assert.equal(mount.findAll('textarea')[0].value, 'Ciao Guido, ti scrivo per', 'the draft is back');
 });
@@ -458,4 +468,76 @@ test('review #776: a booking answered after leaving the scheda keeps the next cu
   await flush();
   assert.ok(mount.textContent.includes('Altra Persona'), 'the next customer stays');
   assert.ok(!reads.some((path) => path.includes('/card/contact/c1')), 'the first customer is not read again');
+});
+
+test('backlog:0a980182918f: a refused booking logs the shared write line, once, never «Object»', async () => {
+  const refused = fakeClient({
+    confirm: () => {
+      throw Object.assign(new Error('Orario fuori dalle ore di lavoro'), {
+        status: 400, code: 'VALIDATION_FAILED', method: 'POST', path: APPOINTMENT_CONFIRM_PATH,
+      });
+    },
+  });
+  const original = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const { panel } = await open({ client: refused });
+    await choose(panel);
+    chips(panel)[0].dispatch('click');
+    await panel.__submit();
+    await flush();
+  } finally {
+    console.error = original;
+  }
+  const lines = logged.map((args) => String(args[0]));
+  assert.equal(lines.length, 1, `one line per failure: ${lines.join(' | ')}`);
+  assert.equal(lines[0], `[bo] scrittura fallita POST ${APPOINTMENT_CONFIRM_PATH} · 400 VALIDATION_FAILED: Orario fuori dalle ore di lavoro`);
+  assert.ok(!lines.some((line) => line.includes('appuntamento non fissato')));
+});
+
+// P1 11/11: the window books from the server's own bookable list when it
+// serves one (the pilot), so Conferma sends the key the worker books.
+test('P1 11/11: the window menu is the served bookable list and the claim books its key and price', async () => {
+  const served = { services: [
+    { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    { serviceKey: 'personal-training', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+  ] };
+  const base = fakeClient();
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/services') return served;
+      return base.request(path, options);
+    },
+  };
+  const { panel } = await open({ client });
+  assert.deepEqual(selectNamed(panel, 'service').findAll('option').map((node) => node.textContent),
+    ['Scegli il servizio', 'Lezione di prova · 15,00 €', 'PT singola · 40,00 €']);
+  assert.ok(!base.paths().includes('/api/catalog/products?limit=200'), 'no second rule over the catalog');
+  await choose(panel, { service: 'personal-training' });
+  chips(panel)[0].dispatch('click');
+  await panel.__submit();
+  const sent = base.confirms()[0].body;
+  assert.equal(sent.serviceKey, 'personal-training');
+  assert.equal(sent.priceCents, 4000);
+});
+
+// Verifica 12/11: with a full free day the first twelve hours were all
+// today and the next days could not be chosen.
+test('verifica 12/11: a full free day never hides the next days', async () => {
+  const today = Array.from({ length: 16 }, (_, index) => {
+    const startMs = Date.parse('2026-11-12T08:00:00.000Z') + index * 30 * 60000;
+    return { startsAt: new Date(startMs).toISOString(), endsAt: new Date(startMs + 30 * 60000).toISOString() };
+  });
+  const tomorrow = [{ startsAt: '2026-11-13T09:00:00.000Z', endsAt: '2026-11-13T09:30:00.000Z' }];
+  const { panel, client } = await open({ client: fakeClient({ slots: { members: [{ teamMemberId: 'google|sara', slots: [...today, ...tomorrow] }] } }) });
+  await choose(panel);
+  const dayChips = panel.findAll('button').filter((button) => button.getAttribute('data-day') !== null);
+  assert.deepEqual(dayChips.map((chip) => chip.getAttribute('data-day')), ['2026-11-12', '2026-11-13']);
+  dayChips[1].dispatch('click');
+  assert.deepEqual(chips(panel).map((chip) => chip.getAttribute('data-slot')), ['2026-11-13T09:00:00.000Z']);
+  chips(panel)[0].dispatch('click');
+  await panel.__submit();
+  assert.equal(client.confirms()[0].body.startsAt, '2026-11-13T09:00:00.000Z', 'a later day books');
 });

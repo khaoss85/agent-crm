@@ -16,7 +16,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stableKey, optionsShareable, templateDirName } from './helpers/contracts-project-cache.js';
+import { stableKey, optionsShareable, templateDirName, publishBuild } from './helpers/contracts-project-cache.js';
 import * as cached from './helpers/contracts-project-cache.js';
 import * as original from './helpers/contracts-project.js';
 import { createHash } from 'node:crypto';
@@ -69,6 +69,69 @@ test('an option set holding a function is not shareable', () => {
   assert.equal(optionsShareable(undefined), true);
   assert.equal(optionsShareable({ clock: () => 0 }), false);
   assert.equal(optionsShareable({ priceRules: { nested: { fn: () => 0 } } }), false);
+});
+
+test('only plain JSON-like option sets are cacheable: anything stableKey would blur builds fresh', () => {
+  // Each of these stringifies lossily, so two different values would share
+  // one cache key (or throw): never cached, never shared.
+  class Rules { constructor() { this.a = 1; } }
+  const cyclic = { a: 1 };
+  /** @type {any} */ (cyclic).self = cyclic;
+  for (const [label, options] of /** @type {Array<[string, unknown]>} */ ([
+    ['Map', { priceRules: new Map([['a', 1]]) }],
+    ['Set', { priceRules: new Set([1]) }],
+    ['Date', { asOf: new Date(0) }],
+    ['class instance', { priceRules: new Rules() }],
+    ['BigInt', { limit: 1n }],
+    ['Symbol', { tag: Symbol('x') }],
+    ['NaN', { ratio: Number.NaN }],
+    ['Infinity', { ratio: Number.POSITIVE_INFINITY }],
+    ['symbol key', { [Symbol('k')]: 1 }],
+    ['cycle', cyclic],
+  ])) {
+    assert.equal(optionsShareable(options), false, label);
+  }
+  assert.equal(optionsShareable({ withWork: true, priceRules: { rules: [{ pct: 5, sku: 'A' }] }, n: null }), true);
+  assert.equal(optionsShareable(Object.assign(Object.create(null), { withWork: true })), true);
+});
+
+/** A fake build: a throwaway dir in the OS temp dir holding one file. */
+function fakeBuild(/** @type {string} */ content) {
+  return (/** @type {{ after(fn: () => void): void }} */ t) => {
+    const root = mkdtempSync(join(tmpdir(), 'accordo-fake-build-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    writeFileSync(join(root, 'marker.txt'), content);
+    return root;
+  };
+}
+
+test('a build is published whole by one rename inside the target directory, never half-copied', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'accordo-publish-'));
+  try {
+    const dir = join(parent, 'template');
+    assert.equal(publishBuild(parent, dir, {}, fakeBuild('first')), true);
+    assert.equal(readFileSync(join(dir, 'marker.txt'), 'utf8'), 'first');
+    assert.deepEqual(readdirSync(parent), ['template'], 'no staging directory is left behind');
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test('two builders racing for one key: the loser discards its build and the winner\'s stays intact', () => {
+  // What a stale-lock takeover can produce when the first holder is still
+  // alive: two complete builds. Publication is one rename, so the second
+  // cannot overwrite or mix into the first.
+  const parent = mkdtempSync(join(tmpdir(), 'accordo-publish-'));
+  try {
+    const dir = join(parent, 'template');
+    assert.equal(publishBuild(parent, dir, {}, fakeBuild('winner')), true);
+    assert.equal(publishBuild(parent, dir, {}, fakeBuild('loser')), false);
+    assert.equal(readFileSync(join(dir, 'marker.txt'), 'utf8'), 'winner');
+    assert.deepEqual(readdirSync(dir), ['marker.txt']);
+    assert.deepEqual(readdirSync(parent), ['template']);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 /** @param {string} root @returns {Record<string, string>} path → sha256 */

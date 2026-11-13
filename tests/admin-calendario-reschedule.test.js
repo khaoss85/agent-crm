@@ -41,7 +41,9 @@ const WEEK = () => ({
         },
         {
           id: 'a2',
-          status: 'cancelled',
+          // A closed booking that still paints (backlog:5346ab531538: a
+          // cancelled one leaves the grid, a done one stays).
+          status: 'done',
           startsAt: '2026-10-23T09:00:00.000Z',
           endsAt: '2026-10-23T09:30:00.000Z',
           serviceKey: 'barba',
@@ -132,6 +134,12 @@ async function selectEvent(mount, id) {
 }
 
 function moveForm(mount) {
+  // Dan 11/11: the form opens from the popover's «Modifica o sposta» icon.
+  if (!mount.querySelector('div[data-role="move-form"]')) {
+    const edit = mount.querySelector('button[data-action="event-edit"]');
+    assert.ok(edit, 'the popover carries «Modifica o sposta»');
+    edit.dispatch('click');
+  }
   const form = mount.querySelector('div[data-role="move-form"]');
   assert.ok(form, 'the Sposta form paints beside the selected event');
   return form;
@@ -283,12 +291,18 @@ const DRAG_WEEK = () => ({
   ],
 });
 
-async function openPointerWeek() {
+async function openPointerWeek({ failRescheduleWith = null, wait = undefined, endsAt = undefined } = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const week = DRAG_WEEK();
-  const client = stubClient({ week });
-  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  if (endsAt) week.members[0].appointments[0].endsAt = endsAt;
+  const client = stubClient({ week, failRescheduleWith });
+  const toasts = [];
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
+    toast: (message, error) => toasts.push({ message, error: error === true }),
+    ...(wait ? { wait } : {}),
+  });
   await view.render();
   const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
   filter.value = 'marco';
@@ -299,7 +313,7 @@ async function openPointerWeek() {
   attachClosest(mount);
   // 1 px per minute from 09:00: clientY 300 is 14:00, 330 is 14:30, 390 is 15:30.
   col.getBoundingClientRect = () => ({ top: 0, height: 540 });
-  return { doc, mount, client, week, view, col };
+  return { doc, mount, client, week, view, col, toasts };
 }
 
 function resizeHandleOf(mount) {
@@ -436,11 +450,13 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
       return base.request(path, options);
     },
   };
-  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  const toasts = [];
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, toast: (message, error) => toasts.push({ message, error: error === true }), now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
   mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
   await settle();
+  const popoverOpen = () => mount.findAll('div').some((node) => node.getAttribute('data-role') === 'event-detail');
   let button = eventButton(mount, 'a9');
   let col = button.parentNode;
   attachClosest(mount);
@@ -463,33 +479,25 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
   col.dispatch('pointerup', {});
   await settle(5);
   assert.equal(rescheduleBodies.length, 1, 'no second request leaves while busy');
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('già uno spostamento')),
-    'the wait reads Italian beside the event',
-  );
+  // backlog:a332dcd070ca: a drag never opens the popover, so the wait reads
+  // in a toast, in Italian.
+  assert.equal(popoverOpen(), false, 'the drag opened no popover');
+  assert.ok(toasts.some((toast) => toast.message.includes('già uno spostamento') && toast.error), JSON.stringify(toasts));
   // The first request lands: the grid confirms the new time, and the click
   // guard is eaten exactly once afterwards — never stuck.
   releaseReschedule({ appointment: { id: 'a9', startsAt: rescheduleBodies[0].startsAt, endsAt: rescheduleBodies[0].endsAt } });
   await settle(15);
   assert.equal(rescheduleBodies.length, 1, 'the landing sends nothing new');
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the landing confirms the new time',
-  );
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Spostato a') && !toast.error), 'the landing confirms the new time');
+  assert.equal(popoverOpen(), false, 'the landing opens no popover either');
   const firstClick = eventButton(mount, 'a9');
   firstClick.dispatch('click', { target: firstClick });
   await settle(5);
-  assert.ok(
-    mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the drag click is eaten once, the note stays',
-  );
+  assert.equal(popoverOpen(), false, 'the drag click is eaten once');
   const secondClick = eventButton(mount, 'a9');
   secondClick.dispatch('click', { target: secondClick });
   await settle(5);
-  assert.ok(
-    !mount.findAll('p').some((node) => node.textContent.includes('Spostato a')),
-    'the next click selects again: the guard is not wedged',
-  );
+  assert.equal(popoverOpen(), true, 'the next click opens the popover: the guard is not wedged');
 });
 
 test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P2)', async () => {
@@ -533,4 +541,244 @@ test('3d0fbe7d: bad move fields fail closed in Italian before any request', asyn
     mount.findAll('p').some((node) => node.textContent.includes('validi')),
     'bad fields get an Italian note',
   );
+});
+
+// backlog:a332dcd070ca (pilota 11/11): a refused drag must not open the
+// popover by itself; the refusal reads in a toast and the block goes back.
+test('a332dcd0: a refused drag opens no popover, the block goes back, the refusal reads in a toast', async () => {
+  const refusal = Object.assign(new Error('overlap'), { code: 'APPOINTMENTS_OVERLAP', status: 409 });
+  const { mount, client, week, col, toasts } = await openPointerWeek({ failRescheduleWith: refusal });
+  const before = { ...week.members[0].appointments[0] };
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(client.calls.some((call) => call.path === '/api/appointments/reschedule'), 'the move was asked');
+  assert.equal(
+    mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length,
+    0,
+    'the refused drag opens no popover',
+  );
+  assert.equal(eventButton(mount, 'a9').getAttribute('aria-pressed'), 'false', 'nothing selected');
+  assert.equal(week.members[0].appointments[0].startsAt, before.startsAt, 'the block is back where it was');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, true);
+  assert.match(toasts[0].message, /occupata/, 'the Italian refusal reads in the toast');
+  // The click after the drop is eaten once, then a click opens the popover.
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 1);
+});
+
+test('a332dcd0: a successful drag opens no popover either and confirms in a toast', async () => {
+  const { mount, col, toasts } = await openPointerWeek();
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 0);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, false);
+  assert.match(toasts[0].message, /^Spostato a giovedì 22 ottobre, 15:00–16:00\.$/);
+});
+
+test('a332dcd0: a move still queued on the shared /bo stays where it was dropped and the week is read again', async () => {
+  const queued = Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'req-1', claimId: 'c-1' });
+  const waits = [];
+  let release = () => {};
+  const wait = (ms) => { waits.push(ms); return new Promise((resolve) => { release = resolve; }); };
+  const { mount, client, week, col, toasts } = await openPointerWeek({ failRescheduleWith: queued, wait });
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.equal(week.members[0].appointments[0].startsAt, '2026-10-22T13:00:00.000Z', 'the drop stands, never reverted as refused');
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].error, false);
+  assert.match(toasts[0].message, /in coda/);
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'event-detail').length, 0);
+  const reads = () => client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  const before = reads();
+  assert.deepEqual(waits, [4000], 'the week is read again after a short wait');
+  release();
+  await settle(10);
+  assert.equal(reads(), before + 1, 'the week read shows where the worker put it');
+});
+
+test('a332dcd0: the Sposta form in the popover still answers inside the popover', async () => {
+  const refusal = Object.assign(new Error('overlap'), { code: 'APPOINTMENTS_OVERLAP', status: 409 });
+  const { mount, toasts } = await openPointerWeek({ failRescheduleWith: refusal });
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  const form = moveForm(mount);
+  fillMove(form, { date: '2026-10-22', start: '16:00', end: '17:00' });
+  submitMove(form);
+  await settle(15);
+  const note = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'move-note');
+  assert.match(note?.textContent ?? '', /occupata/, 'the refusal reads beside the form');
+  assert.equal(toasts.length, 0, 'no toast while the popover shows it');
+});
+
+test('a332dcd0 (review #811): a queued reread waits for a move in flight, never clobbering it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const week = DRAG_WEEK();
+  const base = stubClient({ week });
+  const bodies = [];
+  let releaseSecond = () => {};
+  const client = {
+    ...base,
+    async request(path, options = {}) {
+      if (path === '/api/appointments/reschedule') {
+        const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        bodies.push(body);
+        if (bodies.length === 1) {
+          throw Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'r1', claimId: 'c1' });
+        }
+        await new Promise((resolve) => { releaseSecond = resolve; });
+        return { appointment: { id: 'a9', startsAt: body.startsAt, endsAt: body.endsAt } };
+      }
+      return base.request(path, options);
+    },
+  };
+  let releaseWait = () => {};
+  const toasts = [];
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z'),
+    toast: (message, error) => toasts.push({ message, error: error === true }),
+    wait: () => new Promise((resolve) => { releaseWait = resolve; }),
+  });
+  await view.render();
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
+  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  await settle();
+  const drag = async (fromY, toY) => {
+    const button = eventButton(mount, 'a9');
+    const col = button.parentNode;
+    attachClosest(mount);
+    col.getBoundingClientRect = () => ({ top: 0, height: 540 });
+    col.dispatch('pointerdown', { target: button, button: 0, clientY: fromY });
+    col.dispatch('pointermove', { clientY: toY });
+    col.dispatch('pointerup', {});
+    await settle(10);
+  };
+  const weekReads = () => base.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length;
+  // Drag A: queued on the worker, its reread scheduled.
+  await drag(330, 390);
+  assert.equal(bodies.length, 1);
+  assert.match(toasts.at(-1).message, /in coda/);
+  // A click eats the drag guard, then drag B: it stays in flight.
+  eventButton(mount, 'a9').dispatch('click', { target: eventButton(mount, 'a9') });
+  await drag(390, 450);
+  assert.equal(bodies.length, 2, 'the second move left');
+  const readsBefore = weekReads();
+  // The first move's reread time comes while B is in flight: it waits.
+  releaseWait();
+  await settle(10);
+  assert.equal(weekReads(), readsBefore, 'no week read lands in the middle of the second move');
+  // B lands: its own outcome speaks, then the week is read once.
+  releaseSecond();
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Spostato a') && !toast.error), JSON.stringify(toasts));
+  assert.equal(weekReads(), readsBefore + 1, 'one week read, after the second move');
+});
+
+// backlog:7587307d5215: the drag and the bottom edge snap to the quarter hour.
+test('7587307d: a move and a stretch snap to the quarter hour', async () => {
+  const moved = await openPointerWeek();
+  // 540 px from 09:00: 15 px a quarter. Grab 14:30 on the 14:00–15:00 block,
+  // let go at 14:50 (the 14:45 quarter): the block starts at 14:15.
+  moved.col.dispatch('pointerdown', { target: eventButton(moved.mount, 'a9'), button: 0, clientY: 330 });
+  moved.col.dispatch('pointermove', { clientY: 350 });
+  moved.col.dispatch('pointerup', {});
+  await settle(15);
+  const move = moved.client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  const moveBody = typeof move.body === 'string' ? JSON.parse(move.body) : move.body;
+  assert.equal(moveBody.startsAt, '2026-10-22T12:15:00.000Z', 'starts on the 14:15 quarter (Rome)');
+  assert.equal(moveBody.endsAt, '2026-10-22T13:15:00.000Z', 'the hour stays an hour');
+
+  const stretched = await openPointerWeek();
+  const { handle } = resizeHandleOf(stretched.mount);
+  // The bottom edge dragged to 15:10 lands on the 15:15 line.
+  stretched.col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  stretched.col.dispatch('pointermove', { clientY: 370 });
+  stretched.col.dispatch('pointerup', {});
+  await settle(15);
+  const stretch = stretched.client.calls.find((call) => call.path === '/api/appointments/reschedule');
+  const stretchBody = typeof stretch.body === 'string' ? JSON.parse(stretch.body) : stretch.body;
+  assert.equal(stretchBody.startsAt, '2026-10-22T12:00:00.000Z', 'the start stays');
+  assert.equal(stretchBody.endsAt, '2026-10-22T13:15:00.000Z', 'the end snaps to 15:15 (Rome)');
+});
+
+test('7587307d (review #834): a 20-minute booking drags with a whole-row ghost', async () => {
+  // a9 runs 14:00–14:20 Rome: 20 minutes, not a whole quarter count.
+  const { mount, col } = await openPointerWeek({ endsAt: '2026-10-22T12:20:00.000Z' });
+  col.dispatch('pointerdown', { target: eventButton(mount, 'a9'), button: 0, clientY: 300 });
+  col.dispatch('pointermove', { clientY: 345 });
+  const ghost = (col.childNodes ?? []).find((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  assert.ok(ghost, 'the drag ghost paints');
+  const style = ghost.getAttribute('style') ?? '';
+  assert.match(style, /grid-row: \d+ \/ span \d+;/, `a whole-row span: ${style}`);
+  assert.match(style, /grid-row: 24 \/ span 2;/, `14:45–15:05 covers the 14:45 and 15:00 rows: ${style}`);
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
+// backlog:7587307d5215: while the roster and the week load, Team and the
+// grid show placeholders — never «nessuna persona» nor an empty week.
+test('7587307d: loading shows skeletons, never the empty states', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let releaseRoster = () => {};
+  let releaseWeek = () => {};
+  const week = DRAG_WEEK();
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/memberships') {
+        await new Promise((resolve) => { releaseRoster = resolve; });
+        return { items: [{ subject: 'marco', displayName: 'Marco', email: 'marco@example.com' }] };
+      }
+      if (path.startsWith('/api/appointments/team-week')) {
+        await new Promise((resolve) => { releaseWeek = resolve; });
+        return week;
+      }
+      if (path === '/api/profile') return { member: null, connections: { available: false, reason: 'PROFILE_NOT_COMPOSED', items: [] } };
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
+      const missing = Object.assign(new Error('not composed'), { code: 'NOT_FOUND', status: 404 });
+      throw missing;
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  void view.render();
+  await settle(3);
+  const team = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-team'));
+  const week_ = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-week'));
+  const skeletons = (root) => root.findAll('div').filter((node) => node.getAttribute('data-role') === 'team-skeleton').length;
+  // Roster in flight: skeleton rows, no empty sentence.
+  assert.ok(skeletons(team()) > 0, 'Team shows placeholder rows');
+  assert.equal(team().getAttribute('aria-busy'), 'true');
+  assert.ok(!/Nomina le persone|nessuna persona/.test(team().textContent), team().textContent);
+  assert.ok(week_().findAll('div').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the grid shows placeholder blocks');
+  assert.ok(!/Scegli le persone/.test(week_().textContent), 'no empty-week sentence while the team loads');
+  // Review #834: the phone layout hides `is-empty` days and shows the compact
+  // «Nessun appuntamento» row; neither may paint while the week loads, or
+  // the skeletons vanish under the empty state.
+  const classed = (root, name) => root.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes(name));
+  assert.equal(classed(week_(), 'is-empty').length, 0, 'no day is called empty while loading');
+  assert.equal(classed(week_(), 'cal-day-compact').length, 0, 'no compact empty row while loading');
+  assert.ok(!/Nessun appuntamento/.test(week_().textContent), week_().textContent);
+  // Roster in, week in flight: the grid still shows its skeleton.
+  releaseRoster();
+  await settle(5);
+  assert.equal(skeletons(team()), 0, 'the team rows replace the placeholders');
+  assert.ok(team().textContent.includes('Marco'));
+  assert.ok((week_().findAll('div').find((node) => (node.getAttribute('class') ?? '').includes('cal-grid'))?.getAttribute('class') ?? '').includes('is-loading'), 'the grid is still loading');
+  assert.equal(week_().getAttribute('aria-busy'), 'true');
+  assert.equal(classed(week_(), 'is-empty').length, 0, 'still no empty day while the week is in flight');
+  assert.equal(classed(week_(), 'cal-day-compact').length, 0);
+  // Week in: no placeholder left, the blocks paint.
+  releaseWeek();
+  await settle(10);
+  assert.ok(!week_().findAll('div').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no placeholder after the week lands');
+  assert.equal(week_().getAttribute('aria-busy'), null);
+  assert.ok(eventButton(mount, 'a9'), 'the booking paints');
 });

@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -24,7 +24,7 @@ import {
   POSTGRESQL_HTTP_SPINE_REQUIRED,
 } from '../packages/cli/src/commands.js';
 import { MCP_PRODUCTION_SURFACE_UNAVAILABLE } from '../packages/mcp/src/production-surface.js';
-import { CHILD_EXIT_HANG_GUARD_MS, assertSyncChildExited, awaitChildExit } from './helpers/child-exit.js';
+import { assertSyncChildExited, awaitChildExit, hangGuardMs, spawnTracked } from './helpers/child-exit.js';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -181,7 +181,7 @@ function spawnEnv(extra = {}) {
 // The timeout is the hang guard of tests/helpers/child-exit.js, not a speed budget.
 function runCli(args, { cwd = repoRoot, env = spawnEnv() } = {}) {
   const result = spawnSync(process.execPath, ['--no-warnings', cli, ...args], {
-    cwd, encoding: 'utf8', timeout: CHILD_EXIT_HANG_GUARD_MS, env,
+    cwd, encoding: 'utf8', timeout: hangGuardMs(), env,
   });
   assertSyncChildExited(result, `accordo ${args[0]}`);
   return result;
@@ -340,7 +340,7 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
   writeModule(root, 'providers/identity-verifier.mjs', HANG_VERIFIER);
   const configPath = writeConfig(root, sqliteEnvelope(root));
   const dbPath = join(root, 'tenant.sqlite');
-  const child = spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve',
     '--deployment-storage', configPath,
     '--root', root,
@@ -359,6 +359,7 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
   // serve must end on its own (its verifier timeout), never by a signal from the test.
   const exit = await awaitChildExit(child, { label: 'M2-22 serve with a hanging verifier', diagnostics: () => stderr });
   assert.equal(exit.signal, null, stderr);
+  assert.equal(exit.signalSent, null, 'the test never signalled serve');
   assert.notEqual(exit.code, 0);
   assert.equal(stdout.includes('Accordo running at'), false);
   assert.equal(existsSync(dbPath), false);
@@ -370,7 +371,7 @@ test('M2-22 serve does not listen until the verifier contract passes', async () 
 test('M2-17 serve --db still discloses the ratified SQLite path and listens', async () => {
   const root = scratch();
   const dbPath = join(root, 'serve.sqlite');
-  const child = spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve', '--db', dbPath, '--port', '0',
   ], {
     cwd: repoRoot, env: spawnEnv(), stdio: ['ignore', 'pipe', 'pipe'],
@@ -385,8 +386,8 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', as
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new Error(`serve did not start within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard: ${stderr}`));
-      }, CHILD_EXIT_HANG_GUARD_MS);
+        reject(new Error(`serve did not start within its hang guard: ${stderr}`));
+      }, hangGuardMs());
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes(`Database: ${dbPath}`)) return;
@@ -398,7 +399,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', as
     assert.equal(stdout.includes(`Database: ${dbPath}`), true, stdout);
     const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
     assert.ok(advertised, stdout);
-    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(CHILD_EXIT_HANG_GUARD_MS) });
+    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(hangGuardMs()) });
     assert.equal(response.status, 200);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
@@ -418,7 +419,7 @@ test('M2-17 serve --db still discloses the ratified SQLite path and listens', as
 test('M2-17 serve document-selected stdout is {adapter,available} not a path', async () => {
   const { root, configPath } = sqliteScratch();
   const dbPath = join(root, 'tenant.sqlite');
-  const child = spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'serve',
     '--deployment-storage', configPath,
     '--root', root,
@@ -436,8 +437,8 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', a
     await new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new Error(`serve did not start within the ${CHILD_EXIT_HANG_GUARD_MS} ms hang guard: ${stderr}`));
-      }, CHILD_EXIT_HANG_GUARD_MS);
+        reject(new Error(`serve did not start within its hang guard: ${stderr}`));
+      }, hangGuardMs());
       child.stdout.on('data', () => {
         if (!stdout.includes('Accordo running at')) return;
         if (!stdout.includes('"adapter":"sqlite"')) return;
@@ -452,7 +453,7 @@ test('M2-17 serve document-selected stdout is {adapter,available} not a path', a
     assert.equal(stdout.includes('"available":true'), true, stdout);
     const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
     assert.ok(advertised, stdout);
-    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(CHILD_EXIT_HANG_GUARD_MS) });
+    const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(hangGuardMs()) });
     assert.equal(response.status, 200);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
@@ -493,7 +494,7 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
   assert.equal(fifo.status, 0, fifo.stderr || 'mkfifo failed');
   const dbPath = join(root, 'data', 'accordo.sqlite');
 
-  const child = spawn(process.execPath, ['--no-warnings', mcpBin], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', mcpBin], {
     cwd: root,
     env: spawnEnv({
       ACCORDO_MODE: 'production',
@@ -543,7 +544,7 @@ test('M2-16 production MCP is static-context-only and does not load a FIFO confi
 test('M2-16 local MCP --db still composes and lists application tools', async () => {
   const root = scratch();
   const dbPath = join(root, 'mcp.sqlite');
-  const child = spawn(process.execPath, [
+  const child = spawnTracked(process.execPath, [
     '--no-warnings', cli, 'mcp', '--db', dbPath,
   ], {
     cwd: repoRoot, env: spawnEnv(), stdio: ['pipe', 'pipe', 'pipe'],

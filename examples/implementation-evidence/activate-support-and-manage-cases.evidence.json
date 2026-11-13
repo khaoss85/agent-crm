@@ -254,7 +254,7 @@
         {
           "kind": "source.artifact",
           "path": "apps/admin/public/admin-service.js",
-          "sha256": "a982cc39bb5751055fa45693047fbfcffcc030acc215fe46674a2ddb657818ef"
+          "sha256": "fa1ecbe08c85cdb99bb2772129276a826b8bf2b472d7ac85a42b63bf84561549"
         }
       ]
     }

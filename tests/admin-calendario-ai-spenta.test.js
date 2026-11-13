@@ -68,8 +68,12 @@ async function askPhrase(client) {
   return { doc, mount };
 }
 
-const manualPanel = (mount) => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-manual'));
-const isOpen = (mount) => (manualPanel(mount)?.getAttribute('class') ?? '').split(' ').includes('open');
+// backlog:6e6750ff8163: the form lives in its popover, hidden while closed.
+const manualPop = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'manual-pop');
+const isOpen = (mount) => {
+  const pop = manualPop(mount);
+  return Boolean(pop) && !(pop.getAttribute('class') ?? '').split(' ').includes('hidden') && pop.getAttribute('hidden') === null;
+};
 
 const CASES = [
   {

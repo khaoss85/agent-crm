@@ -25,6 +25,7 @@
 // createElement + textContent/setAttribute — never innerHTML with data, so a
 // hostile channel, account or adapter label is inert text, never markup.
 
+import { channelState, CHANNEL_STATE_LABELS, NOT_AVAILABLE_NOTE } from './admin-channels-count.js';
 import { humanReadError } from './admin-core.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { googleConnectionsCard, metaConnectionsCard } from './admin-profilo.js';
@@ -205,23 +206,32 @@ export function matchConnections(channel, entries) {
 }
 
 /**
- * The screen status of one catalog connector: no composed adapter means the
- * connector honestly cannot connect here; no connection row means it shows
- * the "cosa succede" preview; otherwise the live row decides.
+ * The screen status of one catalog connector, from the one shared channel
+ * state (admin-channels-count.js `channelState`, backlog:e381c48581fa): an
+ * active row is `collegato` whether or not this composition configures the
+ * channel (`shared.managedHere` and `shared.note` say which), rows without
+ * an active one are `da-completare` when an adapter can finish them, no row
+ * is `da-collegare` when an adapter is composed, `non-disponibile` when
+ * nothing here can connect it.
  * @param {{ entry: ConnectorCatalogEntry, adapters: Array<any>, connections: Array<any> }} input
  */
-export function connectorStatus({ entry, adapters, connections }) {
-  if (adapters.length === 0) {
-    return Object.freeze({ status: 'non-disponibile', connections: Object.freeze([]) });
-  }
-  if (connections.length === 0) {
-    return Object.freeze({ status: 'da-collegare', connections: Object.freeze([]) });
-  }
-  const active = connections.find((row) => row.status === 'active') ?? null;
-  if (active !== null) {
-    return Object.freeze({ status: 'collegato', connections: Object.freeze(connections) });
-  }
-  return Object.freeze({ status: 'da-completare', connections: Object.freeze(connections) });
+export function connectorStatus({ entry, adapters, connections, profile = null }) {
+  const list = Array.isArray(connections) ? connections : [];
+  // The rows arrive already matched to this channel: name it on each copy
+  // so the shared state reads them, and hand back the original rows. The
+  // profile (GET /api/profile) merges like the shared count, so a link that
+  // lives only on Profilo is `collegato` here too (review #782 P1).
+  const shared = channelState(entry.channel, {
+    rows: list.map((row) => ({ ...row, channel: entry.channel })),
+    adapters: Array.isArray(adapters) ? adapters : [],
+    profile,
+  });
+  const keep = shared.state === 'collegato' || shared.state === 'da-completare';
+  return Object.freeze({
+    status: shared.state,
+    connections: Object.freeze(keep ? [...list] : []),
+    shared,
+  });
 }
 
 /**
@@ -300,7 +310,7 @@ export function flowBack(flow) {
   return Object.freeze({ ...flow, step: 0, error: null });
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -373,6 +383,7 @@ export function createConnectorsView(deps) {
     /** @type {any} */ flow: null,
     busyControls: /** @type {Array<any>} */ ([]),
     /** @type {any} */ google: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
     /** @type {any} */ meta: null,
   };
 
@@ -419,7 +430,7 @@ export function createConnectorsView(deps) {
       `Passo 1: autorizzi ${catalog.label} a parlare con Accordo. Non chiede password né segreti: registra solo dove la custodia dello spazio troverà il riferimento.`));
     const adapters = matchAdapters(catalog.channel, state.adapters);
     if (adapters.length === 0) {
-      box.appendChild(el(doc, 'p', 'field-error', 'Nessun adattatore composto per questo canale: non si può collegare qui.'));
+      box.appendChild(el(doc, 'p', 'field-error', NOT_AVAILABLE_NOTE));
       return;
     }
     const names = adapters.map((entry) => String(entry.label ?? entry.name)).join(', ');
@@ -437,7 +448,7 @@ export function createConnectorsView(deps) {
     const go = el(doc, 'button', undefined, 'Autorizza e collega');
     go.setAttribute('data-action', 'connect-authorize');
     state.busyControls.push(go);
-    if (flow.busy) go.disabled = true;
+    if (flow.busy) uiMarkBusy(go, 'Collego…');
     go.addEventListener('click', async () => {
       const account = String(input.value ?? '').trim();
       if (account === '') {
@@ -447,7 +458,7 @@ export function createConnectorsView(deps) {
       }
       const picked = matchAdapters(catalog.channel, state.adapters)[0] ?? null;
       if (picked === null) {
-        state.flow = flowFail(state.flow, 'Nessun adattatore composto per questo canale.');
+        state.flow = flowFail(state.flow, NOT_AVAILABLE_NOTE);
         render();
         return;
       }
@@ -510,7 +521,7 @@ export function createConnectorsView(deps) {
     const go = el(doc, 'button', undefined, 'Concludi il collegamento');
     go.setAttribute('data-action', 'connect-finish');
     state.busyControls.push(go);
-    if (flow.busy) go.disabled = true;
+    if (flow.busy) uiMarkBusy(go, 'Concludo…');
     go.addEventListener('click', async () => {
       state.flow = flowFinishStart(state.flow);
       render();
@@ -564,7 +575,7 @@ export function createConnectorsView(deps) {
       const more = el(doc, 'button', undefined, 'Continua l\u2019importazione');
       more.setAttribute('data-action', 'connect-resume');
       state.busyControls.push(more);
-      if (flow.busy) more.disabled = true;
+      if (flow.busy) uiMarkBusy(more, 'Importo…');
       more.addEventListener('click', async () => {
         state.flow = flowResumeImport(state.flow);
         render();
@@ -627,7 +638,7 @@ export function createConnectorsView(deps) {
   function renderRow(box, catalog) {
     const adapters = matchAdapters(catalog.channel, state.adapters);
     const connections = matchConnections(catalog.channel, state.entries);
-    const mapped = connectorStatus({ entry: catalog, adapters, connections });
+    const mapped = connectorStatus({ entry: catalog, adapters, connections, profile: state.profile });
     // One row like the Google rows above it (apps/admin/public/admin-profilo.js):
     // badge tile, bold name, one description line, status pill and Collega.
     // No underlined link and no bullet list: the row itself opens the detail.
@@ -649,7 +660,7 @@ export function createConnectorsView(deps) {
       && /** @type {{ status?: unknown }} */ (item).status === 'active') ?? null;
     const account = active !== null && typeof /** @type {{ account?: unknown }} */ (active).account === 'string'
       && /** @type {{ account?: string }} */ (active).account.trim() !== ''
-      ? /** @type {{ account?: string }} */ (active).account.trim() : null;
+      ? /** @type {{ account?: string }} */ (active).account.trim() : mapped.shared.account;
     open.appendChild(el(doc, 'span', 'bo-profilo-conn-line',
       account !== null ? `Collegato come ${account}` : String(catalog.syncLines[0] ?? catalog.accountLabel)));
     open.addEventListener('click', (event) => {
@@ -658,15 +669,23 @@ export function createConnectorsView(deps) {
     });
     row.appendChild(open);
     const side = el(doc, 'div', 'bo-profilo-conn-side');
-    const pill = mapped.status === 'collegato'
-      ? { text: 'Collegato', tone: 'ok' }
-      : mapped.status === 'da-completare'
-        ? { text: 'Da completare', tone: 'warn' }
-        : mapped.status === 'non-disponibile'
-          ? { text: 'Non disponibile qui', tone: 'muted' }
-          : { text: 'Da collegare', tone: 'muted' };
+    // One label per state, the same words on every screen (backlog:e381c48581fa).
+    const pill = CHANNEL_STATE_LABELS[mapped.status];
     side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${pill.tone}`, pill.text));
-    if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
+    if (mapped.status === 'da-collegare' && mapped.shared.managedHere !== true
+      && typeof mapped.shared.connectRoute === 'string') {
+      // Nothing here connects it, but Profilo does (a Meta channel with no
+      // adapter): Collega leads there, never into a wizard with no adapter.
+      const route = mapped.shared.connectRoute;
+      const go = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
+      go.setAttribute('href', route);
+      go.setAttribute('data-action', 'connect-elsewhere');
+      go.addEventListener('click', (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        navigate(route);
+      });
+      side.appendChild(go);
+    } else if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
       const go = el(doc, 'button', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
       go.setAttribute('data-action', 'connect-open');
       state.busyControls.push(go);
@@ -791,6 +810,9 @@ export function createConnectorsView(deps) {
       state.google = googleConnectionsCard({ doc, client: deps.client });
       state.meta = metaConnectionsCard({ doc, ready: state.google.answer });
       await load();
+      // The same profile read as the Google card (never a second request):
+      // the rows' state merges it like the shared count (review #782 P1).
+      state.profile = await state.google.answer;
       render();
     },
   };

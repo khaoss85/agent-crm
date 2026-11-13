@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { AUTOMATED_SENDER_LOCALS, NOTIFICATION_DOMAINS, SENDING_SUBDOMAINS, isAutomatedAddress } from '../../core/sender-kind.js';
 import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
 import { GMAIL_MAX_STORED_TEXT, createGmailHttpIo } from './gmail-http.js';
@@ -58,60 +59,20 @@ export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
  */
 
 /**
- * Local parts that are never a person writing (backlog:1a4d9b30,
- * supervisor arbitration 06/11 on #606: these local-parts alone are
- * automated, never leads, even without headers — no "team alone is a
- * person" rule). The bare address decides alone. A local
- * part matches exactly or as the stem of a separator-suffixed variant
- * (`noreply-it`, `order-update-2`), after the `+` tag is stripped.
- * Closed vocabulary — an unknown local part is a person until proven
- * otherwise.
+ * Local parts that are never a person writing, sending subdomains and bulk
+ * platforms (backlog:1a4d9b30, supervisor arbitration 06/11 on #606): one
+ * closed vocabulary in the kernel sender rule (core/sender-kind.js), shared
+ * with the Clienti and Oggi notification readers. Re-exported here under
+ * the Gmail names the door always used.
  */
-export const GMAIL_AUTOMATED_SENDER_LOCALS = Object.freeze([
-  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
-  'notify', 'notification', 'notifications',
-  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
-  'renewals', 'support', 'onboarding',
-  'mailer-daemon', 'postmaster',
-]);
-
-/**
- * First DNS labels that mark a sender domain as sending infrastructure,
- * never a person (backlog:1a4d9b30): `hello@notify.railway.app` is
- * platform traffic even with a human-looking local part. Only the first
- * label counts, so `notify.example.com` matches but `example-notify.com`
- * does not. Closed vocabulary — any other domain is a person until
- * proven otherwise.
- */
-export const GMAIL_SENDING_SUBDOMAINS = Object.freeze([
-  'mail', 'notify', 'em', 'news', 'bounce',
-]);
-
-/** Separator that may follow an automated local-part stem (`noreply-it`). */
-const AUTOMATED_LOCAL_SEPARATORS = Object.freeze(['-', '_', '.']);
+export const GMAIL_AUTOMATED_SENDER_LOCALS = AUTOMATED_SENDER_LOCALS;
+export const GMAIL_SENDING_SUBDOMAINS = SENDING_SUBDOMAINS;
 
 /** Precedence header values that mark a message as mass mail. */
 export const GMAIL_BULK_PRECEDENCE = Object.freeze(['bulk', 'list', 'junk']);
 
-/**
- * Bulk-infrastructure domains: mail from these is platform traffic, never
- * a person writing. Bare domains match their subdomains too
- * (`newsletter.example` covers `a.newsletter.example`). Kept tight on
- * purpose — an unknown sender domain is a person until proven otherwise.
- */
-export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
-  'amazonses.com',
-  'sendgrid.net',
-  'mandrillapp.com',
-  'mailchimp.com',
-  'list-manage.com',
-  'campaign-archive.com',
-  'constantcontact.com',
-  'mailgun.org',
-  'hubspotemail.net',
-  'mktomail.com',
-  'cmail20.com',
-]);
+/** Bulk-infrastructure domains (kernel sender rule): their subdomains match too. */
+export const GMAIL_NOTIFICATION_DOMAINS = NOTIFICATION_DOMAINS;
 
 /**
  * Whether one sender address is automated, never a person
@@ -123,21 +84,7 @@ export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
  * @param {unknown} from
  */
 export function isAutomatedGmailSender(from) {
-  const address = typeof from === 'string' ? from.trim().toLowerCase() : '';
-  const at = address.lastIndexOf('@');
-  if (at <= 0 || at === address.length - 1) return false;
-  const base = address.slice(0, at).split('+')[0] ?? '';
-  if (GMAIL_AUTOMATED_SENDER_LOCALS.includes(base)) return true;
-  if (GMAIL_AUTOMATED_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)))) {
-    return true;
-  }
-  // A sending-subdomain first label automates regardless of local part
-  // (arbitration 06/11, P2): `hello@notify.railway.app` is platform
-  // traffic even with a human-looking local part.
-  const domain = address.slice(at + 1);
-  const labels = domain.split('.');
-  if (labels.length >= 2 && GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '')) return true;
-  return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+  return isAutomatedAddress(from);
 }
 
 /**

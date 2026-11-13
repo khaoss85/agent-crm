@@ -608,3 +608,26 @@ test('review #776: another customer opened during the save keeps the screen', as
   assert.ok(!reads.some((path) => path.includes('/card/contact/c1')), 'the first customer is not read again');
   assert.ok(!mount.textContent.includes('Nessun connettore voce collegato'), 'no call panel there');
 });
+
+test('backlog:af43dffdff83: the number window says how the call really starts, never «parte la chiamata»', async () => {
+  const { HOW_THE_CALL_STARTS } = await import('../apps/admin/public/admin-call-number.js');
+  assert.match(HOW_THE_CALL_STARTS, /apro il telefono del computer con questo numero/);
+  assert.match(HOW_THE_CALL_STARTS, /connettore voce/);
+  // Without a number.
+  const none = await renderCard(stubClient());
+  button(none, 'call-customer').listeners.click[0]();
+  const noneText = phoneWindow(none).textContent;
+  assert.ok(noneText.includes(HOW_THE_CALL_STARTS), noneText);
+  assert.ok(!noneText.includes('parte la chiamata'), 'no promise of a call that the window does not place');
+  // With several known numbers.
+  const several = await renderCard(stubClient({
+    card: CARD_WITH_PHONE,
+    connectors: [],
+    profile: { externalIdentities: [{ system: 'whatsapp', externalId: '+39 345 765 4321' }] },
+  }));
+  button(several, 'call-customer').listeners.click[0]();
+  await flush();
+  const severalText = phoneWindow(several).textContent;
+  assert.ok(severalText.includes('Un numero nuovo lo salvo sulla scheda.'), severalText);
+  assert.ok(severalText.includes(HOW_THE_CALL_STARTS));
+});

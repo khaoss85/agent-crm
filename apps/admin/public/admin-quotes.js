@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -146,6 +146,37 @@ export function createQuoteView(deps) {
     return String(interval ?? '—');
   };
 
+  /**
+   * Backlog 8dc6d4a456e1: the server always persists a zero-valued one-time
+   * group, even for subscription-only quotes, so truthiness alone would
+   * paint `0 €`. A totals group carries a value only with a nonzero net.
+   */
+  const groupHasValue = (group) => Number.isSafeInteger(group?.netAmountCents) && group.netAmountCents !== 0;
+
+  /**
+   * Summary of the valued totals groups, never mixing periods; an em dash
+   * when no group carries a value, like the offer header.
+   */
+  const quoteTotalSummary = (totals, currency) => {
+    const parts = [];
+    if (groupHasValue(totals.oneTimeTotal)) parts.push(`una tantum ${money(totals.oneTimeTotal.netAmountCents, currency)}`);
+    for (const group of totals.recurringTotals) {
+      if (!groupHasValue(group)) continue;
+      parts.push(`${money(group.netAmountCents, currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : '—';
+  };
+
+  /**
+   * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
+   * decided it (`name@version` from the version record), never nothing.
+   */
+  const policyTag = (version) => (
+    typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
+      ? `${version.policy}@${version.policyVersion}`
+      : null
+  );
+
   async function fetchRows(module, filter) {
     const result = await client.request(`/api/modules/${module}/records?limit=${LIST_LIMIT}`);
     const rows = (result.items ?? []).filter(filter ?? (() => true));
@@ -229,7 +260,7 @@ export function createQuoteView(deps) {
     }
     const createButton = el('button', undefined, 'Crea preventivo');
     const createError = el('small', 'field-error', '');
-    createButton.addEventListener('click', async () => {
+    createButton.addEventListener('click', () => uiBusy(createButton, 'Creo…', async () => {
       const opportunityId = String(opportunityInput.value ?? '').trim();
       if (!opportunityId) {
         createError.textContent = 'Scegli l’offerta per cui creare il preventivo.';
@@ -247,7 +278,7 @@ export function createQuoteView(deps) {
       } finally {
         createButton.disabled = false;
       }
-    });
+    }));
     form.appendChild(opportunityInput);
     form.appendChild(bookSelect);
     form.appendChild(createButton);
@@ -259,11 +290,8 @@ export function createQuoteView(deps) {
       const row = el('div', 'quote-row');
       row.setAttribute('data-quote', quote.id);
       const quoteTotals = parseTotals(quote.totalsJson);
-      const recurringSummary = quoteTotals.recurringTotals
-        .map((group) => `${money(group.netAmountCents, quote.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`)
-        .join(' + ') || 'nessuna ricorrenza';
       const link = el('a', undefined,
-        `Preventivo · ${quoteStatusLabel(quote.status)} · una tantum ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
+        `Preventivo · ${quoteStatusLabel(quote.status)} · ${quoteTotalSummary(quoteTotals, quote.currency)}`);
       link.setAttribute('href', `#/quotes/${quote.id}`);
       row.appendChild(link);
       list.appendChild(row);
@@ -339,14 +367,16 @@ export function createQuoteView(deps) {
     heroWords.appendChild(meta);
     hero.appendChild(heroWords);
     const heroTotal = el('div', 'bo-quote-hero-total');
-    const lead = totals.oneTimeTotal ?? totals.recurringTotals[0] ?? null;
+    const valuedOneTime = groupHasValue(totals.oneTimeTotal) ? totals.oneTimeTotal : null;
+    const valuedRecurring = totals.recurringTotals.filter(groupHasValue);
+    const lead = valuedOneTime ?? valuedRecurring[0] ?? null;
     if (lead !== null) {
       heroTotal.appendChild(el('span', 'bo-quote-amount', money(lead.netAmountCents, lead.currency ?? quote.currency)));
-      heroTotal.appendChild(el('span', 'bo-quote-amount-note', totals.oneTimeTotal
+      heroTotal.appendChild(el('span', 'bo-quote-amount-note', valuedOneTime
         ? 'una tantum, netto'
         : `ogni ${lead.intervalCount} ${periodLabel(lead.intervalCount, lead.interval)}, netto`));
-      if (totals.oneTimeTotal && totals.recurringTotals.length > 0) {
-        const next = totals.recurringTotals[0];
+      if (valuedOneTime && valuedRecurring.length > 0) {
+        const next = valuedRecurring[0];
         heroTotal.appendChild(el('span', 'bo-quote-amount-note', `+ ${money(next.netAmountCents, next.currency ?? quote.currency)} ogni ${next.intervalCount} ${periodLabel(next.intervalCount, next.interval)}`));
       }
     }
@@ -379,11 +409,14 @@ export function createQuoteView(deps) {
       row.appendChild(value);
       totalsPanel.appendChild(row);
     };
-    if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
+    // The Totale panel names only valued groups, like the hero above: a
+    // zero-valued group is an unpriced component, never a «0 €» row.
+    if (valuedOneTime !== null) totalRow('Una tantum', valuedOneTime, totals.vat?.oneTime ?? null);
     totals.recurringTotals.forEach((group, index) => {
+      if (!groupHasValue(group)) return;
       totalRow(`Ricorrente ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`, group, totals.vat?.recurring?.[index] ?? null);
     });
-    if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
+    if (valuedOneTime === null && !totals.recurringTotals.some(groupHasValue)) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
     totalsPanel.appendChild(el('p', 'quote-totals-note', 'Una tantum e importi ricorrenti restano separati: non si sommano tra loro.'));
@@ -458,16 +491,16 @@ export function createQuoteView(deps) {
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
         busy.push(updateButton, removeButton);
-        updateButton.addEventListener('click', () => withBusy(() => act('update-line', {
+        updateButton.addEventListener('click', () => uiBusy(updateButton, 'Aggiorno…', () => withBusy(() => act('update-line', {
           lineId: line.id,
           quantity: Number(quantityInput.value),
           discountBps: Number(discountInput.value),
           expectedRevision: quote.draftRevision,
-        })));
-        removeButton.addEventListener('click', () => withBusy(() => act('remove-line', {
+        }))));
+        removeButton.addEventListener('click', () => uiBusy(removeButton, 'Rimuovo…', () => withBusy(() => act('remove-line', {
           lineId: line.id,
           expectedRevision: quote.draftRevision,
-        })));
+        }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
         edit.appendChild(labelled('Sconto (punti base)', discountInput));
@@ -504,12 +537,12 @@ export function createQuoteView(deps) {
       const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Sconto in punti base (intero 0–10000): 1000 = 10,00%.');
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
-      addButton.addEventListener('click', () => withBusy(() => act('add-line', {
+      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
         quantity: Number(quantityInput.value),
         discountBps: Number(discountInput.value),
         expectedRevision: quote.draftRevision,
-      })));
+      }))));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
       addPanel.appendChild(labelled('Sconto (punti base)', discountInput));
@@ -532,10 +565,10 @@ export function createQuoteView(deps) {
       }
       const submitButton = el('button', undefined, 'Invia');
       busy.push(submitButton);
-      submitButton.addEventListener('click', () => withBusy(() => {
+      submitButton.addEventListener('click', () => uiBusy(submitButton, 'Invio…', () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
-      }));
+      })));
       submitPanel.appendChild(labelled('Regola di sconto', policySelect));
       submitPanel.appendChild(submitButton);
       submitPanel.__submit = () => withBusy(() => {
@@ -553,8 +586,8 @@ export function createQuoteView(deps) {
       const approveButton = el('button', undefined, 'Approva');
       const rejectButton = el('button', undefined, 'Rifiuta');
       busy.push(approveButton, rejectButton);
-      approveButton.addEventListener('click', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {})));
-      rejectButton.addEventListener('click', () => withBusy(() => act('reject', { reason: reasonInput.value })));
+      approveButton.addEventListener('click', () => uiBusy(approveButton, 'Approvo…', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {}))));
+      rejectButton.addEventListener('click', () => uiBusy(rejectButton, 'Rifiuto…', () => withBusy(() => act('reject', { reason: reasonInput.value }))));
       decidePanel.appendChild(reasonInput);
       decidePanel.appendChild(approveButton);
       decidePanel.appendChild(rejectButton);
@@ -568,7 +601,7 @@ export function createQuoteView(deps) {
       const revisePanel = el('div', 'quote-revise');
       const reviseButton = el('button', undefined, 'Rivedi (torna in bozza)');
       busy.push(reviseButton);
-      reviseButton.addEventListener('click', () => withBusy(() => act('revise', {})));
+      reviseButton.addEventListener('click', () => uiBusy(reviseButton, 'Riapro…', () => withBusy(() => act('revise', {}))));
       revisePanel.appendChild(reviseButton);
       revisePanel.__revise = () => withBusy(() => act('revise', {}));
       side.appendChild(revisePanel);
@@ -588,12 +621,18 @@ export function createQuoteView(deps) {
       const row = el('div', 'quote-version-row');
       row.setAttribute('data-version', version.id);
       const versionTotals = parseTotals(version.totalsJson);
-      const periods = [
-        `una tantum ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`,
-        ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
-      ].join(' · ');
+      const valuedParts = [];
+      if (groupHasValue(versionTotals.oneTimeTotal)) {
+        valuedParts.push(`una tantum ${money(versionTotals.oneTimeTotal.netAmountCents, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`);
+      }
+      versionTotals.recurringTotals.forEach((group, index) => {
+        if (!groupHasValue(group)) return;
+        valuedParts.push(`${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`);
+      });
+      const periods = valuedParts.length > 0 ? valuedParts.join(' · ') : '—';
+      const policy = policyTag(version);
       const link = el('a', undefined,
-        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
+        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${percentReason(version.decisionReason)}`));
@@ -686,7 +725,7 @@ export function createQuoteView(deps) {
           }),
         });
       });
-      requestButton.addEventListener('click', request);
+      requestButton.addEventListener('click', () => uiBusy(requestButton, 'Invio…', request));
       for (const control of [providerSelect, nameInput, emailInput, roleInput, requestButton]) form.appendChild(control);
       form.appendChild(el('small', 'muted', 'Tutti i firmatari devono firmare; l’ordine dichiarato è registrato, non imposto in sequenza. Nessuna garanzia sull’identità dei firmatari.'));
       form.__request = request;
@@ -739,7 +778,7 @@ export function createQuoteView(deps) {
       const reconcileButton = el('button', undefined, 'Riconcilia con il fornitore');
       busy.push(reconcileButton);
       const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
-      reconcileButton.addEventListener('click', reconcile);
+      reconcileButton.addEventListener('click', () => uiBusy(reconcileButton, 'Controllo…', reconcile));
       state.appendChild(reconcileButton);
       state.__reconcile = reconcile;
     }

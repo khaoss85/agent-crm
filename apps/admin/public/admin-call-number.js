@@ -6,14 +6,17 @@
 // and starts the call with the usual «Chiama» flow. The CRM call route
 // dials the number held on the card, so a number is always saved first.
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { holdButton, openSchedaWindow } from './admin-scheda-window.js';
+import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { openSchedaWindow } from './admin-scheda-window.js';
 
 /** Identity systems whose handle is a phone number (same list as the card). */
 const PHONE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', 'tel', 'mobile']);
 const SYSTEM_WORDS = Object.freeze({
   whatsapp: 'WhatsApp', sms: 'SMS', voice: 'chiamate', phone: 'telefono', tel: 'telefono', mobile: 'cellulare',
 });
+
+/** How the call starts once the number is chosen (backlog:af43dffdff83). */
+export const HOW_THE_CALL_STARTS = 'Poi apro il telefono del computer con questo numero o, se hai collegato un connettore voce, la chiamata dal CRM.';
 
 export const NUMBER_FORMAT_HINT = 'Numero non valido: scrivilo con il prefisso, come +39 333 123 4567, oppure come 333 1234567.';
 
@@ -90,9 +93,13 @@ export function openCallNumberPanel(deps) {
   const OTHER = 'altro';
   let selected = numbers.length === 0 ? OTHER : (numbers.find((entry) => entry.held)?.number ?? numbers[0].number);
 
+  // backlog:af43dffdff83: say how the call really starts. This window only
+  // saves the number; «Chiama dal CRM» then opens the computer's phone app
+  // on the number (tel:) or, with a voice connector linked, the form that
+  // records the call.
   body.appendChild(el('p', 'bo-muted', numbers.length === 0
-    ? 'Il cliente non ha ancora un numero: scrivilo qui, lo salvo sulla scheda e parte la chiamata.'
-    : 'Quale numero chiamo? Un numero nuovo viene salvato sulla scheda.'));
+    ? `Il cliente non ha ancora un numero: scrivilo qui. ${HOW_THE_CALL_STARTS}`
+    : `Quale numero chiamo? Un numero nuovo lo salvo sulla scheda. ${HOW_THE_CALL_STARTS}`));
 
   const typed = el('input', 'bo-scheda-composer-subject');
   typed.setAttribute('type', 'tel');
@@ -184,7 +191,7 @@ export function openCallNumberPanel(deps) {
       held = entry.held;
     }
     busy = true;
-    const release = holdButton(go, held ? 'Chiamo…' : 'Salvo…');
+    const release = uiHold(go, held ? 'Chiamo…' : 'Salvo…');
     try {
       const refusal = await deps.choose(number, held);
       if (refusal !== null && !gone()) say(refusal);
