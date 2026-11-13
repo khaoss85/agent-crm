@@ -422,7 +422,12 @@ test('the edit validates before writing and keeps the form on a refused save', a
 
 test('offer routes parse canonically; hostile routes are invalid', async () => {
   assert.deepEqual(parseModuleRoute('#/offerte/off1'), { view: 'offer-detail', offerId: 'off1' });
-  for (const bad of ['#/offerte/', '#/offerte//off1', '#/offerte/a/b', '#/offerte/a%2Fb', '#/offerte/%zz']) {
+  // backlog:96c7b56001ba: opened from a scheda, the route names it.
+  assert.deepEqual(parseModuleRoute('#/offerte/off1/cliente/contact/c1'),
+    { view: 'offer-detail', offerId: 'off1', from: { resource: 'contact', subjectId: 'c1' } });
+  for (const bad of ['#/offerte/', '#/offerte//off1', '#/offerte/a/b', '#/offerte/a%2Fb', '#/offerte/%zz',
+    '#/offerte/a/cliente/contact', '#/offerte/a/altro/contact/c1', '#/offerte/a/cliente/Contact/c1',
+    '#/offerte/a/cliente/contact/c%2F1', '#/offerte/a/cliente/contact/c1/x']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
 });
@@ -932,11 +937,13 @@ test('a3d3b99c738e: the price book menu names each book once, the currency once'
   assert.ok(labels.every((label) => !/EUR\)?.*\(EUR\)/.test(label)), 'never «Manuale EUR (EUR)»');
 });
 
-// backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s): reads
-// that do not depend on each other leave together, in three rounds instead
-// of one long chain.
-test('d8175e1c3495: the offer page reads in rounds — schema with offer, then quotes, history and team, then each quote’s lines and versions', async () => {
-  const base = pageClient({ books: [] });
+// backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s) and
+// backlog:94eabbd4762f (pilota 13/11: 1,8-4 s from the click): every read
+// of the page leaves at once, the offer first — the quotes, the history,
+// the team and the price books never wait for the offer — and each quote's
+// lines and versions leave the moment the quotes land.
+test('94eabbd4762f: the offer page reads at once — offer first, quotes, history and team beside it, then lines, versions and price books', async () => {
+  const base = pageClient();
   const quotes = [{ ...QUOTE, id: 'q1' }, { ...QUOTE, id: 'q2' }];
   const pending = [];
   const client = {
@@ -965,16 +972,60 @@ test('d8175e1c3495: the offer page reads in rounds — schema with offer, then q
     return now.map((entry) => entry.path.split('?')[0]);
   };
   const first = await round();
-  assert.deepEqual(first.sort(), ['/api/opportunities/off1', '/api/schema'], 'schema and offer together');
+  assert.equal(first[0], '/api/opportunities/off1', 'the offer is asked first');
+  assert.deepEqual([...first].sort(), ['/api/audit', '/api/modules/quote/records', '/api/opportunities/off1', '/api/schema', '/api/spine/memberships'],
+    'offer, schema, quotes, history and team together');
   const second = await round();
-  assert.deepEqual(second.sort(), ['/api/audit', '/api/modules/quote/records', '/api/spine/memberships'], 'quotes, history and team together');
-  const third = await round();
-  assert.equal(third.filter((path) => path === '/api/modules/quote-line/records').length, 2, 'both quotes read their lines at once');
-  assert.equal(third.filter((path) => path === '/api/modules/quote-version/records').length, 2, 'and their versions, in the same round');
+  assert.equal(second.filter((path) => path === '/api/modules/quote-line/records').length, 2, 'both quotes read their lines at once');
+  assert.equal(second.filter((path) => path === '/api/modules/quote-version/records').length, 2, 'and their versions, in the same round');
+  assert.ok(second.includes('/api/modules/price-book/records'), 'the price books with them, never after the paint');
   while (pending.length > 0) await round();
   await done;
   const cards = mount.findAll('div').filter((node) => node.getAttribute('data-quote'));
   assert.deepEqual(cards.map((node) => node.getAttribute('data-quote')), ['q1', 'q2'], 'cards keep the order the quotes were read');
+  assert.ok(button(mount, 'offer-create-quote'), 'the action is there when the page is');
+});
+
+test('94eabbd4762f: on a host serving two reads at a time the page is complete under 2 s from the click', async () => {
+  const { createReadPool } = await import('./helpers/read-pool.js');
+  const base = pageClient({ record: { contactId: 'c1' } });
+  const quoted = {
+    request(path, options) {
+      if (path.startsWith('/api/modules/quote/records')) return Promise.resolve({ items: [QUOTE] });
+      return base.request(path, options);
+    },
+  };
+  // Pilota 13/11: the offer read alone takes 1-2,2 s; the schema is the
+  // shell's cached one after a click.
+  const pool = createReadPool(quoted, {
+    readers: 2,
+    latency: (path) => (path.startsWith('/api/opportunities/') ? 1000 : 300),
+    cached: (path) => path === '/api/schema',
+  });
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: pool });
+  const ms = await pool.settle(view.renderOfferDetail('off1', { from: null }));
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+  assert.ok(button(mount, 'offer-create-quote'), 'the whole page, its action included');
+  assert.ok(ms < 2000, `complete in ${ms} ms`);
+});
+
+test('94eabbd4762f: a link naming a quote reads that offer’s quotes and history again, by the offer’s own id', async () => {
+  const base = pageClient();
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/opportunities/q9') return Promise.reject(Object.assign(new Error('Not Found'), { status: 404, code: 'NOT_FOUND' }));
+      if (path === '/api/modules/quote/records/q9') return Promise.resolve({ id: 'q9', opportunityId: 'off1' });
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('q9');
+  const paths = base.calls.map((call) => call.path);
+  assert.ok(paths.some((path) => path.startsWith('/api/modules/quote/records?') && path.includes('filter.opportunityId=off1')), 'quotes by the offer id');
+  assert.ok(paths.some((path) => path.startsWith('/api/audit') && path.includes('entityId=off1')), 'history by the offer id');
 });
 
 test('d8175e1c3495: the page shows its frame at once as a skeleton, never «Caricamento…», and the paint replaces it', async () => {
@@ -1017,4 +1068,73 @@ test('d8175e1c3495: an offer that cannot be read replaces the skeleton with the 
   }
   assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no skeleton over a failure');
   assert.match(mount.textContent, /Offerta non trovata o non leggibile/);
+});
+
+// backlog:96c7b56001ba (pilota 13/11): opened from the scheda the offer said
+// «← Pipeline» and lit Pipeline in the sidebar; it goes back to the scheda.
+test('96c7b56001ba: opened from a scheda the way back is that scheda, through every re-read of the page', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = pageClient();
+  const view = createOfferDetail({ doc, mount, client, toast: () => {}, navigate: () => {} });
+  const back = () => mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-back');
+  await view.renderOfferDetail('off1', { from: { resource: 'contact', subjectId: 'c1' } });
+  assert.equal(back().textContent, '← Giulia Verdi', 'named after the customer it goes back to');
+  assert.equal(back().getAttribute('href'), '#/customer-card/contact/c1');
+  assert.equal(parseModuleRoute(back().getAttribute('href')).view, 'customer-card', 'the link is a real route');
+  // Salva re-reads the page: the way back stays.
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  await form.__save();
+  await flushAll();
+  assert.equal(back().getAttribute('href'), '#/customer-card/contact/c1', 'Salva keeps the way back');
+  // Another scheda (a company mate) is named plainly.
+  await view.renderOfferDetail('off1', { from: { resource: 'company', subjectId: 'co9' } });
+  assert.equal(back().textContent, '← Scheda cliente');
+  assert.equal(back().getAttribute('href'), '#/customer-card/company/co9');
+  // Opened again from the board: back to the board.
+  await view.renderOfferDetail('off1', { from: null });
+  assert.equal(back().textContent, '← Pipeline');
+  assert.equal(back().getAttribute('href'), '#/pipelines/b2b-sales');
+});
+
+test('96c7b56001ba: the scheda hands its own address to the offer page, and the sidebar stays on Clienti', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /case 'offer-detail': return \{ id: target\.from \? 'clienti' : 'pipeline', label: 'Offerta' \};/,
+    'an offer opened from a scheda keeps Clienti lit');
+  assert.match(app, /offerDetail\.renderOfferDetail\(target\.offerId, \{ from: target\.from \?\? null \}\)/,
+    'the router hands the page where it was opened from');
+});
+
+// backlog:96c7b56001ba: PREVENTIVO said «Ancora nessun preventivo per questa
+// offerta.» for 0,3-1,1 s with neither the price book nor «Crea preventivo».
+test('96c7b56001ba: the quotes section never shows an empty line that changes — the action comes with it', async () => {
+  const base = pageClient();
+  let releaseBooks = () => {};
+  const booksHeld = new Promise((resolve) => { releaseBooks = resolve; });
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-book/records')) return booksHeld.then(() => base.request(path, options));
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(!mount.textContent.includes('Ancora nessun preventivo'), 'no empty line while the price books read');
+  assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-skeleton') === 'true'), 'the skeleton holds the place');
+  releaseBooks();
+  await done;
+  await flushAll();
+  assert.ok(mount.textContent.includes('Ancora nessun preventivo per questa offerta.'));
+  assert.ok(button(mount, 'offer-create-quote'), 'the empty line and «Crea preventivo» arrive together');
+});
+
+test('96c7b56001ba: unreadable price books say so in one honest line', async () => {
+  const { mount } = await openPage({ books: Object.assign(new Error('boom'), { status: 500, code: 'BOOM' }) });
+  assert.match(mount.textContent, /Listini non leggibili: crea il preventivo più tardi\./);
 });

@@ -142,6 +142,23 @@ function pipelineHref(schema, record) {
   return composed && /^[a-z][a-z0-9-]*$/.test(key) ? `#/pipelines/${key}` : '#/pipeline';
 }
 
+/**
+ * backlog:96c7b56001ba: the page's way back. Opened from a customer's
+ * scheda it returns to that scheda — named after the customer when the
+ * offer is theirs — otherwise to the board the offer sits on.
+ * @param {any} schema @param {any} record
+ * @param {{resource: string, subjectId: string} | null} from
+ * @returns {{href: string, label: string}}
+ */
+export function backLink(schema, record, from) {
+  if (from && typeof from.resource === 'string' && typeof from.subjectId === 'string' && from.subjectId !== '') {
+    const href = `#/customer-card/${encodeURIComponent(from.resource)}/${encodeURIComponent(from.subjectId)}`;
+    const customer = offerCustomer(record);
+    return { href, label: customer !== null && customer.href === href ? `← ${customer.name}` : '← Scheda cliente' };
+  }
+  return { href: pipelineHref(schema, record), label: '← Pipeline' };
+}
+
 /** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void}} deps */
 export function createOfferDetail(deps) {
   const { doc, mount, navigate = () => {} } = deps;
@@ -278,7 +295,75 @@ export function createOfferDetail(deps) {
     return page;
   }
 
-  async function renderOfferDetail(offerId) {
+  /**
+   * backlog:96c7b56001ba: where the page goes back to. The router hands the
+   * origin on entry (`#/offerte/<id>/cliente/<resource>/<id>` from the
+   * scheda); the page's own re-reads (Salva, Cambia stato) keep it.
+   * @type {{resource: string, subjectId: string} | null}
+   */
+  let origin = null;
+
+  /**
+   * The audit trail of an offer, never failing the page: an unreadable
+   * trail is its own state, logged with its cause.
+   * @param {string} id
+   */
+  function readAudit(id) {
+    return client.request(
+      `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(id)}&limit=${AUDIT_LIMIT}`,
+    ).then(
+      (audit) => ({ items: Array.isArray(audit?.items) ? audit.items : [], unreadable: false }),
+      // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
+      // the trail order is newest first, so the creation event may sit
+      // past it and the author must not be read from a partial page.
+      (error) => {
+        // The audit trail is decoration: facts, quotes and lines render
+        // without it rather than failing the whole detail. An unreadable
+        // trail is not an empty one: it gets its own line and a log cause.
+        logReadFailure('audit', error);
+        return { items: [], unreadable: true };
+      },
+    );
+  }
+
+  /**
+   * The quotes of an offer and, as soon as they land, every quote's lines
+   * and versions (backlog:94eabbd4762f): the cards are built while the rest
+   * of the page still reads.
+   * @param {string} id @param {number} token
+   */
+  function readQuotes(id, token) {
+    const read = fetchLinked('quote', 'opportunityId', id).then(async (quotes) => ({
+      quotes,
+      cards: await Promise.all(quotes.rows.map((quote) => paintQuote(quote, token))),
+    }));
+    read.catch(() => {});
+    return read;
+  }
+
+  /**
+   * backlog:94eabbd4762f: the price books, read beside the offer — never
+   * after the page painted — so «Crea preventivo» and the empty line paint
+   * together (backlog:96c7b56001ba). Only where the commercial block is
+   * composed; an unreadable list is its own state.
+   * @param {Promise<any>} schemaRead
+   */
+  function readBooks(schemaRead) {
+    return schemaRead.then((schema) => {
+      if (!commercialBlock(schema)) return { books: null, error: null };
+      return client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then(
+        (answer) => ({ books: Array.isArray(answer?.items) ? answer.items : [], error: null }),
+        (error) => ({ books: null, error }),
+      );
+    }, () => ({ books: null, error: null }));
+  }
+
+  /**
+   * @param {string} offerId
+   * @param {{from?: {resource: string, subjectId: string} | null}} [entry] the router's entry; absent on the page's own re-reads
+   */
+  async function renderOfferDetail(offerId, entry) {
+    if (entry !== undefined) origin = entry?.from ?? null;
     const token = ++renderToken;
     editing = false;
     clear();
@@ -289,36 +374,27 @@ export function createOfferDetail(deps) {
     let schema;
     let record;
     let quotes;
+    /** @type {Array<any>} */
+    let quoteCards = [];
     let auditItems;
     let auditUnreadable = false;
     let auditTruncated = false;
+    /** @type {{books: Array<any> | null, error: any}} */
+    let bookAnswer = { books: null, error: null };
     /** @type {Array<any>} */
     let people = [];
     try {
-      // backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s):
-      // the reads that do not depend on each other leave together — the
-      // schema with the offer, then the quotes, the history and the team
-      // with each other — instead of one after the other.
+      // backlog:94eabbd4762f (pilota 13/11: 1,8-4 s dal clic, 4,6-5,9 s da
+      // link diretto): every read of the page leaves at once, the offer
+      // first. Quotes and history are asked by the id the page opened —
+      // the offer's own id in every link — and asked again only when the
+      // record turns out to be another one (a link naming a quote).
+      const offerRead = readOffer(offerId);
+      offerRead.catch(() => {});
       const schemaRead = client.request('/api/schema');
       schemaRead.catch(() => {});
-      [schema, record] = await Promise.all([schemaRead, readOffer(offerId)]);
-      const quotesRead = fetchLinked('quote', 'opportunityId', record.id);
-      quotesRead.catch(() => {});
-      const auditRead = client.request(
-        `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
-      ).then(
-        (audit) => ({ items: Array.isArray(audit?.items) ? audit.items : [], unreadable: false }),
-        // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
-        // the trail order is newest first, so the creation event may sit
-        // past it and the author must not be read from a partial page.
-        (error) => {
-          // The audit trail is decoration: facts, quotes and lines render
-          // without it rather than failing the whole detail. An unreadable
-          // trail is not an empty one: it gets its own line and a log cause.
-          logReadFailure('audit', error);
-          return { items: [], unreadable: true };
-        },
-      );
+      const quotesFirst = readQuotes(offerId, token);
+      const auditFirst = readAudit(offerId);
       // The team names the referente and the authors by their profile
       // name (backlog:ddf7f416ad22); without it the deal still renders.
       const teamRead = client.request('/api/spine/memberships').then(
@@ -328,12 +404,22 @@ export function createOfferDetail(deps) {
           return [];
         },
       );
-      const [readQuotes, audit, team] = await Promise.all([quotesRead, auditRead, teamRead]);
-      quotes = readQuotes;
+      const booksRead = readBooks(schemaRead);
+      [schema, record] = await Promise.all([schemaRead, offerRead]);
+      const sameId = String(record?.id ?? '') === offerId;
+      const [quotesAnswer, audit, team, books] = await Promise.all([
+        sameId ? quotesFirst : readQuotes(String(record.id), token),
+        sameId ? auditFirst : readAudit(String(record.id)),
+        teamRead,
+        booksRead,
+      ]);
+      quotes = quotesAnswer.quotes;
+      quoteCards = quotesAnswer.cards;
       auditItems = audit.items;
       auditUnreadable = audit.unreadable;
       auditTruncated = auditItems.length >= AUDIT_LIMIT;
       people = team;
+      bookAnswer = books;
     } catch (error) {
       if (token !== renderToken) return;
       clear();
@@ -349,9 +435,11 @@ export function createOfferDetail(deps) {
     // is for, the stage and the value up front, the facts in one strip, the
     // quotes as cards and the history as a timeline.
     const page = el('div', 'bo-offer');
-    // Backlog 169cd4bc988c: never a dead end — the way back to the board.
-    const back = el('a', 'quote-back', '← Pipeline');
-    back.setAttribute('href', pipelineHref(schema, record));
+    // Backlog 169cd4bc988c: never a dead end — the way back to the board,
+    // or (backlog:96c7b56001ba) to the scheda the offer was opened from.
+    const way = backLink(schema, record, origin);
+    const back = el('a', 'quote-back', way.label);
+    back.setAttribute('href', way.href);
     back.setAttribute('data-action', 'offer-back');
     page.appendChild(back);
     const sheet = el('article', 'bo-offer-sheet');
@@ -424,14 +512,12 @@ export function createOfferDetail(deps) {
     if (quotes.rows.length === 0) {
       quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
     }
-    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token, latestQuote(quotes.rows));
+    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token, latestQuote(quotes.rows), bookAnswer);
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
-    // backlog:d8175e1c3495: every quote reads its lines and versions at the
+    // backlog:d8175e1c3495: every quote read its lines and versions at the
     // same time; the cards still paint in the order the quotes were read.
-    const quoteCards = await Promise.all(quotes.rows.map((quote) => paintQuote(quote, token, record)));
-    if (token !== renderToken) return;
     for (const card of quoteCards) quotesPanel.appendChild(card);
     page.appendChild(quotesPanel);
 
@@ -725,14 +811,6 @@ export function createOfferDetail(deps) {
     box.appendChild(wrap);
   }
 
-  /**
-   * Backlog 169cd4bc988c: «Crea preventivo» on the offer — the same
-   * `create-quote` action as the quotes screen, on an active price book
-   * (the one in the offer's currency first). One book is one button; more
-   * books are a menu beside it; none is one honest line, never a dead
-   * button. The new quote opens where its lines are added.
-   * @param {any} head @param {any} panel @param {any} record @param {number} token
-   */
   /** The main action beside an existing quote: open it. @param {{id: string}} quote */
   function openQuoteLink(quote) {
     const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
@@ -741,91 +819,102 @@ export function createOfferDetail(deps) {
     return open;
   }
 
-  function paintCreateQuote(head, panel, record, token, existing = null) {
+  /**
+   * Backlog 169cd4bc988c: «Crea preventivo» on the offer — the same
+   * `create-quote` action as the quotes screen, on an active price book
+   * (the one in the offer's currency first). One book is one button; more
+   * books are a menu beside it; none is one honest line, never a dead
+   * button. The new quote opens where its lines are added.
+   * backlog:96c7b56001ba: the price books arrive with the page's other
+   * reads, so the empty line and the action paint together, never a
+   * «nessun preventivo» that changes a moment later.
+   * @param {any} head @param {any} panel @param {any} record @param {number} token
+   * @param {any} [existing] @param {{books: Array<any> | null, error: any}} [answer]
+   */
+  function paintCreateQuote(head, panel, record, token, existing = null, answer = { books: null, error: null }) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
-    void client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then((answer) => {
-      if (token !== renderToken) return;
-      const books = (Array.isArray(answer?.items) ? answer.items : [])
-        .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
-        .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
-      if (books.length === 0) {
-        if (existing !== null) {
-          head.appendChild(openQuoteLink(existing));
-          return;
-        }
-        line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
-        panel.appendChild(line);
-        return;
-      }
-      const bar = el('div', 'offer-quote-create');
-      let pickBook = () => books[0].id;
-      if (books.length > 1) {
-        const node = uiSelect(doc, {
-          name: 'priceBookId',
-          value: books[0].id,
-          options: books.map((book) => ({ value: book.id, label: priceBookLabel(book) })),
-        });
-        const select = node.querySelector('select');
-        select.setAttribute('aria-label', 'Listino del preventivo');
-        select.value = books[0].id;
-        pickBook = () => String(select.value ?? books[0].id);
-        bar.appendChild(node);
-      }
-      // backlog:a2ea75f705fd: with a quote already there, the main action
-      // opens it; a new quote stays possible, as the quiet second choice.
-      if (existing !== null) bar.appendChild(openQuoteLink(existing));
-      const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
-      create.setAttribute('type', 'button');
-      create.setAttribute('data-action', 'offer-create-quote');
-      let busy = false;
-      // One key per quote being created: a retry after an uncertain failure
-      // never opens a second quote; a refusal or another book frees it.
-      /** @type {null | {key: string, book: string}} */
-      let pending = null;
-      const offerId = String(record.id);
-      create.addEventListener('click', async () => {
-        if (busy) return;
-        busy = true;
-        const book = pickBook();
-        if (pending === null || pending.book !== book) pending = { key: submissions.issueKey(), book };
-        create.setAttribute('disabled', 'disabled');
-        create.setAttribute('aria-busy', 'true');
-        line.textContent = '';
-        try {
-          const created = await client.request(
-            `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
-            { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
-          );
-          pending = null;
-          // Review #786: the page changed meanwhile — never pull the person
-          // away from the offer they opened since.
-          if (token !== renderToken) return;
-          const quoteId = created?.result?.quote?.id;
-          if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
-          toast('Preventivo creato: aggiungi le righe.');
-          navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
-        } catch (error) {
-          const status = typeof error?.status === 'number' ? error.status : 0;
-          if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
-          if (token !== renderToken) return;
-          line.setAttribute('class', 'field-error offer-quote-create-line');
-          line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
-        } finally {
-          busy = false;
-          create.removeAttribute('disabled');
-          create.setAttribute('aria-busy', 'false');
-        }
-      });
-      bar.appendChild(create);
-      head.appendChild(bar);
-      panel.appendChild(line);
-    }, (error) => {
-      if (token !== renderToken) return;
-      logReadFailure('price-books', error);
+    if (answer.books === null) {
+      if (answer.error) logReadFailure('price-books', answer.error);
+      if (existing !== null) head.appendChild(openQuoteLink(existing));
       line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
       panel.appendChild(line);
+      return;
+    }
+    const books = answer.books
+      .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
+      .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
+    if (books.length === 0) {
+      if (existing !== null) {
+        head.appendChild(openQuoteLink(existing));
+        return;
+      }
+      line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
+      panel.appendChild(line);
+      return;
+    }
+    const bar = el('div', 'offer-quote-create');
+    let pickBook = () => books[0].id;
+    if (books.length > 1) {
+      const node = uiSelect(doc, {
+        name: 'priceBookId',
+        value: books[0].id,
+        options: books.map((book) => ({ value: book.id, label: priceBookLabel(book) })),
+      });
+      const select = node.querySelector('select');
+      select.setAttribute('aria-label', 'Listino del preventivo');
+      select.value = books[0].id;
+      pickBook = () => String(select.value ?? books[0].id);
+      bar.appendChild(node);
+    }
+    // backlog:a2ea75f705fd: with a quote already there, the main action
+    // opens it; a new quote stays possible, as the quiet second choice.
+    if (existing !== null) bar.appendChild(openQuoteLink(existing));
+    const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
+    create.setAttribute('type', 'button');
+    create.setAttribute('data-action', 'offer-create-quote');
+    let busy = false;
+    // One key per quote being created: a retry after an uncertain failure
+    // never opens a second quote; a refusal or another book frees it.
+    /** @type {null | {key: string, book: string}} */
+    let pending = null;
+    const offerId = String(record.id);
+    create.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      const book = pickBook();
+      if (pending === null || pending.book !== book) pending = { key: submissions.issueKey(), book };
+      create.setAttribute('disabled', 'disabled');
+      create.setAttribute('aria-busy', 'true');
+      line.textContent = '';
+      try {
+        const created = await client.request(
+          `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
+          { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
+        );
+        pending = null;
+        // Review #786: the page changed meanwhile — never pull the person
+        // away from the offer they opened since.
+        if (token !== renderToken) return;
+        const quoteId = created?.result?.quote?.id;
+        if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
+        toast('Preventivo creato: aggiungi le righe.');
+        navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
+      } catch (error) {
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+        if (token !== renderToken) return;
+        line.setAttribute('class', 'field-error offer-quote-create-line');
+        line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        busy = false;
+        create.removeAttribute('disabled');
+        create.setAttribute('aria-busy', 'false');
+      }
     });
+    bar.appendChild(create);
+    head.appendChild(bar);
+    panel.appendChild(line);
   }
 
   /**
@@ -834,7 +923,7 @@ export function createOfferDetail(deps) {
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
    */
-  async function paintQuote(quote, token, record) {
+  async function paintQuote(quote, token) {
     const panel = el('div', 'offer-quote');
     panel.setAttribute('data-quote', quote.id);
     const totals = parseTotals(quote.totalsJson);

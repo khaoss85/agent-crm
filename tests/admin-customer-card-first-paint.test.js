@@ -123,21 +123,31 @@ function deferredClient() {
     return gates.get(name);
   };
   const writes = [];
+  const reads = [];
   const client = {
     writes,
     gates,
+    reads,
+    /** A fresh set of held reads, for a second opening. */
+    reset() { gates.clear(); reads.length = 0; },
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if ((options?.method ?? 'GET') !== 'GET') {
         writes.push({ path, method: options.method });
         return {};
       }
+      reads.push(path);
       if (path.startsWith('/api/customer-hub/card/')) return gate('card').promise;
       if (path.startsWith('/api/customer-hub/timeline/')) return gate('timeline').promise;
       if (path.startsWith('/api/customer-data/profile/')) return gate('profile').promise;
       if (path.startsWith('/api/customer-data/enriched/')) return { customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c-ada' }, linked: false, optedOut: null, items: [] };
       if (path.startsWith('/api/customer-data/fields')) return path.includes('/values') ? { values: [] } : { definitions: [] };
       if (path === '/api/schema') return { pipelines: [] };
+      // backlog:947260f9f036: the offer's trail and the team roster can be
+      // held like the three reads above.
+      if (path.startsWith('/api/audit')) return gate('audit').promise;
+      if (path === '/api/spine/memberships') return gate('roster').promise;
+      if (path === '/api/spine/context') return { actor: { id: 'u-me' } };
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -188,3 +198,103 @@ test('voce 908f2eb9bbfb: a late profile failure leaves the painted name and time
   assert.ok(!text.includes('Scheda non disponibile'), 'a late profile failure never fails the whole scheda');
   assert.ok(text.includes('Riprova più tardi'), 'the failed section names the retry');
 });
+
+// backlog:947260f9f036 (pilota 13/11): the scheda opened from the offer's
+// «Per <cliente>» showed only «Carico Clienti…» on a blank page for
+// 2,8-5,7 s — the scheda had been on screen before (scheda → offerta →
+// scheda), so the view took the second opening for a re-read of a scheda
+// still shown, while the router had already cleared it.
+const busySections = (mount) => mount.findAll('div').filter((node) => node.getAttribute('data-loading') === 'true');
+
+test('947260f9f036: back on the same customer after another screen, the scheda shows its skeleton at once', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc, mount, client });
+  const first = view.renderCard('contact', 'c-ada');
+  assert.ok(busySections(mount).length > 0, 'the first opening paints the skeleton');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  client.gates.get('profile').release.resolve(PROFILE);
+  await first;
+  await flush(3);
+  assert.ok(mount.textContent.includes('Ada Rossi'));
+
+  // The router leaves for the offer page: the scheda is invalidated and the
+  // shared mount cleared, then «Per Ada Rossi» comes back to the same scheda.
+  view.invalidate();
+  while (mount.firstChild) mount.removeChild(mount.firstChild);
+  const loading = doc.createElement('div');
+  loading.textContent = 'Carico Clienti…';
+  mount.appendChild(loading);
+  client.reset();
+  const again = view.renderCard('contact', 'c-ada');
+  assert.ok(busySections(mount).length > 0, 'the skeleton is on screen at once, as from the Clienti list');
+  assert.ok(!mount.textContent.includes('Carico Clienti…'), 'never the lone loading line on a blank page');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  client.gates.get('profile').release.resolve(PROFILE);
+  await again;
+  await flush(3);
+  assert.ok(mount.textContent.includes('Ada Rossi'));
+  assert.equal(busySections(mount).length, 0, 'the skeleton leaves when the reads land');
+});
+
+const OFFER_PROFILE = {
+  ...PROFILE,
+  opportunities: {
+    available: true, count: 1, countIsComplete: true, truncated: false,
+    items: [{ id: 'o1', status: 'proposal', name: 'Pacchetto sede', owner: 'maria', createdAt: '2026-11-01T08:00:00.000Z' }],
+  },
+};
+const MOVE = {
+  id: 'a2', action: 'opportunity.stage_changed', actorType: 'user', actorId: 'maria',
+  createdAt: '2026-11-03T10:00:00.000Z', data: { from: 'qualification', to: 'proposal' },
+};
+
+/** The cronologia «Tutti» rows on screen, as text. */
+const timelineRows = (mount) => {
+  const list = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-timeline');
+  return { list, text: list ? list.textContent : '' };
+};
+const stateHistory = (mount) => mount.findAll('p')
+  .filter((node) => ['bo-scheda-offer-history', 'bo-muted'].includes(node.getAttribute('class') ?? ''))
+  .map((node) => node.textContent);
+
+for (const order of [['roster', 'audit'], ['audit', 'roster']]) {
+  test(`947260f9f036: the cronologia is whole on every opening — ${order.join(' then ')}`, async () => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = deferredClient();
+    const view = createCustomerCardView({ doc, mount, client });
+    const shown = view.renderCard('contact', 'c-ada');
+    await flush(3);
+    client.gates.get('card').release.resolve(CARD);
+    client.gates.get('timeline').release.resolve(TIMELINE);
+    client.gates.get('profile').release.resolve(OFFER_PROFILE);
+    await shown;
+    await flush();
+    // The trail and the roster leave together, never one after the other.
+    assert.ok(client.reads.some((path) => path.startsWith('/api/audit')), 'the trail is asked before the roster answers');
+    assert.ok(client.reads.includes('/api/spine/memberships'));
+    // While the stage moves are still reading, «Tutti» says so: never two
+    // events that become three a moment later.
+    const waiting = timelineRows(mount);
+    assert.equal(waiting.list.getAttribute('aria-busy'), 'true', 'the cronologia is marked as still reading');
+    assert.ok(waiting.list.findAll('p').some((node) => node.getAttribute('data-loading') === 'true'), 'a grey row where the moves arrive');
+    for (const name of order) {
+      client.gates.get(name).release.resolve(name === 'audit' ? { items: [MOVE] } : { items: [] });
+      await flush();
+    }
+    const done = timelineRows(mount);
+    assert.equal(done.list.getAttribute('aria-busy'), 'false');
+    assert.ok(done.text.includes('Ciao, vorrei prenotare una prova'), 'the message');
+    assert.ok(done.text.includes('Pacchetto sede'), 'the offer creation');
+    assert.ok(/Pacchetto sede: da .+ a .+/.test(done.text), 'and the stage move: three events');
+    const history = stateHistory(mount);
+    assert.ok(!history.includes('Caricamento…'), '«Storia stati» never stays on «Caricamento…»');
+    assert.ok(history.some((text) => /^da .+ a .+ · da /.test(text)), '«Storia stati» names the move');
+  });
+}

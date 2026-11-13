@@ -1336,7 +1336,7 @@ test('a2ea75f705fd: the quote offer line opens the offer page, not the quote', a
   }));
   const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.ok(link, 'the quote offer line is a link');
-  assert.equal(link.getAttribute('href'), '#/offerte/o1', 'the line opens its offer page (backlog:a2ea75f705fd)');
+  assert.equal(link.getAttribute('href'), '#/offerte/o1/cliente/contact/c1', 'the line opens its offer page (backlog:a2ea75f705fd), naming the scheda to go back to (backlog:96c7b56001ba)');
   assert.ok(link.textContent.includes('Pacchetto 10 ingressi · proposta'),
     'the link keeps the opportunity name and the Italian stage');
 });
@@ -1409,7 +1409,7 @@ test('a2ea75f705fd: the opportunity-fallback offer line opens the offer page', a
   }));
   assert.ok(mount.textContent.includes('Pacchetto sede · proposta'), 'the fallback offer line still reads');
   const links = mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
-  assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/o1'], 'the offer opens its page');
+  assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/o1/cliente/contact/c1'], 'the offer opens its page');
 });
 
 test('the opportunity-fallback offer line reads the name with its Italian stage, never the bare name', async () => {
@@ -4469,7 +4469,7 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(amount, 'the opportunity fallback paints its amount');
   assert.equal(amount.textContent, '1.200 €');
   const link = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-scheda-offer-link');
-  assert.equal(link?.getAttribute('href'), '#/offerte/o1', 'the offer opens its page (backlog:a2ea75f705fd)');
+  assert.equal(link?.getAttribute('href'), '#/offerte/o1/cliente/contact/c1', 'the offer opens its page (backlog:a2ea75f705fd)');
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
