@@ -17,7 +17,7 @@ on:
 
 permissions:
   contents: read
-  actions: read
+  actions: write
 
 concurrency:
   group: nightly-tool-selection
@@ -29,8 +29,9 @@ jobs:
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
     steps:
-      # Late or duplicate scheduled runs skip in seconds instead of holding a runner, with a warning; the
-      # supervisor round reports a night without a successful run as NOT DONE. A manual dispatch always runs.
+      # Late or duplicate scheduled runs stop in seconds instead of holding a runner, concluding «cancelled»
+      # (never «success»); the supervisor round reports a night without a successful run as NOT DONE.
+      # A manual dispatch always runs.
       - id: window
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,11 +43,14 @@ jobs:
               run=false; echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04"
             else
               others=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
-                --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length") || others=0
+                --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }}) | select(.conclusion != \"cancelled\" and .conclusion != \"failure\")] | length") || others=0
               if [ "${others:-0}" -gt 0 ]; then run=false; echo "::notice::nightly matrix already launched tonight ($others other run(s)); this scheduled run skips"; fi
             fi
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
+          # A skipped night must never read as a passing one: the run cancels itself, so its conclusion is
+          # «cancelled», not «success»; only a run that executed the matrix can conclude success.
+          if [ "$run" = false ]; then gh run cancel ${{ github.run_id }} -R ${{ github.repository }}; sleep 60; exit 1; fi
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
       - if: steps.window.outputs.run == 'true'
