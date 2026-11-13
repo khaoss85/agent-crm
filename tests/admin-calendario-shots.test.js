@@ -220,6 +220,16 @@ const client = {
     if (path.startsWith('/api/appointments/suggest-slots')) {
       return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
     }
+    // backlog:3582d91635cb: five suggestions, two homonyms among them.
+    if (path.startsWith('/api/customer-data/customers')) {
+      return { complete: true, items: [
+        { resource: 'contact', id: 'c1', name: 'Ada Rossi', email: 'ada.rossi@example.com', phone: null, company: null },
+        { resource: 'contact', id: 'c2', name: 'Ada Rossi', email: null, phone: { value: '+393331234567', system: 'whatsapp' }, company: null },
+        { resource: 'contact', id: 'c3', name: 'Adele Bianchi', email: 'adele@example.com', phone: null, company: null },
+        { resource: 'contact', id: 'c4', name: 'Adriano Verdi', email: 'adriano@example.com', phone: null, company: null },
+        { resource: 'contact', id: 'c5', name: 'Adamo Neri', email: 'adamo@example.com', phone: null, company: null },
+      ] };
+    }
     throw new Error('unexpected ' + path);
   },
 };
@@ -293,8 +303,25 @@ const customerProbe = (() => {
     room: Math.floor(room),
   };
 })();
+// backlog:3582d91635cb: the suggestions open in the form, which stays on
+// screen with its live height.
+byName('customerSearch').value = 'Ad';
+byName('customerSearch').dispatchEvent(new Event('input', { bubbles: true }));
+await new Promise((r) => setTimeout(r, 100));
+await new Promise((r) => setTimeout(r, 100));
+const suggestProbe = (() => {
+  const pop = document.querySelector('[data-role="manual-pop"]');
+  if (!pop || pop.hidden) return null;
+  const box = pop.getBoundingClientRect();
+  return {
+    top: Math.round(box.top), bottom: Math.round(box.bottom), left: Math.round(box.left), right: Math.round(box.right),
+    innerHeight: window.innerHeight, innerWidth: window.innerWidth,
+    labels: [...document.querySelectorAll('[data-role="customer-results"] button')].map((node) => node.textContent),
+  };
+})();
 const probe = {
   grid: gridProbe,
+  suggest: suggestProbe,
   customer: customerProbe,
   days: document.querySelectorAll('.cal-day').length,
   events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
@@ -539,6 +566,11 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
     assert.ok(Math.abs(box.bottom - 240) <= 2, `${phase}: the block ends at 13:00, three whole hours: ${JSON.stringify(stretch)}`);
   }
   assert.ok(probe.grid.labelMid === null || Math.abs(probe.grid.labelMid - 120) <= 3, `the 11:00 label sits on the 11:00 line: ${JSON.stringify(probe.grid)}`);
+  // backlog:3582d91635cb: homonyms read apart, the form stays on screen.
+  assert.ok(probe.suggest, 'the suggestions open in the form');
+  assert.ok(probe.suggest.labels.includes('Ada Rossi · ad…@example.com') && probe.suggest.labels.includes('Ada Rossi · tel. …4567'), JSON.stringify(probe.suggest.labels));
+  assert.ok(probe.suggest.top >= 0 && probe.suggest.bottom <= probe.suggest.innerHeight, `the form stays on screen with the suggestions open: ${JSON.stringify(probe.suggest)}`);
+  assert.ok(probe.suggest.left >= 0 && probe.suggest.right <= probe.suggest.innerWidth, `the form stays on screen sideways: ${JSON.stringify(probe.suggest)}`);
   assert.ok(probe.customer, 'the customer search paints in the form');
   assert.ok(probe.customer.iconRight <= probe.customer.textLeft, `the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.customer.placeholderWidth <= probe.customer.room, `the placeholder reads whole: ${JSON.stringify(probe.customer)}`);
@@ -569,6 +601,7 @@ test('the team week renders in a real browser: phone PNG without sideways scroll
   assert.ok(dom.includes('<title>calendario-ready</title>'), 'the harness module ran to completion in the page');
   const probe = readProbe(dom);
   assert.ok(probe.events.some((text) => /^taglio\b/i.test(text)), 'the phone render lists the week events');
+  assert.ok(probe.suggest && probe.suggest.top >= 0 && probe.suggest.bottom <= probe.suggest.innerHeight, `phone: the sheet stays on screen with the suggestions open: ${JSON.stringify(probe.suggest)}`);
   assert.ok(probe.customer && probe.customer.iconRight <= probe.customer.textLeft, `phone: the magnifier never covers the text: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.customer.placeholderWidth <= probe.customer.room, `phone: the placeholder reads whole: ${JSON.stringify(probe.customer)}`);
   assert.ok(probe.pop, 'the event popover opens on the phone');

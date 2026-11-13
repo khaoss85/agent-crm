@@ -916,6 +916,28 @@ export function isCancelledRow(row) {
 }
 
 /**
+ * backlog:3582d91635cb — what tells a homonym apart in the customer
+ * suggestions: a partial email («ad…@example.com»), else the last four
+ * digits of the held phone («tel. …4567»), else the company name; null
+ * when the customer carries none of them. Never the whole address or
+ * number: the hint distinguishes, it does not publish.
+ * @param {any} item one `/api/customer-data/customers` item
+ */
+export function customerHint(item) {
+  const email = typeof item?.email === 'string' ? item.email.trim() : '';
+  const at = email.indexOf('@');
+  if (at > 0 && at < email.length - 1) {
+    const local = email.slice(0, at);
+    return `${local.slice(0, Math.min(2, local.length))}…@${email.slice(at + 1)}`;
+  }
+  const phone = typeof item?.phone?.value === 'string' ? item.phone.value : (typeof item?.phone === 'string' ? item.phone : '');
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length >= 4) return `tel. …${digits.slice(-4)}`;
+  const company = typeof item?.company?.name === 'string' ? item.company.name.trim() : '';
+  return company !== '' ? company : null;
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
  * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
@@ -1954,7 +1976,7 @@ export function createCalendarioView(deps) {
     formPop.appendChild(renderManual());
     formPop.addEventListener?.('keydown', (event) => { if (event?.key === 'Escape' || event?.key === 'Esc') closeManual(); });
     main.appendChild(formPop);
-    if (formOpen && state.selection) pop = formPop;
+    if (formOpen) pop = formPop;
     layout.appendChild(rail);
     layout.appendChild(main);
     wrap.appendChild(layout);
@@ -1987,16 +2009,45 @@ export function createCalendarioView(deps) {
 
   /** Seats the popover beside the pick: right of it, or left on the last columns. */
   function placePopover(main, pop) {
-    const pick = main.querySelector?.('[data-role="slot-pick"]');
-    if (!pick || typeof pick.getBoundingClientRect !== 'function' || typeof main.getBoundingClientRect !== 'function') return;
+    if (!pop || typeof main.getBoundingClientRect !== 'function') return;
+    const view = doc?.defaultView ?? null;
+    const viewportWidth = Number(view?.innerWidth) || Number(doc?.documentElement?.clientWidth) || 0;
+    const viewportHeight = Number(view?.innerHeight) || Number(doc?.documentElement?.clientHeight) || 0;
     const box = main.getBoundingClientRect();
-    const at = pick.getBoundingClientRect();
-    const width = 340;
-    const right = at.right - box.left + 12;
-    const left = right + width > box.width ? Math.max(0, at.left - box.left - width - 12) : right;
-    const top = Math.max(0, Math.min(at.top - box.top, box.height - 120));
-    pop.setAttribute('style', `left: ${Math.round(left)}px; top: ${Math.round(top)}px`);
+    const size = typeof pop.getBoundingClientRect === 'function' ? pop.getBoundingClientRect() : null;
+    const width = Number(size?.width) || 340;
+    const height = Number(size?.height) || 420;
+    const pick = main.querySelector?.('[data-role="slot-pick"]');
+    if (!pick && (viewportWidth <= 0 || viewportHeight <= 0)) return;
+    // backlog:3582d91635cb: the form never leaves the screen — beside the
+    // picked slot, or at the top right of the grid, then clamped to the
+    // viewport with its live height (customer suggestions open included).
+    if (pick && typeof pick.getBoundingClientRect === 'function') {
+      const at = pick.getBoundingClientRect();
+      if (viewportWidth <= 0 || viewportHeight <= 0) {
+        const right = at.right - box.left + 12;
+        const left = right + width > box.width ? Math.max(0, at.left - box.left - width - 12) : right;
+        pop.setAttribute('style', `left: ${Math.round(left)}px; top: ${Math.round(Math.max(0, at.top - box.top))}px`);
+        return;
+      }
+      const placed = eventPopoverPlacement({ anchor: at, box, width, height, viewportWidth, viewportHeight });
+      pop.setAttribute('style', `left: ${placed.left}px; top: ${placed.top}px`);
+      return;
+    }
+    const margin = 8;
+    const topVp = Math.min(Math.max(box.top + 12, margin), Math.max(margin, viewportHeight - margin - height));
+    const leftVp = Math.min(Math.max(box.right - 12 - width, margin), Math.max(margin, viewportWidth - margin - width));
+    pop.setAttribute('style', `left: ${Math.round(leftVp - box.left)}px; top: ${Math.round(topVp - box.top)}px`);
   }
+
+  /** The open form popover, re-seated after its height changed (suggestions in or out). */
+  function reseatFormPopover() {
+    const pop = mount.querySelector('[data-role="manual-pop"]');
+    const main = mount.querySelector('.cal-main');
+    if (!pop || !main || pop.getAttribute('hidden') !== null) return;
+    placePopover(main, pop);
+  }
+
 
   /**
    * BO-F6-11 fetta 2 (specs/calendario.md C3): the "Nuovo appuntamento" menu.
@@ -4066,6 +4117,7 @@ export function createCalendarioView(deps) {
       state.customerItems = [];
       state.customerError = null;
       paintCustomerResults(liveCustomerBox());
+      reseatFormPopover();
       return;
     }
     // The space the search asked in: an answer never paints in another one.
@@ -4097,6 +4149,7 @@ export function createCalendarioView(deps) {
       });
     }
     paintCustomerResults(liveCustomerBox());
+    reseatFormPopover();
   }
 
   /**
@@ -4142,9 +4195,18 @@ export function createCalendarioView(deps) {
         text: 'L’elenco è parziale: potrebbero esserci altri clienti oltre quelli letti.',
       }));
     }
+    // backlog:3582d91635cb: two customers with the same name read apart —
+    // a partial email or phone beside each homonym, never a guess.
+    const nameOf = (item) => (typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome');
+    const seen = new Map();
+    for (const item of state.customerItems) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
     for (const item of state.customerItems) {
-      const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
+      const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item) : null;
+      if (hint !== null) {
+        pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
+      }
       pick.addEventListener('click', () => {
         // Review #690 (P2): the choice ends the search — no pending timer or
         // request in flight reads again after it.
