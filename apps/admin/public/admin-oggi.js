@@ -35,7 +35,7 @@ import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
-import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
+import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
@@ -985,10 +985,17 @@ export const UNREAD_VIEW = 'da-leggere';
  * limit. The «Da leggere» count comes from the same answer's view pills.
  * @param {any} answer GET /api/customer-data/customers?vista=da-rispondere
  * @param {Date} [now]
- * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null } | null}
+ * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null, correspondents: { conversations: Set<string>, addresses: Set<string> } | null } | null}
  */
 export function buildServerReplies(answer, now = new Date()) {
   if (!answer || typeof answer !== 'object' || !Array.isArray(answer.items)) return null;
+  // La base «mai scritto» della scansione (seguito P2 review Muse #821 giro
+  // 4, backlog:095fb37de6bb): gli stessi corrispondenti da cui la vista
+  // decide — l’inbox locale li riusa per le notifiche. Assente sulle risposte
+  // di prima della cura: allora vale la base della pagina, come prima.
+  const correspondents = answer.teamCorrespondents == null
+    ? null
+    : reviveCorrespondents(answer.teamCorrespondents);
   const rows = [];
   for (const item of answer.items.slice(0, INBOX_LIMIT)) {
     const resource = nonEmptyText(item?.subject?.resource ?? item?.resource);
@@ -1019,6 +1026,7 @@ export function buildServerReplies(answer, now = new Date()) {
     totalIsExact: answer.totalIsExact !== false,
     rows,
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
+    correspondents,
   };
 }
 
@@ -1074,9 +1082,15 @@ function realLabel(value) {
  * `notifications`, apart, and never counts as waiting. `ownAddresses` are
  * the space's own mailboxes (`ownMailboxes`). `pendingNames` marks the rows
  * whose name a profile read still has to bring (backlog:bd5e84545021).
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string> }} input
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string>, correspondents?: any }} input
+ * `correspondents` is the server view's scan-wide base
+ * (buildServerReplies, backlog:095fb37de6bb): the «mai scritto» the server
+ * classified its threads from. A scanned thread (one with a customer
+ * subject) decides from that base; a thread the scan never saw (no
+ * subject) decides from the page, like before. Absent it reads the
+ * page, like before.
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [] } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [], correspondents: shared = null } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -1094,10 +1108,18 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
   }
   const waiting = [];
   const automated = [];
-  // Who the team ever wrote to, among the messages read (backlog:bab63e32acdb):
+  // Who the team ever wrote to (backlog:bab63e32acdb, backlog:095fb37de6bb):
   // mass-mail footers count only for a sender nobody answered — per sender,
-  // the server view's rule (review Muse #821).
-  const correspondents = teamCorrespondents(messages);
+  // the server view's rule (review Muse #821). With the server base a
+  // scanned thread decides from the whole scan, not the latest 100; a
+  // thread the scan never saw (no customer subject) decides from the
+  // page. Never one union base for both (review Muse #847 P1 on #821: a
+  // page-only outbound flipped a server-classified notification into
+  // local waiting, which Oggi discards when the server answers — the
+  // thread vanished from both groups). Without the server base the page
+  // reads itself, like before.
+  const pageBase = teamCorrespondents(messages);
+  const serverBase = shared == null ? null : reviveCorrespondents(shared);
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -1109,6 +1131,11 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectId: message.subjectId ?? conversation?.subjectId,
     };
     const subjectKey = inboxSubjectKey(subject);
+    // The server scan covers customer subjects: a thread with one was
+    // classified from the server base, so it decides from that base — a
+    // page-only outbound must never flip it. A thread with no subject the
+    // scan never saw decides from the page.
+    const threadBase = serverBase !== null && subjectKey !== null ? serverBase : pageBase;
     const machine = isNotificationMessage({
       ...message,
       channel,
@@ -1116,7 +1143,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     }, {
       ownAddresses,
       labels: [conversation?.subjectLabel],
-      weWrote: teamWroteTo(correspondents, { ...message, remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle) }),
+      weWrote: teamWroteTo(threadBase, { ...message, remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle) }),
     });
     const handle = nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
@@ -2439,6 +2466,11 @@ export function createOggiView(deps) {
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    // backlog:095fb37de6bb: the «Notifiche automatiche» group decides from
+    // the server's scan-wide base when it answered — per thread: the server
+    // base for the threads it scanned, the page base for the rest (review
+    // Muse #847) — else from the page, like before.
+    const { correspondents: serverCorrespondents, ...serverInbox } = last.replies ?? {};
     const local = !last.inboxComposed
       ? null
       : last.inboxAvailable
@@ -2451,6 +2483,7 @@ export function createOggiView(deps) {
             now: lastMeta.now,
             pendingNames: pendingNames || last.inboxNamesPending === true,
             ownAddresses: ownMailboxes(last.profile, last.connections),
+            correspondents: serverCorrespondents ?? null,
           }),
         }
         : { available: false, total: 0, rows: [] };
@@ -2461,7 +2494,7 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...last.replies, notifications }
+        ? { ...serverInbox, notifications }
         : local;
     renderOggi({
       doc,
