@@ -14,11 +14,14 @@
 //   «the agents package is not composed here»);
 // - writes: `POST /api/agents/create` (create-agent: a catalogue slug, or —
 //   backlog:1f7cb20d3c30 — a hand-written agent from «Nuovo agente»),
-//   `POST /api/agents/assign` (create-assignment) and `PATCH
-//   /api/modules/teammate-agent/records/:id` (a hand-written agent's own
-//   Modifica/Ritira: name, role, instructions, cap or paused/resumed),
-//   all posted through the bound submission client so the Admin mutation
-//   gate sees an Idempotency-Key. Nothing else writes from here.
+//   `POST /api/agents/assign` (create-assignment),
+//   `POST /api/agents/update` (update-agent: a hand-written agent's own
+//   Modifica — name, role, instructions, cap) and
+//   `POST /api/agents/set-status` (set-agent-status: its Ritira/Riattiva —
+//   paused/resumed), all posted through the bound submission client so the
+//   Admin mutation gate sees an Idempotency-Key. Nothing else writes from
+//   here. The generic modules PATCH is never used for agents: teammate-agent
+//   exposes no update capability, so it would answer 404 (review #879).
 //
 // Honest gaps, said on screen and never faked:
 // - backlog:31a76b6f19a3: Approva, Rifiuta and Modifica post
