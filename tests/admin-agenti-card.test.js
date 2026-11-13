@@ -28,6 +28,7 @@ import { chromiumRuns, findChromium } from '../scripts/bo-shots.js';
 
 const NOW = '2026-11-11T10:00:00.000Z';
 const AGENT = { id: 1, sourceKey: 'agent:presti:pulizia-contatti', spaceId: 'presti', name: 'Pulizia contatti', role: 'Tiene in ordine i clienti', status: 'active' };
+const CATALOG_ENTRY = { slug: 'pulizia-contatti', name: 'Pulizia contatti', role: 'Tiene in ordine i clienti', instructions: 'Cerca doppioni.', examplePhrase: 'ogni venerdì controlla i doppioni', agentSourceKey: AGENT.sourceKey };
 const LONG = 'controlla i doppioni tra i clienti arrivati da WhatsApp, Instagram, email e dal form del sito negli ultimi tre mesi, proponi come unirli senza perdere le note, i telefoni e le etichette, e dimmi quali hanno ancora un appuntamento aperto';
 
 /** Five incarichi, newest first: applied, rejected, nothing to propose, failed, never ran. */
@@ -49,7 +50,9 @@ function client({ assignments = ASSIGNMENTS } = {}) {
   return {
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/agents/catalog')) return { agents: [] };
+      // The agent is the catalogue's own (backlog:1f7cb20d3c30: only a
+      // catalogue agent has an engine, so it reads «Attivo»).
+      if (path.startsWith('/api/agents/catalog')) return { agents: [CATALOG_ENTRY] };
       if (path.startsWith('/api/modules/teammate-agent/records?')) return { items: [{ ...AGENT }] };
       if (path.startsWith('/api/modules/teammate-assignment/records?')) return { items: assignments.map((row) => ({ ...row })) };
       if (path.startsWith('/api/modules/teammate-run/records?')) return { items: RUNS.map((row) => ({ ...row })) };
@@ -155,7 +158,7 @@ const RUNS = ${JSON.stringify(RUNS)};
 const client = {
   async request(path, options = {}) {
     enforceAdminWriteGate(path, options);
-    if (path.startsWith('/api/agents/catalog')) return { agents: [] };
+    if (path.startsWith('/api/agents/catalog')) return { agents: [${JSON.stringify(CATALOG_ENTRY)}] };
     if (path.startsWith('/api/modules/teammate-agent/records?')) return { items: [AGENT] };
     if (path.startsWith('/api/modules/teammate-assignment/records?')) return { items: ASSIGNMENTS };
     if (path.startsWith('/api/modules/teammate-run/records?')) return { items: RUNS };

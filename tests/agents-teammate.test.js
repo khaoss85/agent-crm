@@ -555,7 +555,8 @@ test('an executor that reports far above the cap is stopped, not recorded as a s
   const { ops, modules } = compose();
   const kinds = { artifact: 'ag-liar-artifact', proposals: 'ag-liar-proposals' };
   for (const [kind, agentSourceKey] of Object.entries(kinds)) {
-    await makeAgent(ops, { sourceKey: agentSourceKey, spendingCapCents: 100 });
+    // Two agents of one space never share a name (backlog:1f7cb20d3c30).
+    await makeAgent(ops, { sourceKey: agentSourceKey, name: `Vendi ${kind}`, spendingCapCents: 100 });
     await ops.createAssignment({
       actor: USER,
       spaceId: SPACE,
@@ -1207,4 +1208,60 @@ test('conditional run writes hold on async (PostgreSQL-like) storage', async () 
   assert.equal(rows[0].outcome, 'artifact');
   assert.equal(rows[0].decidedAt, FEB_01);
   assert.ok(!/Slot claimed/.test(rows[0].note ?? ''), 'no claim note survives on the async path either');
+});
+
+test('1f7cb20d3c30: create-agent refuses a second agent with the same @name in a space, and still replays its own key', async () => {
+  const { ops } = compose();
+  const first = await makeAgent(ops, { sourceKey: 'ag-a', name: 'Report Vendite' });
+  const replay = await ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey: 'ag-a', name: 'Report Vendite', role: 'r', instructions: 'i' });
+  assert.equal(replay.duplicate, true, 'the same key replays before the name rule');
+  assert.equal(replay.agent.sourceKey, first.sourceKey);
+  await assert.rejects(
+    () => ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey: 'ag-b', name: ' report  vèndite', role: 'r', instructions: 'i' }),
+    (error) => error.code === 'AGENT_NAME_TAKEN' && error.status === 409,
+  );
+  const other = await ops.createAgent({ actor: USER, spaceId: 'altro-spazio', sourceKey: 'ag-c', name: 'Report Vendite', role: 'r', instructions: 'i' });
+  assert.equal(other.duplicate, false, 'another space may use the name');
+});
+
+test('1f7cb20d3c30: run-due leaves an agent the deployment cannot run waiting — no run, no failure, still due', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'custom-agent:ws:k1', name: 'Auguri' });
+  await makeAgent(ops, { sourceKey: 'ag-ok', name: 'Pronto' });
+  for (const [sourceKey, agentSourceKey] of [['as-wait', 'custom-agent:ws:k1'], ['as-ok', 'ag-ok']]) {
+    await ops.createAssignment({
+      actor: USER, spaceId: SPACE, sourceKey, agentSourceKey,
+      phrase: 'ogni giorno il report', plan: { cadence: 'daily', timeOfDay: '08:00' },
+    });
+  }
+  const executed = [];
+  const execute = async ({ agent }) => {
+    executed.push(agent.sourceKey);
+    return { kind: 'artifact', costCents: 0, artifact: { total: 0 } };
+  };
+  const runnable = (agent) => !agent.sourceKey.startsWith('custom-agent:');
+  const summary = await ops.runDue({ actor: SYSTEM, at: MON_0801, execute, runnable });
+  assert.equal(summary.waiting, 1, 'the engine-less agent waits');
+  assert.equal(summary.failed, 0, 'never a failed run');
+  assert.deepEqual(executed, ['ag-ok'], 'its assignment is never executed');
+  const runs = await modules.get('teammate-run').service.listWhere({ spaceId: SPACE, agentSourceKey: 'custom-agent:ws:k1' });
+  assert.equal(runs.length, 0, 'no run row is born');
+  const [waiting] = await modules.get('teammate-assignment').service.listWhere({ spaceId: SPACE, sourceKey: 'as-wait' });
+  assert.equal(waiting.status, 'active', 'the assignment is kept');
+  assert.ok(Date.parse(waiting.nextRunAt) <= Date.parse(MON_0801), 'and stays due: it runs once an engine exists');
+  const again = await ops.runDue({ actor: SYSTEM, at: MON_0801, execute });
+  assert.equal(again.waiting, undefined, 'without the seam every agent is runnable and the summary shape is unchanged');
+  assert.ok(executed.includes('custom-agent:ws:k1'));
+});
+
+test('1f7cb20d3c30 review #836 P2: two concurrent creates of one @name in a space — one agent, one AGENT_NAME_TAKEN', async () => {
+  const { ops, modules } = compose();
+  const create = (sourceKey) => ops.createAgent({ actor: USER, spaceId: SPACE, sourceKey, name: 'Auguri', role: 'r', instructions: 'i' });
+  const outcomes = await Promise.allSettled([create('ag-x'), create('ag-y'), create('ag-z')]);
+  assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 1, 'exactly one agent is created');
+  for (const lost of outcomes.filter((o) => o.status === 'rejected')) {
+    assert.equal(/** @type {any} */ (lost).reason.code, 'AGENT_NAME_TAKEN');
+  }
+  const rows = (await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE })).filter((row) => row.name === 'Auguri');
+  assert.equal(rows.length, 1, 'never two agents with the same @name');
 });
