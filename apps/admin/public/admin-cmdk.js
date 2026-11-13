@@ -353,6 +353,10 @@ export function createCommandMenu({
     // locked: its answer is dropped and the next query reads again.
     offersToken += 1;
     state.offersLoading = false;
+    // backlog:1f7cb20d3c30: same for the agents read — a late answer never
+    // lands in the next menu use.
+    agentsToken += 1;
+    state.agentsLoading = false;
     state.enterWaited = false;
     if (input !== null) input.value = '';
     render();
