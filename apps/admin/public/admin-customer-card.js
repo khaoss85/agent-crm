@@ -1051,11 +1051,18 @@ export function createCustomerCardView(deps) {
   const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines']);
 
   /**
-   * The scheda's reads, all in flight at once. backlog:1a96094db71d: with
-   * `onPart` the caller hears each read as it lands (production 12/11: the
-   * card answered in 5.4 s, the cronologia in 7 s, and the scheda waited for
+   * The scheda's reads in two waves. backlog:1a96094db71d: with `onPart`
+   * the caller hears each read as it lands (production 12/11: the card
+   * answered in 5.4 s, the cronologia in 7 s, and the scheda waited for
    * the slowest before painting anything), so a section fills the moment
-   * its own read is back. The final answer is the same shape as before.
+   * its own read is back. Voce 4cd1bbb646d0 (production 13/11: ~11 reads
+   * in parallel at open, card and timeline queued behind them — alone they
+   * answer in 466 ms and 281 ms, at open the name took 4-6 s): the first
+   * wave is card and timeline alone, and the second wave starts only after
+   * both settle, so the name and the cronologia never wait behind the
+   * secondary reads. No pool limit is raised — the server keeps its single
+   * reader; the client simply stops crowding it. The final answer is the
+   * same shape as before.
    * @param {string} resource @param {string} id
    * @param {((loaded: any, pending: Set<string>) => void) | null} [onPart]
    */
@@ -1085,9 +1092,19 @@ export function createCustomerCardView(deps) {
       pending.delete(part);
       if (typeof onPart === 'function') onPart({ ...loaded }, new Set(pending));
     };
+    // Voce 4cd1bbb646d0: first wave — card and timeline alone. The two
+    // takes paint the name and the cronologia through onPart before any
+    // secondary read even starts, so a slow profile can never hold them
+    // (or queue behind them on the server's single reader).
     await Promise.all([
       PART_READS.card(encoded).then((read) => take('card', read, false)),
       PART_READS.timeline(encoded).then((read) => take('timeline', read)),
+    ]);
+    // Voce 4cd1bbb646d0: second wave — everything else, only after card
+    // and timeline settle. take() never throws (settle catches), so this
+    // await always runs: a failed card still reads the sections behind it,
+    // exactly like the single wave did before.
+    await Promise.all([
       PART_READS.profile(encoded).then((read) => take('profile', read)),
       // The enrichment read lives in the same package as the profile, so it
       // shares its fate — but an older server that does not serve the route
