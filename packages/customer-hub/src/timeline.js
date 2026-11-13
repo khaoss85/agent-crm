@@ -264,20 +264,24 @@ function readFlagAt(read, index) {
  * @returns {Map<string, {body: string|null, revisedAt: string|null, revisedBy: string|null, withdrawn: boolean}>}
  */
 function noteCorrections(rows) {
-  /** @type {Map<string, {body: string|null, revisedAt: string|null, revisedBy: string|null, withdrawn: boolean, at: number}>} */
+  /** @type {Map<string, {body: string|null, revisedAt: string|null, revisedBy: string|null, withdrawn: boolean, at: number, seq: number}>} */
   const byNote = new Map();
   for (const row of rows) {
     if (row?.entry !== 'work-note' || String(row?.kind ?? 'note') !== 'note') continue;
     if (typeof row?.revisesId !== 'string' || row.revisesId === '') continue;
-    const current = byNote.get(row.revisesId) ?? { body: null, revisedAt: null, revisedBy: null, withdrawn: false, at: -Infinity };
+    const current = byNote.get(row.revisesId) ?? { body: null, revisedAt: null, revisedBy: null, withdrawn: false, at: -Infinity, seq: -Infinity };
     if (row.withdrawn === true) {
       current.withdrawn = true;
     } else {
       // The latest correction wins; the write order (seq) breaks a tie of
-      // the same instant, like every other work timeline.
-      const at = Date.parse(String(row.occurredAt ?? '')) + (Number.isInteger(row.seq) ? row.seq / 1e6 : 0);
-      if (Number.isFinite(at) && at >= current.at) {
+      // the same instant, like every other work timeline. The pair is
+      // compared as a pair (review Muse #839): seq added to an epoch in ms
+      // is lost to floating point. A missing seq orders first.
+      const at = Date.parse(String(row.occurredAt ?? ''));
+      const seq = Number.isInteger(row.seq) ? row.seq : -Infinity;
+      if (Number.isFinite(at) && (at > current.at || (at === current.at && seq >= current.seq))) {
         current.at = at;
+        current.seq = seq;
         current.body = typeof row.body === 'string' ? row.body : null;
         current.revisedAt = row.occurredAt ?? null;
         current.revisedBy = typeof row.actorId === 'string' ? row.actorId : null;

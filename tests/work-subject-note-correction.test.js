@@ -183,3 +183,126 @@ test('82235e46e3e9: the writer can change the note, the owner can, another membe
     notAuthor, 'the replay of a withdrawal answers only who could have made it',
   );
 });
+
+// ---- review Muse #839 (giro 1) ---------------------------------------------
+
+test('review Muse #839 (P2): two corrections in the same millisecond — the later seq wins, whatever the row order', () => {
+  const at = '2026-11-03T09:00:00.000Z';
+  const rows = [
+    workNote({ id: 'n1', body: 'originale', actorId: 'elena', occurredAt: '2026-11-01T09:00:00.000Z', seq: 1 }),
+    workNote({ id: 'r2', body: 'seconda', actorId: 'dan', occurredAt: at, seq: 1_000_002, revisesId: 'n1' }),
+    workNote({ id: 'r1', body: 'prima', actorId: 'dan', occurredAt: at, seq: 1_000_001, revisesId: 'n1' }),
+  ];
+  for (const order of [rows, [rows[0], rows[2], rows[1]]]) {
+    const [note] = shape(order).entries.items;
+    assert.equal(note.body, 'seconda', 'the higher seq of the same instant wins, in either row order');
+  }
+  const unsequenced = shape([
+    rows[0],
+    workNote({ id: 'r3', body: 'con seq', actorId: 'dan', occurredAt: at, seq: 3, revisesId: 'n1' }),
+    workNote({ id: 'r4', body: 'senza seq', actorId: 'dan', occurredAt: at, seq: null, revisesId: 'n1' }),
+  ]);
+  assert.equal(unsequenced.entries.items[0].body, 'con seq', 'a row without seq orders first');
+});
+
+/**
+ * The note operations over an in-memory activity store whose reads can be
+ * scripted, so an interleaving is a test step, never a timing accident.
+ */
+async function scriptedNotes({ onListSourceKey = null, onGet = null } = {}) {
+  const { buildReviseSubjectNoteOperation, buildWithdrawSubjectNoteOperation } = await import('../packages/work/src/index.js');
+  const rows = [{
+    id: 'n1', kind: 'note', subjectResource: 'contact', subjectId: 'c1', taskId: null, body: 'Richiamare',
+    actorType: 'user', actorId: OPERATOR.id, occurredAt: '2026-11-01T09:00:00.000Z', seq: 1, revisesId: null, withdrawn: null, sourceKey: null,
+  }];
+  const activities = {
+    rows,
+    async get(id) {
+      if (onGet) return onGet(id, rows);
+      const row = rows.find((candidate) => candidate.id === id);
+      if (!row) throw Object.assign(new Error('missing'), { status: 404, name: 'NotFoundError' });
+      return row;
+    },
+    async listWhere(where) {
+      if (typeof where.sourceKey === 'string' && onListSourceKey) {
+        const scripted = await onListSourceKey(where.sourceKey, rows);
+        if (scripted !== undefined) return scripted;
+      }
+      return rows.filter((row) => Object.entries(where).every(([key, value]) => row[key] === value));
+    },
+    async createManaged(row) {
+      if (row.sourceKey && rows.some((candidate) => candidate.sourceKey === row.sourceKey)) {
+        throw Object.assign(new Error('duplicate'), { code: 'UNIQUE_CONSTRAINT', status: 409, name: 'ConflictError' });
+      }
+      const stored = { id: `a${rows.length + 1}`, ...row };
+      rows.push(stored);
+      return stored;
+    },
+  };
+  const runtime = { modules: { get: (name) => (name === 'work-activity' ? { service: activities } : null) } };
+  return {
+    rows,
+    revise: buildReviseSubjectNoteOperation().create(runtime),
+    withdraw: buildWithdrawSubjectNoteOperation().create(runtime),
+  };
+}
+
+test('review Muse #839 (P2): a withdrawal that lands between the replay read and the note read replays the winner, never 409', async () => {
+  let reads = 0;
+  const winner = { id: 'w-a', kind: 'note', subjectResource: 'contact', subjectId: 'c1', sourceKey: 'note-withdrawal:n1', revisesId: 'n1', withdrawn: true, body: null };
+  const scripted = await scriptedNotes({
+    // B's first replay read sees nothing; A's withdrawal lands right after.
+    onListSourceKey: (key, rows) => {
+      reads += 1;
+      if (reads === 1) {
+        rows.push(winner);
+        return [];
+      }
+      return undefined;
+    },
+  });
+  const answer = await scripted.withdraw({ resource: 'contact', id: 'c1', noteId: 'n1', actor: OPERATOR });
+  assert.equal(answer.id, 'w-a', 'B answers the winner\'s withdrawal');
+  assert.equal(scripted.rows.filter((row) => row.withdrawn === true).length, 1, 'one withdrawal on record');
+});
+
+test('review Muse #839 (P2): the withdrawal replay never masks a store failure, and a missing original is NOT_FOUND for the owner too', async () => {
+  const withdrawal = { id: 'w-a', kind: 'note', subjectResource: 'contact', subjectId: 'c1', sourceKey: 'note-withdrawal:n1', revisesId: 'n1', withdrawn: true, body: null };
+  const failing = await scriptedNotes({ onGet: () => { throw Object.assign(new Error('connection reset'), { code: 'STORAGE_DOWN', status: 503 }); } });
+  failing.rows.push(withdrawal);
+  await assert.rejects(
+    () => failing.withdraw({ resource: 'contact', id: 'c1', noteId: 'n1', actor: OTHER }),
+    (error) => error?.code === 'STORAGE_DOWN',
+    'a store failure stays the store\'s error, never WORK_NOTE_NOT_AUTHOR',
+  );
+  const missing = await scriptedNotes({ onGet: () => { throw Object.assign(new Error('missing'), { status: 404, name: 'NotFoundError' }); } });
+  missing.rows.push(withdrawal);
+  for (const [actor, actorRole] of [[OTHER, undefined], [OTHER, 'owner'], [OPERATOR, undefined]]) {
+    await assert.rejects(
+      () => missing.withdraw({ resource: 'contact', id: 'c1', noteId: 'n1', actor, actorRole }),
+      (error) => error?.code === 'WORK_NOTE_NOT_FOUND' && error?.status === 404,
+      'an unverified original answers NOT_FOUND, never NOT_AUTHOR, never an owner bypass',
+    );
+  }
+});
+
+test('review Muse #839 (P2): a withdrawal that lands while a correction is on its way wins — no correction after it', async () => {
+  let reads = 0;
+  const scripted = await scriptedNotes({
+    // The correction's first withdrawn check sees nothing; the withdrawal
+    // lands before its insert.
+    onListSourceKey: (key, rows) => {
+      reads += 1;
+      if (reads === 1) {
+        rows.push({ id: 'w-a', kind: 'note', subjectResource: 'contact', subjectId: 'c1', sourceKey: 'note-withdrawal:n1', revisesId: 'n1', withdrawn: true, body: null });
+        return [];
+      }
+      return undefined;
+    },
+  });
+  await assert.rejects(
+    () => scripted.revise({ resource: 'contact', id: 'c1', noteId: 'n1', body: 'troppo tardi', actor: OPERATOR }),
+    (error) => error?.code === 'WORK_NOTE_WITHDRAWN' && error?.status === 409,
+  );
+  assert.equal(scripted.rows.filter((row) => row.body === 'troppo tardi').length, 0, 'no correction written after the withdrawal');
+});

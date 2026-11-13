@@ -457,12 +457,16 @@ async function rootNoteOf(activities, subject, noteId) {
     || note.subjectResource !== subject.resource || note.subjectId !== subject.id) {
     throw missing();
   }
-  // A withdrawal holds the unique key note-withdrawal:<id>: one indexed read.
-  const withdrawn = (await activities.listWhere({ sourceKey: `note-withdrawal:${note.id}` }))[0] ?? null;
+  await refuseWithdrawn(activities, note.id);
+  return note;
+}
+
+/** A withdrawal holds the unique key note-withdrawal:<id>: one indexed read. @param {any} activities @param {string} noteId */
+async function refuseWithdrawn(activities, noteId) {
+  const withdrawn = (await activities.listWhere({ sourceKey: `note-withdrawal:${noteId}` }))[0] ?? null;
   if (withdrawn !== null) {
     throw new AppError('This note was withdrawn and can no longer change', { code: 'WORK_NOTE_WITHDRAWN', status: 409 });
   }
-  return note;
 }
 
 /**
@@ -544,6 +548,10 @@ export function buildReviseSubjectNoteOperation(moduleNames) {
           occurredAt: nowIso(),
           source: { package: WORK_PACKAGE, action: 'revise-subject-note' },
           revisesId: note.id,
+          // Review Muse #839 (P2): a withdrawal that lands between the read
+          // above and this write wins — checked again inside the serial
+          // section, so no correction is written after the withdrawal.
+          beforeInsert: () => refuseWithdrawn(activities, note.id),
         });
       };
     },
@@ -585,15 +593,38 @@ export function buildWithdrawSubjectNoteOperation(moduleNames) {
         const sourceKey = `note-withdrawal:${noteId}`;
         // A withdrawal already on record is the answer: replay it.
         const replay = async () => (await activities.listWhere({ sourceKey }))[0] ?? null;
-        const existing = noteId === '' ? null : await replay();
-        if (existing !== null && existing.subjectResource === subject.resource && existing.subjectId === subject.id) {
-          // The replay answers only who could have withdrawn the note.
+        // The replay answers only who could have withdrawn the note — read
+        // from the original note itself (review Muse #839, P2): a missing
+        // original is WORK_NOTE_NOT_FOUND for everyone, owner included, and
+        // a store failure stays the store's error, never a refusal.
+        const replayed = async () => {
+          const existing = noteId === '' ? null : await replay();
+          if (existing === null || existing.subjectResource !== subject.resource || existing.subjectId !== subject.id) return null;
           let original = null;
-          try { original = await activities.get(noteId); } catch { original = null; }
+          try {
+            original = await activities.get(noteId);
+          } catch (error) {
+            if (error?.status !== 404 && error?.name !== 'NotFoundError') throw error;
+          }
+          if (!original) {
+            throw new AppError('No note with this id on this customer', { code: 'WORK_NOTE_NOT_FOUND', status: 404 });
+          }
           requireNoteKeeper(original, normalizeActor(request.actor), request?.actorRole);
           return existing;
+        };
+        const already = await replayed();
+        if (already !== null) return already;
+        let note;
+        try {
+          note = await rootNoteOf(activities, subject, noteId);
+        } catch (error) {
+          // Review Muse #839 (P2): a withdrawal that landed after the replay
+          // read above is the same answer — replay the winner, never 409.
+          if (error?.code !== 'WORK_NOTE_WITHDRAWN') throw error;
+          const raced = await replayed();
+          if (raced === null) throw error;
+          return raced;
         }
-        const note = await rootNoteOf(activities, subject, noteId);
         requireNoteKeeper(note, normalizeActor(request.actor), request?.actorRole);
         try {
           return await recordActivity({ activities, actor: request.actor }, {

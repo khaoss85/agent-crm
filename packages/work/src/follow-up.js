@@ -666,7 +666,10 @@ export function postponeDueAt(nowIso) {
  * @param {{activities: any, actor?: unknown}} deps
  * @param {{sourceKey: string|null, kind: string, subject: {resource: string, id: string},
  *   taskId: string|null, body: string|null, occurredAt: string,
- *   source: {package: string, action: string}, revisesId?: string, withdrawn?: boolean}} entry
+ *   source: {package: string, action: string}, revisesId?: string, withdrawn?: boolean,
+ *   beforeInsert?: () => Promise<void>}} entry `beforeInsert` runs inside the
+ *   serial section, right before the row is written: a check that must hold
+ *   at write time (a note not withdrawn meanwhile) throws there.
  */
 export async function recordActivity({ activities, actor }, entry) {
   if (!ACTIVITY_KINDS.includes(entry.kind)) {
@@ -678,6 +681,7 @@ export async function recordActivity({ activities, actor }, entry) {
   // sentinel out of the task namespace, whatever task ids look like.
   const taskKey = typeof entry.taskId === 'string' ? `task:${entry.taskId}` : 'task:∅-no-task';
   return withTaskSeq(taskKey, async () => {
+    if (typeof entry.beforeInsert === 'function') await entry.beforeInsert();
     const siblings = await activities.listWhere({ taskId: entry.taskId });
     let seq = 1;
     for (const sibling of siblings) {
