@@ -815,6 +815,15 @@ test('Google connections from GET /api/profile vote Calendar, never Email alone'
   assert.ok(!withRow.some((entry) => entry.channel === 'email'), 'a real Email row takes Email out of the invite');
 });
 
+// Backlog:3805161965cd (review giro 6 P1, paired): a real Email row
+// stored under the alias spelling counts Email in «x di 9» and takes it
+// out of the invite — count and invite never disagree on the same row.
+test('3805161965cd: an alias-spelled real Email row counts and un-invites Email', () => {
+  const aliasRow = [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }];
+  assert.equal(countConnectedNine(aliasRow, null), 1, 'the alias-spelled row counts Email');
+  assert.ok(!missingLeadChannels(aliasRow, null).some((entry) => entry.channel === 'email'), 'the same row takes Email out of the invite');
+});
+
 test('A key-only Email row votes nothing on Oggi and stays invited', () => {
   const keyOnly = [{ channel: 'email', status: 'active', connectionKey: 'PROFILE:Gmail' }];
   assert.equal(countConnectedNine(keyOnly, null), 0, 'key-only Email reads as not connected');

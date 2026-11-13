@@ -2799,8 +2799,27 @@ test('3805161965cd: Oggi, Stato sync, composer and Connettori agree on profile-o
   assert.ok(panel.textContent.includes('collega Gmail'), 'the composer names the same cure');
   const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
   assert.ok(link, 'the single off Gmail has its own cure line');
-  assert.equal(link.getAttribute('href'), '#/connettori/email', 'the Gmail cure lands on the email guided flow');
-  assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, null), 'the composer cures where Stato sync cures');
+  // Backlog:3805161965cd (review giro 6 P1): one cure everywhere — the
+  // composer lands where production Stato sync lands (adapters read, none
+  // for Email). The unread-schema branch still names the guided flow.
+  assert.equal(link.getAttribute('href'), '#/profilo', 'the Gmail cure lands on Profilo');
+  assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, []), 'the composer cures where Stato sync cures');
+  assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'unread schema still offers the guided flow');
+});
+
+// Backlog:3805161965cd (review giro 6 P1, paired): a real Email row
+// stored under the alias spelling is sendable in the composer, like the
+// Email Oggi counts — the two screens agree on alias-spelled rows.
+test('3805161965cd: the composer connects an alias-spelled real Email row', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }] },
+      profile: null,
+    }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null, 'the alias-spelled real row enables Email');
+  assert.equal(fromValueOf(panel), 'studio@palestra.it', '«Da» names the row mailbox');
 });
 
 // Voce eaa84ccafc53: the pilot merges the profile mailbox into the

@@ -32,7 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, countedChannel, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1274,11 +1274,15 @@ export function countConnectedNine(connections = [], profile = null) {
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function missingLeadChannels(connections = [], profile = null) {
+  // Backlog:3805161965cd (review giro 6 P1): the invite votes on the
+  // counted id, never the raw spelling — a real active row stored as
+  // channel 'gmail' counts Email in «x di 9» via the shared aliases, so it
+  // must take Email out of the invite too.
   const active = new Set(
     (Array.isArray(connections) ? connections : [])
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string'
         && !isInviteSyntheticEmailRow(row))
-      .map((row) => row.channel),
+      .map((row) => countedChannel(row.channel.toLowerCase())),
   );
   for (const channel of googleNineChannels(profile)) {
     if (channel === 'email') continue;
