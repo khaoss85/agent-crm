@@ -762,6 +762,7 @@ export function withNote(loaded, saved, body) {
     sync: null,
     body: typeof saved?.body === 'string' ? saved.body : body,
     teamAuthorId: typeof saved?.actorId === 'string' ? saved.actorId : null,
+    teamAuthor: typeof saved?.teamAuthor === 'string' && saved.teamAuthor.trim() !== '' ? saved.teamAuthor.trim() : null,
     remoteHandle: null,
     errorCode: null,
     occurredAt: typeof saved?.occurredAt === 'string' ? saved.occurredAt : new Date().toISOString(),
@@ -3403,7 +3404,11 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${writerName(author) ?? 'un membro del team'}`;
+          // backlog:2883ef12f233: like the signature, a chip prefers the
+          // API-named author of one of its notes over the roster lookup.
+          const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
+          const named = first === null ? null : noteWriterName(first);
+          const label = author === '' ? 'dal team' : `da ${named ?? writerName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
@@ -3597,7 +3602,9 @@ export function createCustomerCardView(deps) {
           const when = timeParts(item?.occurredAt);
           // backlog:82235e46e3e9: signed with the writer's name from the
           // team roster, never «dal team» for a known operator.
-          const writer = writerName(item?.teamAuthorId);
+          // backlog:2883ef12f233: the API-named author wins over the
+          // roster, which an admin-gated read may withhold.
+          const writer = noteWriterName(item);
           const author = writer !== null ? `da ${writer}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
@@ -4904,6 +4911,18 @@ export function createCustomerCardView(deps) {
   function writerName(id) {
     if (typeof id !== 'string' || id.trim() === '') return null;
     return rosterName(id.trim()) ?? teamName(id);
+  }
+  /**
+   * backlog:2883ef12f233: who wrote a note. The API names the author on
+   * the entry (`teamAuthor`); that name wins, because the roster read is
+   * admin-gated and a provider id is no name. Without it, the roster and
+   * handle lookup below, unchanged.
+   * @param {unknown} item
+   */
+  function noteWriterName(item) {
+    const named = typeof item?.teamAuthor === 'string' ? item.teamAuthor.trim() : '';
+    if (named !== '') return named;
+    return writerName(item?.teamAuthorId);
   }
 
   /**
