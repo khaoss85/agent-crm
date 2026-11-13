@@ -438,7 +438,7 @@ export function masterEnabled(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
@@ -470,6 +470,8 @@ export function createSpaziAccessiView(deps) {
   };
 
   const state = {
+    /** backlog:1a96094db71d: the first reads are pending (skeleton panels). */
+    loading: false,
     /** The invite form opens in place from the team card head. */
     inviteOpen: false,
     /** The invite menu (C21) opens above the inline form. */
@@ -588,16 +590,21 @@ export function createSpaziAccessiView(deps) {
    * count yields null and the card shows no statistic: a failure here is a
    * missing enhancement, never a page error, so it stays silent.
    * @param {string} spaceId
-   * @param {number|null} memberCount
-   * @param {unknown} [profile] the /api/profile answer for this space, null otherwise
+   * @param {Promise<number|null>} memberCountRead the rendered team size, once read
+   * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCount, profile = null) {
+  async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null)) {
+    // backlog:1a96094db71d: the two reads start at once, beside the team
+    // and permission reads; only the statistic waits for the member count
+    // and the profile it formats with.
+    const reads = Promise.allSettled([
+      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
+      client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
+    ]);
+    const [memberCount, profile] = await Promise.all([memberCountRead, profileRead]);
     if (memberCount === null) return null;
     try {
-      const [channelsSettled, customersSettled] = await Promise.allSettled([
-        client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
-        client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
-      ]);
+      const [channelsSettled, customersSettled] = await reads;
       // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
       // the team rows tile this space's calendar and channels from the same
       // answer — no second request. A failed customer count never hides the
@@ -668,21 +675,52 @@ export function createSpaziAccessiView(deps) {
     state.newSpaceMenuOpen = false;
     state.newSpaceNote = null;
     if (space === '') return;
-    try {
-      const context = await client.request('/api/spine/context');
-      state.myRole = typeof context?.membership?.role === 'string' ? context.membership.role : null;
-      state.roles = context?.roles && typeof context.roles === 'object'
-        ? Object.keys(context.roles).filter((name) => name !== '')
+    // backlog:1a96094db71d: every read starts at once. They used to run one
+    // after the other (context, team, agents, permissions, profile, then
+    // the space cards): eight round trips of 2,5–4 s each in production.
+    const settle = (promise) => promise.then(
+      (value) => ({ ok: true, value, error: null }),
+      (error) => ({ ok: false, value: null, error }),
+    );
+    const contextRead = settle(Promise.resolve().then(() => client.request('/api/spine/context')));
+    const membersRead = settle(Promise.resolve().then(() => client.request('/api/spine/memberships')));
+    const agentsRead = loadSpaceAgents(client, space);
+    const switchesRead = settle(Promise.resolve().then(() => client.request(
+      `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
+    )));
+    const ids = readSpaces()
+      .filter((entry) => entry !== null && typeof entry === 'object'
+        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
+        && /** @type {{id?: unknown}} */ (entry).id !== '')
+      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    // The profile describes the session's own space: its links count on
+    // that card only, never on another space's (review #782 P1).
+    const profileRead = ids.length > 0 ? readProfile(client) : Promise.resolve(null);
+    // The statistic counts what the team list shows: rendered rows only, so a
+    // malformed membership never leaks into the card number.
+    const memberCountRead = membersRead.then((answer) => (answer.ok
+      ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : []).length
+      : null));
+    const current = space;
+    const statsRead = Promise.all(ids.map(async (id) => {
+      const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
+      if (stat !== null) state.stats.set(id, stat);
+    }));
+    const context = await contextRead;
+    if (context.ok) {
+      state.myRole = typeof context.value?.membership?.role === 'string' ? context.value.membership.role : null;
+      state.roles = context.value?.roles && typeof context.value.roles === 'object'
+        ? Object.keys(context.value.roles).filter((name) => name !== '')
         : null;
-    } catch {
+    } else {
       state.myRole = null;
       state.roles = null;
     }
-    try {
-      const answer = await client.request('/api/spine/memberships');
-      state.members = Array.isArray(answer?.items) ? answer.items : [];
-    } catch (error) {
-      const failure = errorOf(error);
+    const members = await membersRead;
+    if (members.ok) {
+      state.members = Array.isArray(members.value?.items) ? members.value.items : [];
+    } else {
+      const failure = errorOf(members.error);
       state.members = null;
       state.membersUnavailable = failure.code === 'SPINE_MEMBERSHIP_FORBIDDEN' || failure.status === 403
         ? 'Non hai il permesso di vedere il team: il server ha rifiutato la lettura, e questa non \u00E8 una lista vuota.'
@@ -692,37 +730,19 @@ export function createSpaziAccessiView(deps) {
     }
     // backlog:33782ba68747: agents sit beside people; a failed or absent
     // read leaves the Team exactly as it was.
-    state.agents = await loadSpaceAgents(client, space);
-    try {
-      const answer = await client.request(
-        `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
-      );
-      const items = Array.isArray(answer?.overrides) ? answer.overrides : [];
-      state.overrides = items;
-    } catch (error) {
-      const failure = errorOf(error);
+    state.agents = await agentsRead;
+    const switches = await switchesRead;
+    if (switches.ok) {
+      state.overrides = Array.isArray(switches.value?.overrides) ? switches.value.overrides : [];
+    } else {
+      const failure = errorOf(switches.error);
       state.overrides = null;
       state.switchesUnavailable = humanReadError(failure, {
         failed: 'I permessi AI non si sono potuti leggere. Riprova pi\u00F9 tardi.',
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
-    // The statistic counts what the team list shows: rendered rows only, so a
-    // malformed membership never leaks into the card number.
-    const memberCount = Array.isArray(state.members) ? buildTeamRows(state.members).length : null;
-    const ids = readSpaces()
-      .filter((entry) => entry !== null && typeof entry === 'object'
-        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
-        && /** @type {{id?: unknown}} */ (entry).id !== '')
-      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
-    // The profile describes the session's own space: its links count on
-    // that card only, never on another space's (review #782 P1).
-    const profile = ids.length > 0 ? await readProfile(client) : null;
-    const current = readActiveSpace().trim();
-    await Promise.all(ids.map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCount, id === current ? profile : null);
-      if (stat !== null) state.stats.set(id, stat);
-    }));
+    await statsRead;
   }
 
   async function mutate(path, body) {
@@ -1240,7 +1260,20 @@ export function createSpaziAccessiView(deps) {
   let generation = 0;
   const childrenOf = () => Array.from(mount?.childNodes ?? []);
 
+  // review #830 P2: the nodes this view painted last. A menu opened while
+  // the first reads are pending repaints the mount from inside this view;
+  // that is still this screen, so the late answer must paint over it.
+  /** @type {Array<any> | null} */
+  let lastPaint = null;
+  const sameNodes = (left, right) => Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((node, index) => node === right[index]);
+
   function render() {
+    paint();
+    lastPaint = childrenOf();
+  }
+
+  function paint() {
     refusalPainted = false;
     clear();
     const space = activeSpace();
@@ -1258,14 +1291,42 @@ export function createSpaziAccessiView(deps) {
     // 1.5fr + AI 1fr, like prototype screen 08) and stack in one column
     // under 700px. The panels wrap instead of overflowing in between.
     const panels = el(doc, 'div', { cls: 'bo-spazi-panels' });
-    renderTeam(panels);
-    renderSwitches(panels, space);
+    if (state.loading) {
+      renderSkeleton(panels);
+    } else {
+      renderTeam(panels);
+      renderSwitches(panels, space);
+    }
     mount.appendChild(panels);
   }
 
-  async function refresh() {
+  /**
+   * The team and AI panels while their reads are pending
+   * (backlog:1a96094db71d): the same two cards with their titles and grey
+   * bars, marked busy — never a fake row, never a switch that can be
+   * flipped before its value is known.
+   * @param {any} box
+   */
+  function renderSkeleton(box) {
+    box.setAttribute('aria-busy', 'true');
+    const panels = [
+      { cls: 'bo-spazi-team-panel', title: 'Team dell\u2019organizzazione', rows: 3 },
+      { cls: 'bo-spazi-ai-panel', title: '\u2726 Cosa pu\u00F2 fare l\u2019AI', rows: 6 },
+    ];
+    for (const panel of panels) {
+      const section = el(doc, 'section', { cls: `bo-spazi-section bo-spazi-panel ${panel.cls}`, attrs: { 'data-skeleton': 'true' } });
+      section.appendChild(el(doc, 'h3', { text: panel.title }));
+      for (let index = 0; index < panel.rows; index += 1) {
+        const row = el(doc, 'div', { cls: 'bo-spazi-skeleton-row' });
+        row.appendChild(uiSkeleton(doc, { width: index % 2 === 0 ? '70%' : '50%', block: true }));
+        section.appendChild(row);
+      }
+      box.appendChild(section);
+    }
+  }
+
+  async function refresh({ skeleton = false } = {}) {
     const mine = (generation += 1);
-    const before = childrenOf();
     const space = readActiveSpace().trim();
     // A space change drops the previous space's count before anything
     // paints: the tabs never wear another space's badge, not even briefly.
@@ -1273,23 +1334,38 @@ export function createSpaziAccessiView(deps) {
       state.fixSpace = space;
       state.fixCount = null;
     }
-    await load();
-    if (mine !== generation) return;
-    if (space !== '') {
-      // Voce 19c2e22a64a1 (1): the badge counts this space live. A space
-      // move mid-read keeps the unknown state instead of painting another
-      // space's late count.
-      const count = await loadFixCount(client, { spaceId: space });
-      if (mine !== generation) return;
-      if (readActiveSpace().trim() === space) state.fixCount = count;
+    // backlog:1a96094db71d: the badge count reads beside the page, never
+    // after it. Voce 19c2e22a64a1 (1): it counts this space live, and a
+    // space move mid-read keeps the unknown state instead of painting
+    // another space's late count.
+    const countRead = space !== '' ? loadFixCount(client, { spaceId: space }) : Promise.resolve(null);
+    const loading = load();
+    // backlog:1a96094db71d: on entry the page paints at once — tabs,
+    // header, space cards and a skeleton where team and AI switches will
+    // be — instead of «Carico…» for the whole of the reads. A refresh after
+    // a write keeps the screen as it is until the answer lands.
+    if (skeleton && space !== '') {
+      state.loading = true;
+      render();
     }
+    const before = childrenOf();
+    await loading;
+    const count = await countRead;
+    // Only the newest refresh decides the loading state: an older one
+    // landing late never lifts a newer one's skeleton.
+    if (mine !== generation) return;
+    state.loading = false;
+    if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
+    // Paint only while the mount still holds this screen: what it held
+    // when the reads started, or what this view painted since (a menu
+    // opened meanwhile). Anything else is another screen: stay out.
     const now = childrenOf();
-    if (now.length !== before.length || now.some((node, index) => node !== before[index])) return;
+    if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
     render();
   }
 
   async function renderView() {
-    await refresh();
+    await refresh({ skeleton: true });
   }
 
   return { render: renderView };

@@ -344,6 +344,102 @@ test('1cfc68175ab7: with the space AI off the five read paused, never green', as
   assert.doesNotMatch(text(onMount), /In pausa/);
 });
 
+// backlog:1a96094db71d (giro UX 11/11): Spazi e accessi stayed on «Carico…»
+// for more than 10 s — eight reads one after the other, 2,5–4 s each. Now
+// the page paints at once with a skeleton, every read starts together, and
+// the data replaces the skeleton when the reads land.
+test('1a96094db71d: the page paints a skeleton at once and starts every read together', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // Nothing has answered yet: the page is already there.
+  const before = text(mount);
+  assert.match(before, /IMPOSTAZIONI/, 'the tabs paint at once');
+  assert.match(before, /Spazi di lavoro/, 'the header paints at once');
+  assert.match(before, /Team dell\u2019organizzazione/, 'the team card is there');
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton, not «Carico…»');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
+    'no switch to flip before its value is known');
+  const started = pending.map((entry) => entry.path);
+  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers']) {
+    assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
+  }
+  // Release everything (and whatever the answers start), then the data replaces the skeleton.
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
+});
+
+// Review #830 P2: a menu opened while the first reads are pending repaints
+// the mount from inside the view; when the reads land the data must still
+// replace the skeleton, never stay stuck behind it.
+test('1a96094db71d review: a menu opened during loading never leaves the skeleton on screen', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is up');
+  const adder = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  assert.ok(adder, 'the new-space menu toggle is there while loading');
+  adder.dispatch('click', {});
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'still loading after the menu opens');
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the statistic arrives');
+});
+
+test('1a96094db71d: a refresh after a write keeps the screen, never the skeleton', async () => {
+  const { mount, view: v } = view({ client: stubClient({}) });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('role') === 'switch' && node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label);
+  toggle.dispatch('click', {});
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(confirm, 'the confirm step opens');
+  const writing = confirm.dispatch('click', {});
+  void writing;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton flash after a write');
+  await flush();
+});
+
 test('a refused team read renders as a refusal, not an empty team', async () => {
   const denied = Object.assign(new Error('forbidden'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
   const { mount, view: v } = view({ client: stubClient({ fail: { members: denied } }) });
