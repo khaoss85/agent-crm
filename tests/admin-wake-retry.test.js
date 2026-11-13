@@ -79,7 +79,7 @@ test('a /bo screen whose first read hit the gateway page shows its data, not the
     enforceAdminWriteGate(path, options);
     if (sleeping) { sleeping = false; throw answer(502, RENDER_PAGE); }
     if (path === '/api/schema') return { pipelines: [] };
-    if (path.startsWith('/api/modules/opportunity/records/')) return record;
+    if (/^\/api\/opportunities\/[^/?]+$/.test(path)) return record;
     return { items: [] };
   };
   const client = { request: (path, options = {}) => withWakeRetry(() => once(path, options), { method: options.method ?? 'GET', wait: async () => {} }) };
