@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -3967,7 +3967,7 @@ export function createCustomerCardView(deps) {
           : 'trascrizione non disponibile per questa chiamata'));
     }
     if (older.length > 0) {
-      box.appendChild(el('p', 'bo-muted', `+ ${older.length} chiamate precedenti`));
+      box.appendChild(el('p', 'bo-muted', `+ ${plural(older.length, 'chiamata precedente', 'chiamate precedenti')}`));
     }
   }
 

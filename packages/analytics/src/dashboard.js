@@ -212,6 +212,15 @@ export function dashboardCompilations(query) {
   });
 }
 
+/**
+ * A count with its Italian noun: only exactly one takes the singular
+ * («1 persa», «2 perse»), like admin-labels plural() on the client.
+ * @param {number} count @param {string} one @param {string} many
+ */
+function plural(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 /** @param {number} minor @param {string} currency */
 export function formatMinor(minor, currency) {
   // Explicit support check: Intl.NumberFormat formats unknown 3-letter codes
@@ -221,7 +230,10 @@ export function formatMinor(minor, currency) {
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
   }
   try {
-    return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+    // Thousands always grouped («1.080,00 €», never «1080,00 €»): it-IT's
+    // default minimum-grouping leaves four-digit amounts bare, which is how
+    // the Reporting cards read (backlog:9236684c96a7, review #761).
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency, useGrouping: 'always' }).format(minor / 100);
   } catch {
     // A runtime that cannot format an enumerated code still refuses as a 400.
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
@@ -448,7 +460,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'open-value', label: 'Valore pipeline aperto',
       display: formatMinor(open.minor, query.currency),
-      sub: `${open.count} preventivi aperti`,
+      sub: plural(open.count, 'preventivo aperto', 'preventivi aperti'),
     }),
     Object.freeze({
       id: 'open-count', label: 'Preventivi aperti',
@@ -458,19 +470,19 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'won-period', label: `Vinte in ${periodLabel}`,
       display: formatMinor(wonInPeriod.minor, query.currency),
-      sub: `${wonInPeriod.count} chiusure`,
+      sub: plural(wonInPeriod.count, 'chiusura', 'chiusure'),
     }),
     Object.freeze({
       id: 'win-rate', label: 'Tasso di chiusura',
       display: winRate === null ? 'n.d.' : `${Math.round(winRate * 100)}%`,
-      sub: `${won.count} vinte, ${lost.count} perse`,
+      sub: `${plural(won.count, 'vinta', 'vinte')}, ${plural(lost.count, 'persa', 'perse')}`,
     }),
     Object.freeze({
       id: 'closing-period', label: `In chiusura in ${periodLabel}`,
       display: formatMinor(openInPeriod.minor, query.currency),
       sub: undatedOpen.count > 0
-        ? `${openInPeriod.count} preventivi, ${undatedOpen.count} senza data attesa`
-        : `${openInPeriod.count} preventivi`,
+        ? `${plural(openInPeriod.count, 'preventivo', 'preventivi')}, ${undatedOpen.count} senza data attesa`
+        : plural(openInPeriod.count, 'preventivo', 'preventivi'),
     }),
   ]);
 

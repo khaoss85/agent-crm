@@ -54,7 +54,7 @@ import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 // The photographed Previsione reuses the production money formatter
 // (backlog:1ce3a1f0): the obiettivo line can never again show cents as
 // euros, because no second formatter exists for it.
-import { formatMinor } from '../packages/analytics/src/dashboard.js';
+import { formatMinor, formatMonth } from '../packages/analytics/src/dashboard.js';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
@@ -419,11 +419,13 @@ const DEMO_REPORT = {
   metrics: { modelVersion: 1 },
   truncated: false,
   kpis: [
-    { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000,00 EUR', sub: '6 preventivi aperti' },
-    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000,00 EUR' },
-    { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000,00 EUR', sub: '2 chiusure' },
-    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 perse' },
-    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000,00 EUR', sub: '2 preventivi' },
+    // Review #761: displays come from the server formatter (never a
+    // hand-typed «EUR»), counts with the server's singular for one.
+    { id: 'open-value', label: 'Valore pipeline aperto', display: formatMinor(2600000, 'EUR'), sub: '6 preventivi aperti' },
+    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: formatMinor(2600000, 'EUR') },
+    { id: 'won-period', label: 'Vinte in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 chiusure' },
+    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
+    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 preventivi' },
   ],
   funnel: [
     { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
@@ -618,7 +620,10 @@ export const SCREENS = Object.freeze([
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
-  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
+  // backlog:06d4b855fac4: the demo dashboard follows the requested period
+  // (the screen asks for the current UTC month), so the cards must read
+  // that month — never a hard-coded «ottobre 2026».
+  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(new Date().toISOString().slice(0, 7))}`] },
   { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
@@ -1102,9 +1107,44 @@ document.title = 'agenti-ready';`;
 import { createReportingView } from './admin-reporting.js';
 const MODEL = ${JSON.stringify(DEMO_REPORT)};
 const BUNDLE_ROWS = [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }];
+// backlog:06d4b855fac4: like the real server (formatMonth(query.period)),
+// period, periodLabel, card labels and the monthly window follow the
+// period the screen asks for, never a fixed October.
+const monthLabel = (period) => new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+  .format(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1)));
+const shiftMonth = (period, delta) => {
+  const date = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1 + delta, 1));
+  return date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0');
+};
+function modelFor(path) {
+  const asked = new URL(path, 'http://demo.local').searchParams.get('period');
+  const period = /^\\d{4}-(0[1-9]|1[0-2])$/.test(asked ?? '') ? asked : MODEL.period.slice(0, 7);
+  const periodLabel = monthLabel(period);
+  const model = structuredClone(MODEL);
+  model.period = period;
+  model.periodLabel = periodLabel;
+  const labels = { 'won-period': 'Vinte in ' + periodLabel, 'closing-period': 'In chiusura in ' + periodLabel };
+  model.kpis = model.kpis.map((kpi) => (labels[kpi.id] ? { ...kpi, label: labels[kpi.id] } : kpi));
+  const last = model.monthly.length - 1;
+  model.monthly = model.monthly.map((entry, index) => {
+    const month = shiftMonth(period, index - last);
+    return { ...entry, month, label: monthLabel(month) };
+  });
+  // Like channelWeeksOf(period) on the server: the four Monday-start weeks
+  // opening the asked month, labels «2 nov», never a fixed «28 set … 19 ott».
+  const first = Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1);
+  const monday = first - ((new Date(first).getUTCDay() + 6) % 7) * 86400000;
+  const dayLabel = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  model.channels = { ...model.channels, weeks: model.channels.weeks.map((slot, index) => {
+    const start = new Date(monday + index * 7 * 86400000);
+    return { week: start.toISOString().slice(0, 10), label: dayLabel.format(start).replace(/\\./g, '') };
+  }) };
+  if (model.csv) model.csv = { filename: 'reporting-' + period + '.csv', content: model.csv.content.replace(MODEL.period.slice(0, 7), period) };
+  return model;
+}
 const client = {
   async request(path) {
-    if (path.includes('/api/reporting/dashboard')) return MODEL;
+    if (path.includes('/api/reporting/dashboard')) return modelFor(path);
     return { items: BUNDLE_ROWS };
   },
 };

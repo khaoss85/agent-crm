@@ -532,6 +532,7 @@ import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { moduleScreenLabel } from './admin-labels.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -1104,8 +1105,11 @@ function shellScreenFor(target) {
     case 'list':
     case 'new':
     case 'detail':
+      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
+      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
+      // Italian, never the raw module key.
       return target.moduleName
-        ? { id: `module-${target.moduleName}`, label: target.moduleName }
+        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
         : { id: null, label: 'Modulo' };
     // Admin views outside the backoffice prototype: an honest crumb with no
     // sidebar highlight, never the previous screen left stale.
