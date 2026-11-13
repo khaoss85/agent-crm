@@ -37,8 +37,13 @@ function server(initial, { onPost = null } = {}) {
   let records = initial.map((item) => ({ ...item }));
   const posts = [];
   const reads = [];
+  /** When set, list reads wait for it (a slow quiet re-read). */
+  let readGate = null;
   return {
     posts, reads,
+    gateReads(gate) { readGate = gate; },
+    /** The server-side stage write a pilot commits before the place is refused. */
+    setStage(id, stage) { records = records.map((item) => (item.id === id ? { ...item, pipelineStage: stage } : item)); },
     async request(path, options = {}) {
       enforceAdminWriteGate(path, options);
       if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE] };
@@ -59,6 +64,7 @@ function server(initial, { onPost = null } = {}) {
         return { ok: true };
       }
       reads.push(path);
+      if (readGate && path.startsWith('/api/opportunities')) await readGate;
       return { items: records };
     },
   };
@@ -210,4 +216,63 @@ test('rifinitura: a card waiting for its write shows a moving bar, not only aria
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.pipeline-card\[aria-busy="true"\]::after \{[^}]*content: ""/, 'a visible bar on the waiting card');
   assert.match(css, /animation: pipeline-card-wait/, 'that moves');
+});
+
+// ---- Review Muse #852, giro 1 ----------------------------------------------
+
+test('review #852: «Annulla» clicked while the landing re-read is in flight wins over that repaint', async () => {
+  // The reverse write never answers here: what the screen shows after the
+  // forward re-read is the client's own doing, not a later server repaint.
+  const { mount, client, toasts } = await board([record('a', 'discovery'), record('b', 'demo')], {
+    onPost: (_body, count) => (count === 2 ? new Promise(() => {}) : undefined),
+  });
+  let releaseRead = () => {};
+  client.gateReads(new Promise((resolve) => { releaseRead = resolve; }));
+  const { drop } = drag(mount, 'a', 'demo', 0);
+  drop();
+  await tick();
+  assert.equal(client.posts.length, 1, 'the forward write landed; its re-read now waits');
+  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  await tick();
+  assert.deepEqual(order(mount, 'discovery'), ['a'], 'the click puts the card back');
+  client.gateReads(null);
+  releaseRead();
+  await tick(10);
+  assert.deepEqual(order(mount, 'discovery'), ['a'], 'the in-flight re-read did not paint it back onto Prova');
+  assert.deepEqual(client.posts[1], { toStage: 'discovery', fromStage: 'demo', first: true }, 'and the reverse write followed');
+});
+
+test('review #852: a drop onto Vinta keeps the place the slot showed through Conferma', async () => {
+  const { mount, client } = await board([record('a', 'discovery'), record('w1', 'won'), record('w2', 'won')]);
+  // Pointer at y = 140: below the middle of w1, above the middle of w2.
+  const { drop } = drag(mount, 'a', 'won', 140);
+  drop();
+  await tick();
+  assert.equal(client.posts.length, 0, 'Conferma first');
+  await cardOf(mount, 'a').__confirm();
+  await tick();
+  assert.deepEqual(client.posts[0], { toStage: 'won', fromStage: 'discovery', afterId: 'w1' }, 'the confirmed write carries the place');
+});
+
+test('review #852: STALE_POSITION never puts the card back by guess — the fresh board says where it is', async () => {
+  const stale = Object.assign(new Error('stale'), { status: 409, code: 'STALE_POSITION' });
+  let api = null;
+  const { mount, client, toasts } = await board([record('a', 'discovery'), record('b', 'demo')], {
+    // Like the pilot: the stage write lands, then the place is refused.
+    onPost: (body) => { api.setStage('a', body.toStage); throw stale; },
+  });
+  api = client;
+  // The re-read after the refusal is slow: what shows meanwhile matters.
+  let releaseRead = () => {};
+  client.gateReads(new Promise((resolve) => { releaseRead = resolve; }));
+  const { drop } = drag(mount, 'a', 'demo', 150);
+  drop();
+  await tick(6);
+  assert.deepEqual(order(mount, 'discovery'), [], 'no guessed jump back to Richiesta info while the board re-reads');
+  client.gateReads(null);
+  releaseRead();
+  await tick(10);
+  assert.deepEqual(order(mount, 'demo'), ['a', 'b'], 'the card shows where the server has it (Prova)');
+  assert.deepEqual(order(mount, 'discovery'), []);
+  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.');
 });

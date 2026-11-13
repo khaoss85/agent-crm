@@ -602,6 +602,11 @@ export function createPipelineBoard(deps) {
       // An undone move does not repaint its landing: the reverse write is
       // next, and the board re-reads after it.
       if (!intent.undone) await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      // Review Muse #852 (P2): «Annulla» may land while that re-read is in
+      // flight — its repaint just put the card back on the landing column.
+      // The undo wins: card and numbers go back to the place they left,
+      // and only then does the reverse write follow (undoMove).
+      if (intent.undone) placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
       settle({ moved: true });
       return { moved: true, ...(intent.undone ? { undone: true } : {}) };
     } catch (error) {
@@ -621,10 +626,18 @@ export function createPipelineBoard(deps) {
         return { pending: true };
       }
       moveLocks.delete(id);
-      if (restore) { restore(); restore = null; }
       const message = moveFailureText(error);
-      // The column changed under this drop: the fresh board shows the truth.
-      if (error?.code === 'STALE_POSITION') void renderBoard(pipeline.name, { quiet: true });
+      if (error?.code === 'STALE_POSITION') {
+        // Review Muse #852 (P2): the column changed under this drop. On the
+        // pilot the stage write may already have landed before the place was
+        // refused (two writes, not one): never guess by putting the card
+        // back — the fresh board says where it is.
+        restore = null;
+        await renderBoard(pipeline.name, { quiet: true });
+      } else if (restore) {
+        restore();
+        restore = null;
+      }
       for (const view of moveViewsOf(id)) view.fail(message);
       // The toast that said «Spostata» is replaced by the truth — unless the
       // person already undid it: the card is where they wanted it.
@@ -744,7 +757,8 @@ export function createPipelineBoard(deps) {
       return;
     }
     if (toStage !== fromStage && stageNeedsConfirm(target)) {
-      const revealed = revealConfirm(pipeline, record, fromStage, toStage);
+      // Review Muse #852 (P2): the place the slot showed rides Conferma too.
+      const revealed = revealConfirm(pipeline, record, fromStage, toStage, placement);
       if (!revealed) {
         toast(target.type === 'lost'
           ? 'Per la perdita serve un motivo — apri prima la card.'
@@ -1840,14 +1854,14 @@ export function createPipelineBoard(deps) {
     /**
      * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
      */
-    const doPost = (toStage, reason) => runMove(pipeline, record.id, stage.key, toStage, reason);
+    const doPost = (toStage, reason, placement = null) => runMove(pipeline, record.id, stage.key, toStage, reason, { placement });
     const confirm = async () => {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
       const target = pipeline.stages.find((candidate) => candidate.key === pending.toStage);
       const answer = readStageConfirm(confirmPanel, target);
       if (!answer.ok) return;
-      await doPost(pending.toStage, answer.reason);
+      await doPost(pending.toStage, answer.reason, pending.placement ?? null);
     };
     const cancelConfirm = () => {
       pendingConfirm.delete(String(record.id));
@@ -1903,12 +1917,12 @@ export function createPipelineBoard(deps) {
    * @param {any} pipeline @param {Record<string, any>} record
    * @param {string} fromStage @param {string} toStage
    */
-  function revealConfirm(pipeline, record, fromStage, toStage) {
+  function revealConfirm(pipeline, record, fromStage, toStage, placement = null) {
     const controls = cardNodes.get(String(record.id));
     if (!controls) return false;
     const target = pipeline.stages.find((candidate) => candidate.key === toStage);
     if (!target) return false;
-    pendingConfirm.set(String(record.id), { fromStage, toStage });
+    pendingConfirm.set(String(record.id), { fromStage, toStage, placement });
     controls.select.value = toStage;
     showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
