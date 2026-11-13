@@ -330,7 +330,11 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
   const matching = mergeProfileConnections(rows, profile)
     .filter((row) => countedChannel(row.channel) === id);
   const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
-  const active = matching.find((row) => row.status === 'active') ?? null;
+  // The profile-Gmail stand-in is no channel connection (the send without
+  // one fails 409), so it never reads `collegato` — Connettori agrees with
+  // Oggi, Stato sync and the composer on profile-only Gmail
+  // (backlog:3805161965cd, review giro 4 P1).
+  const active = matching.find((row) => row.status === 'active' && !isProfileEmailStandinRow(row)) ?? null;
   const shape = (state, extra = {}) => Object.freeze({
     channel: id,
     state,

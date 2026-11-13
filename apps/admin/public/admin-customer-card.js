@@ -1203,8 +1203,9 @@ export function createCustomerCardView(deps) {
    * @param {any} card the frozen card from `read-customer-card`
    * @param {unknown} connections the sync-state entries (`GET /api/connectors`), or null before they load
    * @param {unknown} profile the space-profile answer (`GET /api/profile`, served by
-   *   the pilot), or null when unreadable — its linked Gmail mailbox also
-   *   connects Email (backlog:a935af6a6d19)
+   *   the pilot), or null when unreadable — its linked Gmail mailbox only
+   *   names the «Da» sender and the «collega Gmail» line, never the Email
+   *   connection itself (backlog:a935af6a6d19, backlog:3805161965cd)
    */
   function composerChannelsFor(card, connections, profile) {
     /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
@@ -1270,6 +1271,13 @@ export function createCustomerCardView(deps) {
       // a route the send queues on, so it is never sent (the server derives
       // the route from the space's own mailbox).
       const synthetic = live !== null && isSyntheticRow(live);
+      // A sole synthetic row is no route either: readSyncState lists real
+      // DB connections only, so a send with no key and zero real candidates
+      // fails 409 CHANNEL_CONNECTION_NOT_ACTIVE (backlog:3805161965cd).
+      // Email is connected only on a real active row, everywhere else it
+      // stays off with its «collega Gmail» line — the same contract Oggi,
+      // Stato sync and Connettori enforce (review giro 4 P1).
+      const realLive = live !== null && !synthetic;
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
       // channel with an empty «Da». The profile Gmail alone is linked but
@@ -1277,13 +1285,13 @@ export function createCustomerCardView(deps) {
       // CHANNEL_CONNECTION_NOT_ACTIVE (backlog:3805161965cd, Codex P2 su
       // #563), so Email stays off and never the default on the mailbox.
       const linked = live !== null || gmailLinked;
-      const gmailUnlinked = channel === 'email' && live === null && gmailSender !== null;
+      const gmailUnlinked = channel === 'email' && !realLive && (liveAccount ?? gmailSender) !== null;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
         linked,
-        connected: live !== null && (channel !== 'email' || sender !== null),
+        connected: live !== null && (channel !== 'email' || (sender !== null && realLive)),
         gmailUnlinked,
         connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
