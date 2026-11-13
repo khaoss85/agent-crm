@@ -612,6 +612,9 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   position: sticky; top: 0; z-index: 10; background: var(--paper);
   display: flex; align-items: center; gap: 16px; padding: 12px 0; margin: 0 -32px; padding-left: 32px; padding-right: 32px;
 }
+/* backlog:dd6a01de569b: once the page scrolls under it, the sticky bar
+ * draws a hairline, so it never floats flat over the content. */
+.bo-topbar.bo-topbar-scrolled { box-shadow: 0 1px 0 var(--line); }
 /* BO-F6-01: the path reads uppercase mono, like the prototype. */
 .bo-crumb { font-family: var(--mono); font-size: 12px; color: var(--dim); white-space: nowrap; text-transform: uppercase; letter-spacing: .08em; }
 .bo-ai { margin-left: auto; flex: 0 1 480px; min-width: 0; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
@@ -684,7 +687,13 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
-  .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1; }
+  /* backlog:dd6a01de569b: the bar above names the space; no ⌘K on a phone;
+   * the AI bar keeps a margin from the path (it touched it): the path line
+   * is uppercase only, so line-height 1 pays for the margin inside the
+   * 120px budget. */
+  .bo-crumb-space, .bo-ai-key { display: none; }
+  .bo-ai { margin-top: 2px; }
   .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }

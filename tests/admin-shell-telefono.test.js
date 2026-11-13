@@ -24,17 +24,18 @@ function mountShell(overrides = {}) {
   const topbar = createMount();
   const navigated = [];
   const handlers = {};
-  const win = { addEventListener: (type, handler) => { (handlers[type] ??= []).push(handler); } };
+  // A test window passes as is (its getters stay live).
+  const win = overrides.win ?? { addEventListener: (type, handler) => { (handlers[type] ??= []).push(handler); } };
   const fire = (type, event) => { for (const handler of handlers[type] ?? []) handler(event); };
   const view = createShellView({
     doc, sidebar, topbar,
     spaces: overrides.spaces ?? [{ id: 'prova', name: 'Spazio di prova', initials: 'SP' }],
     user: overrides.user ?? { name: 'Elena Rinaldi', email: 'elena@example.it' },
-    screenId: 'oggi', screenLabel: 'Oggi',
+    screenId: overrides.screenId ?? 'oggi', screenLabel: 'Oggi',
     navigate: (hash) => navigated.push(hash),
     win,
   });
-  view.update({ items: buildShellNav({ customerDataAvailable: true }), activeScreenId: 'oggi', screenLabel: 'Oggi' });
+  view.update({ items: buildShellNav({ customerDataAvailable: true }), activeScreenId: overrides.screenId ?? 'oggi', screenLabel: 'Oggi' });
   const toggle = () => topbar.findAll('button').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-menu-toggle'));
   const isOpen = () => sidebar.classList.contains('bo-drawer-open');
   return { doc, sidebar, topbar, navigated, fire, view, toggle, isOpen };
@@ -217,6 +218,8 @@ test('the phone content starts within 120px at 390px, short and long names with 
   const crumbLine = px(css, /\.bo-crumb \{[^}]*font-size: (\d+)px;/, 'crumb size')
     * ratio(block, /\.bo-crumb \{[^}]*line-height: ([\d.]+);/, 'phone crumb line height');
   const aiH = px(block, /\.bo-ai \{[^}]*height: (\d+)px;/, 'phone AI bar height');
+  // backlog:dd6a01de569b: the margin between the path and the AI bar counts.
+  const aiMargin = px(block, /\.bo-ai \{[^}]*margin-top: (\d+)px;/, 'phone AI bar top margin');
   const contentGap = px(block, /\.bo-main > \.bo-topbar \+ \* \{[^}]*margin-top: (\d+)px;/, 'gap between the bar and the content');
   assert.doesNotMatch(css, /\.bo-nav \{ flex-direction: row;/, 'diagnostic: the 300px horizontal strip is gone');
   assert.match(block, /\.bo-crumb \{[^}]*white-space: nowrap;/, 'diagnostic: the crumb keeps one line');
@@ -254,7 +257,48 @@ test('the phone content starts within 120px at 390px, short and long names with 
       crumb.textContent.includes(spaces[0].name) && crumb.textContent.includes('Oggi'),
       `${label}: the rendered path still names the space and the screen`,
     );
-    const total = barPadV + firstRow + rowGap + crumbLine + rowGap + aiH + contentGap;
+    const total = barPadV + firstRow + rowGap + crumbLine + rowGap + aiMargin + aiH + contentGap;
     assert.ok(total <= 120, `${label}: the content starts at ${total.toFixed(1)}px, within the 120px budget`);
   }
+});
+
+// backlog:dd6a01de569b (verifica #843, 390 px): the phone bar promised ⌘K
+// (no keyboard there), the path repeated the space the bar above already
+// names («PROVA VALIDAZIONE B1 / OGGI»), the AI bar touched the path (0 px)
+// and the sticky bar floated flat over the scrolled page.
+test('dd6a01de569b: the phone bar shows the screen alone, no ⌘K, a margin and an edge once scrolled', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const phone = css.indexOf('@media (max-width: 700px) {\n  /* design: shell telefono');
+  const block = css.slice(phone, css.indexOf('\n}\n', phone));
+  assert.match(block, /\.bo-crumb-space, \.bo-ai-key \{ display: none; \}/, 'under 700px: no space in the path, no ⌘K key');
+  assert.match(block, /\.bo-ai \{ margin-top: [1-9]\d*px; \}/, 'the AI bar keeps a margin from the path');
+  assert.match(css, /\.bo-topbar\.bo-topbar-scrolled[^{]*\{ box-shadow: [^}]+\}/, 'an edge once the page scrolls');
+  const listeners = {};
+  let scrollY = 0;
+  const { topbar } = mountShell({
+    spaces: [{ id: 'b1', name: 'Prova validazione B1', initials: 'PV' }],
+    screenId: 'nessuna-voce',
+    win: {
+      matchMedia: (query) => ({ matches: query === '(max-width: 700px)' }),
+      get scrollY() { return scrollY; },
+      addEventListener: (type, handler) => { (listeners[type] ??= []).push(handler); },
+    },
+  });
+  const crumb = topbar.findAll('div').find((node) => String(node.getAttribute('class') ?? '') === 'bo-crumb');
+  const part = (cls) => crumb.findAll('span').find((node) => node.getAttribute('class') === cls)?.textContent ?? null;
+  assert.equal(part('bo-crumb-space'), 'Prova validazione B1 / ', 'the space part is its own span, hidden on a phone');
+  assert.equal(part('bo-crumb-screen'), 'Oggi');
+  const input = topbar.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('bo-ai-input'));
+  assert.doesNotMatch(input.getAttribute('placeholder'), /⌘K/, 'no ⌘K promised on a phone');
+  assert.ok(!topbar.classList.contains('bo-topbar-scrolled'), 'flat at the top of the page');
+  scrollY = 120;
+  for (const handler of listeners.scroll ?? []) handler({});
+  assert.ok(topbar.classList.contains('bo-topbar-scrolled'), 'the edge appears once scrolled');
+  scrollY = 0;
+  for (const handler of listeners.scroll ?? []) handler({});
+  assert.ok(!topbar.classList.contains('bo-topbar-scrolled'), 'and goes away back at the top');
+  // A wide screen keeps its ⌘K placeholder.
+  const { topbar: wide } = mountShell({ screenId: 'nessuna-voce', win: { matchMedia: () => ({ matches: false }), scrollY: 0, addEventListener: () => {} } });
+  const wideInput = wide.findAll('input').find((node) => String(node.getAttribute('class') ?? '').includes('bo-ai-input'));
+  assert.match(wideInput.getAttribute('placeholder'), /⌘K/);
 });

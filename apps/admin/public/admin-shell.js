@@ -808,7 +808,12 @@ export function createShellView({
       else openDrawer();
     });
     topbar.appendChild(menuToggle);
-    const path = el(doc, 'div', 'bo-crumb', crumb(space.name, screenLabelFor(state.activeScreenId)));
+    // backlog:dd6a01de569b: on a phone the bar above already names the
+    // space, so the path keeps only the screen: the space part is its own
+    // span, which the ≤700px rules hide. The text stays «<space> / <screen>».
+    const path = el(doc, 'div', 'bo-crumb');
+    path.appendChild(el(doc, 'span', 'bo-crumb-space', `${space.name} / `));
+    path.appendChild(el(doc, 'span', 'bo-crumb-screen', screenLabelFor(state.activeScreenId)));
     path.setAttribute('aria-label', 'Percorso');
     topbar.appendChild(path);
 
@@ -820,7 +825,7 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId));
+    aiInput.setAttribute('placeholder', phonePlaceholder(aiPlaceholder(state.aiScreenId ?? state.activeScreenId)));
     aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
@@ -847,6 +852,21 @@ export function createShellView({
     commandMenu.attach(form, aiInput);
   }
 
+  /**
+   * backlog:dd6a01de569b: no «⌘K» on a phone — there is no keyboard
+   * shortcut to promise under the 700px shell.
+   * @param {string} text
+   */
+  function phonePlaceholder(text) {
+    let phone = false;
+    try {
+      phone = win != null && typeof win.matchMedia === 'function' && win.matchMedia('(max-width: 700px)').matches === true;
+    } catch {
+      phone = false;
+    }
+    return phone ? String(text).replace(/\s*\(⌘K\)/g, '') : text;
+  }
+
   function screenLabelFor(id) {
     // BO-F6-16: the crumb names the open screen (Stato sync, Connettori,
     // Personalizzazione), not the sidebar section hosting it (Impostazioni):
@@ -855,6 +875,20 @@ export function createShellView({
     const found = state.items.find((item) => item.id === id);
     if (found) return found.label;
     return 'Oggi';
+  }
+
+  // backlog:dd6a01de569b: the sticky bar draws its edge once the page has
+  // scrolled under it, so it never floats flat over the content.
+  if (win != null && typeof win.addEventListener === 'function' && topbar != null) {
+    const paintScrolled = () => {
+      const scrolled = Number(win.scrollY ?? win.pageYOffset ?? 0) > 0;
+      if (topbar.classList && typeof topbar.classList.add === 'function') {
+        if (scrolled) topbar.classList.add('bo-topbar-scrolled');
+        else topbar.classList.remove('bo-topbar-scrolled');
+      }
+    };
+    win.addEventListener('scroll', paintScrolled, { passive: true });
+    paintScrolled();
   }
 
   if (win != null && typeof win.addEventListener === 'function') {
