@@ -87,7 +87,14 @@ const activityOf = (over = {}) => ({
   ...over,
 });
 
-const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
+// A composition whose guided channels each have an adapter: every catalog
+// channel can connect here (backlog:e381c48581fa — the Collega follows
+// the shared channel state, which needs a composed adapter).
+const COMPOSED_ADAPTERS = ['whatsapp', 'instagram', 'telegram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form']
+  .map((channel) => ({ channel, name: `${channel}-adapter`, version: 1 }));
+const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: COMPOSED_ADAPTERS } } } };
+/** The production pilot: channels composed, no channel adapter at all. */
+const schemaNoAdapters = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
 function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null } = {}) {
   const calls = [];
@@ -408,6 +415,79 @@ test('the hero pull updates every syncable connection with one toast', async () 
   const rebuilt = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
   assert.equal(rebuilt.textContent, 'Sincronizza ora');
   assert.equal(rebuilt.getAttribute('disabled'), null);
+});
+
+test('a lot started in one space finishes in that space after a mid-lot switch', async () => {
+  // backlog:0e848a46e53a: il lotto cattura lo spazio alla partenza — un
+  // cambio spazio a lotto in corso non sposta le pull restanti (con le chiavi
+  // dello spazio vecchio) nello spazio nuovo.
+  let space = 'prova';
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  const calls = [];
+  let pulls = 0;
+  const switching = {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, options });
+      if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
+        if (path === '/api/connectors/sync-now') {
+          pulls += 1;
+          if (pulls === 1) await firstGate;
+          return { pulled: 1 };
+        }
+        throw new Error(`unexpected mutation ${path}`);
+      }
+      if (path === '/api/schema') return schemaOk;
+      if (path.startsWith('/api/connectors/activity')) {
+        return activityOf({
+          connections: [
+            entryOf(),
+            entryOf({ connectionKey: 'ig-1', channel: 'instagram', account: 'palestra.esempio' }),
+          ],
+        });
+      }
+      if (path === '/api/profile') throw new Error('profile not served');
+      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: [] };
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createSyncView({
+    doc,
+    mount,
+    client: switching,
+    storage: { getItem: () => space, setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: (message, isError) => { seen.push({ message, isError }); },
+  });
+  await view.render();
+  await flush();
+  const hero = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  hero.dispatch('click');
+  await flush(3);
+  assert.equal(calls.filter((call) => call.path === '/api/connectors/sync-now').length, 1);
+  // L'operatore cambia spazio a lotto in corso: l'host ri-renderizza, come onPickSpace.
+  space = 'nuova';
+  await view.render();
+  await flush();
+  releaseFirst();
+  await flush(15);
+  const lotto = calls.filter((call) => call.path === '/api/connectors/sync-now');
+  assert.equal(lotto.length, 2);
+  for (const pull of lotto) {
+    assert.equal(JSON.parse(pull.options.body).spaceId, 'prova');
+  }
+  // A lotto finito la vista segue lo spazio nuovo.
+  const reads = calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.ok(reads[reads.length - 1].path.includes('spaceId=nuova'));
+  // Ma il successo non è senza qualifica: il lotto ha tirato 'prova' e
+  // dipinge 'nuova' — il toast lo dice, senza fingere 'nuova' sincronizzata.
+  assert.ok(!seen.some((toast) => toast.message === 'Sincronizzazione aggiornata.'));
+  assert.ok(seen.some((toast) => toast.message.includes('spazio di partenza')));
 });
 
 test('hostile server text stays text, never markup', async () => {
@@ -1403,4 +1483,45 @@ test('#692 P2: a binding that is not active never reads Attivo', () => {
   assert.equal(active.pill.text, 'in attesa del primo evento', 'an active binding with no traffic yet waits');
   const live = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle' })] }))[0];
   assert.equal(live.pill.text, 'Attivo', 'traffic keeps the Attivo pill');
+});
+
+// backlog:e381c48581fa (verifica pilota 51ab9ca): TikTok, Telefono e Form
+// read «Non ancora disponibile» in Connettori but offered «Collega» in
+// Stato sync. The production shape: no adapter composed, raw activity rows,
+// the profile apart. Every row offers Collega exactly where Connettori does.
+test('e381c48581fa: with no adapter Stato sync offers Collega only where Connettori does', async () => {
+  const profile = {
+    member: {},
+    connections: {
+      available: true,
+      reason: null,
+      items: [
+        { connector: 'whatsapp', status: 'disconnected', account: null },
+        { connector: 'gmail', status: 'disconnected', account: null },
+        { connector: 'calendar', status: 'disconnected', account: null },
+      ],
+      meta: { configured: true },
+    },
+  };
+  const { CONNECTOR_CATALOG, connectorStatus } = await import('../apps/admin/public/admin-connectors.js');
+  const empty = activityOf({ connections: [] });
+  const { mount, view } = renderView({ client: { activity: empty, schema: schemaNoAdapters, profile } });
+  await view.render();
+  await flush();
+  const collega = Object.fromEntries(mount.findAll('a')
+    .filter((node) => node.getAttribute('data-action') === 'collega')
+    .map((node) => [node.getAttribute('data-channel'), node.getAttribute('href')]));
+  for (const channel of ['tiktok', 'voice', 'site-form', 'instagram', 'facebook', 'stripe']) {
+    assert.equal(collega[channel], undefined, `${channel}: nothing connects it, no Collega`);
+  }
+  assert.equal(collega.whatsapp, '#/profilo', 'WhatsApp connects on Profilo (Meta app configured)');
+  assert.equal(collega.email, '#/profilo', 'Email connects on Profilo (Gmail)');
+  assert.equal(collega.calendar, '#/profilo');
+  // The same answer as the Connettori list for every catalog channel.
+  for (const entry of CONNECTOR_CATALOG) {
+    if (!['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form'].includes(entry.channel)) continue;
+    const listed = connectorStatus({ entry, adapters: [], connections: [], profile });
+    const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
+    assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
+  }
 });

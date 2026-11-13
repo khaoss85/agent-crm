@@ -141,6 +141,16 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   space-gated, like the confirm path) and the linked Google event is
   converged after the commit through the calendar-sync push handle
   (`push` / `pushError` as data, like the confirm path).
+- `cancelAppointment({ id | sourceKey, reason, spaceId?, calendar? })`
+  (backlog `5346ab531538`) cancels a `booked`/`confirmed` booking — the
+  governed write behind «Annulla appuntamento» in the calendar popover. It
+  is the lifecycle's own `-> cancelled` advance with the required reason:
+  `done` and `no-show` refuse 409 `APPOINTMENTS_INVALID_STATE`, the row stays
+  stored as cancelled (the customer's history keeps it) and frees the slot.
+  A row already cancelled answers `cancelled: false` and writes nothing. With
+  `calendar: { calendarId }` named the linked Google event is cancelled after
+  the commit (calendar-sync's «cancellation wins»), answered as data like
+  the reschedule path; without it the next two-way sync converges it.
 
 `tests/appointments-booking-flow.test.js` proves the flow with fakes and no
 application boot, including the ten-racer link race. The backoffice UI

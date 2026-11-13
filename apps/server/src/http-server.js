@@ -523,6 +523,17 @@ export function buildRouter(app) {
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
     return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
   });
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  // The lifecycle's own cancellation with a reason, idempotent on a row
+  // already cancelled; the cancelled row stays in the customer history.
+  router.add('POST', '/api/appointments/cancel', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.cancelAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment cancellation');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.cancelAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
   // and the «Crea con l'AI» confirmation create through the declared
@@ -1592,6 +1603,9 @@ export function buildRouter(app) {
         type: query.type,
         companyId: query.companyId,
         limit: parseLimit(query.limit),
+        // backlog:67a3116f4f65: the Pipeline board asks `order=board`
+        // (position, then newest first); every other reader keeps newest first.
+        order: query.order,
       }),
     };
   });

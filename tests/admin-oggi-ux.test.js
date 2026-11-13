@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildInbox, buildPreCallBrief, buildTodayAgenda, createOggiView, ownMailboxes, renderOggi,
+  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
-import { takePendingCalendarEvent, writePendingCalendarEvent } from '../apps/admin/public/admin-prefill.js';
+import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
+import { createCustomerListView } from '../apps/admin/public/admin-clienti.js';
 import { createCalendarioView } from '../apps/admin/public/admin-calendario.js';
 import { isAutomatedGmailSender } from '../packages/channels/src/gmail.js';
 import { isTechnicalLocalPart } from '../packages/customer-data/src/display-name.js';
@@ -527,4 +528,342 @@ test('review #792 P2: a machine sender with a display name («Name <addr>») is 
   const event = buildPreCallBrief({ appointment: APPT, now: NOW });
   assert.deepEqual(event.sources.find((source) => source.calendarEvent)?.calendarEvent, { id: 'appt-9', day: '2026-10-19', member: 'google|1049' },
     'the handoff names the member holding the slot');
+});
+
+// ---------------------------------------------------------------------------
+// backlog:c2bf6b206d96 (punti 3, 4 e 6 del giro): Oggi never says the day
+// is done while messages wait, every waiting customer is reachable, and Oggi
+// and Clienti count «Da rispondere» from one server view.
+// ---------------------------------------------------------------------------
+
+test('point 3: the recap names the messages waiting, «Niente in sospeso» only when nothing waits', () => {
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 32 }),
+    'Ti aspettano 32 messaggi da rispondere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 1 }),
+    'Ti aspetta 1 messaggio da rispondere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 2 }),
+    'Ti aspettano 2 messaggi da rispondere. Ti resta 1 appuntamento.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 3 }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Ti aspettano anche 3 messaggi da rispondere.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0 }),
+    'Niente in sospeso e nessun appuntamento per oggi.', 'unchanged when nothing waits');
+});
+
+test('point 3: «Hai finito per oggi» never shows over messages waiting', () => {
+  const paintWith = (total) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    renderOggi({
+      doc, mount, spaceName: 'Spazio', now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections: [],
+        availability: { work: true, appointments: true, channels: true },
+        inbox: { available: true, total, rows: [], notifications: { total: 0, rows: [] } },
+      },
+    });
+    return mount.querySelector('section').textContent;
+  };
+  const busy = paintWith(32);
+  assert.ok(!busy.includes('Hai finito per oggi'), busy);
+  assert.ok(busy.includes('Restano 32 messaggi da rispondere'), busy);
+  assert.ok(paintWith(1).includes('Resta 1 messaggio da rispondere'));
+  assert.ok(paintWith(0).includes('✓ Hai finito per oggi.'), 'still said when nothing waits');
+});
+
+/** A /api/customer-data/customers answer for the da-rispondere view. */
+function repliesAnswer(count, { unread = 0, exact = true } = {}) {
+  const items = Array.from({ length: Math.min(count, 10) }, (_, index) => ({
+    subject: { resource: 'contact', id: `p${index}` }, resource: 'contact', id: `p${index}`,
+    name: `Persona ${index}`, awaitingReplyCount: 1, awaitingChannel: 'whatsapp',
+    awaitingText: `Ciao, sono la persona ${index}`, lastAwaitingAt: `2026-10-19T0${index % 10}:00:00.000Z`,
+  }));
+  return {
+    items, total: count, totalIsExact: exact, complete: exact,
+    views: [{ id: 'tutti', label: 'Tutti', count: 40 }, { id: 'da-leggere', label: 'Da leggere', count: unread }, { id: 'da-rispondere', label: 'Da rispondere', count }],
+  };
+}
+
+function serverClient(answer) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) return answer;
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+}
+
+test('c2bf6b206d96: Oggi reads «Da rispondere» from the Clienti server view — total, order and clean names, no message page, no profile reads', async () => {
+  const client = serverClient(repliesAnswer(32, { unread: 6 }));
+  const storage = memoryStorage();
+  const seen = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage, navigate: (hash) => seen.push(hash), setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const read = client.calls.find((path) => path.startsWith('/api/customer-data/customers?'));
+  assert.ok(read.includes('vista=da-rispondere'), read);
+  assert.ok(!client.calls.some((path) => path.startsWith('/api/customer-data/profile/')), 'names arrive clean from the view');
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('32 in attesa'), 'the head is the view total');
+  const rows = section.findAll('div').filter((node) => node.getAttribute('data-conversation') !== null);
+  assert.equal(rows.length, 6);
+  assert.ok(rows[0].textContent.includes('Persona 0') && rows[0].textContent.includes('Ciao, sono la persona 0'), 'server order and names');
+  assert.ok(rows[0].querySelector('a[href="#/customer-card/contact/p0"]'), 'the row opens the scheda');
+  // Point 3: the recap and the advisor count the same total.
+  assert.ok(mount.querySelector('.bo-oggi-recap')?.textContent.includes('Ti aspettano 32 messaggi da rispondere'), mount.querySelector('.bo-oggi-recap')?.textContent);
+  assert.ok(!mount.textContent.includes('Hai finito per oggi'));
+  assert.ok(!mount.textContent.includes('Niente in sospeso'));
+  // Point 4: «Vedi tutte» opens Clienti › Da rispondere.
+  assert.ok(section.textContent.includes('Mostro le 6 più recenti su 32.'));
+  const all = section.querySelector('a[data-action="inbox-all"]');
+  assert.ok(all, '«Vedi tutte» under the disclosure');
+  let prevented = false;
+  all.dispatch('click', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.deepEqual(seen, ['#/customer-data']);
+  assert.equal(takePendingClientiView(storage), 'da-rispondere', 'Clienti opens on Da rispondere, once');
+  assert.equal(takePendingClientiView(storage), null);
+  // «Da leggere» stays its own number, named apart, one click from Clienti.
+  const unread = section.querySelector('a[data-action="inbox-unread"]');
+  assert.equal(unread?.textContent, '6 da leggere in Clienti →');
+  unread.dispatch('click', { preventDefault: () => {} });
+  assert.equal(takePendingClientiView(storage), 'da-leggere');
+});
+
+test('c2bf6b206d96: with nothing waiting and nothing unread Oggi says so, with no links', async () => {
+  const client = serverClient(repliesAnswer(0, { unread: 0 }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('Nessun messaggio aspetta una risposta.'));
+  assert.equal(section.querySelector('a[data-action="inbox-all"]'), null);
+  assert.equal(section.querySelector('a[data-action="inbox-unread"]'), null);
+  assert.ok(mount.textContent.includes('Niente in sospeso e nessun appuntamento per oggi.'));
+});
+
+test('c2bf6b206d96: a view that cannot be read falls back to the messages read, never to «nobody waits»', async () => {
+  const client = {
+    calls: [],
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) throw Object.assign(new Error('down'), { status: 409 });
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [PERSON_MSG] };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: { displayName: 'Lia Marroni' } };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: NOW });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('1 in attesa') && section.textContent.includes('Lia Marroni'), section.textContent);
+});
+
+// Review Muse #795 (giro 1, testa 291c29a).
+test('review #795 P2: a count from a truncated scan is a floor — never «Niente in sospeso», «Hai finito» or «Nessun messaggio»', async () => {
+  const client = serverClient({ ...repliesAnswer(0), totalIsExact: false, complete: false });
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const text = mount.textContent;
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', 'Nessun messaggio aspetta una risposta']) {
+    assert.ok(!text.includes(claim), `no exact claim over a floor: ${claim}`);
+  }
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('almeno 0 in attesa'), section.textContent);
+  assert.ok(section.querySelector('a[data-action="inbox-all"]'), 'Clienti is one click away');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 4, waitingExact: false }),
+    'Ti aspettano almeno 4 messaggi da rispondere e nessun appuntamento per oggi.');
+});
+
+test('review #795 P2: «Vedi tutte» opens Clienti on the view alone, without the filters left from an earlier visit', async () => {
+  const storage = memoryStorage();
+  const calls = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      return { items: [], total: 0, page: 1, pageSize: 10, pages: 1, complete: true, totalIsExact: true, views: [], sorts: [], columns: [], customColumns: [], pageSizes: [10, 25, 50] };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const list = createCustomerListView({ doc, mount, client, storage, navigate: () => {}, schedule: () => null });
+  await list.render();
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  assert.ok(search, 'the search box');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault: () => {} });
+  await flush();
+  assert.equal(list.getState().q, 'rossi', 'the earlier visit searched');
+  writePendingClientiView(storage, 'da-rispondere');
+  await list.render();
+  const last = new URLSearchParams(calls[calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search');
+  assert.equal(last.get('sort'), 'recent');
+  assert.equal(list.getState().q, '');
+});
+
+test('bd5e84545021: Oggi’s badges read the one initials rule of Clienti and the scheda («UX Esplorativo 1111 B» → «UB»)', async () => {
+  const { customerInitials } = await import('../apps/admin/public/admin-core.js');
+  const name = 'UX Esplorativo 1111 B';
+  assert.equal(customerInitials(name), 'UB');
+  const [action] = buildAdvisorActions({ tasks: [{ ...TASK, channel: null, subjectLabel: name }], now: NOW }).actions;
+  assert.equal(action.mono, 'UB', 'the advisor card');
+  const inbox = buildInbox({ messages: [{ ...PERSON_MSG, channel: 'telegram', subjectLabel: name, remoteHandle: null }], now: NOW });
+  assert.equal(inbox.rows[0].mono, 'UB', 'the Da rispondere row');
+  const server = buildServerReplies({ items: [{ subject: { resource: 'contact', id: 'u1' }, name, awaitingChannel: 'telegram' }], total: 1 }, NOW);
+  assert.equal(server.rows[0].mono, 'UB', 'the server view row');
+});
+
+// Review Muse #795 (giro 2, testa 68fb9ec): an unreadable inbox is unknown, never zero.
+test('review #795 P1: an inbox that could not be read never reads as «Niente in sospeso», «Hai finito» or «0 in attesa»', async () => {
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) throw Object.assign(new Error('down'), { status: 409 });
+      if (path.startsWith('/api/modules/interaction-message/records')) throw Object.assign(new Error('down'), { status: 500 });
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: NOW });
+  const text = mount.textContent;
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', '0 in attesa']) {
+    assert.ok(!text.includes(claim), `no measured zero over an unreadable inbox: ${claim}`);
+  }
+  assert.ok(text.includes('I messaggi non si sono potuti leggere'), 'the section says so');
+  assert.ok(mount.querySelector('.bo-oggi-recap').textContent.includes('Non riesco a leggere i messaggi da rispondere'), mount.querySelector('.bo-oggi-recap').textContent);
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: null }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Non riesco a leggere i messaggi da rispondere.');
+});
+
+// Verification 12/11 on the pilot (bab63e32acdb NON PASSA): the
+// «Notifiche automatiche» rows read bare addresses.
+test('bab63e32acdb: a notification names its sender like Clienti — the brand of its domain, never the address', () => {
+  const notice = (id, handle, label = null) => ({
+    id: `m-${id}`, conversationId: id, direction: 'inbound', channel: 'email', body: 'Ricevuta',
+    occurredAt: '2026-10-19T06:00:00.000Z', ...host, subjectId: `s-${id}`, remoteHandle: handle, subjectLabel: label,
+  });
+  const inbox = buildInbox({
+    messages: [
+      notice('a', 'noreply@namecheap.com'),
+      notice('b', 'Ahrefs <noreply@ahrefs.com>'),
+      notice('c', 'comments-noreply@docs.google.com'),
+      notice('d', 'assistenza@paypal.it', 'PayPal'),
+    ],
+    now: NOW,
+  });
+  const names = Object.fromEntries(inbox.notifications.rows.map((row) => [row.id, row.name]));
+  assert.deepEqual(names, { a: 'Namecheap', b: 'Ahrefs', c: 'Google', d: 'PayPal' }, 'a stored name still wins');
+  assert.ok(inbox.notifications.rows.every((row) => !row.name.includes('@')), 'never an address');
+});
+
+// Verification 12/11 on the pilot: the names in «Da rispondere» came 10-16 s
+// late. The server view never holds the day back: the day paints, the
+// section and the recap wait in grey, then fill in place.
+test('bab63e32acdb: a slow «Da rispondere» view never holds the day back, and never says «Niente in sospeso» before its count', async () => {
+  const view = deferred();
+  const base = serverClient(repliesAnswer(24, { unread: 0 }));
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path.startsWith('/api/customer-data/customers?')) await view.promise;
+      if (path === '/api/schema') return { domains: { work: {}, interactions: {}, 'customer-data': {} } };
+      if (path.startsWith('/api/modules/work-task/records')) return { items: [TASK] };
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const oggi = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void oggi.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') }).then(() => { rendered = true; });
+  await flush();
+  assert.equal(rendered, false, 'the view is still reading');
+  assert.ok(mount.textContent.includes('Richiama per il preventivo'), 'the day painted without waiting for the view');
+  const section = () => mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section().querySelector('span[data-skeleton="true"]'), 'the section waits in grey');
+  assert.ok(mount.querySelector('[data-oggi-recap="true"]').querySelector('span[data-skeleton="true"]'), 'the recap waits in grey');
+  for (const claim of ['Niente in sospeso', 'Hai finito per oggi', 'Nessun messaggio aspetta una risposta', '0 in attesa']) {
+    assert.ok(!mount.textContent.includes(claim), `no claim before the count: ${claim}`);
+  }
+  const advisor = mount.findAll('section')[0];
+  view.resolve();
+  await flush();
+  assert.equal(rendered, true);
+  assert.ok(section().textContent.includes('24 in attesa') && section().textContent.includes('Persona 0'), section().textContent);
+  assert.ok(mount.querySelector('[data-oggi-recap="true"]').textContent.includes('Ti aspettano anche 24 messaggi da rispondere'), mount.querySelector('[data-oggi-recap="true"]').textContent);
+  assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
+});
+
+test('bab63e32acdb: the verification rows — «Namecheap Support» and «Ahrefs Site Audit» go to Notifiche with their names', () => {
+  const conversations = [
+    { id: 'n1', status: 'open', subjectLabel: 'Namecheap Support', remoteHandle: null, ...host, subjectId: 'nc' },
+    { id: 'a1', status: 'open', subjectLabel: 'Ahrefs Site Audit', remoteHandle: null, ...host, subjectId: 'ah' },
+  ];
+  const messages = [
+    { id: 'm-n', conversationId: 'n1', direction: 'inbound', channel: 'email', remoteHandle: 'pesupport@namecheap.com', mailSubject: null,
+      body: `Download the new Private Email mobile app${' '.repeat(30)} View in browser`, occurredAt: '2026-10-19T05:00:00.000Z', ...host, subjectId: 'nc' },
+    { id: 'm-a', conversationId: 'a1', direction: 'inbound', channel: 'email', remoteHandle: 'sa@ahrefs.com', mailSubject: null,
+      body: 'New crawl: 400 internal URLs were analyzed. Health Score 87. Unsubscribe from this project', occurredAt: '2026-10-19T06:00:00.000Z', ...host, subjectId: 'ah' },
+    PERSON_MSG,
+  ];
+  const inbox = buildInbox({ messages, conversations, now: NOW });
+  assert.deepEqual(inbox.rows.map((row) => row.id), ['c1'], 'only the person waits');
+  assert.deepEqual(inbox.notifications.rows.map((row) => row.name), ['Ahrefs Site Audit', 'Namecheap Support']);
+});
+
+test('review #821 P2: a slow «Da rispondere» view never holds the agenda names or the actions back', async () => {
+  const viewRead = deferred();
+  const base = slowNamesClient();
+  base.names.resolve();
+  const client = {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {}, 'customer-data': {} } };
+      if (path.startsWith('/api/customer-data/customers?')) {
+        await viewRead.promise;
+        return repliesAnswer(3);
+      }
+      return base.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  let rendered = false;
+  void view.render({ spaceName: 'Spazio', links: [], now: NOW }).then(() => { rendered = true; });
+  await flush();
+  assert.equal(rendered, false, 'the view is still reading');
+  assert.ok(mount.querySelector('section[data-oggi-section="agenda"]').textContent.includes('Fio Neri'), 'the agenda is named');
+  const actions = mount.findAll('button').filter((node) => node.getAttribute('data-triage') !== null);
+  assert.ok(actions.length > 0 && actions.every((node) => node.disabled === false), 'the actions are live');
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').querySelector('span[data-skeleton="true"]'), 'only «Da rispondere» waits');
+  viewRead.resolve();
+  await flush();
+  assert.equal(rendered, true);
+  assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('3 in attesa'));
 });

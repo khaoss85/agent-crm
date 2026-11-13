@@ -84,7 +84,7 @@ async function api(path, options = {}) {
       throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
     }
     return body;
-  }, { method });
+  }, { method, onWaking: wakingNotice });
 }
 
 const submissions = createSubmissionController({
@@ -216,10 +216,25 @@ const moduleClient = {
       }
       return payload;
     };
-    return withWakeRetry(once, { method });
+    return withWakeRetry(once, { method, onWaking: wakingNotice });
   },
 };
 const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
+
+/**
+ * backlog:2b62c771f1f9: while reads wait for the host to wake, the shell
+ * says so once — «Il server si sta svegliando…» — and the screen keeps its
+ * loading state; the scheda's parallel reads share one notice.
+ */
+let wakingReads = 0;
+function wakingNotice(waking) {
+  if (!waking) {
+    wakingReads = Math.max(0, wakingReads - 1);
+    return;
+  }
+  wakingReads += 1;
+  if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
 
 async function refresh() {
   toggleBusy(elements.refreshButton, true);
@@ -465,19 +480,22 @@ if (elements.closeTrace) {
 
 import {
   ACTIVE_SPACE_KEY,
+  SPACES_KEY,
   buildShellNav,
   createShellView,
   keepSettingsTabs,
   loadClientCount,
   loadFixCount,
+  mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   renderSettingsPanel,
   renderUnknownRoute,
   rerendersOnSpaceSwitch,
   resolveBadgeSpaceId,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
-import { DEV_USER, readSessionProfile, resolveLogoutTarget } from './admin-session.js';
+import { DEV_USER, readSessionProfile, resolveLogoutTarget, spaceMountFor } from './admin-session.js';
 import { renderDemoChrome } from './admin-demo.js';
 import { createModuleAdmin } from './admin-modules.js';
 import { createPipelineBoard } from './admin-pipeline.js';
@@ -505,7 +523,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -863,11 +881,7 @@ const spaziAccessiView = createSpaziAccessiView({
   spaces: () => shellSpaces,
   activeSpaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
   onPickSpace: (id) => {
-    shellActiveSpace = id;
-    try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
-      // The switch still applies to this tab.
-    }
-    if (shellView) shellView.setSpaces(shellSpaces, id);
+    pickSpace(id);
   },
   storage: shellStorage,
   toast,
@@ -886,7 +900,26 @@ const profiloView = createProfiloView({
 // person — never the development identity — and Oggi greets with the same
 // name; without one the development identity stays (criterion 3).
 const sessionProfile = readSessionProfile(document);
-const shellSpaces = sessionProfile ? [sessionProfile.space] : readSpaces(shellStorage);
+// The «Cambia spazio» menu lists every space the person can open
+// (backlog:029409ff), not just the current one. The session profile leads
+// when the host names the person's spaces; otherwise this browser's own
+// history fills in: every space mount visited on this origin merges its
+// space in, so after opening each space once the menu shows all of them.
+// The history is read without the development fallback, so a fresh
+// browser never adds a fictitious «Spazio locale» to a real session.
+// A stored entry the person lost stays a plain row: picking it lands on
+// that space's mount, where the host refuses or logs in, never inside the
+// wrong space.
+const shellSpaces = sessionProfile
+  ? mergeSpaces(sessionProfile.spaces, readStoredSpaces(shellStorage))
+  : readSpaces(shellStorage);
+if (sessionProfile) {
+  try {
+    shellStorage.setItem(SPACES_KEY, JSON.stringify(shellSpaces));
+  } catch {
+    // The menu still switches for this tab without persisting.
+  }
+}
 const shellUser = sessionProfile
   ? { name: sessionProfile.name, email: sessionProfile.email, role: sessionProfile.role ?? undefined }
   : { ...DEV_USER };
@@ -900,6 +933,49 @@ if (!sessionProfile) {
   } catch {
     // Keep the default space.
   }
+}
+
+/**
+ * Every «Cambia spazio» pick in this shell — the sidebar menu, the ⌘N
+ * shortcuts, the Spazi e accessi cards — lands here (backlog:029409ff).
+ * Under a session the spaces are sibling mounts (`/w/<id>/bo`), so picking
+ * another space navigates to its mount: the operator never hand-edits the
+ * URL. The landing is the space home (`#/`), never a deep link: a card or
+ * route id from this space must not reopen inside the next one. Without a
+ * derivable sibling mount (local development, an unknown base shape) the
+ * pick stays the in-tab switch it always was.
+ * @param {unknown} id
+ */
+function pickSpace(id) {
+  if (typeof id !== 'string' || id === '') return;
+  if (sessionProfile !== null && id !== shellActiveSpace) {
+    const target = spaceMountFor({
+      adminBase: resolveAdminBase(document),
+      currentSpaceId: sessionProfile.space.id,
+      targetSpaceId: id,
+    });
+    if (target !== null) {
+      try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
+        // The navigation still lands on the picked space.
+      }
+      window.location.assign(`${target}#/`);
+      return;
+    }
+  }
+  shellActiveSpace = id;
+  try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
+    // The switch still applies to this tab.
+  }
+  if (shellView) shellView.setSpaces(shellSpaces, id);
+  // The open card shows space-scoped calls (BO-F1-08): re-render it on
+  // the new space instead of leaving the previous space's summaries.
+  // The mounted home greets with the space name: re-render it too.
+  // The Stato sync screen (BO-F1-03) reads space-scoped activity: it
+  // re-renders with the new space so its controls never submit a pull
+  // for the space just left behind.
+  const openView = targetForHash(window.location.hash || '#/').view;
+  // Agenti and Sequenze too (review #661): rerendersOnSpaceSwitch.
+  if (rerendersOnSpaceSwitch(openView, { mounted: MOUNTED })) route();
 }
 
 let currentScreenId = 'oggi';
@@ -978,19 +1054,7 @@ if (boSidebar && boTopbar) {
       },
     },
     onPickSpace: (id) => {
-      shellActiveSpace = id;
-      try { shellStorage.setItem(ACTIVE_SPACE_KEY, id); } catch {
-        // The switch still applies to this tab.
-      }
-      // The open card shows space-scoped calls (BO-F1-08): re-render it on
-      // the new space instead of leaving the previous space's summaries.
-      // The mounted home greets with the space name: re-render it too.
-      // The Stato sync screen (BO-F1-03) reads space-scoped activity: it
-      // re-renders with the new space so its controls never submit a pull
-      // for the space just left behind.
-      const openView = targetForHash(window.location.hash || '#/').view;
-      // Agenti and Sequenze too (review #661): rerendersOnSpaceSwitch.
-      if (rerendersOnSpaceSwitch(openView, { mounted: MOUNTED })) route();
+      pickSpace(id);
     },
     win: typeof window !== 'undefined' ? window : null,
   });
@@ -1256,6 +1320,9 @@ async function route() {
       fixCount: shellFixCount,
       navigate: (next) => { window.location.hash = next; },
       customerDataAvailable: shellCustomerData,
+      // backlog:1d33b335fba0: Riprova reads the count again, like the
+      // sidebar badge, and the panel shows the fresh answer.
+      onRetry: () => refreshShellCounts().then(() => ({ fixCount: shellFixCount, customerDataAvailable: shellCustomerData })),
     });
     syncShell({ view: 'settings' });
     return;

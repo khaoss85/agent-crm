@@ -14,8 +14,8 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
  * «Modifica o sposta» (il flusso di spostamento esistente), il titolo con il
  * quadratino colore, giorno con il mese intero, cliente come link alla
  * scheda, persona del team con avatar e nome (mai un id o un handle), nota e
- * origine. Nessun «Annulla appuntamento»: il pacchetto non espone una
- * scrittura di annullamento.
+ * origine. «Annulla appuntamento» ha i suoi test in
+ * tests/admin-calendario-annulla.test.js.
  */
 
 const ROSTER = [
@@ -200,7 +200,7 @@ test('popover: actions on top, big title with the colour square, full date, cust
   assert.ok(tools, 'the actions row paints on top');
   assert.equal(pop.childNodes[0], tools, 'the actions come first');
   const labels = tools.findAll('button').map((node) => node.getAttribute('aria-label'));
-  assert.deepEqual(labels, ['Modifica o sposta', 'Chiudi'], 'only the actions that exist: no cancel write is exposed');
+  assert.deepEqual(labels, ['Modifica o sposta', 'Annulla appuntamento', 'Chiudi'], 'edit, cancel (backlog:5346ab531538) and close');
   const title = pop.findAll('h2')[0];
   const swatch = title.findAll('span').find((node) => hasClass(node, 'cal-swatch'));
   assert.ok(swatch, 'the title carries the colour square');
@@ -359,7 +359,7 @@ test('popover: «Modifica o sposta» opens the existing move form, prefilled, wi
   assert.equal(moves[0].body.id, 'p1');
   const after = popover(mount);
   assert.ok(after, 'the popover stays on the moved event');
-  assert.match(after.textContent, /Spostato a Martedì 11:00–11:45/);
+  assert.match(after.textContent, /Spostato a martedì 10 novembre, 11:00–11:45\./);
   assert.equal(after.querySelector('div[data-role="move-form"]'), null, 'the form folds away after the move');
 });
 
