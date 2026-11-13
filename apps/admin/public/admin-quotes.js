@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -73,6 +73,33 @@ export function percentReason(reason) {
     `${(Number(bps) / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',')}%`);
 }
 
+/**
+ * backlog:a2ea75f705fd: a discount in basis points as the operator writes a
+ * percentage — 750 → «7,5», 1000 → «10», 0 → «0». Never «punti base».
+ * @param {unknown} bps
+ */
+export function bpsToPercentText(bps) {
+  const value = Number.isSafeInteger(bps) ? /** @type {number} */ (bps) : 0;
+  return (value / 100).toFixed(2).replace(/\.?0+$/, '').replace('.', ',');
+}
+
+/**
+ * A percentage typed by the operator («7,5», «10», «0,25») as integer basis
+ * points, or null when it is not a number from 0 to 100 with at most two
+ * decimals. Empty reads 0: no discount.
+ * @param {unknown} text
+ */
+export function percentToBps(text) {
+  const raw = String(text ?? '').trim().replace('%', '').trim().replace(',', '.');
+  if (raw === '') return 0;
+  if (!/^\d{1,3}(\.\d{1,2})?$/.test(raw)) return null;
+  const bps = Math.round(Number(raw) * 100);
+  return bps >= 0 && bps <= 10000 ? bps : null;
+}
+
+/** The refusal a malformed discount reads, before anything is sent. */
+const DISCOUNT_FORMAT_TEXT = 'Scrivi lo sconto in percentuale, da 0 a 100 (es. 10 o 7,5).';
+
 export function createQuoteView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   /** The space the quote is issued by (Dan 06/11: a quote is a little personal). */
@@ -99,6 +126,20 @@ export function createQuoteView(deps) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
   const money = (cents, currency) => formatAmount(cents, currency);
+  /** A discount field in percent (backlog:a2ea75f705fd). @param {string} value */
+  const percentInput = (value) => {
+    const input = el('input');
+    input.setAttribute('type', 'text');
+    input.setAttribute('inputmode', 'decimal');
+    input.value = value;
+    return input;
+  };
+  /** Basis points from a percent field; a malformed value refuses before any write. */
+  const discountFrom = (input) => {
+    const bps = percentToBps(input.value);
+    if (bps === null) throw new Error(DISCOUNT_FORMAT_TEXT);
+    return bps;
+  };
   /** Frozen VAT text for one group, or '' when the totals predate VAT. */
   const vatText = (vatEntry, currency, rateBps) => {
     if (!Number.isSafeInteger(rateBps) || rateBps < 0 || rateBps > 10000
@@ -146,6 +187,37 @@ export function createQuoteView(deps) {
     return String(interval ?? '—');
   };
 
+  /**
+   * Backlog 8dc6d4a456e1: the server always persists a zero-valued one-time
+   * group, even for subscription-only quotes, so truthiness alone would
+   * paint `0 €`. A totals group carries a value only with a nonzero net.
+   */
+  const groupHasValue = (group) => Number.isSafeInteger(group?.netAmountCents) && group.netAmountCents !== 0;
+
+  /**
+   * Summary of the valued totals groups, never mixing periods; an em dash
+   * when no group carries a value, like the offer header.
+   */
+  const quoteTotalSummary = (totals, currency) => {
+    const parts = [];
+    if (groupHasValue(totals.oneTimeTotal)) parts.push(`una tantum ${money(totals.oneTimeTotal.netAmountCents, currency)}`);
+    for (const group of totals.recurringTotals) {
+      if (!groupHasValue(group)) continue;
+      parts.push(`${money(group.netAmountCents, currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : '—';
+  };
+
+  /**
+   * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
+   * decided it (`name@version` from the version record), never nothing.
+   */
+  const policyTag = (version) => (
+    typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
+      ? `${version.policy}@${version.policyVersion}`
+      : null
+  );
+
   async function fetchRows(module, filter) {
     const result = await client.request(`/api/modules/${module}/records?limit=${LIST_LIMIT}`);
     const rows = (result.items ?? []).filter(filter ?? (() => true));
@@ -166,24 +238,31 @@ export function createQuoteView(deps) {
     if (opportunityId === null) return { back: null, opportunityName: null, customerName: null };
     let opportunity;
     try {
-      opportunity = await client.request(`/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}`);
+      // backlog:a2ea75f705fd: the core offer route — the generic records
+      // surface never serves core modules and answered 404 here.
+      opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
       return { back: null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
+    // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
+    // and the other quotes live there.
+    const offer = el('a', 'quote-offer-link', 'Apri l’offerta →');
+    offer.setAttribute('href', `#/offerte/${encodeURIComponent(opportunityId)}`);
+    offer.setAttribute('data-action', 'quote-open-offer');
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
     const subjectId = contactId ?? companyId;
-    if (resource === null || subjectId === null) return { back: null, opportunityName, customerName: null };
+    if (resource === null || subjectId === null) return { back: null, offer, opportunityName, customerName: null };
     const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
     const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
-    if (name === null) return { back: null, opportunityName, customerName: null };
+    if (name === null) return { back: null, offer, opportunityName, customerName: null };
     const back = el('a', 'quote-back');
     back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
     // Text only: a hostile customer name stays inert text inside the link.
     back.textContent = `← ${name}`;
-    return { back, opportunityName, customerName: name };
+    return { back, offer, opportunityName, customerName: name };
   }
 
   async function renderQuoteList() {
@@ -229,7 +308,7 @@ export function createQuoteView(deps) {
     }
     const createButton = el('button', undefined, 'Crea preventivo');
     const createError = el('small', 'field-error', '');
-    createButton.addEventListener('click', async () => {
+    createButton.addEventListener('click', () => uiBusy(createButton, 'Creo…', async () => {
       const opportunityId = String(opportunityInput.value ?? '').trim();
       if (!opportunityId) {
         createError.textContent = 'Scegli l’offerta per cui creare il preventivo.';
@@ -247,7 +326,7 @@ export function createQuoteView(deps) {
       } finally {
         createButton.disabled = false;
       }
-    });
+    }));
     form.appendChild(opportunityInput);
     form.appendChild(bookSelect);
     form.appendChild(createButton);
@@ -259,11 +338,8 @@ export function createQuoteView(deps) {
       const row = el('div', 'quote-row');
       row.setAttribute('data-quote', quote.id);
       const quoteTotals = parseTotals(quote.totalsJson);
-      const recurringSummary = quoteTotals.recurringTotals
-        .map((group) => `${money(group.netAmountCents, quote.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`)
-        .join(' + ') || 'nessuna ricorrenza';
       const link = el('a', undefined,
-        `Preventivo · ${quoteStatusLabel(quote.status)} · una tantum ${money(quoteTotals.oneTimeTotal?.netAmountCents ?? 0, quote.currency)} · ${recurringSummary}`);
+        `Preventivo · ${quoteStatusLabel(quote.status)} · ${quoteTotalSummary(quoteTotals, quote.currency)}`);
       link.setAttribute('href', `#/quotes/${quote.id}`);
       row.appendChild(link);
       list.appendChild(row);
@@ -303,14 +379,15 @@ export function createQuoteView(deps) {
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
     // and the test double, never a copy).
-    const { back, opportunityName, customerName } = await resolveCardBackLink(quote);
+    const { back, offer = null, opportunityName, customerName } = await resolveCardBackLink(quote);
     if (token !== renderToken) return;
     if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
-    if (back !== null) {
+    if (back !== null || offer !== null) {
       mount.removeChild(heading);
       mount.removeChild(status);
-      mount.appendChild(back);
+      if (back !== null) mount.appendChild(back);
       mount.appendChild(heading);
+      if (offer !== null) mount.appendChild(offer);
       mount.appendChild(status);
     }
 
@@ -339,14 +416,16 @@ export function createQuoteView(deps) {
     heroWords.appendChild(meta);
     hero.appendChild(heroWords);
     const heroTotal = el('div', 'bo-quote-hero-total');
-    const lead = totals.oneTimeTotal ?? totals.recurringTotals[0] ?? null;
+    const valuedOneTime = groupHasValue(totals.oneTimeTotal) ? totals.oneTimeTotal : null;
+    const valuedRecurring = totals.recurringTotals.filter(groupHasValue);
+    const lead = valuedOneTime ?? valuedRecurring[0] ?? null;
     if (lead !== null) {
       heroTotal.appendChild(el('span', 'bo-quote-amount', money(lead.netAmountCents, lead.currency ?? quote.currency)));
-      heroTotal.appendChild(el('span', 'bo-quote-amount-note', totals.oneTimeTotal
+      heroTotal.appendChild(el('span', 'bo-quote-amount-note', valuedOneTime
         ? 'una tantum, netto'
         : `ogni ${lead.intervalCount} ${periodLabel(lead.intervalCount, lead.interval)}, netto`));
-      if (totals.oneTimeTotal && totals.recurringTotals.length > 0) {
-        const next = totals.recurringTotals[0];
+      if (valuedOneTime && valuedRecurring.length > 0) {
+        const next = valuedRecurring[0];
         heroTotal.appendChild(el('span', 'bo-quote-amount-note', `+ ${money(next.netAmountCents, next.currency ?? quote.currency)} ogni ${next.intervalCount} ${periodLabel(next.intervalCount, next.interval)}`));
       }
     }
@@ -379,11 +458,14 @@ export function createQuoteView(deps) {
       row.appendChild(value);
       totalsPanel.appendChild(row);
     };
-    if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
+    // The Totale panel names only valued groups, like the hero above: a
+    // zero-valued group is an unpriced component, never a «0 €» row.
+    if (valuedOneTime !== null) totalRow('Una tantum', valuedOneTime, totals.vat?.oneTime ?? null);
     totals.recurringTotals.forEach((group, index) => {
+      if (!groupHasValue(group)) return;
       totalRow(`Ricorrente ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`, group, totals.vat?.recurring?.[index] ?? null);
     });
-    if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
+    if (valuedOneTime === null && !totals.recurringTotals.some(groupHasValue)) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
     totalsPanel.appendChild(el('p', 'quote-totals-note', 'Una tantum e importi ricorrenti restano separati: non si sommano tra loro.'));
@@ -418,7 +500,7 @@ export function createQuoteView(deps) {
       // The owner reads the package, the quantity, a discount only when one
       // applies, and the net: SKU and offer revision stay in the records.
       const lineDiscount = (line.discountBps ?? 0) > 0
-        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%`
+        ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%${Number.isSafeInteger(line.discountAmountCents) && line.discountAmountCents > 0 ? ` (−${money(line.discountAmountCents, quote.currency)})` : ''}`
         : '';
       const head = el('span', 'quote-line-head');
       head.appendChild(el('span', 'quote-line-name', line.offerName));
@@ -451,30 +533,27 @@ export function createQuoteView(deps) {
         const quantityInput = el('input');
         quantityInput.setAttribute('type', 'number');
         quantityInput.value = String(line.quantity);
-        const discountInput = el('input');
-        discountInput.setAttribute('type', 'number');
-        discountInput.value = String(line.discountBps);
-        discountInput.setAttribute('title', 'Sconto in punti base: 1000 = 10,00%');
+        const discountInput = percentInput(bpsToPercentText(line.discountBps ?? 0));
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
         busy.push(updateButton, removeButton);
-        updateButton.addEventListener('click', () => withBusy(() => act('update-line', {
+        updateButton.addEventListener('click', () => uiBusy(updateButton, 'Aggiorno…', () => withBusy(() => act('update-line', {
           lineId: line.id,
           quantity: Number(quantityInput.value),
-          discountBps: Number(discountInput.value),
+          discountBps: discountFrom(discountInput),
           expectedRevision: quote.draftRevision,
-        })));
-        removeButton.addEventListener('click', () => withBusy(() => act('remove-line', {
+        }))));
+        removeButton.addEventListener('click', () => uiBusy(removeButton, 'Rimuovo…', () => withBusy(() => act('remove-line', {
           lineId: line.id,
           expectedRevision: quote.draftRevision,
-        })));
+        }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
-        edit.appendChild(labelled('Sconto (punti base)', discountInput));
+        edit.appendChild(labelled('Sconto (%)', discountInput));
         edit.appendChild(updateButton);
         edit.appendChild(removeButton);
         row.appendChild(edit);
-        row.__update = () => withBusy(() => act('update-line', { lineId: line.id, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
+        row.__update = () => withBusy(() => act('update-line', { lineId: line.id, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
         row.__quantity = quantityInput;
         row.__discount = discountInput;
       }
@@ -498,46 +577,53 @@ export function createQuoteView(deps) {
       const quantityInput = el('input');
       quantityInput.setAttribute('type', 'number');
       quantityInput.value = '1';
-      const discountInput = el('input');
-      discountInput.setAttribute('type', 'number');
-      discountInput.value = '0';
-      const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Sconto in punti base (intero 0–10000): 1000 = 10,00%.');
+      const discountInput = percentInput('0');
+      const hint = el('small', 'muted', 'La quantità vale per le componenti a unità e a scaglioni; le quote fisse si addebitano una volta. Lo sconto è in percentuale, es. 10 o 7,5.');
       const addButton = el('button', undefined, 'Aggiungi riga');
       busy.push(addButton);
-      addButton.addEventListener('click', () => withBusy(() => act('add-line', {
+      addButton.addEventListener('click', () => uiBusy(addButton, 'Aggiungo…', () => withBusy(() => act('add-line', {
         offerId: entrySelect.value,
         quantity: Number(quantityInput.value),
-        discountBps: Number(discountInput.value),
+        discountBps: discountFrom(discountInput),
         expectedRevision: quote.draftRevision,
-      })));
+      }))));
       addPanel.appendChild(labelled('Pacchetto', entrySelect));
       addPanel.appendChild(labelled('Quantità', quantityInput));
-      addPanel.appendChild(labelled('Sconto (punti base)', discountInput));
+      addPanel.appendChild(labelled('Sconto (%)', discountInput));
       addPanel.appendChild(hint);
       addPanel.appendChild(addButton);
-      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: Number(discountInput.value), expectedRevision: quote.draftRevision }));
+      addPanel.__add = () => withBusy(() => act('add-line', { offerId: entrySelect.value, quantity: Number(quantityInput.value), discountBps: discountFrom(discountInput), expectedRevision: quote.draftRevision }));
       addPanel.__entry = entrySelect;
       addPanel.__quantity = quantityInput;
-      addPanel.__discountBps = discountInput;
+      addPanel.__discount = discountInput;
       side.appendChild(addPanel);
 
       const submitPanel = el('div', 'quote-submit');
       submitPanel.appendChild(el('h3', undefined, 'Invia per l’approvazione'));
+      // backlog:a2ea75f705fd: the discount rule is a choice only when there
+      // is one to make. One rule is simply applied; none means the send is
+      // not available here, said once — never an empty menu.
+      const policies = (commercialBlock(schema)?.discountPolicies ?? [])
+        .filter((policy) => typeof policy?.name === 'string' && policy.name !== '' && Number.isSafeInteger(policy?.version));
       const policySelect = el('select');
-      for (const policy of commercialBlock(schema)?.discountPolicies ?? []) {
-        const option = el('option', undefined, `${policy.label} (v${policy.version})`);
+      for (const policy of policies) {
+        const option = el('option', undefined, `${policy.label ?? policy.name} (v${policy.version})`);
         option.setAttribute('value', `${policy.name}@${policy.version}`);
         policySelect.appendChild(option);
         if (policySelect.value === undefined || policySelect.value === '') policySelect.value = `${policy.name}@${policy.version}`;
       }
       const submitButton = el('button', undefined, 'Invia');
       busy.push(submitButton);
-      submitButton.addEventListener('click', () => withBusy(() => {
+      submitButton.addEventListener('click', () => uiBusy(submitButton, 'Invio…', () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
-      }));
-      submitPanel.appendChild(labelled('Regola di sconto', policySelect));
-      submitPanel.appendChild(submitButton);
+      })));
+      if (policies.length === 0) {
+        submitPanel.appendChild(el('p', 'muted quote-submit-off', 'L’invio per l’approvazione non è ancora disponibile in questo spazio.'));
+      } else {
+        if (policies.length > 1) submitPanel.appendChild(labelled('Regola di sconto', policySelect));
+        submitPanel.appendChild(submitButton);
+      }
       submitPanel.__submit = () => withBusy(() => {
         const [name, version] = String(policySelect.value).split('@');
         return act('submit', { policy: name, version: Number(version), expectedRevision: quote.draftRevision });
@@ -553,8 +639,8 @@ export function createQuoteView(deps) {
       const approveButton = el('button', undefined, 'Approva');
       const rejectButton = el('button', undefined, 'Rifiuta');
       busy.push(approveButton, rejectButton);
-      approveButton.addEventListener('click', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {})));
-      rejectButton.addEventListener('click', () => withBusy(() => act('reject', { reason: reasonInput.value })));
+      approveButton.addEventListener('click', () => uiBusy(approveButton, 'Approvo…', () => withBusy(() => act('approve', reasonInput.value ? { reason: reasonInput.value } : {}))));
+      rejectButton.addEventListener('click', () => uiBusy(rejectButton, 'Rifiuto…', () => withBusy(() => act('reject', { reason: reasonInput.value }))));
       decidePanel.appendChild(reasonInput);
       decidePanel.appendChild(approveButton);
       decidePanel.appendChild(rejectButton);
@@ -568,7 +654,7 @@ export function createQuoteView(deps) {
       const revisePanel = el('div', 'quote-revise');
       const reviseButton = el('button', undefined, 'Rivedi (torna in bozza)');
       busy.push(reviseButton);
-      reviseButton.addEventListener('click', () => withBusy(() => act('revise', {})));
+      reviseButton.addEventListener('click', () => uiBusy(reviseButton, 'Riapro…', () => withBusy(() => act('revise', {}))));
       revisePanel.appendChild(reviseButton);
       revisePanel.__revise = () => withBusy(() => act('revise', {}));
       side.appendChild(revisePanel);
@@ -588,12 +674,18 @@ export function createQuoteView(deps) {
       const row = el('div', 'quote-version-row');
       row.setAttribute('data-version', version.id);
       const versionTotals = parseTotals(version.totalsJson);
-      const periods = [
-        `una tantum ${money(versionTotals.oneTimeTotal?.netAmountCents ?? 0, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`,
-        ...versionTotals.recurringTotals.map((group, index) => `${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`),
-      ].join(' · ');
+      const valuedParts = [];
+      if (groupHasValue(versionTotals.oneTimeTotal)) {
+        valuedParts.push(`una tantum ${money(versionTotals.oneTimeTotal.netAmountCents, version.currency)}${vatText(versionTotals.vat?.oneTime ?? null, version.currency, versionTotals.vatRateBps)}`);
+      }
+      versionTotals.recurringTotals.forEach((group, index) => {
+        if (!groupHasValue(group)) return;
+        valuedParts.push(`${money(group.netAmountCents, version.currency)} ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}${vatText(versionTotals.vat?.recurring?.[index] ?? null, version.currency, versionTotals.vatRateBps)}`);
+      });
+      const periods = valuedParts.length > 0 ? valuedParts.join(' · ') : '—';
+      const policy = policyTag(version);
       const link = el('a', undefined,
-        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)} · ${periods}`);
+        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${periods}`);
       link.setAttribute('href', `#/modules/quote-version/${version.id}`);
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${percentReason(version.decisionReason)}`));
@@ -686,7 +778,7 @@ export function createQuoteView(deps) {
           }),
         });
       });
-      requestButton.addEventListener('click', request);
+      requestButton.addEventListener('click', () => uiBusy(requestButton, 'Invio…', request));
       for (const control of [providerSelect, nameInput, emailInput, roleInput, requestButton]) form.appendChild(control);
       form.appendChild(el('small', 'muted', 'Tutti i firmatari devono firmare; l’ordine dichiarato è registrato, non imposto in sequenza. Nessuna garanzia sull’identità dei firmatari.'));
       form.__request = request;
@@ -739,7 +831,7 @@ export function createQuoteView(deps) {
       const reconcileButton = el('button', undefined, 'Riconcilia con il fornitore');
       busy.push(reconcileButton);
       const reconcile = () => withBusy(() => client.request(`/api/signature/envelopes/${encodeURIComponent(envelope.id)}/reconcile`, { method: 'POST', body: '{}' }));
-      reconcileButton.addEventListener('click', reconcile);
+      reconcileButton.addEventListener('click', () => uiBusy(reconcileButton, 'Controllo…', reconcile));
       state.appendChild(reconcileButton);
       state.__reconcile = reconcile;
     }

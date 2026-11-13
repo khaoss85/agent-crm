@@ -11,6 +11,7 @@ import {
   sigObservation, unownedSignatureSource,
 } from './signature-harness.mjs';
 import { generateBaseline, sourceFingerprints } from './run-signature-characterization.mjs';
+import { classifySourceDrift, formatBlockingDrift, formatDriftAdvisory } from './source-drift.mjs';
 
 /**
  * LA0 for Signature & Order — the characterization gate.
@@ -61,14 +62,47 @@ test('the current Signature & Order behaviour matches the frozen baseline', () =
   assert.equal(fresh.fingerprint, BASELINE.fingerprint);
 });
 
-test('the baseline is stale when behaviour-bearing source changes', () => {
-  assert.deepEqual(sourceFingerprints(repoRoot), BASELINE.source,
-    'a source file that decides Signature & Order behaviour changed — regenerate the baseline deliberately '
-    + 'with `node scripts/characterize-signature.mjs` and review the diff');
+test('source-hash drift is advisory when behaviour is unchanged, blocking when it moved', () => {
+  // Backlog e0347551, forma (a) like `repo:truth --check --drift-advisory --base`:
+  // the hashes are a warning against the base, not the gate. A PR that
+  // touches a digested source without changing any observed value passes
+  // with a loud advisory and regenerates nothing; a behaviour change
+  // without a regenerated baseline still fails below.
   for (const [file, digest] of Object.entries(BASELINE.source)) {
     assert.notEqual(digest, 'absent', `${file} is recorded as absent; the baseline was generated against a different tree`);
     assert.match(digest, /^[0-9a-f]{64}$/);
   }
+  const verdict = classifySourceDrift({
+    baselineSource: BASELINE.source,
+    current: sourceFingerprints(repoRoot),
+    comparison: compareToBaseline(BASELINE, fresh.observations),
+  });
+  if (verdict.blocking) {
+    assert.fail(formatBlockingDrift({
+      domain: 'Signature & Order', verdict, regenerate: 'node scripts/characterize-signature.mjs',
+    }));
+  }
+  if (verdict.advisory) {
+    process.stderr.write(`${formatDriftAdvisory({
+      domain: 'signature-order', drifted: verdict.drifted, regenerate: 'node scripts/characterize-signature.mjs',
+    })}\n`);
+  }
+});
+
+test('a behaviour change without a regenerated baseline still fails the gate', () => {
+  // The acceptance direction that must never go quiet (backlog e0347551):
+  // the advisory above must not mask a moved value. Proved on the live
+  // fresh run, not on a fixture.
+  const target = fresh.observations.find((entry) => ASSERTED.includes(entry.classification));
+  assert.ok(target, 'no asserted observation to move');
+  const mutated = fresh.observations.map((entry) => (entry.id === target.id
+    ? { ...entry, observed: { ...entry.observed, __gate: 'moved' } } : entry));
+  const verdict = classifySourceDrift({
+    baselineSource: BASELINE.source,
+    current: sourceFingerprints(repoRoot),
+    comparison: compareToBaseline(BASELINE, mutated),
+  });
+  assert.equal(verdict.blocking, true);
 });
 
 test('generation is separate from verification, and never runs during verify', () => {
@@ -265,7 +299,10 @@ test('pre-extraction evidence is recorded, never a contract the extraction must 
 
 test('the baseline file is byte-reproducible, so its diff is the change', () => {
   const serialize = (value) => `${JSON.stringify(sortKeysDeep(value), null, 2)}\n`;
-  assert.equal(serialize(fresh), readFileSync(join(repoRoot, 'tests/characterization/signature-baseline.json'), 'utf8'));
+  // Source hashes are advisory metadata (the drift test above), not
+  // behaviour: a hash-only drift must not fail this file-equality check.
+  assert.equal(serialize({ ...fresh, source: BASELINE.source }),
+    readFileSync(join(repoRoot, 'tests/characterization/signature-baseline.json'), 'utf8'));
 });
 
 test('the comparison is order-independent and key-order-independent', () => {

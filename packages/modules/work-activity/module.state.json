@@ -1,13 +1,13 @@
 {
   "stateVersion": 2,
   "module": "work-activity",
-  "revision": 2,
-  "fingerprint": "15aed7318556b43ebee90e238fc0cbf7328d463812311fdeb61cbaf9f00bdc66",
+  "revision": 3,
+  "fingerprint": "f71168887e6c7fca0acd229dbf37f0282f96de7256cbe1209484a9a3f6526f59",
   "manifest": {
     "manifestVersion": 1,
-    "revision": 2,
+    "revision": 3,
     "name": "work-activity",
-    "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
+    "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. A note is never edited or deleted in place: a correction is a later note row whose revisesId names the original note, and a withdrawal is one with withdrawn true and no body, so the timeline shows the latest wording, hides a withdrawn note, and every version stays on record. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
     "table": "work_activities",
     "fields": [
       {
@@ -121,6 +121,22 @@
         "unique": false,
         "column": "seq",
         "writable": "managed"
+      },
+      {
+        "name": "revisesId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "revises_id",
+        "writable": "managed"
+      },
+      {
+        "name": "withdrawn",
+        "type": "boolean",
+        "required": false,
+        "unique": false,
+        "column": "withdrawn",
+        "writable": "managed"
       }
     ]
   },
@@ -129,6 +145,11 @@
       "name": "create_work_activities",
       "checksum": "42270f60cda19a00a619e349b9139484d6f7422dfb530806a253b6cb020d0fe2",
       "sql": "CREATE TABLE IF NOT EXISTS work_activities (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  kind TEXT CHECK(kind IN ('task_created', 'task_completed', 'task_cancelled', 'note')),\n  subject_resource TEXT,\n  subject_id TEXT,\n  task_id TEXT,\n  body TEXT,\n  occurred_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  seq INTEGER,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS work_activities_kind ON work_activities(kind);\nCREATE INDEX IF NOT EXISTS work_activities_subject_resource ON work_activities(subject_resource);\nCREATE INDEX IF NOT EXISTS work_activities_subject_id ON work_activities(subject_id);\nCREATE INDEX IF NOT EXISTS work_activities_task_id ON work_activities(task_id);\nCREATE INDEX IF NOT EXISTS work_activities_source_package ON work_activities(source_package);\n"
+    },
+    {
+      "name": "evolve_work_activities_r3",
+      "checksum": "4f3386dcea6eb73e7c1341b6debb229f596a799540f5f63705d161062b39415c",
+      "sql": "ALTER TABLE work_activities ADD COLUMN revises_id TEXT;\nALTER TABLE work_activities ADD COLUMN withdrawn INTEGER CHECK(withdrawn IN (0, 1));\n"
     }
   ],
   "postgres": {
@@ -141,6 +162,12 @@
         "fingerprint": "15aed7318556b43ebee90e238fc0cbf7328d463812311fdeb61cbaf9f00bdc66"
       }
     },
-    "evolutions": []
+    "evolutions": [
+      {
+        "name": "pg_evolve_work_activities_r3",
+        "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nALTER TABLE \"accordo\".\"work_activities\" ADD COLUMN \"revises_id\" TEXT;\n\nALTER TABLE \"accordo\".\"work_activities\" ADD COLUMN \"withdrawn\" BOOLEAN;\n",
+        "checksum": "8f57501d3f4f66fb72c74bdf03fb629fa140698c08a8add1979baba3dc5c85a3"
+      }
+    ]
   }
 }

@@ -17,7 +17,7 @@
 // the renderer uses DOM APIs only — createElement + textContent/setAttribute
 // — never innerHTML with data, so hostile bundle rows are inert text.
 
-import { euro } from './admin-labels.js';
+import { euro, personLabel, teamPeople } from './admin-labels.js';
 import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /** Hash route of the Reporting screen. */
@@ -221,6 +221,54 @@ export function isDashboardPayload(model) {
   if (!Number.isInteger(channels.total)) return false;
   const csv = /** @type {Record<string, unknown>} */ (payload.csv);
   return typeof csv.filename === 'string' && typeof csv.content === 'string';
+}
+
+/**
+ * backlog:07a101585207 / b3d88f6e38ef (famiglia F5): the person a dashboard
+ * owner names, as the team names them — the profile name from the roster
+ * (`teamPeople`, the Calendario rule), the owner's own words when they read
+ * as a name, «Membro del team» otherwise. Never a slug like «coach-guido».
+ * @param {unknown} owner
+ * @param {unknown} people `teamPeople` rows
+ */
+export function ownerName(owner, people) {
+  return personLabel(owner, Array.isArray(people) ? people : []) ?? 'Membro del team';
+}
+
+/**
+ * The dashboard as the operator reads it: team rows and the «Cosa noto»
+ * sentences name people, never the owner id the registry stores. `owners`
+ * keeps the raw ids — the filter sends them back to the server.
+ * @param {any} model a dashboard payload
+ * @param {unknown} roster `/api/spine/memberships` items
+ */
+export function withPersonNames(model, roster) {
+  const people = teamPeople(roster);
+  const owners = [...new Set([
+    ...(Array.isArray(model?.owners) ? model.owners : []),
+    ...(Array.isArray(model?.team) ? model.team.map((entry) => entry?.owner) : []),
+  ].filter((owner) => typeof owner === 'string' && owner !== ''))];
+  const names = new Map(owners.map((owner) => [owner, ownerName(owner, people)]));
+  // One pass over the sentence (review Muse #750): every owner is matched in
+  // the original text only, longest first, so a name just written in is
+  // never rewritten by another owner. Owners match as whole words only
+  // (backlog:e52c5e0dd49f): a short owner never rewrites inside a longer
+  // word («Sara» leaves «Saranno» alone), and never inside a longer
+  // hyphenated id or mailbox («guido» leaves «coach-guido» and
+  // «guido.rossi@esempio.it» alone).
+  const ordered = [...owners].sort((a, b) => b.length - a.length);
+  const pattern = ordered.length === 0
+    ? null
+    : new RegExp(`(?<![\\p{L}\\p{N}_@.\\-])(?:${ordered.map((owner) => owner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\p{L}\\p{N}_@\\-]|\\.(?=[\\p{L}\\p{N}]))`, 'gu');
+  const say = (text) => (typeof text === 'string' && pattern !== null
+    ? text.replace(pattern, (owner) => names.get(owner) ?? owner)
+    : text);
+  return {
+    ...model,
+    ownerNames: names,
+    team: (model.team ?? []).map((entry) => ({ ...entry, owner: names.get(entry?.owner) ?? ownerName(entry?.owner, people) })),
+    insights: (model.insights ?? []).map((insight) => ({ ...insight, text: say(insight?.text) })),
+  };
 }
 
 /** Hash route of the "+ Nuovo modulo" screen. */
@@ -474,12 +522,13 @@ export function createReportingView(deps) {
     // shape is the supervisor's vestito (styles.css); the structure and
     // the recalculation contract are here.
     for (const owner of model.owners ?? []) {
-      const sigla = pill(ownerSigla(owner), dashboard.owner === owner, () => {
+      const name = model.ownerNames?.get(owner) ?? ownerName(owner, []);
+      const sigla = pill(ownerSigla(name), dashboard.owner === owner, () => {
         dashboard.owner = owner;
         renderReporting();
       });
-      sigla.setAttribute('title', String(owner));
-      sigla.setAttribute('aria-label', String(owner));
+      sigla.setAttribute('title', name);
+      sigla.setAttribute('aria-label', name);
       sigla.setAttribute('data-owner', String(owner));
       people.appendChild(sigla);
     }
@@ -860,6 +909,18 @@ export function createReportingView(deps) {
       }));
       return;
     }
+    // The team names people by their profile name (famiglia F5): an
+    // unreadable roster leaves the owners' own words, never an error.
+    let roster = [];
+    if ((model.owners ?? []).length > 0 || (model.team ?? []).length > 0) {
+      try {
+        const answer = await client.request('/api/spine/memberships');
+        roster = Array.isArray(answer?.items) ? answer.items : [];
+      } catch (error) {
+        log('reporting team read failed', { name: error?.name ?? 'Error', status: error?.status ?? null, code: error?.code ?? null });
+      }
+    }
+    model = withPersonNames(model, roster);
     dashboardFilters(filtersHost, model);
     if (model.truncated) {
       host.appendChild(el(doc, 'p', { class: 'lede', text: 'Dati parziali: oltre 1000 righe lette, i totali sono troncati.' }));

@@ -19,8 +19,11 @@
  * nothing is invented for the camera. The completion probe stays in the DOM
  * but hidden, so it can never leak into a PNG. The Chromium lookup mirrors
  * the `*-shots` tests (`CHROMIUM_BIN`, then the Playwright headless-shell
- * caches). Where no binary exists, or it cannot run here, the command exits
- * 0 with a skip message: shots are a publishing convenience, not a gate.
+ * caches). Sandbox-less Linux executors refuse Chromium's zygote bootstrap,
+ * so the runnable probe retries once with `--no-sandbox` and every render
+ * run reuses the winning flags. Where no binary exists, or none runs even
+ * without the sandbox, the command fails loudly (exit 1) instead of
+ * skipping in silence: missing PNGs must never look like a pass.
  *
  * The command never touches the network: the fixture server binds 127.0.0.1
  * and Chromium runs with background networking disabled. The default output
@@ -555,8 +558,15 @@ const DEMO_SPACES = [
 const DEMO_MEMBERS = [
   { subject: 'broker|owner-1', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'elena@studioaurora.it' },
   { subject: 'google|1001', role: 'owner', status: 'active', displayName: 'Elena Rinaldi', email: 'Elena@studioaurora.it' },
-  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it' },
+  { subject: 'google|1002', role: 'operator', status: 'active', displayName: 'Marco Ferri', email: 'marco@studioaurora.it', operatorAccountId: 'op-marco' },
+  // The calendar books Marco as `marco` (the week's teamMemberId): the same
+  // person key joins it to Marco Ferri, so the shots prove the per-person
+  // union, not only the fallback (design check #750).
+  { subject: 'marco', role: 'operator', status: 'active', operatorAccountId: 'op-marco' },
 ];
+
+// Sara as the calendar roster names her (the week books her as «sara»).
+const DEMO_SARA = { subject: 'sara', role: 'operator', status: 'active', displayName: 'Sara Conti', email: 'sara@studioaurora.it' };
 
 // The connectors screen (BO-F6-02): every catalog channel has a composed
 // fake adapter and no connection yet, so all eight rows paint the
@@ -712,6 +722,8 @@ shellView.update({
 // missing). Await the faces the shell paints before the fixtures run, so
 // the load event — and the screenshot — wait for real glyphs. Rejections
 // settle the wait instead of hanging the harness.
+// backlog:30dc70e6b076: a face loads and decodes in real time; the page
+// pacer (PACE_PRELUDE) keeps the virtual clock from running out meanwhile.
 await Promise.all([
   document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
@@ -901,15 +913,39 @@ await view.render();
 // control, so the shot proves all three steps (drop zone, column match,
 // table check) instead of the empty first step.
 const input = document.querySelector('#view-module input[name="file"]');
+const CSV = 'nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n';
 const transfer = new DataTransfer();
-transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+transfer.items.add(new File([CSV], 'clienti.csv', { type: 'text/csv' }));
 input.files = transfer.files;
+// The demo file's bytes are already here: hand them over without a Blob
+// read. Chromium's virtual clock waits for network fetches, not for Blob
+// I/O, so on a loaded runner the read used to land after the budget and
+// the shot ended with no import-ready (bo:shots import, PR #828 and #833).
+// The view still reads the file through its own file.arrayBuffer() call.
+const bytes = new TextEncoder().encode(CSV);
+Object.defineProperty(input.files[0], 'arrayBuffer', { value: () => Promise.resolve(bytes.buffer.slice(0)) });
 input.dispatchEvent(new Event('change', { bubbles: true }));
-const deadline = Date.now() + 15000;
-while (!document.querySelector('#view-module select[name="mapping-0"]')) {
-  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
+// The mapping step paints once the view's own promise chain settles: wait
+// for that paint, never for a wall-clock deadline that spends the budget.
+await new Promise((resolve, reject) => {
+  const mount = document.getElementById('view-module');
+  const ready = () => mount.querySelector('select[name="mapping-0"]') !== null;
+  if (ready()) { resolve(); return; }
+  const watch = new MutationObserver(() => {
+    if (!ready()) return;
+    watch.disconnect();
+    resolve();
+  });
+  watch.observe(mount, { childList: true, subtree: true });
+  // A refused file paints its own error line instead of the mapping: say
+  // so, never wait for a step that will not come.
+  const refused = mount.querySelector('.customer-data-error');
+  if (refused !== null) {
+    new MutationObserver(() => {
+      if (refused.textContent.trim() !== '') reject(new Error('the import tool refused the demo file: ' + refused.textContent));
+    }).observe(refused, { childList: true, characterData: true, subtree: true });
+  }
+});
 const painted = document.getElementById('view-module');
 document.getElementById('probe').textContent = JSON.stringify({
   back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
@@ -943,8 +979,13 @@ const SLOTS = ${JSON.stringify(DEMO_SLOTS)};
 // backlog:913c61ec: a phrase with a time proposes that time only, so the shot
 // drafts a day without a time («giovedì») to paint two proposals and a ghost.
 const DRAFT = { teamMemberId: 'marco', serviceKey: 'taglio', day: '2026-10-22', durationMinutes: 30, notes: 'taglio per Ada' };
+// The space roster (design check #750): the week books «marco» and «sara»;
+// the roster joins «marco» to Marco Ferri (google|1002) by person key and
+// names Sara, so Team and «Scegli una persona…» paint people, never ids.
+const MEMBERS = ${JSON.stringify([...DEMO_MEMBERS, DEMO_SARA])};
 const client = {
   async request(path) {
+    if (path === '/api/spine/memberships') return { items: MEMBERS };
     if (path.startsWith('/api/appointments/team-week')) return WEEK;
     // Block titles read the catalog service names (backlog:5fbebe8559e9);
     // the demo has no customer profiles, so the row labels name them.
@@ -956,7 +997,9 @@ const client = {
     }
     if (path === '/api/appointments/phrase') return { draft: DRAFT, dryRun: false, spaceId: 'demo' };
     if (path.startsWith('/api/appointments/suggest-slots')) {
-      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }] };
+      // Marco holds two identities (marco, google|1002): the search asks for
+      // the whole person, both answer the same free slots.
+      return { from: '', to: '', slotMinutes: 30, members: [{ teamMemberId: 'marco', slots: SLOTS }, { teamMemberId: 'google|1002', slots: SLOTS }] };
     }
     throw new Error('unexpected ' + path);
   },
@@ -975,9 +1018,7 @@ const view = createCalendarioView({
   now: () => new Date('2026-10-22T10:00:00Z'),
 });
 await view.render();
-byName('members').value = 'marco, sara';
-byName('members').dispatchEvent(new Event('input', { bubbles: true }));
-click('Mostra settimana');
+// The roster loads the whole team's week by itself: no typed filter.
 await new Promise((r) => setTimeout(r, 100));
 await new Promise((r) => setTimeout(r, 100));
 document.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco giovedì';
@@ -1241,7 +1282,13 @@ const client = {
       return { spaceId: 'spazio-1', overrides: [] };
     }
     if (path.indexOf('/api/connectors') === 0) {
-      return { connectors: [{ status: 'active' }, { status: 'active' }, { status: 'revoked' }] };
+      // Real rows name their channel: the space card counts linked channels
+      // with the shared count (backlog:e381c48581fa), two here.
+      return { connectors: [
+        { channel: 'whatsapp', connectionKey: 'wa-1', status: 'active' },
+        { channel: 'email', connectionKey: 'mail-1', status: 'active' },
+        { channel: 'instagram', connectionKey: 'ig-1', status: 'revoked' },
+      ] };
     }
     if (path.indexOf('/api/customer-data/customers') === 0) {
       return { items: [], total: 3, totalIsExact: true, page: 1, pageSize: 10, pages: 1 };
@@ -1301,7 +1348,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
   unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
-    .filter((node) => node.textContent.includes('Non disponibile')).length,
+    .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
     case 'componenti': return `
@@ -1373,8 +1420,12 @@ export function harnessHtml(name, publicDir) {
   const screen = SCREENS.find((entry) => entry.name === name);
   if (!screen || !screen.module) throw new Error(`bo:shots has no harness for screen "${name}"`);
   return `<!doctype html><html lang="it"><head><meta charset="utf-8">`
+    + PACE_PRELUDE
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-    + `<link rel="stylesheet" href="/styles.css"></head>`
+    + `<link rel="stylesheet" href="/styles.css">`
+    // The text caret blinks on the real clock's beat (see PACE_PRELUDE): a
+    // focused field would show it in one run and not the next.
+    + `<style>* { caret-color: transparent !important; }</style></head>`
     + `<body><main class="bo-shell">`
     + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
     + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
@@ -1389,13 +1440,84 @@ export function harnessHtml(name, publicDir) {
 }
 
 /**
+ * The pacer (backlog:30dc70e6b076). Chromium's `--virtual-time-budget`
+ * keeps the virtual clock still while a network fetch is pending, and only
+ * then: the moment the page waits on anything else with no fetch open — a
+ * webfont decoding, a Blob read, any work off the main thread — the clock
+ * jumps straight to the next timer, and with none pending to the end of
+ * the budget, so the run ends. On a loaded runner such a wait ended shots
+ * before their ready title («import desktop … no import-ready»,
+ * «nuovo-modulo phone …», then «cliente desktop … no cliente-ready» on
+ * #836 and #839). Holding each known wait (#841) cured the waits we knew
+ * of, one by one, and a hold freezes the clock outright: a webfont load
+ * that needs the clock to move then hangs until the hold gives up.
+ *
+ * The cure lives here, once, for every harness: until the harness writes
+ * its `<name>-ready` title (or throws), the page keeps one beat going — a
+ * fetch the shot server answers after PACE_MS of real time, then a virtual
+ * timer of PACE_STEP_MS. While the fetch is pending the clock stands still;
+ * during the timer it can move at most PACE_STEP_MS. So the virtual clock
+ * never runs faster than PACE_STEP_MS per PACE_MS of real time while the
+ * harness works: a wait off the main thread costs its real length, never
+ * the whole budget, and timers, frames and webfonts keep moving. At the
+ * ready title the beat stops and the budget runs out at once, as before.
+ */
+export const VIRTUAL_BUDGET_MS = 8000;
+/** Real time of one beat. */
+export const PACE_MS = 20;
+/** Virtual time one beat may let pass. */
+export const PACE_STEP_MS = 10;
+
+export const PACE_PRELUDE = `<script>
+(() => {
+  const later = window.setTimeout.bind(window);
+  let done = false;
+  const beat = () => {
+    if (done) return;
+    fetch('/__bo-pace').catch(() => {}).then(() => {
+      if (!done) later(beat, ${PACE_STEP_MS});
+    });
+  };
+  const finish = () => { done = true; };
+  new MutationObserver(() => {
+    if (/-ready$/.test(document.title)) finish();
+  }).observe(document.head, { childList: true, subtree: true, characterData: true });
+  // A harness that throws, or a module that does not load, stops the beat:
+  // the run fails at once instead of spending the budget slowly. A missing
+  // image is not the harness failing.
+  window.addEventListener('error', (event) => {
+    if (event instanceof ErrorEvent || event.target instanceof HTMLScriptElement) finish();
+  }, true);
+  window.addEventListener('unhandledrejection', finish);
+  beat();
+})();
+</script>`;
+
+
+/**
  * Serves the public /bo assets and the harness pages on 127.0.0.1 only.
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor) {
+  /** Beats not answered yet: closing the server answers them. */
+  const beats = new Set();
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    // backlog:30dc70e6b076: one beat of the page pacer (see PACE_PRELUDE).
+    if (url.pathname === '/__bo-pace') {
+      const answer = () => {
+        clearTimeout(timer);
+        beats.delete(answer);
+        if (res.writableEnded) return;
+        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.end();
+      };
+      const timer = setTimeout(answer, PACE_MS);
+      beats.add(answer);
+      res.on('close', answer);
+      return;
+    }
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1427,6 +1549,10 @@ function startServer(publicDir, pageFor) {
     }
     res.writeHead(404);
     res.end('no');
+  });
+  // A beat pending at shutdown never keeps the process alive.
+  server.on('close', () => {
+    for (const answer of [...beats]) answer();
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -1489,6 +1615,55 @@ export function chromiumRuns(binary) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Sandbox-less Linux executors (this lane: unprivileged user namespaces
+ * disabled) refuse Chromium's zygote bootstrap, so a plain probe dies with
+ * "No usable sandbox" on a binary that paints fine without the sandbox.
+ * Probe once with a blank page, retrying once with `--no-sandbox`: only an
+ * exit-0 HTML dump counts as runnable. Returns the winning extra flags
+ * (`[]` when the sandbox works, `['--no-sandbox']` when only the retry
+ * paints) or `null` when nothing runs. Every render run reuses the winning
+ * flags, so the probe and the PNGs always launch Chromium the same way.
+ * (backlog:cd0ad69b)
+ * @param {string | null} binary
+ * @returns {Array<string> | null}
+ */
+export function chromiumFlags(binary) {
+  if (!binary) return null;
+  const probe = (extra) => {
+    try {
+      const out = spawnSync(binary, ['--headless', '--disable-gpu', '--dump-dom', ...extra, 'about:blank'], {
+        encoding: 'utf8',
+        timeout: 60_000,
+      });
+      return out.status === 0 && String(out.stdout ?? '').includes('<html');
+    } catch {
+      return false;
+    }
+  };
+  if (probe([])) return [];
+  if (probe(['--no-sandbox'])) return ['--no-sandbox'];
+  return null;
+}
+
+/**
+ * How far a harness got when its run ended without the ready title: the
+ * title it reached, whether the shell and the view painted, and the last
+ * Chromium stderr line. A red run then says where it stopped instead of
+ * only that it stopped.
+ * @param {{ stdout: string, stderr: string }} dom
+ */
+export function harnessStage(dom) {
+  const out = String(dom.stdout ?? '');
+  const title = out.match(/<title>(.*?)<\/title>/s)?.[1] ?? null;
+  const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
+  const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
+  const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+  return `title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
+    + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
+    + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
 }
 
 /**
@@ -1703,7 +1878,7 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 active connectors,
+      // C7: both cards paint the real statistic (2 linked channels,
       // 2 rendered members, exact total 3). A card that cannot count paints
       // no row, so the gate requires both rows here.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
@@ -1729,8 +1904,8 @@ export function assertProbe(name, probe) {
       if (probe.openers !== n) {
         throw new Error(`connettori: the probe lists ${String(probe.openers)} row openers, expected ${n}`);
       }
-      // A channel with no adapter in the composition reads «Non disponibile
-      // qui» and offers no Collega (Telegram in the demo data). Every other
+      // A channel with no adapter and no link reads «Non ancora disponibile»
+      // (the shared channel state, backlog:e381c48581fa) and offers no Collega (Telegram in the demo data). Every other
       // row offers one.
       const connectable = n - (typeof probe.unavailable === 'number' ? probe.unavailable : 0);
       if (probe.flows !== connectable) {
@@ -1760,9 +1935,9 @@ export function assertProbe(name, probe) {
  * proof come from two Chromium runs over the same harness URL with the
  * same fixtures under a frozen virtual clock, so both runs paint the same
  * logical page state and the PNG is gated on the probe of that state.
- * @param {{ binary: string, port: number, screen: object, outDir: string }} options
+ * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
  */
-async function renderScreen({ binary, port, screen, outDir }) {
+async function renderScreen({ binary, flags, port, screen, outDir }) {
   const page = screen.name === 'login'
     ? `http://127.0.0.1:${port}/login.html`
     : `http://127.0.0.1:${port}/shot-${screen.name}.html`;
@@ -1776,11 +1951,17 @@ async function renderScreen({ binary, port, screen, outDir }) {
   const shots = [];
   for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', PHONE]]) {
     const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
+    // Reduced motion: the pacer lets the virtual clock follow the real one
+    // while a harness works, so the moment a looping animation (the Stato
+    // sync dot, a skeleton pulse) starts differs run to run. The still
+    // shows each element at rest, and two runs give the same PNG.
     const run = await runChromium(binary, [
       '--headless',
+      ...flags,
       `--screenshot=${file}`,
       `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
       '--hide-scrollbars',
       '--disable-background-networking',
       page,
@@ -1789,17 +1970,18 @@ async function renderScreen({ binary, port, screen, outDir }) {
       throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
     }
     const dom = await runChromium(binary, [
-      '--headless', '--dump-dom',
+      '--headless', ...flags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
       '--disable-background-networking',
       page,
     ], 120000);
     if (dom.status !== 0) {
-      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status}`);
+      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status} (stderr: ${(dom.stderr ?? '').slice(-500)})`);
     }
     if (screen.ready !== null && !dom.stdout.includes(`<title>${screen.ready}</title>`)) {
-      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready})`);
+      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready}; ${harnessStage(dom)})`);
     }
     if (screen.module !== null) {
       if (!dom.stdout.includes('id="boSidebar"') || !dom.stdout.includes('id="boTopbar"')) {
@@ -1866,8 +2048,10 @@ async function main() {
     return;
   }
   const binary = findChromium();
-  if (!chromiumRuns(binary)) {
-    console.log('Skipping bo:shots: no runnable Chromium found (set CHROMIUM_BIN to override).');
+  const flags = chromiumFlags(binary);
+  if (flags === null) {
+    console.error('bo:shots: no runnable Chromium found, even with --no-sandbox (set CHROMIUM_BIN to override).');
+    process.exitCode = 1;
     return;
   }
   const wanted = args.screen ?? null;
@@ -1885,7 +2069,7 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, port: address.port, screen, outDir });
+      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

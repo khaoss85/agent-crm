@@ -1,5 +1,6 @@
 // @ts-check
 
+import { takePendingClientiView } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -21,8 +22,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
-import { humanReadError } from './admin-core.js';
-import { euro, plainAmount } from './admin-labels.js';
+import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -73,10 +73,14 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
+/** Quiet time after the last keystroke before the list searches (same as the Calendario). */
+export const SEARCH_DEBOUNCE_MS = 300;
 /** «Da leggere»: how often the open list re-reads unread state. */
 export const LIST_REFRESH_MS = 60_000;
 /** The server's view of customers with unread inbound messages. */
 const UNREAD_VIEW = 'da-leggere';
+/** «Da rispondere» (backlog:c2bf6b206d96): lit like «Da leggere» when someone waits. */
+const AWAITING_VIEW = 'da-rispondere';
 /**
  * Grid track per column id: [minimum px, flexible share]. Optional and custom
  * columns get a readable 120px minimum (review #600 P2: never a 0px track).
@@ -123,11 +127,6 @@ const channelLabel = (system) => CHANNEL_LABELS[String(system ?? '').toLowerCase
  * neighbours of the current page, gaps collapsed to "…".
  * @param {number} pages @param {number} page
  */
-/** Two-letter initials for the row avatar, like the prototype. */
-function initialsOf(name) {
-  const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
-  return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
-}
 
 export function pageNumbers(pages, page) {
   const nums = [];
@@ -142,7 +141,9 @@ export function pageNumbers(pages, page) {
  * @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void,
  *   notify?: (message: string) => void, spaceId?: string | (() => (string | null | undefined)),
  *   onAskAi?: ((question: string) => void) | null,
- *   onManualAdd?: (() => void) | null, storage?: any}} deps
+ *   onManualAdd?: (() => void) | null, storage?: any, schedule?: any,
+ *   searchDelayMs?: number, searchSchedule?: (fn: () => void, ms: number) => any,
+ *   onTotal?: ((total: {count: number, exact: boolean}) => void) | null}} deps
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
@@ -170,6 +171,17 @@ export function createCustomerListView(deps) {
   };
   let data = null;
   let renderToken = 0;
+  // Search while typing (backlog:754918ad8da7): the quiet time before one
+  // read, and the timer — both injectable so tests drive them by hand. A
+  // newer keystroke, Enter or Azzera bumps the sequence and drops the
+  // pending read.
+  const searchDelayMs = Number.isInteger(deps.searchDelayMs) && deps.searchDelayMs >= 0
+    ? deps.searchDelayMs
+    : SEARCH_DEBOUNCE_MS;
+  const searchSchedule = typeof deps.searchSchedule === 'function'
+    ? deps.searchSchedule
+    : (fn, ms) => setTimeout(fn, ms);
+  let searchSeq = 0;
   // «Da leggere»: while the list is on screen and the server serves read
   // state, it re-reads quietly so a new message lights its row up without a
   // reload. Injectable for tests; the handle never keeps a process alive.
@@ -234,11 +246,46 @@ export function createCustomerListView(deps) {
     return params.toString();
   }
 
+  /**
+   * The screen frame (title, search, views, tools, chips, table) is built
+   * once per route entry (backlog:754918ad8da7): a reload repaints only the
+   * parts that read the answer, so the search field keeps its focus and its
+   * caret while the list filters, an open menu stays open, and the rows
+   * stay on screen while the next page loads — no blank frame, no jump.
+   */
+  let frame = null;
+
+  /** Route entry: a fresh frame, then the read. */
+  function render() {
+    // A keystroke read left pending by the previous frame dies here.
+    searchSeq += 1;
+    // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
+    // the view alone, never a search or filter left from an earlier visit
+    // (review Muse #795).
+    const askedView = takePendingClientiView(store);
+    if (askedView !== null) {
+      Object.assign(state, {
+        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    } else if (state.q !== '') {
+      // backlog:4968615de0a4: coming back to Clienti from another page the
+      // search starts empty — never a list filtered by a word typed earlier.
+      // Filters, order and columns stay: they show in the bar.
+      state.q = '';
+      state.page = 1;
+    }
+    drawShell();
+    return load();
+  }
+
   async function load() {
     const token = ++renderToken;
-    drawShell();
-    const statusLine = mount.querySelector?.('.bo-clienti-status');
-    if (statusLine) statusLine.textContent = 'Caricamento…';
+    if (frame === null) drawShell();
+    const statusLine = frame.status;
+    // The first read has nothing to show yet; later reads keep the rows
+    // and only mark the table busy, so the bar never jumps.
+    if (data === null && statusLine) statusLine.textContent = 'Caricamento…';
+    frame.body.setAttribute('aria-busy', 'true');
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
@@ -246,8 +293,28 @@ export function createCustomerListView(deps) {
       data = { error: humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }), status: error?.status ?? null };
     }
     if (token !== renderToken) return;
-    drawShell();
+    paint();
+    reportTotal();
     armRefresh(token);
+  }
+
+  /**
+   * The unfiltered list total is the Clienti badge (backlog:ff8bb60f417f):
+   * whenever the list reads it, the sidebar takes it, so the badge never
+   * stays behind a customer created anywhere — form, AI, import or another
+   * tab. A filtered page or a failed read says nothing.
+   */
+  function reportTotal() {
+    if (typeof deps.onTotal !== 'function' || !data || data.error) return;
+    const unfiltered = state.vista === 'tutti' && state.q === '' && state.canale === 'all'
+      && state.stato === 'all' && state.campo === '';
+    const total = Number(data.total);
+    if (!unfiltered || !Number.isInteger(total) || total < 0) return;
+    try {
+      deps.onTotal({ count: total, exact: data.totalIsExact !== false });
+    } catch {
+      // The badge stays as it was; the list is already painted.
+    }
   }
 
   /** True when the server names read state on the rows (`unreadCount`). */
@@ -284,7 +351,7 @@ export function createCustomerListView(deps) {
     if (token !== renderToken) return;
     if (unreadShape(next) !== unreadShape(data)) {
       data = next;
-      drawShell();
+      paint();
     }
     armRefresh(token);
   }
@@ -337,10 +404,11 @@ export function createCustomerListView(deps) {
    * optional badge, never words. The accessible name always says what the
    * icon means, so the icon-only toggle stays usable without sight.
    */
-  function toolLabel(icon, { text = null, badge = null } = {}) {
+  function toolLabel(icon, { text = null, word = null, badge = null } = {}) {
     const node = el('span', 'bo-clienti-tool');
     node.appendChild(uiIcon(doc, icon));
     if (text !== null) node.appendChild(el('span', 'bo-clienti-toolcount', text));
+    if (word !== null) node.appendChild(el('span', 'bo-clienti-toolword', word));
     if (badge !== null && badge > 0) node.appendChild(el('span', 'bo-clienti-toolbadge', String(badge)));
     return node;
   }
@@ -350,7 +418,7 @@ export function createCustomerListView(deps) {
   const toggleOf = (wrap) => Array.from(wrap?.childNodes ?? [])
     .find((node) => String(node.tagName ?? '').toLowerCase() === 'button') ?? null;
 
-  function menuBox(label, build, title, buttonClass = 'bo-clienti-menubutton') {
+  function menuBox(label, build, title, buttonClass = 'bo-clienti-menubutton', scope = 'frame') {
     const wrap = el('div', 'bo-clienti-menuwrap');
     const button = el('button', buttonClass, typeof label === 'string' ? label : '');
     if (label !== null && typeof label === 'object') button.appendChild(label);
@@ -361,7 +429,7 @@ export function createCustomerListView(deps) {
     const syncExpanded = () => {
       button.setAttribute('aria-expanded', menu.classList.contains('hidden') ? 'false' : 'true');
     };
-    openMenus.push({ menu, sync: syncExpanded });
+    openMenus.push({ menu, sync: syncExpanded, scope });
     button.addEventListener('click', (event) => {
       event?.stopPropagation?.();
       const willOpen = menu.classList.contains('hidden');
@@ -389,13 +457,50 @@ export function createCustomerListView(deps) {
     return wrap;
   }
 
+  /** The menus and the columns, from the last answer or the prototype fallbacks. */
+  function metaOf() {
+    const views = data?.views ?? FALLBACK_VIEWS;
+    const sorts = data?.sorts ?? FALLBACK_SORTS;
+    // Custom fields (backlog:434cc39a): every space-wide definition reads
+    // as an opt-in list column, off until the operator asks for it — the
+    // same explicit-boolean rule as the AI budget column.
+    const customDefs = Array.isArray(data?.customColumns) ? data.customColumns : [];
+    const columnsMeta = [
+      ...(data?.columns ?? FALLBACK_COLUMNS),
+      ...customDefs.map((def) => ({
+        id: `campo:${def?.key ?? ''}`,
+        label: def?.label ?? def?.key ?? 'campo',
+        always: false,
+        ai: false,
+        def: false,
+      })),
+    ];
+    const sizes = data?.pageSizes ?? FALLBACK_SIZES;
+    return { views, sorts, customDefs, columnsMeta, sizes };
+  }
+
+  /**
+   * One choice in a pick-one menu (backlog:754918ad8da7): the active option
+   * carries the ✓ and aria-checked, like the Pipeline filter voices, so the
+   * open menu says which order or filter is on.
+   */
+  function choiceItem(label, active) {
+    const item = el('button', 'bo-clienti-item' + (active ? ' active' : ''));
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', active ? 'true' : 'false');
+    const check = el('span', 'bo-clienti-check', active ? '✓' : '');
+    check.setAttribute('aria-hidden', 'true');
+    item.appendChild(check);
+    item.appendChild(el('span', undefined, label));
+    return item;
+  }
+
+  /** Builds the frame once per route entry: nothing in it reads the answer. */
   function drawShell() {
     clearMount();
     openMenus.length = 0;
     const panel = el('section', 'bo-clienti');
-    const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
-    const title = el('h1', 'bo-clienti-title', total === null ? 'Clienti' : 'Clienti ');
-    if (total !== null) title.appendChild(el('span', 'bo-clienti-count', String(total)));
+    const title = el('h1', 'bo-clienti-title', 'Clienti');
     const headRow = el('div', 'bo-clienti-bar');
     headRow.appendChild(title);
     // "Aggiungi cliente": AI paste writes nothing until applied (preview is
@@ -405,7 +510,10 @@ export function createCustomerListView(deps) {
     headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
       menu.classList.add('ui-add-menu');
       const addItem = (action, label, hint, onPick) => {
+        // backlog:4968615de0a4: the import has its own file mark, never
+        // the pencil of «Compila manualmente».
         const item = uiAddOption(doc, { kind: action === 'add-ai' ? 'ai' : 'manual', title: label, line: hint,
+          icon: action === 'add-import' ? 'importa' : undefined,
           attrs: { 'data-action': action } });
         item.addEventListener('click', () => {
           closeMenu();
@@ -432,57 +540,21 @@ export function createCustomerListView(deps) {
       });
     }, 'Aggiungi cliente', 'bo-clienti-menubutton ui-btn-primary'));
     panel.appendChild(headRow);
-    panel.appendChild(el('p', 'bo-muted bo-clienti-status', ''));
+    // The status line (first read, empty page, errors) sits under the bar,
+    // beside the table it speaks about: its text never pushes the search
+    // and the tools down (backlog:754918ad8da7).
+    const status = el('p', 'bo-muted bo-clienti-status', '');
 
-    const views = data?.views ?? FALLBACK_VIEWS;
-    const sorts = data?.sorts ?? FALLBACK_SORTS;
-    // Custom fields (backlog:434cc39a): every space-wide definition reads
-    // as an opt-in list column, off until the operator asks for it — the
-    // same explicit-boolean rule as the AI budget column.
-    const customDefs = Array.isArray(data?.customColumns) ? data.customColumns : [];
-    const columnsMeta = [
-      ...(data?.columns ?? FALLBACK_COLUMNS),
-      ...customDefs.map((def) => ({
-        id: `campo:${def?.key ?? ''}`,
-        label: def?.label ?? def?.key ?? 'campo',
-        always: false,
-        ai: false,
-        def: false,
-      })),
-    ];
-    const sizes = data?.pageSizes ?? FALLBACK_SIZES;
-    if (state.columns === null) state.columns = normalizeColumns(columnsMeta, readStoredColumns());
-    else state.columns = normalizeColumns(columnsMeta, state.columns);
-
-    // ── quick views ─────────────────────────────────────────────────────
-    const viewsRow = el('div', 'bo-clienti-views');
-    viewsRow.setAttribute('role', 'tablist');
-    viewsRow.setAttribute('aria-label', 'Viste rapide');
-    for (const view of views) {
-      // The server names a finite `count` per view when it can know it; a
-      // view without one renders its label only — honest absence, never a
-      // guessed number.
-      const count = Number(view.count);
-      const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
-      const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
-      button.setAttribute('role', 'tab');
-      button.setAttribute('data-view', view.id);
-      if (view.id === UNREAD_VIEW && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
-      if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
-      button.addEventListener('click', () => {
-        if (state.vista === view.id) return;
-        state.vista = view.id;
-        reload();
-      });
-      viewsRow.appendChild(button);
-    }
     // ── search (the prototype's ✦ field), then views and tools on one bar ──
-    const toolbar = el('div', 'bo-clienti-toolbar');
     const form = el('form', 'bo-clienti-search');
     form.appendChild(el('span', 'bo-clienti-spark', '✦'));
     form.setAttribute('role', 'search');
     const input = el('input', 'ui-field'); // BO-F6-02: through the library, never raw.
-    input.setAttribute('type', 'search');
+    // backlog:4968615de0a4: one way to clear the search — the field's own
+    // Azzera. A plain text field carries no browser ×, and the search is no
+    // chip either (it is already in the field); Invio still searches.
+    input.setAttribute('type', 'text');
+    input.setAttribute('enterkeyhint', 'search');
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
     input.setAttribute('placeholder', 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
@@ -493,13 +565,32 @@ export function createCustomerListView(deps) {
     const syncClearSearch = () => {
       clearSearch.classList.toggle('hidden', String(input.value ?? '') === '');
     };
-    input.addEventListener('input', syncClearSearch);
     syncClearSearch();
+    // The list filters while the operator types (backlog:754918ad8da7): one
+    // read after SEARCH_DEBOUNCE_MS of quiet, never one per keystroke. The
+    // field itself is never rebuilt, so focus and caret stay where they are.
+    // Enter still searches at once.
+    // The quiet-time read skips a query already on screen; an explicit
+    // Cerca/Invio or Azzera always reads, so it also retries a failed read.
+    const searchNow = ({ explicit = false } = {}) => {
+      searchSeq += 1;
+      const next = String(input.value ?? '').trim().replace(/\s+/g, ' ');
+      if (!explicit && next === state.q && !data?.error) return;
+      state.q = next;
+      reload();
+    };
+    input.addEventListener('input', () => {
+      syncClearSearch();
+      const seq = ++searchSeq;
+      searchSchedule(() => {
+        if (seq !== searchSeq) return;
+        searchNow();
+      }, searchDelayMs);
+    });
     clearSearch.addEventListener('click', () => {
       input.value = '';
-      state.q = '';
       syncClearSearch();
-      reload();
+      searchNow({ explicit: true });
     });
     const go = el('button', undefined, 'Cerca');
     go.setAttribute('type', 'submit');
@@ -508,21 +599,96 @@ export function createCustomerListView(deps) {
     form.appendChild(go);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
-      state.q = String(input.value ?? '').trim().replace(/\s+/g, ' ');
-      reload();
+      searchNow({ explicit: true });
     });
     panel.appendChild(form);
+
+    const viewsRow = el('div', 'bo-clienti-views');
+    viewsRow.setAttribute('role', 'tablist');
+    viewsRow.setAttribute('aria-label', 'Viste rapide');
+    const toolbar = el('div', 'bo-clienti-toolbar');
     const bar = el('div', 'bo-clienti-bar');
     bar.appendChild(viewsRow);
     bar.appendChild(toolbar);
+    panel.appendChild(bar);
+    const chips = el('div', 'bo-clienti-chips');
+    panel.appendChild(chips);
+    panel.appendChild(status);
+    const body = el('div', 'bo-clienti-body');
+    panel.appendChild(body);
+    mount.appendChild(panel);
+    frame = { panel, title, status, input, syncClearSearch, viewsRow, toolbar, chips, body };
+    paintFrame();
+  }
+
+  /** Repaints what reads the answer: title count, views, tools, chips and the table. */
+  function paint() {
+    if (frame === null) drawShell();
+    else paintFrame();
+  }
+
+  function paintFrame() {
+    const meta = metaOf();
+    if (state.columns === null) state.columns = normalizeColumns(meta.columnsMeta, readStoredColumns());
+    else state.columns = normalizeColumns(meta.columnsMeta, state.columns);
+    const total = data && Number.isFinite(Number(data.total)) ? Number(data.total) : null;
+    frame.title.textContent = total === null ? 'Clienti' : 'Clienti ';
+    if (total !== null) frame.title.appendChild(el('span', 'bo-clienti-count', String(total)));
+    paintViews(meta);
+    paintTools(meta);
+    paintChips(meta);
+    frame.body.removeAttribute('aria-busy');
+    while (frame.body.firstChild) frame.body.removeChild(frame.body.firstChild);
+    frame.status.textContent = '';
+    if (!data) return;
+    if (data.error) {
+      const unavailable = data.status === 404;
+      frame.status.textContent = unavailable
+        ? 'Clienti non composto in questo spazio'
+        : data.error;
+      return;
+    }
+    drawList(frame.body, meta.columnsMeta, meta.sizes);
+  }
+
+  // ── quick views ─────────────────────────────────────────────────────
+  function paintViews({ views }) {
+    const viewsRow = frame.viewsRow;
+    while (viewsRow.firstChild) viewsRow.removeChild(viewsRow.firstChild);
+    for (const view of views) {
+      // The server names a finite `count` per view when it can know it; a
+      // view without one renders its label only — honest absence, never a
+      // guessed number.
+      const count = Number(view.count);
+      const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
+      const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
+      button.setAttribute('role', 'tab');
+      button.setAttribute('data-view', view.id);
+      if ((view.id === UNREAD_VIEW || view.id === AWAITING_VIEW) && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
+      if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
+      button.addEventListener('click', () => {
+        if (state.vista === view.id) return;
+        state.vista = view.id;
+        reload();
+      });
+      viewsRow.appendChild(button);
+    }
+  }
+
+  function paintTools({ sorts, customDefs, columnsMeta }) {
+    const toolbar = frame.toolbar;
+    while (toolbar.firstChild) toolbar.removeChild(toolbar.firstChild);
+    for (let index = openMenus.length - 1; index >= 0; index -= 1) {
+      if (openMenus[index].scope === 'tools') openMenus.splice(index, 1);
+    }
 
     // The prototype toolbar carries exactly three icons (filters, sort,
     // columns with its visible/total), so the assistant entry joins the
     // Filtri menu instead of a fourth word beside it: same question, same
     // fallback, same action, one tap away.
-    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
+    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
     const filtersBox = menuBox(toolLabel('filtri', { badge: activeFilters }), (menu, closeMenu) => {
-      const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l\u2019AI');
+      const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l’AI');
       aiItem.setAttribute('data-action', 'ai-filter');
       aiItem.setAttribute('title', 'Descrivi chi vuoi vedere: senza chiave LLM il pannello resta utilizzabile e la domanda libera è spenta');
       aiItem.addEventListener('click', () => {
@@ -536,8 +702,7 @@ export function createCustomerListView(deps) {
       menu.appendChild(aiItem);
       menu.appendChild(el('p', 'bo-clienti-group', 'Canale'));
       for (const value of ['all', 'whatsapp', 'instagram', 'facebook', 'email', 'tiktok', 'phone']) {
-        const item = el('button', 'bo-clienti-item' + (state.canale === value ? ' active' : ''),
-          value === 'all' ? 'Tutti i canali' : channelLabel(value));
+        const item = choiceItem(value === 'all' ? 'Tutti i canali' : channelLabel(value), state.canale === value);
         item.setAttribute('data-filter', `canale:${value}`);
         item.addEventListener('click', () => {
           state.canale = value;
@@ -547,8 +712,7 @@ export function createCustomerListView(deps) {
       }
       menu.appendChild(el('p', 'bo-clienti-group', 'Stato'));
       for (const value of ['all', 'cliente', 'contatto']) {
-        const item = el('button', 'bo-clienti-item' + (state.stato === value ? ' active' : ''),
-          value === 'all' ? 'Tutti gli stati' : STATO_LABELS[value]);
+        const item = choiceItem(value === 'all' ? 'Tutti gli stati' : STATO_LABELS[value], state.stato === value);
         item.setAttribute('data-filter', `stato:${value}`);
         item.addEventListener('click', () => {
           state.stato = value;
@@ -591,31 +755,37 @@ export function createCustomerListView(deps) {
         }
       }
       menu.appendChild(el('p', 'bo-muted', 'Es. «clienti di Milano con offerta sopra 10.000 €»'));
-    }, 'Filtri');
+    }, 'Filtri', undefined, 'tools');
     toggleOf(filtersBox)?.setAttribute('aria-label', activeFilters > 0 ? `Filtri: ${activeFilters} attivi` : 'Filtri');
     toolbar.appendChild(filtersBox);
 
+    // backlog:754918ad8da7: the toggle reads «Ordina: <ordine>» on screen,
+    // not only in its accessible name, and the open menu ticks the order on.
     const currentSort = sorts.find((sort) => sort.id === state.sort) ?? null;
-    const sortBox = menuBox(toolLabel('ordina'), (menu) => {
+    const sortBox = menuBox(toolLabel('ordina', { word: currentSort ? `Ordina: ${currentSort.label}` : null }), (menu) => {
       menu.appendChild(el('p', 'bo-clienti-group', 'Ordina per'));
       for (const sort of sorts) {
-        const item = el('button', 'bo-clienti-item' + (state.sort === sort.id ? ' active' : ''), sort.label);
+        const item = choiceItem(sort.label, state.sort === sort.id);
         item.setAttribute('data-sort', sort.id);
         item.addEventListener('click', () => {
+          if (state.sort === sort.id) return;
           state.sort = sort.id;
           reload();
         });
         menu.appendChild(item);
       }
-    }, `Ordina: ${currentSort?.label ?? ''}`);
+    }, `Ordina: ${currentSort?.label ?? ''}`, undefined, 'tools');
     toggleOf(sortBox)?.setAttribute('aria-label', `Ordina: ${currentSort?.label ?? ''}`);
     toolbar.appendChild(sortBox);
 
     const configurable = columnsMeta.filter((column) => !column.always);
-    const visibleCount = configurable.filter((column) => state.columns[column.id] === true).length;
+    const visibleCount = () => configurable.filter((column) => state.columns[column.id] === true).length;
     // Prototype "04 Clienti": the columns toggle is an icon with its
     // visible/total count, like the toolbar's other two icons.
-    const columnsBox = menuBox(toolLabel('colonne', { text: `${visibleCount}/${configurable.length}` }), (menu) => {
+    const columnsLabel = toolLabel('colonne', { text: `${visibleCount()}/${configurable.length}` });
+    /** @type {Array<{column: any, item: any}>} */
+    const columnItems = [];
+    const columnsBox = menuBox(columnsLabel, (menu) => {
       menu.appendChild(el('p', 'bo-clienti-group', 'Colonne visibili'));
       for (const column of columnsMeta) {
         if (!column.always) continue;
@@ -625,32 +795,54 @@ export function createCustomerListView(deps) {
       }
       for (const column of columnsMeta) {
         if (column.always) continue;
-        const on = state.columns[column.id] === true;
-        const label = `${on ? '✓' : '○'} ${column.label}${column.ai ? ' ✦' : ''}`;
-        const item = el('button', 'bo-clienti-item', label);
+        const item = el('button', 'bo-clienti-item', '');
         item.setAttribute('data-column', column.id);
+        item.setAttribute('role', 'menuitemcheckbox');
         item.addEventListener('click', () => {
           state.columns = { ...state.columns, [column.id]: state.columns[column.id] !== true };
-          writeStoredColumns();
-          drawShell();
+          applyColumns();
         });
+        columnItems.push({ column, item });
         menu.appendChild(item);
       }
       const reset = el('button', 'bo-clienti-item', 'Ripristina');
       reset.setAttribute('data-action', 'reset-columns');
       reset.addEventListener('click', () => {
         state.columns = normalizeColumns(columnsMeta, null);
-        writeStoredColumns();
-        drawShell();
+        applyColumns();
       });
       menu.appendChild(reset);
-    }, 'Colonne');
-    toggleOf(columnsBox)?.setAttribute('aria-label', `Colonne: ${visibleCount} di ${configurable.length} visibili`);
+    }, 'Colonne', undefined, 'tools');
+    const columnsToggle = toggleOf(columnsBox);
+    const countNode = columnsLabel.querySelector?.('.bo-clienti-toolcount') ?? null;
+    const syncColumnsMenu = () => {
+      for (const { column, item } of columnItems) {
+        const on = state.columns[column.id] === true;
+        item.textContent = `${on ? '✓' : '○'} ${column.label}${column.ai ? ' ✦' : ''}`;
+        item.setAttribute('aria-checked', on ? 'true' : 'false');
+      }
+      if (countNode) countNode.textContent = `${visibleCount()}/${configurable.length}`;
+      columnsToggle?.setAttribute('aria-label', `Colonne: ${visibleCount()} di ${configurable.length} visibili`);
+    };
+    // A column tick repaints the table and this menu's own lines only: the
+    // menu stays open between ticks (backlog:754918ad8da7).
+    const applyColumns = () => {
+      writeStoredColumns();
+      syncColumnsMenu();
+      if (data && !data.error) {
+        while (frame.body.firstChild) frame.body.removeChild(frame.body.firstChild);
+        const meta = metaOf();
+        drawList(frame.body, meta.columnsMeta, meta.sizes);
+      }
+    };
+    syncColumnsMenu();
     toolbar.appendChild(columnsBox);
-    panel.appendChild(bar);
+  }
 
-    // ── active filter chips with × ────────────────────────────────────────
-    const chips = el('div', 'bo-clienti-chips');
+  // ── active filter chips with × ────────────────────────────────────────
+  function paintChips({ customDefs }) {
+    const chips = frame.chips;
+    while (chips.firstChild) chips.removeChild(chips.firstChild);
     const chip = (label, clear) => {
       const node = el('span', 'bo-clienti-chip');
       node.appendChild(el('span', undefined, label));
@@ -662,7 +854,6 @@ export function createCustomerListView(deps) {
     };
     if (state.canale !== 'all') chip(channelLabel(state.canale), () => { state.canale = 'all'; reload(); });
     if (state.stato !== 'all') chip(STATO_LABELS[state.stato] ?? state.stato, () => { state.stato = 'all'; reload(); });
-    if (state.q !== '') chip(`«${state.q}»`, () => { state.q = ''; reload(); });
     if (state.campo !== '') {
       const def = customDefs.find((entry) => String(entry?.key ?? '') === state.campo) ?? null;
       const label = String(def?.label ?? state.campo);
@@ -673,29 +864,26 @@ export function createCustomerListView(deps) {
       });
     }
     if (chips.childNodes.length > 0) {
-      const clearAll = el('button', 'bo-clienti-clear', 'Azzera');
+      // Clears the filters only: the search keeps its own Azzera.
+      const clearAll = el('button', 'bo-clienti-clear', 'Azzera filtri');
       clearAll.addEventListener('click', () => {
         state.canale = 'all';
         state.stato = 'all';
-        state.q = '';
         state.campo = '';
         state.valore = '';
         reload();
       });
       chips.appendChild(clearAll);
-      panel.appendChild(chips);
     }
+    chips.classList.toggle('hidden', chips.childNodes.length === 0);
+  }
 
-    mount.appendChild(panel);
-    if (!data) return;
-    if (data.error) {
-      const unavailable = data.status === 404;
-      panel.querySelector('.bo-clienti-status').textContent = unavailable
-        ? 'Clienti non composto in questo spazio'
-        : data.error;
-      return;
-    }
-    drawList(panel, columnsMeta, sizes);
+  /** A cleared search empties the field too, and drops a pending keystroke read. */
+  function clearSearchField() {
+    if (frame === null) return;
+    searchSeq += 1;
+    frame.input.value = '';
+    frame.syncClearSearch();
   }
 
   function cellFor(row, columnId) {
@@ -754,12 +942,8 @@ export function createCustomerListView(deps) {
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
-        // backlog:9236684c96a7: the shared euro() groups thousands («1.200,00 €»);
-        // without a currency the amount stays bare, never a presumed € (review #761).
-        const cents = Number(row.offerValueCents);
-        const code = typeof row.offerCurrency === 'string' ? row.offerCurrency.trim() : '';
-        const amount = code === '' ? plainAmount(cents) : euro(cents, code);
-        return amount === null ? el('span', 'bo-muted', '—') : el('span', undefined, amount);
+        // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
+        return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
       }
       case 'budget': {
         if (row.budget?.available !== true) return el('span', 'bo-muted', row.budget?.reason ?? 'non disponibile');
@@ -794,7 +978,7 @@ export function createCustomerListView(deps) {
     const to = Math.min(page * pageSize, total);
     const prefix = data.totalIsExact === false ? 'almeno ' : '';
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
-    const statusLine = panel.querySelector('.bo-clienti-status');
+    const statusLine = frame?.status ?? null;
     if (statusLine) {
       statusLine.textContent = total === 0
         ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
@@ -832,7 +1016,7 @@ export function createCustomerListView(deps) {
       card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
-      head.appendChild(el('span', 'bo-clienti-avatar', initialsOf(name)));
+      head.appendChild(el('span', 'bo-clienti-avatar', customerInitials(name)));
       const who = el('div', 'bo-clienti-who');
       const nameLink = link(
         `#/customer-card/${encodeURIComponent(row.resource)}/${encodeURIComponent(row.id)}`,
@@ -928,7 +1112,9 @@ export function createCustomerListView(deps) {
    */
   function invalidate() {
     renderToken += 1;
+    // A pending keystroke read never fires on a screen the operator left.
+    searchSeq += 1;
   }
 
-  return { render: load, reload, invalidate, getState: () => ({ ...state }) };
+  return { render, reload, invalidate, getState: () => ({ ...state }) };
 }

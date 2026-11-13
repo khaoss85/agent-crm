@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 import {
   customerDataDeferredLine,
@@ -407,7 +407,7 @@ export function createCustomerDataView(deps) {
       const previewButton = el('button', undefined, 'Anteprima (non scrive nulla)');
       previewButton.setAttribute('data-action', 'preview-customer-import');
       busy.push(previewButton);
-      previewButton.addEventListener('click', () => withBusy(async () => {
+      previewButton.addEventListener('click', () => uiBusy(previewButton, 'Controllo…', () => withBusy(async () => {
         if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
         if (dupes.length > 0) throw new Error(`Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`);
         const system = file.system === '' ? slugFromFileName(file.name) : file.system;
@@ -423,12 +423,12 @@ export function createCustomerDataView(deps) {
         });
         fileState.preview = result;
         fileState.applied = '';
-      }));
+      })));
 
       const applyButton = el('button', undefined, 'Applica importazione');
       applyButton.setAttribute('data-action', 'apply-customer-import');
       busy.push(applyButton);
-      applyButton.addEventListener('click', () => withBusy(async () => {
+      applyButton.addEventListener('click', () => uiBusy(applyButton, 'Importo…', () => withBusy(async () => {
         if (built.length === 0) throw new Error('Nessuna riga da importare: abbina almeno una colonna.');
         if (dupes.length > 0) throw new Error(`Due colonne puntano su «${fieldLabel(dupes[0])}»: correggi gli abbinamenti prima di continuare, una colonna per campo.`);
         const system = file.system === '' ? slugFromFileName(file.name) : file.system;
@@ -500,7 +500,7 @@ export function createCustomerDataView(deps) {
         if (invalidPhones > 0) summary += ` ${invalidPhones} numeri di telefono non validi: controlla la colonna Telefono.`;
         fileState.preview = null;
         fileState.applied = summary;
-      }));
+      })));
 
       checkBox.appendChild(previewButton);
       checkBox.appendChild(applyButton);
@@ -551,7 +551,7 @@ export function createCustomerDataView(deps) {
       const linkButton = el('button', undefined, 'Collega come unico cliente');
       linkButton.setAttribute('data-action', 'link-canonical-identity');
       busy.push(linkButton);
-      linkButton.addEventListener('click', () => withBusy(async () => {
+      linkButton.addEventListener('click', () => uiBusy(linkButton, 'Collego…', () => withBusy(async () => {
         const value = String(canonical.value ?? '');
         const [resource, id] = value.split(':');
         if (!resource || !id) throw new Error('Scegli quale scheda tenere come principale.');
@@ -559,15 +559,15 @@ export function createCustomerDataView(deps) {
           method: 'POST',
           body: JSON.stringify({ canonicalResource: resource, canonicalId: id, reason: String(reason.value ?? '') }),
         });
-      }));
+      })));
       const dismissButton = el('button', 'danger', 'Non è lo stesso cliente');
       dismissButton.setAttribute('data-action', 'dismiss-duplicate-candidate');
       busy.push(dismissButton);
-      dismissButton.addEventListener('click', () => withBusy(async () => {
+      dismissButton.addEventListener('click', () => uiBusy(dismissButton, 'Salvo…', () => withBusy(async () => {
         await client.request(`/api/modules/duplicate-candidate/records/${encodeURIComponent(candidate.id)}/actions/dismiss-duplicate-candidate`, {
           method: 'POST', body: JSON.stringify({ reason: String(reason.value ?? '') }),
         });
-      }));
+      })));
       row.appendChild(reason);
       row.appendChild(canonical);
       row.appendChild(linkButton);
@@ -600,11 +600,11 @@ export function createCustomerDataView(deps) {
       const governButton = el('button', undefined, 'Registra decisione');
       governButton.setAttribute('data-action', 'govern-data-quality-issue');
       busy.push(governButton);
-      governButton.addEventListener('click', () => withBusy(async () => {
+      governButton.addEventListener('click', () => uiBusy(governButton, 'Registro…', () => withBusy(async () => {
         await client.request(`/api/modules/data-quality-issue/records/${encodeURIComponent(issue.id)}/actions/govern-data-quality-issue`, {
           method: 'POST', body: JSON.stringify({ decision: String(decision.value ?? 'resolved'), reason: String(reason.value ?? '') }),
         });
-      }));
+      })));
       row.appendChild(reason);
       row.appendChild(decision);
       row.appendChild(governButton);

@@ -137,8 +137,10 @@ test('9236684c96a7: the served bundle has no money formatter without thousands s
   assert.doesNotMatch(jsBody, /\$\{[^}`]*(?:toFixed\(2\)|priceText\([^)]*\)|formatPriceCents\([^)]*\))[^}`]*\}\s*€/, 'no «45.00 €» glued by hand');
   // The views that write money read the shared helpers.
   assert.match(source('admin-reporting.js'), /return euro\(minor, currency\) \?\? 'n\.d\.'/);
-  assert.match(source('admin-clienti.js'), /euro\(cents, code\)/);
-  assert.match(source('admin-calendario.js'), /\$\{entry\.name\} · \$\{euro\(entry\.priceCents\) \?\? '—'\}/);
+  // Clienti and the Calendario service menu use main's grouped helpers
+  // (formatAmount, backlog:5c2f8bc67859; italianEuros): same «1.080» grouping.
+  assert.match(source('admin-clienti.js'), /formatAmount\(Number\(row\.offerValueCents\), row\.offerCurrency \?\? ''\)/);
+  assert.match(source('admin-calendario.js'), /\$\{entry\.name\} · \$\{italianEuros\(cents\)\}/);
 });
 
 // Review #761 (P2): an offer with no currency must not read as euros: the
@@ -147,7 +149,7 @@ test('review #761: plainAmount groups without a symbol; Clienti never presumes �
   assert.equal(plainAmount(120000), '1.200,00');
   assert.equal(plainAmount(1.5), null);
   const clienti = source('admin-clienti.js');
-  assert.match(clienti, /code === '' \? plainAmount\(cents\) : euro\(cents, code\)/, 'no currency: bare grouped amount');
+  assert.match(clienti, /row\.offerCurrency \?\? ''/, 'no currency: bare grouped amount (formatAmount writes no unit)');
   assert.doesNotMatch(clienti, /offerCurrency \?\? 'EUR'/, 'never a presumed EUR');
 });
 

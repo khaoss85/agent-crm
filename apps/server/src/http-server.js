@@ -510,6 +510,25 @@ export function buildRouter(app) {
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
     return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
   });
+  router.add('POST', '/api/appointments/reschedule', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.rescheduleAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment reschedule');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  // The lifecycle's own cancellation with a reason, idempotent on a row
+  // already cancelled; the cancelled row stays in the customer history.
+  router.add('POST', '/api/appointments/cancel', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.cancelAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment cancellation');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.cancelAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
   // and the «Crea con l'AI» confirmation create through the declared
@@ -862,6 +881,38 @@ export function buildRouter(app) {
     }
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
+
+  // Scheda cliente note «Modifica» and «Elimina» (backlog:82235e46e3e9):
+  // the same enumerated-adapter shape as the notes route above. Neither
+  // rewrites a row: the work operations append a correction or a withdrawal
+  // naming the original note, so the timeline shows the latest wording or
+  // hides the note while every version stays on record. Fixed paths with
+  // the note in the body, so a gateway allowlist names them one by one.
+  for (const [path, method, label] of [
+    ['/api/customer-hub/notes/revise', 'reviseSubjectNote', 'subject note revision'],
+    ['/api/customer-hub/notes/withdraw', 'withdrawSubjectNote', 'subject note withdrawal'],
+  ]) {
+    router.add('POST', path, async ({ body, actor, identity, organizationId }) => {
+      const decision = await gate(app, identity, organizationId, 'records.write');
+      if (typeof app[method] !== 'function') {
+        throw new NotFoundError('Operation', label);
+      }
+      const input = recordInput(body);
+      // The role is the authorization decision's, never the caller's: only
+      // the note's writer or the space owner may change a note.
+      delete input.actorRole;
+      if (input.resource === 'contact') {
+        await app.services.contacts.get(String(input.id ?? ''));
+      } else if (input.resource === 'company') {
+        await app.services.companies.get(String(input.id ?? ''));
+      } else {
+        throw new ValidationError(`a ${label} needs resource contact or company`, { field: 'resource' });
+      }
+      const actorRole = typeof decision?.role === 'string' ? decision.role : null;
+      return respond(method === 'withdrawSubjectNote' ? 200 : 201,
+        await app[method]({ ...stripServerControlledKeys(input), actor, actorRole }));
+    });
+  }
 
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial
@@ -1579,6 +1630,9 @@ export function buildRouter(app) {
         type: query.type,
         companyId: query.companyId,
         limit: parseLimit(query.limit),
+        // backlog:67a3116f4f65: the Pipeline board asks `order=board`
+        // (position, then newest first); every other reader keeps newest first.
+        order: query.order,
       }),
     };
   });
@@ -1630,7 +1684,9 @@ export function buildRouter(app) {
   // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
   // screen, read-only. Every number comes from the declared analytics
   // registry — compileReport/runReport over pipeline_value_by_stage and
-  // pipeline_close_schedule — plus the operator's own obiettivo row from the
+  // pipeline_close_schedule, or over their per-pipeline twins when the
+  // opportunity pipeline is composed (backlog 099c41c32355) — plus the
+  // operator's own obiettivo row from the
   // reporting bundle when composed. No storage query of its own, no write
   // surface: there is deliberately no POST under /api/reporting/*, so the
   // "Cosa noto" proposal the model carries can never reassign by itself.
@@ -1643,11 +1699,22 @@ export function buildRouter(app) {
   // storage through this route or through the facade.
   router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
+    // Backlog 099c41c32355 (Reporting like the Pipeline board): the numbers
+    // read the composed opportunity pipeline — the same registry the board's
+    // `/api/schema` serves — so phases, open count and total match the board
+    // instead of the legacy core `stage` column (which a move-stage never
+    // touches). One pipeline per module, so the resolution is deterministic;
+    // with no composed pipeline the legacy grouping still answers.
+    const opportunityPipeline = typeof app.pipelines?.forModule === 'function'
+      ? app.pipelines.forModule('opportunity')
+      : null;
     const dashboardQuery = parseDashboardQuery({
       period: query.period,
       owner: query.owner,
       currency: query.currency,
+      pipeline: opportunityPipeline?.name ?? null,
     });
+    const pipelines = opportunityPipeline ? [opportunityPipeline] : [];
     const specs = dashboardSpecs(dashboardQuery);
     const executeReport = typeof app.runReportFromSpec === 'function'
       ? (spec) => app.runReportFromSpec(spec)
@@ -1673,7 +1740,7 @@ export function buildRouter(app) {
       const counted = await app.countCustomerChannelOrigins({});
       if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
     }
-    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins);
+    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins, pipelines);
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {
