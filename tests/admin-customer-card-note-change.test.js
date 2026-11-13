@@ -210,6 +210,16 @@ test('cb348c9fcaeb: Esc and Annulla put the note back as it was, with no write',
   assert.equal(client.writes.length, 0);
 });
 
+test('cb348c9fcaeb: what is typed in Modifica survives a repaint of the scheda', async () => {
+  const { mount, view } = await open();
+  byAction(noteRow(mount, 'Richiamare lunedì'), 'edit-note').dispatch('click');
+  editField(mount).value = 'Richiamare mercoledì';
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(editField(mount), 'the editor is still open');
+  assert.equal(editField(mount).value, 'Richiamare mercoledì');
+});
+
 test('cb348c9fcaeb: Salva shows its wait and an empty note is refused on the spot', async () => {
   const { mount, client } = await open();
   byAction(noteRow(mount, 'Richiamare lunedì'), 'edit-note').dispatch('click');
@@ -270,6 +280,8 @@ test('cb348c9fcaeb: Elimina hides the note at once, offers Annulla, and withdraw
     toasts[0].options.action.run();
     await flush();
     assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'a late Annulla changes nothing');
+    assert.deepEqual([toasts.at(-1).text, toasts.at(-1).error], ['La nota è già stata eliminata: non si può più annullare.', true],
+      'and says so');
   } finally {
     globalThis.confirm = previous;
   }

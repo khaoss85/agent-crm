@@ -4593,7 +4593,12 @@ export function createCustomerCardView(deps) {
       action: {
         label: 'Annulla',
         run: () => {
-          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) return;
+          // The toast stays while the pointer is on it, so «Annulla» can
+          // come after the withdrawal left: say so, never a silent tap.
+          if (pending.state !== 'waiting' || pendingWithdrawals.get(pendingKey) !== pending) {
+            toast('La nota è già stata eliminata: non si può più annullare.', true);
+            return;
+          }
           pendingWithdrawals.delete(pendingKey);
           repaintIfShown(resource, id);
           toast('Nota ripristinata');
