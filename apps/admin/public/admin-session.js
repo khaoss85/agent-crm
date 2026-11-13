@@ -12,10 +12,15 @@
 //
 // and the shell reads it here. The contract, kept deliberately narrow:
 //
-// - **Shape.** `{ space: { id, name }, role, name, email, logoutUrl }` —
-//   every string trimmed and non-empty; `role` is one of
-//   `owner | operator | observer`; `logoutUrl` is a same-origin absolute
-//   path (the space login the host owns, e.g. `/w/<id>/auth/logout`).
+// - **Shape.** `{ space: { id, name }, spaces?: [{ id, name }], role,
+//   name, email, logoutUrl }` — every string trimmed and non-empty; `role`
+//   is one of `owner | operator | observer`; `logoutUrl` is a same-origin
+//   absolute path (the space login the host owns, e.g.
+//   `/w/<id>/auth/logout`). `spaces`, when present, lists every space the
+//   person can open (the shell menu shows all of them, backlog:029409ff):
+//   entries with an empty id or name are dropped, the current space is
+//   always first; absent or emptied it reads as `[space]`, so hosts that
+//   only know the current space change nothing.
 //   Anything else — missing script, malformed JSON, a wrong shape, a
 //   foreign logout URL — reads as no session, never as a half identity.
 // - **No client names.** The values travel per request from the host that
@@ -99,12 +104,33 @@ export function parseSessionProfile(jsonText) {
   const name = cleanText(/** @type {any} */ (parsed).name);
   const email = cleanText(/** @type {any} */ (parsed).email);
   if (spaceId === '' || spaceName === '' || name === '' || email === '') return null;
+  const current = Object.freeze({
+    id: spaceId,
+    name: spaceName,
+    initials: spaceName.slice(0, 2).toUpperCase(),
+  });
+  // Every space the person can open (backlog:029409ff): the host's list
+  // when usable, otherwise the current space alone. Unknown entries are
+  // dropped, the current space leads, duplicates collapse — the menu never
+  // renders a blank or doubled row.
+  const rawSpaces = /** @type {any} */ (parsed).spaces;
+  const listed = Array.isArray(rawSpaces) ? rawSpaces : [];
+  const cleaned = [];
+  for (const entry of listed) {
+    if (entry === null || typeof entry !== 'object') continue;
+    const id = cleanText(/** @type {any} */ (entry).id);
+    const entryName = cleanText(/** @type {any} */ (entry).name);
+    if (id === '' || entryName === '') continue;
+    if (id === spaceId || cleaned.some((known) => known.id === id)) continue;
+    cleaned.push(Object.freeze({
+      id,
+      name: entryName,
+      initials: entryName.slice(0, 2).toUpperCase(),
+    }));
+  }
   return Object.freeze({
-    space: Object.freeze({
-      id: spaceId,
-      name: spaceName,
-      initials: spaceName.slice(0, 2).toUpperCase(),
-    }),
+    space: current,
+    spaces: Object.freeze([current, ...cleaned]),
     role: KNOWN_ROLES.includes(roleRaw) ? roleRaw : null,
     name,
     email,
@@ -183,6 +209,32 @@ export function spaceLoginUrl(adminBase) {
   if (!/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(root)) return null;
   if (/(^|\/)\.\.?(\/|$)/.test(root)) return null;
   return `${root}/`;
+}
+
+const SPACE_ID_GRAMMAR = /^[A-Za-z0-9._~-]+$/;
+
+/**
+ * Where «Cambia spazio» lands when the person picks another space
+ * (backlog:029409ff): the sibling mount of the target space, derived from
+ * the shell's own mount — the segment before the trailing `/bo` is the
+ * current space id, and only it is swapped. Anything else — a base that is
+ * not under a space mount, a current segment that is not this space, a
+ * target id outside the mount grammar — resolves to null, and the caller
+ * keeps the local switch instead of navigating somewhere unowned.
+ * @param {{ adminBase?: unknown, currentSpaceId?: unknown, targetSpaceId?: unknown }} [input]
+ */
+export function spaceMountFor({ adminBase, currentSpaceId, targetSpaceId } = {}) {
+  if (typeof adminBase !== 'string' || !adminBase.endsWith('/bo')) return null;
+  if (typeof currentSpaceId !== 'string' || !SPACE_ID_GRAMMAR.test(currentSpaceId)) return null;
+  if (typeof targetSpaceId !== 'string' || !SPACE_ID_GRAMMAR.test(targetSpaceId)) return null;
+  if (targetSpaceId === currentSpaceId) return null;
+  const root = adminBase.slice(0, -'/bo'.length);
+  const prefix = `/${currentSpaceId}`;
+  if (!root.endsWith(prefix)) return null;
+  const parent = root.slice(0, -prefix.length);
+  if (parent !== '' && !/^\/[A-Za-z0-9._~-]+(\/[A-Za-z0-9._~-]+)*$/.test(parent)) return null;
+  if (/(^|\/)\.\.?(\/|$)/.test(`/${targetSpaceId}`)) return null;
+  return `${parent}/${targetSpaceId}/bo`;
 }
 
 /**

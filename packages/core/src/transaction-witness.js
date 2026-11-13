@@ -2,6 +2,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { AppError } from './errors.js';
+import { affineStorageFor } from './storage-runtime.js';
 
 /**
  * **Proving a caller-owned transaction without handing out the driver.**
@@ -243,14 +244,21 @@ export function currentTransactionWitness(storage) {
  * The storage handle a module service writes through, or null.
  *
  * A generated service holds the application database object and writes through
- * `database.storage` (`this.database.storage.sync.savepoint(...)`). That
- * property — never the driver beside it — is the handle a write lands on, so
- * it is the handle the proof is about.
+ * the storage that object resolves to right now. On a pooled handle with an
+ * open transaction that is the connection-affine client the database wrapper
+ * published for exactly this database object — the same overlay every managed
+ * write routes through — never the pool-level facade, whose answer is null by
+ * design. Asking a different handle than the write lands on would refuse a
+ * genuine caller-owned transaction, on PostgreSQL always.
  *
  * @param {any} service
  */
 function storageOf(service) {
-  const storage = service?.database?.storage;
+  const database = service?.database;
+  if (!database || typeof database !== 'object') return null;
+  const overlaid = affineStorageFor(database);
+  if (overlaid && typeof overlaid === 'object') return overlaid;
+  const storage = database.storage;
   return storage && typeof storage === 'object' ? storage : null;
 }
 
@@ -316,8 +324,11 @@ function storageOf(service) {
  * Under a pooled connection (`docs/plans/production-spine-v2-postgresql.md`)
  * both halves need the adapter's help: the handle compared by identity must be
  * the pooled client bound to the active transaction, and the ownership scope
- * must be opened around that client's work. Recorded as an obligation in
- * `DECISIONS.md` (ADR-018 addendum 8).
+ * must be opened around that client's work. The first half is the request-local
+ * affine overlay the portable `transactionAsync` publishes for the database
+ * object the services hold — the same handle their managed writes land on —
+ * so the proof and the writes can never disagree about the connection
+ * (ADR-018 addendum 8).
  *
  * @param {any[]} services the module services whose writes must commit together
  * @returns {string} one of {@link TRANSACTION_PROOF}

@@ -96,6 +96,12 @@ function periodLabel(count, interval) {
 const LIST_LIMIT = 200;
 
 /**
+ * Backlog 8dc6d4a456e1: the audit trail is read through this cap; a page
+ * that fills it is truncated, and nothing is derived from a partial page.
+ */
+const AUDIT_LIMIT = 100;
+
+/**
  * Display name of an audit actor: the shared vocabulary in admin-labels.js
  * (backlog c1649d1d), corroborated by this deal's human display values (the
  * referente, the contact or the company the deal stores).
@@ -204,6 +210,7 @@ export function createOfferDetail(deps) {
     let quotes;
     let auditItems;
     let auditUnreadable = false;
+    let auditTruncated = false;
     /** @type {Array<any>} */
     let people = [];
     try {
@@ -212,9 +219,13 @@ export function createOfferDetail(deps) {
       quotes = await fetchLinked('quote', 'opportunityId', record.id);
       try {
         const audit = await client.request(
-          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=100`,
+          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
         );
         auditItems = Array.isArray(audit?.items) ? audit.items : [];
+        // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
+        // the trail order is newest first, so the creation event may sit
+        // past it and the author must not be read from a partial page.
+        auditTruncated = auditItems.length >= AUDIT_LIMIT;
       } catch (error) {
         // The audit trail is decoration: facts, quotes and lines render
         // without it rather than failing the whole detail. An unreadable
@@ -281,8 +292,11 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
 
     // Who created the deal: the actor of its creation event, read through the
-    // same rule as the history (never a technical id); no event, a dash.
-    const createdEvent = auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null;
+    // same rule as the history (never a technical id); no event — or a
+    // truncated page that may hide it — a dash.
+    const createdEvent = !auditTruncated
+      ? (auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null)
+      : null;
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', personLabel(record.owner, people) ?? '—'],
@@ -334,6 +348,8 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
     } else if (auditItems.length === 0) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
+    } else if (auditTruncated) {
+      historyPanel.appendChild(el('p', 'muted', `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     }
     for (const entry of auditItems) {
       const line = historyLine(entry, schema, record, people);
@@ -759,8 +775,10 @@ export function createOfferDetail(deps) {
     }
     if (versions.length === 0) panel.appendChild(el('p', 'quote-version quote-version-empty', 'Ancora nessuna versione: nasce quando il preventivo va in approvazione.'));
     for (const version of versions) {
+      const versionTotals = parseTotals(version.totalsJson);
+      const policy = policyTag(version);
       panel.appendChild(el('p', 'quote-version',
-        `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)} · ${money(versionTotalsNet(version), version.currency ?? quote.currency)}`));
+        `Versione ${version.versionNumber ?? '—'} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${quoteTotalSummary(versionTotals, version.currency ?? quote.currency)}`));
     }
     return panel;
   }
@@ -808,18 +826,12 @@ function quoteTotalSummary(totals, currency) {
   return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
-/** Net of one frozen version: valued one-time first, then valued recurring. */
-function versionTotalsNet(version) {
-  let totals = {};
-  try {
-    totals = typeof version?.totalsJson === 'string' && version.totalsJson !== '' ? (JSON.parse(version.totalsJson) ?? {}) : {};
-  } catch {
-    totals = {};
-  }
-  if (groupHasValue(totals.oneTimeTotal)) return totals.oneTimeTotal.netAmountCents;
-  if (Array.isArray(totals.recurringTotals)) {
-    const valued = totals.recurringTotals.find((group) => groupHasValue(group));
-    if (valued) return valued.netAmountCents;
-  }
-  return 0;
+/**
+ * Backlog 8dc6d4a456e1: the frozen version names the discount policy that
+ * decided it (`name@version` from the version record), never nothing.
+ */
+function policyTag(version) {
+  return typeof version?.policy === 'string' && version.policy !== '' && Number.isSafeInteger(version?.policyVersion)
+    ? `${version.policy}@${version.policyVersion}`
+    : null;
 }

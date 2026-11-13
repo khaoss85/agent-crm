@@ -85,6 +85,83 @@ const NO_REPLY_PIECE = /(?:^|[._-])(?:no[._-]?reply|do[._-]?not[._-]?reply)(?:[.
 /** Words of a website contact form in a subject or the opening of a body. */
 const CONTACT_FORM_WORDS = /\b(?:contact[ -]?form|form submission|new submission|modulo di contatto|richiesta di contatto|nuovo contatto dal sito|messaggio dal sito)\b/i;
 
+/**
+ * The footer words of mass mail (verification 12/11 on the pilot: a SaaS
+ * newsletter «View in browser» and a crawl report «Unsubscribe from this
+ * project», from mailboxes like `pesupport@` and `sa@` no address rule can
+ * name without hurting real people). The Gmail readers now quarantine mass
+ * mail by its headers, so this is the cure for the rows stored before that:
+ * it counts only for a sender the team never wrote to.
+ */
+const BULK_FOOTER_WORDS = /\b(?:unsubscribe|view (?:it )?in (?:your )?browser|manage (?:your )?(?:email )?preferences|annulla (?:l[\x27\u2019])?iscrizione|disiscriviti|cancella (?:la tua |l[\x27\u2019])?iscrizione|visualizza (?:nel|sul|in) (?:tuo )?browser|gestisci le preferenze)\b/i;
+
+/** How far from each end of a body a mass-mail footer (or preheader link) is looked for. */
+const FOOTER_REGION = 400;
+
+
+/** Pieces of a footer: lines, sentences, separators and the long blank runs of preheader padding. */
+const FOOTER_PIECES = /[\n\r.!?|\u2022\u00b7]+|[\s\u2007\u00a0\u200b]{3,}/;
+
+/** A person asking, not a template footer (review Muse #821: «Please help me unsubscribe from this charge»). */
+const FIRST_PERSON = /\b(?:me|my|mine|please|help|can you|could you|i am|i want|i need|i would|vorrei|voglio|mi|mio|mia|miei|per favore|aiut\w*|potete|potreste|puoi|può)\b/i;
+
+/**
+ * Whether a body ends like mass mail (review Muse #821, P1): a short piece
+ * near its end that is a footer link («Unsubscribe from this project»,
+ * «View in browser», «Disiscriviti»), never a person's sentence that only
+ * contains the word. Short pieces only, the end of the body only, and a
+ * piece in the first person is a person asking.
+ * @param {unknown} body
+ */
+export function hasBulkFooter(body) {
+  if (typeof body !== 'string' || body === '') return false;
+  // The tail, and the head too — «View in browser» opens many newsletters
+  // as a preheader link. Never the middle, not even of a body cut at the
+  // storage fence (review Muse #821 giro 4): a person's reply quoting a
+  // newsletter must not read as one. A cut newsletter with no preheader
+  // link stays a person — the safe side; such mail no longer enters (the
+  // Gmail readers quarantine it by its headers).
+  const region = body.length <= FOOTER_REGION * 2
+    ? body
+    : `${body.slice(0, FOOTER_REGION)}\n${body.slice(-FOOTER_REGION)}`;
+  return region.split(FOOTER_PIECES).some((piece) => {
+    const text = piece.trim();
+    return text !== '' && text.length <= 60 && BULK_FOOTER_WORDS.test(text) && !FIRST_PERSON.test(text);
+  });
+}
+
+/**
+ * Who the team ever wrote to among some messages: their conversations and
+ * the addresses outbound messages went to (review Muse #821: per sender,
+ * never per customer — one answered thread must not vouch for another
+ * sender's newsletter).
+ * @param {Iterable<any>} messages
+ * @returns {{ conversations: Set<string>, addresses: Set<string> }}
+ */
+export function teamCorrespondents(messages) {
+  const conversations = new Set();
+  const addresses = new Set();
+  for (const row of messages ?? []) {
+    if (row?.direction !== 'outbound' || row?.entry === 'call') continue;
+    if (row.conversationId !== undefined && row.conversationId !== null && row.conversationId !== '') conversations.add(String(row.conversationId));
+    const address = senderAddress(row.remoteHandle);
+    if (address !== null) addresses.add(address);
+  }
+  return { conversations, addresses };
+}
+
+/**
+ * Whether the team ever wrote to the sender of one inbound message: in its
+ * conversation, or to its address anywhere.
+ * @param {{ conversations: Set<string>, addresses: Set<string> }} correspondents
+ * @param {any} message
+ */
+export function teamWroteTo(correspondents, message) {
+  if (message?.conversationId != null && correspondents.conversations.has(String(message.conversationId))) return true;
+  const address = senderAddress(message?.remoteHandle);
+  return address !== null && correspondents.addresses.has(address);
+}
+
 /** Wrapping punctuation around a word of a display name. */
 const WRAPPING = /^[([<\x22\x27]+|[)\]>\x22\x27,;:]+$/g;
 
@@ -182,11 +259,15 @@ export function isAutomatedSender(handle, ...labels) {
  *   payment provider (`paypal.*`, `stripe.*`…);
  * - a certified-mail (PEC) message: a PEC mailbox (`pec.*` domains,
  *   `posta-certificata@`) or the PEC wording in subject or body;
- * - the owner writing to themselves: a sender among `ownAddresses`.
+ * - the owner writing to themselves: a sender among `ownAddresses`;
+ * - mass mail stored before the Gmail readers quarantined it by its
+ *   headers (List-Unsubscribe, Precedence, Auto-Submitted — today such mail
+ *   is never stored): the footer words of mass mail («Unsubscribe», «View
+ *   in browser») from a sender the team never wrote to (`weWrote: false`).
  * @param {{ channel?: unknown, remoteHandle?: unknown, subjectLabel?: unknown, mailSubject?: unknown, body?: unknown } | null | undefined} message
- * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown> }} [context]
+ * @param {{ ownAddresses?: Iterable<unknown>, labels?: Array<unknown>, weWrote?: boolean }} [context]
  */
-export function isNotificationMessage(message, { ownAddresses = [], labels = [] } = {}) {
+export function isNotificationMessage(message, { ownAddresses = [], labels = [], weWrote = true } = {}) {
   if (!message || typeof message !== 'object') return false;
   const channel = String(message.channel ?? '').toLowerCase();
   if (channel === 'website-form' || channel === 'web' || channel === 'site-form') return false;
@@ -194,6 +275,7 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [] 
   const subject = typeof message.mailSubject === 'string' ? message.mailSubject : '';
   if (CONTACT_FORM_WORDS.test(subject) || CONTACT_FORM_WORDS.test(opening)) return false;
   if (channel !== 'email') return false;
+  if (weWrote === false && hasBulkFooter(message.body)) return true;
   if (isAutomatedSender(message.remoteHandle, message.subjectLabel, ...labels)) return true;
   const address = senderAddress(message.remoteHandle);
   if (address === null) return false;
@@ -208,4 +290,69 @@ export function isNotificationMessage(message, { ownAddresses = [], labels = [] 
     if (senderAddress(own) === address) return true;
   }
   return false;
+}
+
+/**
+ * Two-level public suffixes where the registrable name is the third label
+ * from the right (`amazon.co.uk` → `amazon`). Deliberately small: a miss
+ * reads the suffix's own first label, never an address.
+ */
+export const SECOND_LEVEL_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'com.au', 'net.au', 'org.au', 'co.nz', 'co.jp', 'co.kr', 'co.in',
+  'co.za', 'com.br', 'com.mx', 'com.ar', 'com.tr', 'com.cn', 'com.sg', 'com.hk', 'gov.it',
+]);
+
+/**
+ * Personal mailbox providers: the domain names the provider, not the
+ * customer, so a label from it would call every Gmail sender «Gmail».
+ */
+export const PERSONAL_MAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'outlook.com', 'outlook.it', 'hotmail.com', 'hotmail.it', 'live.com', 'live.it',
+  'msn.com', 'yahoo.com', 'yahoo.it', 'ymail.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'libero.it',
+  'virgilio.it', 'tiscali.it', 'alice.it', 'tim.it', 'tin.it', 'email.it', 'fastwebnet.it', 'inwind.it',
+  'proton.me', 'protonmail.com', 'gmx.com', 'gmx.it', 'gmx.de', 'pec.it', 'legalmail.it',
+]);
+
+/**
+ * The registrable domain of an address, lowercase, technical subdomains
+ * dropped (`x@identity-reachout.bounces.google.com` → `google.com`). Null
+ * when the value is not an address with a dotted domain.
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function registrableDomain(email) {
+  const text = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const at = text.lastIndexOf('@');
+  if (at <= 0) return null;
+  const labels = text.slice(at + 1).split('.').filter((label) => label !== '');
+  if (labels.length < 2 || labels.some((label) => !/^[\p{L}\p{N}-]+$/u.test(label))) return null;
+  const lastTwo = labels.slice(-2).join('.');
+  if (labels.length >= 3 && SECOND_LEVEL_SUFFIXES.has(lastTwo)) return labels.slice(-3).join('.');
+  return lastTwo;
+}
+
+/**
+ * A readable label for an address with no usable name: the registrable
+ * domain's own name, capitalized (`…@bounces.google.com` → `Google`,
+ * `assistenza@paypal.it` → `Paypal`). A personal mailbox provider names
+ * the provider, not the customer: the local part reads as a name when it
+ * looks like one (`mario.rossi@gmail.com` → `Mario Rossi`), else null.
+ * Never the address itself.
+ * @param {unknown} email
+ * @returns {string | null}
+ */
+export function labelFromEmail(email) {
+  const domain = registrableDomain(email);
+  if (domain === null) return null;
+  if (PERSONAL_MAIL_DOMAINS.has(domain)) {
+    // A machine mailbox at a personal provider (`noreply@gmail.com`) names
+    // nobody: never «Noreply» as a person (review #739 giro 3).
+    if (isTechnicalLocalPart(email)) return null;
+    const text = String(email).trim();
+    const local = text.slice(0, text.lastIndexOf('@')).split('+')[0] ?? '';
+    if (!/^\p{L}+(?:[._-]\p{L}+){0,3}$/u.test(local) || local.length > 40) return null;
+    return local.split(/[._-]+/).map((token) => token.charAt(0).toUpperCase() + token.slice(1)).join(' ');
+  }
+  const base = domain.split('.')[0];
+  return base.charAt(0).toUpperCase() + base.slice(1);
 }

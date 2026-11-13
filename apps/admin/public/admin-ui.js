@@ -212,6 +212,8 @@ const ICON_PATHS = Object.freeze({
   messaggio: '<path d="M4 5h16v11H9l-5 4z"/>',
   offerta: '<path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/>',
   appuntamento: '<path d="M5 6h14v13H5zM5 10h14M9 4v4M15 4v4"/>',
+  // Voce 2f2d22f2: the prototype's sixth quick action — «✦ Chiedi all'AI».
+  ai: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/>',
   // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
   cestino: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 });

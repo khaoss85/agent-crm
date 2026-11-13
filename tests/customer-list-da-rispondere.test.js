@@ -166,3 +166,43 @@ test('c2bf6b206d96 (pin #543): a space with no customer answers da-rispondere 20
   assert.equal(page.totalIsExact, true);
   assert.equal(page.views.find((view) => view.id === 'da-rispondere').count, 0, 'an exact zero, with its pill');
 });
+
+test('review #821 P2: the view reads the space’s own mailboxes from its email connections', async () => {
+  const modules = fakeModules({
+    ...SCENE,
+    messages: [...SCENE.messages, msg({ subjectId: 'c4', conversationId: 'mail:own', channel: 'email', remoteHandle: 'op@palestra-esempio.it', occurredAt: at(9), body: 'Copia' })],
+  });
+  const withConnections = { get: (name) => (name === 'channel-connection'
+    ? { service: { listWhere: async (filters) => [{ channel: 'email', account: 'op@palestra-esempio.it', status: 'active' }].filter((row) => !filters.channel || row.channel === filters.channel) } }
+    : modules.get(name)) };
+  const page = await listCustomerRecords({ modules: withConnections, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.ok(!page.items.some((item) => item.name === 'Lia Marroni'), 'the copy from the own mailbox does not make Lia wait');
+  const without = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.ok(without.items.some((item) => item.name === 'Lia Marroni'), 'without the connection it would');
+});
+
+test('review #821 giro 2: the view weighs «never written to» over the whole scan, and logs an unreadable mailbox list', async () => {
+  const news = 'news@palestra-amica.it';
+  const modules = fakeModules({
+    ...SCENE,
+    messages: [
+      ...SCENE.messages,
+      msg({ subjectId: 'c1', conversationId: 'z', channel: 'email', direction: 'outbound', remoteHandle: news, occurredAt: at(0), body: 'Grazie' }),
+      msg({ subjectId: 'c4', conversationId: 'n', channel: 'email', remoteHandle: news, occurredAt: at(8), body: 'Le novità. Unsubscribe' }),
+    ],
+  });
+  const page = await listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'da-rispondere' });
+  assert.ok(page.items.some((item) => item.name === 'Lia Marroni'), 'a sender the team wrote to (for Guido) waits for Lia too, as in Oggi');
+  const failing = { get: (name) => (name === 'channel-connection'
+    ? { service: { listWhere: async () => { throw Object.assign(new Error('down'), { code: 'BOOM' }); } } }
+    : modules.get(name)) };
+  const logged = [];
+  const original = console.error;
+  console.error = (line) => { logged.push(String(line)); };
+  try {
+    await listCustomerRecords({ modules: failing, core: {}, names: { identity: 'external-identity' } }, { vista: 'tutti' });
+  } finally {
+    console.error = original;
+  }
+  assert.ok(logged.some((line) => line.includes('own mailboxes unreadable') && line.includes('BOOM')), logged.join('\n'));
+});

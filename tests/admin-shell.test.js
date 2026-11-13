@@ -17,7 +17,9 @@ import {
   loadFixCount,
   resolveBadgeSpaceId,
   defaultSpaces,
+  mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   resolveSpaceShortcut,
   spaceMenuItems,
   buildShellNav,
@@ -195,6 +197,65 @@ test('readSpaces falls back to the single local space, never empty', () => {
   assert.deepEqual(readSpaces({ getItem: () => '[]' }), defaultSpaces());
   const stored = readSpaces({ getItem: () => JSON.stringify([{ id: 'x', name: 'X' }, { id: '', name: '' }]) });
   assert.deepEqual(stored, [{ id: 'x', name: 'X', initials: 'X' }]);
+});
+
+test('backlog:029409ff — mergeSpaces joins the session spaces with the visited ones', () => {
+  // The reported bug: the menu showed only the session space. The primary
+  // source (session profile) leads, visited spaces fill in, blanks and
+  // duplicates collapse — Presti appears next to Prova Validazione B1.
+  const merged = mergeSpaces(
+    [{ id: 'b1', name: 'Prova Validazione B1', initials: 'PR' }],
+    [{ id: 'presti', name: 'Presti' }, { id: 'b1', name: 'B1 duplicato' }, { id: '', name: '' }, null],
+  );
+  assert.deepEqual(merged, [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ]);
+  // With nothing usable the menu still shows the single local space.
+  assert.deepEqual(mergeSpaces([], []), defaultSpaces());
+  assert.deepEqual(mergeSpaces(null, undefined), defaultSpaces());
+});
+
+test('backlog:029409ff — a fresh browser never merges «Spazio locale» into a real session', () => {
+  // Codex P2 on agent-crm#754: readSpaces falls back to defaultSpaces, so a
+  // fresh, missing or corrupt storage merged a fictitious «Spazio locale»
+  // into the session spaces and persisted it. The session merge reads the
+  // stored history without the development fallback instead.
+  const fresh = { getItem: () => null };
+  const corrupt = { getItem: () => 'not json' };
+  assert.deepEqual(readStoredSpaces(null), []);
+  assert.deepEqual(readStoredSpaces(fresh), []);
+  assert.deepEqual(readStoredSpaces(corrupt), []);
+  assert.deepEqual(readStoredSpaces({ getItem: () => '[]' }), []);
+  const sessionSpaces = [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ];
+  for (const storage of [fresh, corrupt]) {
+    const merged = mergeSpaces(sessionSpaces, readStoredSpaces(storage));
+    assert.deepEqual(merged, sessionSpaces);
+    assert.ok(!merged.some((space) => space.id === 'locale'));
+  }
+  // The sessionless shell keeps its single local space fallback.
+  assert.deepEqual(readSpaces(fresh), defaultSpaces());
+});
+
+test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking one picks it', () => {
+  const { sidebar, seen } = renderShell({
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti', name: 'Presti', initials: 'PR' },
+    ],
+  });
+  const names = sidebar.textContent;
+  assert.ok(names.includes('Prova Validazione B1'));
+  assert.ok(names.includes('Presti'));
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  // Two spaces, two rows: the active one plus the other, never one alone.
+  assert.equal(picks.length, 2);
+  const other = picks.find((node) => !((node.className ?? '').includes('active')));
+  other.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['presti']);
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
@@ -559,8 +620,70 @@ test('settings panel lists the four areas with honest availability', () => {
 
   const unknown = createMount();
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
-  assert.ok(unknown.textContent.includes('Non è stato possibile leggerle'));
+  assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+// backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non
+// ce ne siano)» named nothing and offered nothing. The panel says what was
+// not read and offers Riprova, which reads the count again.
+test('1d33b335fba0: an unread fix count says what is missing and Riprova reads it again', async () => {
+  const doc = createFakeDocument();
+  const flushAll = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  const mount = createMount();
+  const answers = [null, 3];
+  const asked = [];
+  const onRetry = async () => { asked.push(true); return answers.shift(); };
+  renderSettingsPanel({ doc, mount, fixCount: null, onRetry });
+  const text = mount.textContent;
+  assert.ok(text.includes('Non sono riuscito a leggere le cose da sistemare'), 'names what was not read');
+  assert.ok(text.includes('problemi nei dati e schede doppie'), 'in plain words');
+  assert.ok(!text.includes('leggerle'), 'never the old dangling pronoun');
+  assert.ok(!text.includes('non è detto che non ce ne siano'));
+  const retryOf = (node) => node.findAll('button').find((button) => button.getAttribute('data-action') === 'settings-retry');
+  let retry = retryOf(mount);
+  assert.ok(retry, 'Riprova is offered');
+  assert.equal(retry.textContent, 'Riprova');
+  // Still unreadable: the same note and Riprova again.
+  retry.dispatch('click', {});
+  assert.equal(retry.getAttribute('aria-busy'), 'true', 'the button says it is working');
+  await flushAll();
+  assert.equal(asked.length, 1);
+  retry = retryOf(mount);
+  assert.ok(retry, 'still unreadable: Riprova stays');
+  // Read: the count replaces the note.
+  retry.dispatch('click', {});
+  await flushAll();
+  assert.equal(asked.length, 2);
+  assert.ok(mount.textContent.includes('3 cose da sistemare'), 'the fresh count shows');
+  assert.ok(!retryOf(mount), 'no Riprova once read');
+  // A failing retry keeps the note, never throws.
+  const failing = createMount();
+  renderSettingsPanel({ doc, mount: failing, fixCount: null, onRetry: async () => { throw new Error('down'); } });
+  retryOf(failing).dispatch('click', {});
+  await flushAll();
+  assert.ok(failing.textContent.includes('Non sono riuscito a leggere'));
+  assert.ok(retryOf(failing), 'Riprova again after a failure');
+  // Review #833 P2: the retry answers the live availability too — Stato
+  // sync composed since the first paint links once the count is read.
+  const late = createMount();
+  renderSettingsPanel({ doc, mount: late, fixCount: null, customerDataAvailable: false,
+    onRetry: async () => ({ fixCount: 2, customerDataAvailable: true }) });
+  assert.ok(!late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'first paint: Stato sync not composed yet');
+  retryOf(late).dispatch('click', {});
+  await flushAll();
+  assert.ok(late.textContent.includes('2 cose da sistemare'));
+  assert.ok(late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'the fresh availability links Stato sync');
+  // Left meanwhile: the late answer never repaints the new screen.
+  const left = createMount();
+  let release;
+  renderSettingsPanel({ doc, mount: left, fixCount: null, onRetry: () => new Promise((resolve) => { release = resolve; }) });
+  retryOf(left).dispatch('click', {});
+  while (left.firstChild) left.removeChild(left.firstChild);
+  left.appendChild(doc.createElement('p')).textContent = 'Clienti';
+  release(5);
+  await flushAll();
+  assert.equal(left.textContent, 'Clienti', 'the screen opened meanwhile stays');
 });
 
 test('Stato sync links its own screen once customer-data is composed', () => {

@@ -698,8 +698,11 @@ test('the search button stays disabled while searching', async () => {
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
-  const searching = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
-  assert.equal(searching.getAttribute('disabled'), 'true', 'the button is disabled in flight');
+  // backlog:07895caaa4be: the button itself says it is searching.
+  const searching = mount.findAll('button').find((node) => node.textContent === 'Cerco…');
+  assert.ok(searching, 'the button reads «Cerco…» in flight');
+  assert.notEqual(searching.getAttribute('disabled'), null, 'the button is disabled in flight');
+  assert.equal(searching.getAttribute('aria-busy'), 'true');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Cerco gli slot liberi')), 'a short wait, no jargon');
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));

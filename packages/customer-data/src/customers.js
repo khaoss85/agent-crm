@@ -2,7 +2,7 @@
 
 import { ValidationError } from '../../core/index.js';
 import { messagePreview } from '../../core/message-preview.js';
-import { isNotificationMessage } from '../../core/sender-kind.js';
+import { isNotificationMessage, teamCorrespondents, teamWroteTo } from '../../core/sender-kind.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
 
@@ -136,9 +136,13 @@ export const CUSTOMER_VIEWS = Object.freeze([
  * display bound), so the count never stops at a page.
  * @param {Array<any>} messages the customer's interaction-message rows
  * @param {Array<any>} [conversations] the customer's conversation rows (closed state, labels)
+ * @param {{ ownAddresses?: Iterable<unknown>, correspondents?: { conversations: Set<string>, addresses: Set<string> } }} [context]
+ *   the space's own mailboxes (mail from them never waits) and who the team
+ *   ever wrote to across the scan (`teamCorrespondents`; this customer's
+ *   messages when absent)
  * @returns {{ count: number, lastAt: string | null, text: string | null, subject: string | null, channel: string | null }}
  */
-export function awaitingReplyFor(messages, conversations = []) {
+export function awaitingReplyFor(messages, conversations = [], { ownAddresses = [], correspondents: scanned = null } = {}) {
   const byConversation = new Map();
   for (const row of Array.isArray(conversations) ? conversations : []) {
     if (row?.id !== undefined && row?.id !== null) byConversation.set(String(row.id), row);
@@ -153,6 +157,9 @@ export function awaitingReplyFor(messages, conversations = []) {
     const seen = latest.get(thread);
     if (!seen || time > seen.time) latest.set(thread, { time, row });
   }
+  // Mass-mail footers count only for a sender the team never wrote to
+  // (backlog:bab63e32acdb) — per sender, never per customer (review Muse #821).
+  const correspondents = scanned ?? teamCorrespondents(Array.isArray(messages) ? messages : []);
   let count = 0;
   let newest = null;
   for (const { time, row } of latest.values()) {
@@ -160,7 +167,9 @@ export function awaitingReplyFor(messages, conversations = []) {
     const conversation = row.conversationId != null ? byConversation.get(String(row.conversationId)) ?? null : null;
     if (conversation?.status === 'closed') continue;
     const message = { ...row, remoteHandle: row.remoteHandle ?? conversation?.remoteHandle ?? null };
-    if (isNotificationMessage(message, { labels: [conversation?.subjectLabel] })) continue;
+    if (isNotificationMessage(message, {
+      labels: [conversation?.subjectLabel], ownAddresses, weWrote: teamWroteTo(correspondents, message),
+    })) continue;
     count += 1;
     if (newest === null || time > newest.time) newest = { time, row };
   }

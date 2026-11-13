@@ -2329,6 +2329,16 @@ function extractPhraseDraft(text, nowMs) {
         { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.startsAt' } },
       );
     }
+    // A draft naming only its end is still a moment: a past endsAt is the
+    // same past booking as a past startsAt, refused with the same code so
+    // the caller names a future day instead.
+    if (draft.startsAt === undefined && draft.endsAt !== undefined && Number.isSafeInteger(nowMs)
+      && Date.parse(draft.endsAt) <= nowMs) {
+      throw new AppError(
+        'The workspace AI placed the booking at or before the reference instant: name a future day instead',
+        { code: 'APPOINTMENTS_AI_DRAFT_IN_PAST', status: 422, details: { field: 'draft.endsAt' } },
+      );
+    }
     if (parsed.durationMinutes !== undefined) {
       const minutes = parsed.durationMinutes;
       if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 1440) {
