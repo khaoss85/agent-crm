@@ -267,6 +267,12 @@ export function createCustomerListView(deps) {
       Object.assign(state, {
         vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
+    } else if (state.q !== '') {
+      // backlog:4968615de0a4: coming back to Clienti from another page the
+      // search starts empty — never a list filtered by a word typed earlier.
+      // Filters, order and columns stay: they show in the bar.
+      state.q = '';
+      state.page = 1;
     }
     drawShell();
     return load();
@@ -504,7 +510,10 @@ export function createCustomerListView(deps) {
     headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
       menu.classList.add('ui-add-menu');
       const addItem = (action, label, hint, onPick) => {
+        // backlog:4968615de0a4: the import has its own file mark, never
+        // the pencil of «Compila manualmente».
         const item = uiAddOption(doc, { kind: action === 'add-ai' ? 'ai' : 'manual', title: label, line: hint,
+          icon: action === 'add-import' ? 'importa' : undefined,
           attrs: { 'data-action': action } });
         item.addEventListener('click', () => {
           closeMenu();
@@ -541,7 +550,11 @@ export function createCustomerListView(deps) {
     form.appendChild(el('span', 'bo-clienti-spark', '✦'));
     form.setAttribute('role', 'search');
     const input = el('input', 'ui-field'); // BO-F6-02: through the library, never raw.
-    input.setAttribute('type', 'search');
+    // backlog:4968615de0a4: one way to clear the search — the field's own
+    // Azzera. A plain text field carries no browser ×, and the search is no
+    // chip either (it is already in the field); Invio still searches.
+    input.setAttribute('type', 'text');
+    input.setAttribute('enterkeyhint', 'search');
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
     input.setAttribute('placeholder', 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
@@ -673,7 +686,7 @@ export function createCustomerListView(deps) {
     // columns with its visible/total), so the assistant entry joins the
     // Filtri menu instead of a fourth word beside it: same question, same
     // fallback, same action, one tap away.
-    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
+    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
     const filtersBox = menuBox(toolLabel('filtri', { badge: activeFilters }), (menu, closeMenu) => {
       const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l’AI');
       aiItem.setAttribute('data-action', 'ai-filter');
@@ -841,7 +854,6 @@ export function createCustomerListView(deps) {
     };
     if (state.canale !== 'all') chip(channelLabel(state.canale), () => { state.canale = 'all'; reload(); });
     if (state.stato !== 'all') chip(STATO_LABELS[state.stato] ?? state.stato, () => { state.stato = 'all'; reload(); });
-    if (state.q !== '') chip(`«${state.q}»`, () => { state.q = ''; clearSearchField(); reload(); });
     if (state.campo !== '') {
       const def = customDefs.find((entry) => String(entry?.key ?? '') === state.campo) ?? null;
       const label = String(def?.label ?? state.campo);
@@ -852,14 +864,13 @@ export function createCustomerListView(deps) {
       });
     }
     if (chips.childNodes.length > 0) {
-      const clearAll = el('button', 'bo-clienti-clear', 'Azzera');
+      // Clears the filters only: the search keeps its own Azzera.
+      const clearAll = el('button', 'bo-clienti-clear', 'Azzera filtri');
       clearAll.addEventListener('click', () => {
         state.canale = 'all';
         state.stato = 'all';
-        state.q = '';
         state.campo = '';
         state.valore = '';
-        clearSearchField();
         reload();
       });
       chips.appendChild(clearAll);

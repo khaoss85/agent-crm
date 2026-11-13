@@ -205,6 +205,7 @@ const ICON_PATHS = Object.freeze({
   plus: '<path d="M12 5v14M5 12h14"/>',
   colonne: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+  importa: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
   // Azioni rapide della scheda (prototype 05 Scheda cliente).
   telefono: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
   'telefono-piu': '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/><path d="M18 3v6M15 6h6"/>',
@@ -283,11 +284,12 @@ export function uiButton(doc, options = {}) {
  * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,
  * offerta, persona, spazio, prodotto): a 28 px tile, a bold title and one
  * muted line under it. `kind` picks the tile: `ai` is the violet ✦, `manual`
- * the pencil. Built without `el` normalization so a menu voice never picks
+ * the pencil — or `icon`, when the voice is not a hand-filled form (the
+ * file import, backlog:4968615de0a4). Built without `el` normalization so a menu voice never picks
  * up a chip or button class (design pass 7: every menu read in monospace).
  *
  * @param {any} doc
- * @param {{ kind: 'ai' | 'manual', title: string, line: string, attrs?: Record<string, unknown> }} options
+ * @param {{ kind: 'ai' | 'manual', title: string, line: string, icon?: string, attrs?: Record<string, unknown> }} options
  */
 export function uiAddOption(doc, options) {
   const node = doc.createElement('button');
@@ -301,7 +303,7 @@ export function uiAddOption(doc, options) {
   tile.setAttribute('class', 'ui-add-tile');
   tile.setAttribute('aria-hidden', 'true');
   if (options.kind === 'ai') tile.textContent = '\u2726';
-  else tile.appendChild(uiIcon(doc, 'matita'));
+  else tile.appendChild(uiIcon(doc, typeof options.icon === 'string' && options.icon !== '' ? options.icon : 'matita'));
   node.appendChild(tile);
   const words = doc.createElement('span');
   words.setAttribute('class', 'ui-add-words');
