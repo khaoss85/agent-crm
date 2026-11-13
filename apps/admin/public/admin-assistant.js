@@ -1556,6 +1556,23 @@ export async function runSuggestion(client, suggestionId, customer = null) {
 }
 
 /**
+ * The gate code an /api/assistant/status answer (or its rejection) carries,
+ * or null. One reader for every surface that asks «is the AI off here?»
+ * (the Assistente panel, the composer «Scrivi al cliente»), over both
+ * shapes in use: `{ freeQuestions, code | reason }` and the pilot bridge's
+ * `{ spaceId, enabled, reason }` (accordo-arvo-pilot
+ * src/shared/bo-assistant.js, mapGateObserved). Reads `code`, `reason`
+ * and `errorCode`, mirroring packages/llm error codes.
+ * @param {unknown} status
+ * @returns {string|null}
+ */
+export function assistantStatusCode(status) {
+  if (status === null || typeof status !== 'object') return null;
+  const code = /** @type {any} */ (status).code ?? /** @type {any} */ (status).reason ?? /** @type {any} */ (status).errorCode;
+  return typeof code === 'string' && code !== '' ? code : null;
+}
+
+/**
  * Which dry-run notice tells the truth about a non-live status: the key
  * sentence only for a really missing key, the off-in-this-space sentence
  * for a disabled space, the suggest-only line for anything else (absent
@@ -1564,9 +1581,7 @@ export async function runSuggestion(client, suggestionId, customer = null) {
  * @param {unknown} status
  */
 export function assistantDisabledNotice(status) {
-  const code = status !== null && typeof status === 'object'
-    ? status.code ?? status.reason ?? status.errorCode
-    : null;
+  const code = assistantStatusCode(status);
   if (code === 'LLM_SECRET_UNAVAILABLE') return FREE_QUESTION_DISABLED_NOTICE;
   if (code === 'LLM_SPACE_DISABLED') return ASSISTANT_SPACE_DISABLED_NOTICE;
   return ASSISTANT_SUGGEST_ONLY_NOTICE;
