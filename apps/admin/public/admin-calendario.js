@@ -3600,7 +3600,7 @@ export function createCalendarioView(deps) {
     if (aiOff) {
       input.setAttribute('disabled', 'true');
       find.setAttribute('disabled', 'true');
-    } else if (state.aiLoading) find.setAttribute('disabled', 'true');
+    } else if (state.aiLoading) uiMarkBusy(find, 'Cerco…'); // backlog:07895caaa4be: the button says it is searching
     else find.addEventListener('click', () => void submitAi(String(input.value ?? '')));
     row.appendChild(input);
     row.appendChild(find);
