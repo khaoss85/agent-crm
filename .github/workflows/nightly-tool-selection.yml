@@ -20,15 +20,17 @@ jobs:
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
     steps:
-      # GitHub can fire a scheduled run hours late when the runners are busy (13/11: the 01:17 schedule
-      # started at 07:57Z and held one of the two runners during the morning PR rush). A scheduled run
-      # that starts outside the night window (00:00-05:59 UTC) skips the matrix in seconds instead of
-      # holding a runner; the next night runs it. A manual workflow_dispatch always runs.
+      # GitHub can fire a scheduled run hours late when the runners are busy (10-13/11: the 01:17 schedule
+      # started between 07:44 and 08:25Z and held one of the runners during the morning PR rush). A scheduled
+      # run that starts outside the night window (00:00-04:59 UTC, so the 45+ min matrix ends before the
+      # morning) skips the matrix in seconds instead of holding a runner, with a warning so the lost night is
+      # visible; the supervisor round also reports the night as NOT DONE. A manual workflow_dispatch always runs.
       - id: window
         run: |
-          h=$(date -u +%H)
-          if [ "${{ github.event_name }}" = schedule ] && [ "$h" -ge 6 ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-05"
+          h=$((10#$(date -u +%H)))
+          if [ "${{ github.event_name }}" = schedule ] && [ "$h" -ge 5 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04; this night has no full tool-selection matrix"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
