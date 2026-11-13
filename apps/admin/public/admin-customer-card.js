@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
+import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
@@ -810,6 +810,30 @@ export function withOfferStage(loaded, opportunityId, kind, stage) {
         && (row.opportunityStage != null || row.opportunityPipelineStage != null), joined),
     },
   };
+}
+
+/** The longest note the server keeps (work `bounds.noteBody`). */
+const NOTE_MAX = 1000;
+const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri.`;
+
+/**
+ * What a refused note says (backlog:82235e46e3e9 seguito, production
+ * 12/11): a validation refusal names what to correct, never «Riprova più
+ * tardi» — retrying the same text would be refused again. Anything else
+ * keeps the write's own wording.
+ * @param {unknown} error
+ */
+export function noteRefusalText(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  const code = typeof record.code === 'string' ? record.code : '';
+  const status = typeof record.status === 'number' ? record.status : null;
+  if (code === 'VALIDATION_ERROR' || code === 'BO_CRM_BODY_REFUSED' || status === 400 || status === 422) {
+    const said = String(record.message ?? '');
+    if (/at most|between 1 and/i.test(said)) return NOTE_TOO_LONG;
+    if (/control characters/i.test(said)) return 'La nota contiene caratteri non ammessi: riscrivila come testo semplice.';
+    return `La nota non è stata accettata: scrivi un testo semplice, da 1 a ${NOTE_MAX} caratteri.`;
+  }
+  return humanWriteError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
 }
 
 export function createCustomerCardView(deps) {
@@ -3342,6 +3366,10 @@ export function createCustomerCardView(deps) {
           noteError.textContent = 'Scrivi la nota prima di aggiungerla.';
           return;
         }
+        if (String(noteInput.value).trim().length > NOTE_MAX) {
+          noteError.textContent = NOTE_TOO_LONG;
+          return;
+        }
         noteSaving = true;
         noteError.textContent = '';
         try {
@@ -3359,8 +3387,9 @@ export function createCustomerCardView(deps) {
           mount.querySelector('[name="noteBody"]')?.focus?.();
           await refreshed;
         } catch (error) {
-          noteError.textContent = humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' });
-          toast(humanReadError(error, { failed: 'Nota non salvata. Riprova più tardi.' }), true);
+          const said = noteRefusalText(error);
+          noteError.textContent = said;
+          toast(said, true);
         } finally {
           noteSaving = false;
         }
