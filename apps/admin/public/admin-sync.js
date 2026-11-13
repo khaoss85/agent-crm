@@ -496,8 +496,17 @@ export const SYNC_CHANNELS = NINE_CHANNELS;
 export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
-  const merged = mergeProfileConnections(entries, profile);
-  return merged.length === entries.length ? activity : { ...activity, connections: merged };
+  const preFilter = mergeProfileConnections(entries, profile);
+  // The profile-Gmail stand-in never votes Email in the count or the
+  // table: without a real channel connection the send fails 409
+  // (backlog:3805161965cd). The fix and grant cards keep reading the raw
+  // entries (the view runs them on the unfiltered activity).
+  const merged = preFilter.filter((row) => !isProfileEmailStandinRow(row));
+  // Identity means nothing changed, row for row: a removed Email
+  // stand-in plus an added profile link is a change even at equal length,
+  // so the length shortcut never stands alone.
+  const same = merged.length === entries.length && merged.every((row, index) => row === entries[index]);
+  return same ? activity : { ...activity, connections: merged };
 }
 
 /**
@@ -1441,7 +1450,11 @@ export function createSyncView(deps) {
     // count all read the same connections (backlog:cf365ada15b9).
     const activity = withProfileConnections(state.activity, state.profile);
     renderHero(box, activity);
-    renderFixes(box, activity);
+    // The fix and grant cards read the raw entries: a stopped import or
+    // a refused grant keyed `profile:` is a real server row with a route
+    // to name, even though it never votes Email in the count and table
+    // (review giro 4 P1).
+    renderFixes(box, state.activity);
     // Supervisor design pass: channels and the live feed as the prototype's
     // two cards side by side (2:1).
     const cols = el(doc, 'div', 'bo-sync-cols');

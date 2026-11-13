@@ -19,6 +19,7 @@ import {
   NINE_CHANNEL_IDS,
   channelConnectionCount,
   channelState,
+  isProfileEmailStandinRow,
   mergeProfileConnections,
 } from '../apps/admin/public/admin-channels-count.js';
 import { CONNECTOR_CATALOG, connectorStatus, createConnectorsView } from '../apps/admin/public/admin-connectors.js';
@@ -261,4 +262,21 @@ test('1cfc68175ab7: a settings tab keeps the tab row while its content loads', (
   const loading = paintScreenLoading({ doc, mount, label: 'Clienti' });
   assert.equal(keepSettingsTabs(doc, { mount, loading, view: 'customer-data' }), false);
   assert.ok(!mount.textContent.includes('IMPOSTAZIONI'));
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): the Email stand-in rule is the
+// composer's rule — a `source: 'profile'` marker or a `profile:` key (any
+// case), never a real route. Only Email rows count; other channels and
+// real Email rows stay out.
+test('isProfileEmailStandinRow shares the composer rule, key and alias spellings included', () => {
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'profile:gmail', source: 'profile' }), true);
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'profile:gmail' }), true, 'key-only row');
+  assert.equal(isProfileEmailStandinRow({ channel: 'Email', status: 'active', connectionKey: 'PROFILE:Gmail' }), true, 'key match ignores case');
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'gmail-1' }), false, 'a real route stays in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'whatsapp', status: 'active', connectionKey: 'profile:whatsapp' }), false, 'only Email is a stand-in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active' }), false, 'no marker, no key');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'profile:gmail', source: 'profile' }), true, 'alias spelling still a stand-in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'PROFILE:Gmail' }), true, 'alias spelling, key only');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }), false, 'a real gmail route stays in');
+  assert.equal(isProfileEmailStandinRow(null), false);
 });

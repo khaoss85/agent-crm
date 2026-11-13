@@ -143,7 +143,10 @@ export function profileOffersConnector(profile, connector) {
  */
 export function isProfileEmailStandinRow(row) {
   if (row === null || typeof row !== 'object') return false;
-  if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
+  // The counted id, never the raw spelling: a Gmail stand-in stored as
+  // channel 'gmail' still evades an Email vote while the shared count
+  // normalizes it to Email (backlog:3805161965cd, review giro 4 P1).
+  if (countedChannel(String(row.channel ?? '').toLowerCase()) !== 'email') return false;
   if (row.source === 'profile') return true;
   const key = row.connectionKey;
   return typeof key === 'string' && key.trim().toLowerCase().startsWith('profile:');

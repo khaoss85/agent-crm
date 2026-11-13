@@ -42,6 +42,7 @@ import {
   syncIdentityCards,
   syncIndicator,
   timeAgo,
+  withProfileConnections,
 } from '../apps/admin/public/admin-sync.js';
 import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
@@ -1527,4 +1528,40 @@ test('e381c48581fa: with no adapter Stato sync offers Collega only where Connett
     const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
     assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
   }
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): withProfileConnections never
+// keeps the original activity when the rows changed — a removed Email
+// stand-in plus an added Calendar link is a change even at equal length.
+test('withProfileConnections returns the new rows when a stand-in leaves and a link arrives', () => {
+  const emailStandin = entryOf({ connectionKey: 'profile:gmail', channel: 'email', account: 'op@palestra.it', source: 'profile' });
+  const activity = activityOf({ connections: [emailStandin] });
+  const out = withProfileConnections(activity, GOOGLE_PROFILE);
+  assert.notEqual(out, activity, 'same length, different rows: a new activity');
+  assert.deepEqual(out.connections.map((row) => row.channel), ['calendar'], 'Email out, Calendar in');
+  assert.equal(out.connections.filter((row) => row.channel === 'email').length, 0);
+});
+
+// No merged link and no stand-in: the same object comes back, no new
+// array for the view to repaint.
+test('withProfileConnections keeps the activity when nothing merges', () => {
+  const activity = activityOf();
+  assert.equal(withProfileConnections(activity, null), activity);
+  assert.equal(withProfileConnections(null, GOOGLE_PROFILE), null);
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): a key-only Email row (the
+// pilot's merged profile mailbox, no `source` marker) never votes Email
+// on Stato sync — the composer and Oggi already read it as synthetic —
+// while a stopped import on the same key keeps its fix card from the raw
+// entries.
+test('a key-only Email row counts nothing but keeps no silent table', async () => {
+  const keyOnly = entryOf({ connectionKey: 'PROFILE:Gmail', channel: 'email', account: 'op@palestra.it' });
+  const { mount, view } = renderView({ client: { activity: activityOf({ connections: [keyOnly] }) } });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(/0 di 9 collegati/.test(text), 'a key-only Email row connects nothing');
+  assert.ok(!text.includes('Tutto sincronizzato'), 'the hero never calls it synced');
+  assert.ok(text.includes('Collega'), 'Email offers its Collega');
 });

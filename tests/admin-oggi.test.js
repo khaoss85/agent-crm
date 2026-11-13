@@ -815,6 +815,12 @@ test('Google connections from GET /api/profile vote Calendar, never Email alone'
   assert.ok(!withRow.some((entry) => entry.channel === 'email'), 'a real Email row takes Email out of the invite');
 });
 
+test('A key-only Email row votes nothing on Oggi and stays invited', () => {
+  const keyOnly = [{ channel: 'email', status: 'active', connectionKey: 'PROFILE:Gmail' }];
+  assert.equal(countConnectedNine(keyOnly, null), 0, 'key-only Email reads as not connected');
+  assert.ok(missingLeadChannels(keyOnly, null).some((entry) => entry.channel === 'email'), 'Email stays invited without a real row');
+});
+
 test('Oggi strip with Gmail and Calendar linked counts Calendar and invites Email', () => {
   const profile = {
     connections: {
