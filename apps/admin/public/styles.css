@@ -2267,6 +2267,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
   .pipeline-skeleton .pipeline-skeleton-bar, .pipeline-skeleton .pipeline-skeleton-card { animation: pipeline-skeleton-pulse 1.2s ease-in-out infinite; }
   @keyframes pipeline-skeleton-pulse { 50% { opacity: .55; } }
 }
+/* backlog:fd0adcded1c3: dopo 3 s di caricamento lo scheletro lo dice a parole. */
+.pipeline-skeleton .pipeline-skeleton-slow { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+/* backlog:fd0adcded1c3: con il pannello offerta aperto la board tiene le sue colonne e guadagna spazio in fondo, così la colonna della card aperta scorre fuori da sotto il pannello. */
+.pipeline-board[data-offer-room="true"] .pipeline-column { flex: 0 0 var(--pipeline-column-width); min-width: var(--pipeline-column-width); }
+.pipeline-board[data-offer-room="true"]::after { content: ""; flex: 0 0 var(--pipeline-offer-room); }
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }

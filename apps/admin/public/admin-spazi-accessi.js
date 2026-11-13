@@ -865,7 +865,10 @@ export function createSpaziAccessiView(deps) {
     // C11: the dashed box stays last; its menu carries the verbatim C20
     // voices. Creation itself lives in the control plane (no capability
     // here), so picking a voice never invents a space.
-    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder' });
+    // The new-space menu opens as a popover over the page (absolute on this
+    // relative anchor), like the clienti and personalizzazione add menus:
+    // opening it never pushes the grid or the panels below.
+    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder', attrs: { style: 'position: relative;' } });
     const adderToggle = el(doc, 'button', {
       text: '+ Nuovo spazio di lavoro',
       cls: 'bo-spazi-quiet',
@@ -891,7 +894,14 @@ export function createSpaziAccessiView(deps) {
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
-      const menu = el(doc, 'div', { cls: 'ui-add-menu', attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
+      const menu = el(doc, 'div', {
+        cls: 'ui-add-menu',
+        attrs: {
+          role: 'menu',
+          'aria-label': 'Nuovo spazio di lavoro',
+          style: 'position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;',
+        },
+      });
       const aiVoice = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Descrivi l\u2019attivit\u00E0, propongo canali e team' });
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
@@ -955,6 +965,10 @@ export function createSpaziAccessiView(deps) {
     // C21: «Invita persona» opens a two-voice menu with verbatim subtitles.
     // Manual entry opens the existing inline spine form below; the AI voice
     // stays honest (no invention) until a capability exists.
+    // The invite menu opens as a popover under its button (absolute on this
+    // relative wrap), like every other add menu: opening it never pushes
+    // the team list or the invite form below.
+    const inviteWrap = el(doc, 'div', { cls: 'bo-spazi-invite-wrap', attrs: { style: 'position: relative; margin-left: auto;' } });
     const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
     inviteToggle.addEventListener('click', (event) => {
       event?.stopPropagation?.();
@@ -971,10 +985,18 @@ export function createSpaziAccessiView(deps) {
     inviteToggle.addEventListener('keydown', (event) => {
       if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
     });
-    teamHead.appendChild(inviteToggle);
+    inviteWrap.appendChild(inviteToggle);
+    teamHead.appendChild(inviteWrap);
     section.appendChild(teamHead);
     if (state.inviteMenuOpen) {
-      const inviteMenu = el(doc, 'div', { cls: 'ui-add-menu bo-spazi-invite-menu', attrs: { role: 'menu', 'aria-label': 'Invita persona' } });
+      const inviteMenu = el(doc, 'div', {
+        cls: 'ui-add-menu bo-spazi-invite-menu',
+        attrs: {
+          role: 'menu',
+          'aria-label': 'Invita persona',
+          style: 'position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; margin: 0;',
+        },
+      });
       const inviteAi = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB' });
       inviteAi.addEventListener('click', () => {
         state.inviteMenuOpen = false;
@@ -990,7 +1012,7 @@ export function createSpaziAccessiView(deps) {
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);
       trackMenuWrap(inviteMenu);
-      section.appendChild(inviteMenu);
+      inviteWrap.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutta l\u2019organizzazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
