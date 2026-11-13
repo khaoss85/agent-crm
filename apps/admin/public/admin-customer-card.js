@@ -1973,20 +1973,30 @@ export function createCustomerCardView(deps) {
     const paintOff = () => {
       if (offState === null) return;
       const { code, status } = offState;
+      // backlog:d30d17880f63: the AI reason always leads — with the AI off
+      // Genera stays off even once a channel is linked — and the missing
+      // channel follows it. «Scrivi il messaggio qui sotto» only where the
+      // message can leave (a usable channel).
+      const canWrite = channel() !== null;
+      const hand = canWrite ? ': scrivi il messaggio qui sotto' : '';
       say('');
       if (code === 'LLM_SPACE_DISABLED') {
         // Who turns it on: the titolare gets the way there, one click; the
         // others are told whom to ask (the Assistente idiom).
         if (readRole() === 'owner') {
-          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto, o '));
+          line.appendChild(el('span', undefined, `L’AI non è attiva in questo spazio${canWrite ? `${hand}, o ` : ': '}`));
           line.appendChild(link('#/spazi-accessi', 'accendila da Spazi e accessi', 'composer-ai-settings'));
         } else {
-          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto. Per accenderla chiedi al titolare.'));
+          line.appendChild(el('span', undefined, `L’AI non è attiva in questo spazio${hand}. Per accenderla chiedi al titolare.`));
         }
       } else if (code === 'LLM_SECRET_UNAVAILABLE') {
-        line.appendChild(el('span', undefined, 'L’AI non è ancora configurata: scrivi il messaggio qui sotto.'));
+        line.appendChild(el('span', undefined, `L’AI non è ancora configurata${hand}.`));
       } else if (status === 404 || status === 405) {
-        line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
+        line.appendChild(el('span', undefined, `La scrittura con l’AI non è ancora disponibile qui${hand}.`));
+      }
+      if (!canWrite) {
+        line.appendChild(el('span', undefined, ' · Manca anche un canale collegato: '));
+        line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
       }
       const kept = baseline();
       if (kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== '')) appendUndo();
@@ -1994,11 +2004,23 @@ export function createCustomerCardView(deps) {
     const off = (code, status = null) => {
       row.setAttribute('data-off', 'true');
       switchOff();
-      prompt.setAttribute('readonly', 'readonly');
+      // backlog:d30d17880f63: the request field is out of the way, not a
+      // read-only trap — no focus, no Tab stop, so keys never land in a
+      // field that ignores them (production: the page scrolled ~240 px
+      // under the presses). A press on it moves to the message field.
+      prompt.setAttribute('disabled', 'disabled');
+      prompt.setAttribute('aria-disabled', 'true');
+      prompt.setAttribute('tabindex', '-1');
       prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
+      if (typeof prompt.blur === 'function') prompt.blur();
       offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
       paintOff();
     };
+    field.addEventListener?.('mousedown', (event) => {
+      if (row.getAttribute('data-off') !== 'true') return;
+      event.preventDefault?.();
+      if (typeof text.focus === 'function') text.focus({ preventScroll: true });
+    });
     // Annulla: back to the person's own text before the first AI draft.
     function appendUndo() {
       const back = el('button', 'bo-composer-ai-undo', 'Annulla');
@@ -2273,15 +2295,16 @@ export function createCustomerCardView(deps) {
     // No usable channel: off, with Connettori beside it. AI off in the space
     // (the cached state read): off, with the reason and who turns it on. A
     // Genera already in flight is left to the gate's own answer.
+    // backlog:d30d17880f63: the AI state is read with or without a channel —
+    // an AI that is off is the first reason, the channel the second.
     if (channel() === null) {
       switchOff();
       sayConnect();
-    } else {
-      void readSpaceAi(spaceId).then((code) => {
-        if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
-        off(code);
-      });
     }
+    void readSpaceAi(spaceId).then((code) => {
+      if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
+      off(code);
+    });
     prompt.addEventListener?.('keydown', (event) => {
       if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
         event.preventDefault?.();
@@ -2481,7 +2504,9 @@ export function createCustomerCardView(deps) {
         }
       });
     }
-    if (typeof text.focus === 'function' && selected !== null) text.focus();
+    // backlog:d30d17880f63: the opening focus never scrolls the window body —
+    // a scrolled body hid «Rispondi su» under the header (1512×773).
+    if (typeof text.focus === 'function' && selected !== null) text.focus({ preventScroll: true });
     let busy = false;
     send.addEventListener('click', () => { void doSend(); });
     const setBusy = (on) => {
