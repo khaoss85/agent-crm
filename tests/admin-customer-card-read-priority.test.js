@@ -188,7 +188,7 @@ test('voce 4cd1bbb646d0 P1: a hung card never starves the timeline and the secon
   const doc = createFakeDocument();
   const mount = createMount();
   const client = recordingClient();
-  const view = createCustomerCardView({ doc, mount, client, wait: never });
+  const view = createCustomerCardView({ doc, mount, client, firstWaveWait: never });
   view.renderCard('contact', 'c-ada');
   await flush(10);
   client.gates.get('timeline').release.resolve(TIMELINE);
@@ -209,7 +209,7 @@ test('voce 4cd1bbb646d0 P1: the budget opens the second wave when both first-wav
   const doc = createFakeDocument();
   const mount = createMount();
   const client = recordingClient();
-  const view = createCustomerCardView({ doc, mount, client, wait: () => Promise.resolve() });
+  const view = createCustomerCardView({ doc, mount, client, firstWaveWait: () => Promise.resolve() });
   view.renderCard('contact', 'c-ada');
   await flush(20);
   assert.ok(client.started.some((path) => path.startsWith('/api/customer-data/profile/')),
