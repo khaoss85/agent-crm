@@ -81,16 +81,22 @@ async function board(records, { wait, readGate } = {}) {
   return { mount, client, events, view };
 }
 
-test('3d811389bb4c: «Spostata» from Sposta shows only once the card sits in its new column', async () => {
-  const { mount, events } = await board([record('a', 'discovery')]);
+test('3d811389bb4c + fd0adcded1c3: from Sposta the card sits in its new column first; «Spostata» waits for the server', async () => {
+  const { mount, client, events } = await board([record('a', 'discovery')]);
   const card = cardOf(mount, 'a');
   card.__select.value = 'demo';
   void card.__move();
   await tick();
+  const moving = events.find((item) => item.message === 'Spostamento in Prova…');
+  assert.ok(moving, 'while the write runs the toast only says what is happening');
+  assert.equal(moving.cardAt, 'demo', 'with the card already in Prova');
+  assert.ok(!events.some((item) => item.message.startsWith('Spostata')), 'never «Spostata» before the server answers');
+  client.posts[0].answer();
+  await tick(8);
   const moved = events.find((item) => item.message === 'Spostata in Prova.');
-  assert.ok(moved, 'the message shows');
-  assert.equal(moved.cardAt, 'demo', 'and the card was already in Prova when it did');
-  assert.equal(where(mount, 'a'), 'demo');
+  assert.ok(moved, '«Spostata in Prova.» once the server said yes');
+  assert.equal(moved.cardAt, 'demo');
+  assert.ok(moved.options?.action, '«Annulla» still there');
 });
 
 test('3d811389bb4c: «Annulla» brings card and message back at the click, even while the write runs', async () => {
@@ -99,7 +105,7 @@ test('3d811389bb4c: «Annulla» brings card and message back at the click, even 
   card.__select.value = 'demo';
   void card.__move();
   await tick();
-  events.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  events.find((item) => item.message === 'Spostamento in Prova…').options.action.run();
   const back = events.find((item) => item.message === 'Riportata in Richiesta info.');
   assert.ok(back, '«Riportata» at the click');
   assert.equal(back.cardAt, 'discovery', 'with the card already back');
@@ -111,6 +117,7 @@ test('3d811389bb4c: «Annulla» brings card and message back at the click, even 
   client.posts[1].answer();
   await tick(8);
   assert.equal(where(mount, 'a'), 'discovery');
+  assert.ok(!events.some((item) => item.message === 'Spostata in Prova.'), 'an undone move never says «Spostata» when its write lands');
 });
 
 test('3d811389bb4c: a move still running after 3 s says so on its card', async () => {
