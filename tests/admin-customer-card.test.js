@@ -5082,7 +5082,20 @@ function heldByPath(options = {}) {
     await new Promise((resolve) => setImmediate(resolve));
     await new Promise((resolve) => setImmediate(resolve));
   };
-  return { client, held, land };
+  /**
+   * Voce 4cd1bbb646d0: the scheda reads in two waves (card and timeline
+   * first, the rest after). Draining releases whatever is held, flushes,
+   * and repeats — the second wave is only held after the first lands, so a
+   * single splice can never free it.
+   */
+  const drain = async () => {
+    for (let round = 0; round < 25 && held.length > 0; round += 1) {
+      for (const entry of held.splice(0)) entry.release();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+  return { client, held, land, drain };
 }
 
 /** A section card by its title, or undefined. @param {any} mount @param {string} title */
@@ -5091,7 +5104,7 @@ const sectionTitled = (mount, title) => mount.findAll('h4')
 const isSkeleton = (box) => box?.getAttribute('data-loading') === 'true';
 
 test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link shows its structure at once, never a blank mount', async () => {
-  const { client, held } = heldByPath();
+  const { client, held, drain } = heldByPath();
   const mount = createMount();
   const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
   // Before any read answers: the scheda's skeleton, not a «Carico…» line.
@@ -5105,8 +5118,14 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(held.length >= 7, 'every read is in flight at once');
-  for (const entry of held.splice(0)) entry.release();
+  // Voce 4cd1bbb646d0: the first wave is card and timeline alone — no
+  // secondary read jumps the queue behind the server's single reader.
+  const paths = held.map((entry) => entry.path);
+  assert.ok(paths.some((path) => path.startsWith('/api/customer-hub/card/')), 'the card read starts at once');
+  assert.ok(paths.some((path) => path.startsWith('/api/customer-hub/timeline/')), 'the timeline read starts at once');
+  assert.ok(!paths.some((path) => path.startsWith('/api/customer-data/')), 'no secondary read starts before card and timeline settle');
+  assert.ok(!paths.includes('/api/schema'), 'the schema read waits for the first wave');
+  await drain();
   await rendering;
   assert.equal(mount.firstChild.getAttribute('aria-busy'), null, 'the scheda is no longer busy');
   assert.ok(!mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton left');
@@ -5114,40 +5133,45 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
 });
 
 test('backlog:1a96094db71d: each section fills as its own read lands, the slow ones keep their skeleton', async () => {
-  const { client, held, land } = heldByPath();
+  const { client, held, land, drain } = heldByPath();
+  void held;
   const mount = createMount();
   const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
   await new Promise((resolve) => setImmediate(resolve));
 
-  // The profile lands first (2.4 s on production): Prossimi passi fills,
-  // the cronologia and the header still wait for theirs.
-  await land('/api/customer-data/profile/');
-  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile alone');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia still waits for its read');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the card');
-  assert.ok(!mount.textContent.includes(CARD.name), 'no name before the card read');
-
-  // The card lands: the header names the customer, Dettagli fills.
+  // Voce 4cd1bbb646d0: card and timeline land first — the header and the
+  // cronologia paint while the profile sections keep their skeleton. A
+  // secondary read can no longer land before them (it does not even start
+  // until they settle).
   await land('/api/customer-hub/card/');
+  await land('/api/customer-hub/timeline/');
   assert.ok(mount.textContent.includes(CARD.name), 'the header shows the customer');
-  assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimo appuntamento')), 'the appointment waits for the cronologia');
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia paints with the name, without the profile');
+  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'the profile sections keep their skeleton');
+  assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the profile');
   assert.equal(mount.firstChild.getAttribute('aria-busy'), 'true', 'still busy while reads are out');
 
-  for (const entry of held.splice(0)) entry.release();
+  // The profile lands: its sections fill.
+  await land('/api/customer-data/profile/');
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile');
+  assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
+
+  await drain();
   await rendering;
   assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia painted');
   assert.equal(mount.findAll('h4').filter((node) => node.textContent === 'Dettagli').length, 1, 'one Dettagli, never a skeleton beside it');
 });
 
 test('backlog:1a96094db71d: a card read that fails after other sections landed shows the error panel, never a half scheda', async () => {
-  const { client, held, land } = heldByPath({ cardError: Object.assign(new Error('down'), { status: 500, code: 'UNKNOWN' }) });
+  const { client, land, drain } = heldByPath({ cardError: Object.assign(new Error('down'), { status: 500, code: 'UNKNOWN' }) });
   const mount = createMount();
   const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
   await new Promise((resolve) => setImmediate(resolve));
-  await land('/api/customer-data/profile/');
+  // Voce 4cd1bbb646d0: the first wave settles first — the card fails, the
+  // timeline lands — and only then do the secondary reads start.
   await land('/api/customer-hub/card/');
-  for (const entry of held.splice(0)) entry.release();
+  await land('/api/customer-hub/timeline/');
+  await drain();
   await rendering;
   assert.ok(mount.textContent.includes('Scheda non disponibile'), 'the error panel takes the screen');
   assert.ok(!mount.textContent.includes('Prossimi passi'), 'no section of a scheda that cannot be read');
@@ -5155,35 +5179,43 @@ test('backlog:1a96094db71d: a card read that fails after other sections landed s
 
 test('review Muse #835 (P2): a custom field being edited keeps its typing while the other sections land', async () => {
   const defs = [{ key: 'amico', label: 'Amico', type: 'testo' }];
-  const { client, held, land } = heldByPath({ fieldDefs: defs, fieldValues: [] });
+  const { client, land, drain } = heldByPath({ fieldDefs: defs, fieldValues: [] });
   const mount = createMount();
   const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
   await new Promise((resolve) => setImmediate(resolve));
+  // Voce 4cd1bbb646d0: the field reads belong to the second wave — they
+  // start only after card and timeline settle.
+  await land('/api/customer-hub/card/');
+  await land('/api/customer-hub/timeline/');
   await land('/api/customer-data/fields');
   const edit = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-field:amico');
   assert.ok(edit, 'the custom fields are there before the rest');
   edit.dispatch('click');
   const typed = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'campo:amico');
   typed().value = 'Mario Rossi';
-  await land('/api/customer-hub/card/');
+  await land('/api/customer-data/profile/');
   assert.equal(typed()?.value, 'Mario Rossi', 'a section landing keeps the open editor and its typing');
-  for (const entry of held.splice(0)) entry.release();
+  await drain();
   await rendering;
   assert.equal(typed()?.value, 'Mario Rossi', 'the full answer keeps it too');
   assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-action') === 'save-field-value'), 'Salva is still there');
 });
 
 test('review Muse #835 (P2): a field being added keeps its typing while the other sections land', async () => {
-  const { client, held, land } = heldByPath({ fieldDefs: [], fieldValues: [] });
+  const { client, land, drain } = heldByPath({ fieldDefs: [], fieldValues: [] });
   const mount = createMount();
   const rendering = createCustomerCardView({ doc: createFakeDocument(), mount, client }).renderCard('contact', 'c1');
   await new Promise((resolve) => setImmediate(resolve));
+  // Voce 4cd1bbb646d0: the field reads belong to the second wave — they
+  // start only after card and timeline settle.
+  await land('/api/customer-hub/card/');
+  await land('/api/customer-hub/timeline/');
   await land('/api/customer-data/fields');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-field').dispatch('click');
   const label = () => mount.findAll('input').find((node) => node.getAttribute('name') === 'nuovo-campo-label');
   label().value = 'Amico';
-  await land('/api/customer-hub/card/');
-  for (const entry of held.splice(0)) entry.release();
+  await land('/api/customer-data/profile/');
+  await drain();
   await rendering;
   assert.equal(label()?.value, 'Amico', 'the new field form survives the repaints with its text');
 });
@@ -5193,7 +5225,7 @@ test('review Muse #835 (P2): a partial paint that throws is logged with its caus
   const original = console.error;
   console.error = (...args) => { logged.push(args); };
   try {
-    const { client, held, land } = heldByPath();
+    const { client, land, drain } = heldByPath();
     const doc = createFakeDocument();
     const make = doc.createElement;
     let boom = false;
@@ -5204,10 +5236,13 @@ test('review Muse #835 (P2): a partial paint that throws is logged with its caus
     const mount = createMount();
     const rendering = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
     await new Promise((resolve) => setImmediate(resolve));
+    // Voce 4cd1bbb646d0: the throwing paint is a first-wave partial paint
+    // (card and timeline), like the profile landing was before.
     boom = true;
-    await land('/api/customer-data/profile/');
+    await land('/api/customer-hub/card/');
+    await land('/api/customer-hub/timeline/');
     boom = false;
-    for (const entry of held.splice(0)) entry.release();
+    await drain();
     await rendering;
     assert.ok(mount.textContent.includes(CARD.name), 'the full answer still paints');
   } finally {
