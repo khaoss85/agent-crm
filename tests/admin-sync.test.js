@@ -42,6 +42,7 @@ import {
   syncIdentityCards,
   syncIndicator,
   timeAgo,
+  withProfileConnections,
 } from '../apps/admin/public/admin-sync.js';
 import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
@@ -1532,4 +1533,40 @@ test('e381c48581fa: with no adapter Stato sync offers Collega only where Connett
     const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
     assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
   }
+});
+
+// backlog:803d127c4458 (review Muse giro 4 P1): the length-equality shortcut
+// returned the unfiltered activity when the filter dropped the Email
+// stand-in and the merge added another profile channel in the same call
+// (remove 1, add 1: the lengths tie). The production shape: the server
+// already merged the Email stand-in, and the profile offers Calendar too.
+test('803d127c4458: withProfileConnections swaps the Email stand-in for the merged Calendar row', () => {
+  const emailStandin = {
+    connectionKey: 'profile:gmail',
+    channel: 'email',
+    account: 'a@example.com',
+    status: 'active',
+    health: 'ok',
+    source: 'profile',
+  };
+  const activity = activityOf({ connections: [emailStandin] });
+  const profile = {
+    member: {},
+    connections: {
+      available: true,
+      reason: null,
+      items: [
+        { connector: 'gmail', status: 'connected', account: 'a@example.com' },
+        { connector: 'calendar', status: 'connected', account: 'a@example.com' },
+      ],
+      meta: { configured: true },
+    },
+  };
+  const merged = withProfileConnections(activity, profile);
+  assert.notEqual(merged, activity, 'a new activity: the content changed on a length tie');
+  assert.deepEqual(merged.connections.map((row) => row.channel), ['calendar']);
+  assert.equal(merged.connections[0].source, 'profile');
+  // Unchanged input keeps its identity: no merge, no stand-in, no profile.
+  const plain = activityOf();
+  assert.equal(withProfileConnections(plain, null), plain);
 });

@@ -501,7 +501,12 @@ export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
   const merged = mergeProfileConnections(entries, profile).filter((row) => !isProfileEmailStandin(row));
-  return merged.length === entries.length ? activity : { ...activity, connections: merged };
+  // Backlog 803d127c4458 (review Muse giro 4 P1): a length tie is not "no
+  // change" — the filter may drop the Email stand-in while the merge adds
+  // another profile channel in the same call. Compare the content instead.
+  const unchanged = merged.length === entries.length
+    && merged.every((row, index) => row === entries[index]);
+  return unchanged ? activity : { ...activity, connections: merged };
 }
 
 /**
