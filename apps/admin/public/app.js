@@ -4,7 +4,7 @@ import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { afterScreen, createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -100,6 +100,9 @@ const submissions = createSubmissionController({
     method: options.method,
     body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
     idempotencyKey: options.idempotencyKey,
+    // backlog:fe9be5f0af4a (review Muse #878): the same keepalive as the
+    // views' write client, never silently dropped here.
+    ...(options.keepalive === true ? { keepalive: true } : {}),
   }),
 });
 
@@ -652,6 +655,16 @@ const marketingView = createMarketingView({
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
+/**
+ * The name the customer card last gave its breadcrumb, for the customer it
+ * named (backlog:fe9be5f0af4a). @type {{ resource: string, id: string, name: string | null } | null}
+ */
+let customerTitle = null;
+/** The remembered name, only in the space it was read in (review Muse #878). */
+function rememberedCustomerTitle() {
+  return customerTitle !== null && customerTitle.space === (shellActiveSpace ?? null) ? customerTitle : null;
+}
+
 const customerCardView = createCustomerCardView({
   doc: document,
   mount: mountGate.owned('customer-card'),
@@ -684,7 +697,13 @@ const customerCardView = createCustomerCardView({
   // screen, so a title from a card that is no longer routed is dropped.
   onCustomerTitle: (name) => {
     if (!mountGate.isActive('customer-card')) return;
-    if (shellView) shellView.update({ screenLabel: name ? `Clienti / ${name}` : 'Clienti' });
+    // backlog:fe9be5f0af4a: remembered for the routed customer, so a later
+    // re-sync of the shell (the schema read landing after the card) keeps it.
+    const target = targetForHash(window.location.hash || '#/');
+    customerTitle = target.view === 'customer-card'
+      ? { resource: target.resource, id: target.subjectId, name: name ?? null, space: shellActiveSpace ?? null }
+      : null;
+    if (shellView) shellView.update({ screenLabel: customerCrumbLabel(target, 'Clienti', rememberedCustomerTitle()) });
   },
 });
 
@@ -1171,7 +1190,7 @@ function syncShell(target) {
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
-    screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
+    screenLabel: customerCrumbLabel(target, typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista', rememberedCustomerTitle()),
   });
 }
 
@@ -1404,7 +1423,12 @@ async function route() {
   // Voce 2f2d22f2, review #722: a card read still in flight must die when
   // the operator leaves the card — otherwise its late response retitles the
   // screen just opened. Same shared-mount race as the list and the form.
-  if (target.view !== 'customer-card') customerCardView.invalidate();
+  if (target.view !== 'customer-card') {
+    customerCardView.invalidate();
+    // Leaving the scheda forgets its name: a later visit never paints a
+    // stale one before its own read (review Muse #878).
+    customerTitle = null;
+  }
   // backlog:607f33ee: every async view paints straight into the shared
   // mount, so a read still in flight must die when the operator leaves
   // the view — otherwise its late response repaints the screen just
