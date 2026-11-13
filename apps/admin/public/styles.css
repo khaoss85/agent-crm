@@ -1053,6 +1053,17 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
+/* backlog:1f7cb20d3c30: a hand-written agent nothing runs yet — waiting, never «Attivo». */
+.bo-agent-status-waiting { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-agent-noengine { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agenti-sectionhead > .ui-btn { margin-left: auto; }
+.bo-agent-talk .bo-agent-cost { flex: 0 0 96px; min-width: 0; }
+.bo-agent-new-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agent-new { display: flex; flex-direction: column; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+.bo-agent-new > h3 { margin: 0 0 12px; font-size: 17px; }
+.bo-agent-new .bo-seq-create-error { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--danger); }
+.bo-agent-new .bo-seq-field { max-width: 640px; gap: 4px; }
+.bo-agent-new textarea.ui-field { width: 100%; resize: vertical; font-family: inherit; line-height: 1.45; }
 /* One metric per line: small label, clear value, never a broken word. */
 .bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
 .bo-agent-fact { min-width: 0; max-width: 100%; display: flex; align-items: baseline; gap: 8px; }

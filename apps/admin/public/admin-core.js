@@ -585,6 +585,20 @@ export function formatMinorUnits(minorUnits, currency) {
 }
 
 /**
+ * Parse a euro amount typed by the operator ("12,50" or "12.50") into
+ * integer cents. Fail-closed: anything that is not a non-negative amount
+ * with at most two decimals reads null and the form refuses to send.
+ * @param {unknown} raw
+ */
+export function parseEuroToCents(raw) {
+  if (typeof raw !== 'string') return null;
+  const normalized = raw.trim().replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
+  const cents = Math.round(Number(normalized) * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+/**
  * Amount for the Italian screens, the way the prototype writes it:
  * `27.120 €`, `1.200,50 €`, `25 USD`. Dot groups thousands, comma marks the
  * cents and the cents show only when they are not zero; EUR is written `€`,
