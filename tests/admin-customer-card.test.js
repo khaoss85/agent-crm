@@ -3691,6 +3691,67 @@ test('composer AI: Rigenera asks three new versions that replace the old choice'
   assert.deepEqual(picks.map((node) => node.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'new versions start unpicked');
 });
 
+// P1 on #859 (Muse review of 9b9df964): `filled` lives in one composer row
+// while the person's original (`aiBefore`) survives ✕/Esc in the shared
+// draft — a Rigenera after close and reopen filled versions[0] over hand
+// edits with no «Sostituire il testo modificato?» confirm, and Annulla could
+// no longer bring the edits back.
+test('composer AI (backlog:1ca42058): Rigenera after close and reopen keeps hand edits, no silent replace', async () => {
+  const client = draftClient({ ...threeVersions, subject: 'Prova di giovedì' });
+  const { mount, panel } = await openComposerMount({ client });
+  const first = aiParts(panel);
+  first.area.value = 'Il mio testo';
+  first.input.value = 'ricordagli la prova di giovedì';
+  first.go.dispatch('click');
+  await flushComposer();
+  assert.equal(first.area.value, threeVersions.corta, 'the first Genera fills at once');
+  const edited = `${threeVersions.corta} A presto, Laura`;
+  first.area.value = edited;
+  first.area.dispatch('input');
+  panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-close').dispatch('click');
+  await flushComposer();
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
+  await flushComposer();
+  const reopened = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  assert.ok(reopened, 'Scrivi reopens the window');
+  const again = aiParts(reopened);
+  assert.equal(again.area.value, edited, 'the hand-edited draft survives the reopen');
+  assert.equal(again.go.textContent, 'Rigenera');
+  again.input.value = 'ricordagli la prova di giovedì';
+  again.go.dispatch('click');
+  await flushComposer();
+  assert.equal(client.drafts.length, 2, 'Rigenera asks the AI again');
+  assert.equal(again.area.value, edited, 'the new answer never overwrites hand edits in silence');
+  assert.doesNotMatch(reopened.textContent, /Sostituire il testo modificato/, 'no confirm steals the line either: the text simply stays');
+  assert.match(reopened.textContent, /rileggila e modificala prima di inviare/, 'the draft line is shown');
+  assert.equal(aiPicks(reopened).length, 3, 'the new three versions are still choosable');
+  // NOTE (scope of this cure, disclosed in the PR): an explicit pick after
+  // the reopen fills at once — the ephemeral `filled` cannot tell an
+  // untouched AI draft from hand edits in a rebuilt row. The silent
+  // overwrite this test pins is the automatic one (Genera/Rigenera).
+  const undo = reopened.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-ai-undo');
+  assert.ok(undo, 'Annulla stays offered');
+  undo.dispatch('click');
+  assert.equal(again.area.value, 'Il mio testo', 'Annulla still leads back to the person’s own text');
+});
+
+// P3 on #859: the 120-char excerpt used a UTF-16 slice and could split a
+// surrogate pair (emoji on the cut), painting U+FFFD in the preview.
+test('composer AI (backlog:1ca42058): a version excerpt never splits a surrogate pair', async () => {
+  const wording = `${'a'.repeat(119)}😀${'b'.repeat(50)}`;
+  const client = draftClient({ corta: 'Ciao!', lunga: wording, diretta: 'Guido, ci vediamo.', subject: '' });
+  const { panel } = await openComposerMount({ client });
+  const { input, go } = aiParts(panel);
+  input.value = 'scrivi qualcosa';
+  go.dispatch('click');
+  await flushComposer();
+  const preview = aiPicks(panel)[1].findAll('span')
+    .find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-preview'));
+  assert.ok(preview, 'the long version shows an excerpt');
+  assert.ok(preview.textContent.includes('😀'), 'the emoji survives the truncation');
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(preview.textContent), 'no lone surrogate in the excerpt');
+});
+
 test('composer AI (backlog:01289e73): a single-text answer from an older pilot still fills at once', async () => {
   const client = draftClient({ subject: 'Prova di giovedì', body: 'Ciao Guido, ti aspettiamo giovedì alle 18 per la prova.' });
   const { panel } = await openComposerMount({ client });

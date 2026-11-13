@@ -1912,7 +1912,10 @@ export function createCustomerCardView(deps) {
             // member sees what each version holds without picking it first.
             pick.setAttribute('title', version.text);
             pick.appendChild(el('span', 'bo-composer-ai-pick-label', version.label));
-            const excerpt = version.text.length > 120 ? `${version.text.slice(0, 120)}…` : version.text;
+            // P3 on #859: truncate on code points, never a UTF-16 slice that
+            // can split a surrogate pair (emoji) and paint U+FFFD.
+            const chars = Array.from(version.text);
+            const excerpt = chars.length > 120 ? `${chars.slice(0, 120).join('')}…` : version.text;
             pick.appendChild(el('span', 'bo-composer-ai-preview', excerpt));
             // Only a closed or reopened composer retires the versions: a
             // Rigenera in flight leaves them working until the new three.
@@ -1953,8 +1956,12 @@ export function createCustomerCardView(deps) {
           // line — the member reads a draft right away instead of an empty
           // field. A new set after a pick keeps the earlier wording instead,
           // none of the new three selected yet.
-          if (filled === null && versions.length > 0) fill(versions[0].text, versions[0].kind);
-          else if (filled !== null) sayDrafted();
+          // P1 on #859: `filled` is per-row, but the person's original
+          // (`baseline()`) survives ✕/Esc in the shared draft — after a
+          // reopen a Rigenera must not overwrite hand edits in silence.
+          // The first fill happens only when no AI draft exists yet.
+          if (filled === null && baseline() === null && versions.length > 0) fill(versions[0].text, versions[0].kind);
+          else if (filled !== null || baseline() !== null) sayDrafted();
           return;
         }
         // A single-text answer from a pilot before the three-version cure
@@ -1966,7 +1973,11 @@ export function createCustomerCardView(deps) {
         }
         while (choice.firstChild) choice.removeChild(choice.firstChild);
         pickButtons = [];
-        fill(drafted.slice(0, 2000));
+        // Same P1 on #859 as the three-version path: after ✕/Esc and a
+        // reopen, a legacy single-text answer must not overwrite hand edits
+        // in silence either.
+        if (filled === null && baseline() === null) fill(drafted.slice(0, 2000));
+        else sayDrafted();
       } catch (error) {
         if (gone()) return;
         const code = error?.code ?? null;
