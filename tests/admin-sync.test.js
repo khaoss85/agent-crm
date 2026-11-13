@@ -1242,7 +1242,7 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(count[0], '1 di 9 collegati', 'Calendar counts, the profile-Gmail stand-in never votes Email (backlog:3805161965cd: no channel connection, send would 409)');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1298,13 +1298,16 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
 // counted as connected, but with no update and no events they wait for
 // the first event like any other quiet row (DECISION to be confirmed:
 // «senza aggiornamento né eventi» covers profile-merged rows too).
+// Backlog:3805161965cd narrows the count only: the profile-Gmail stand-in
+// never votes Email in «<n> di 9» (no channel connection, send would 409);
+// the table rows keep waiting like #680 says.
 test('#680 P2-1: profile links counted as connected wait for the first event', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  assert.ok(mount.textContent.includes('1 di 9 collegati'), 'Calendar votes, the profile-Gmail stand-in does not (backlog:3805161965cd)');
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
 });

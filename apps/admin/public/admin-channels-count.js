@@ -132,6 +132,23 @@ export function profileOffersConnector(profile, connector) {
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  * @returns {Array<any>}
  */
+/**
+ * Whether one row is a stand-in for the space-profile Gmail rather than a
+ * real channel connection (backlog:3805161965cd). The server refuses the
+ * Email send with 409 CHANNEL_CONNECTION_NOT_ACTIVE without a real channel
+ * connection, so these rows never vote Email in a «collegati» count — on
+ * Oggi, on Stato sync, anywhere the count prints. Calendar and the other
+ * profile votes keep counting.
+ * @param {unknown} row connection-like row ({ channel, connectionKey, source })
+ */
+export function isProfileEmailStandinRow(row) {
+  if (row === null || typeof row !== 'object') return false;
+  if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
+  if (row.source === 'profile') return true;
+  const key = row.connectionKey;
+  return typeof key === 'string' && key.trim().toLowerCase().startsWith('profile:');
+}
+
 export function mergeProfileConnections(rows, profile = null) {
   const list = Array.isArray(rows) ? rows.filter((row) => row != null && typeof row === 'object') : [];
   const items = profileItems(profile);

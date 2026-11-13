@@ -32,7 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
 import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1228,23 +1228,11 @@ export function googleNineChannels(profile) {
 }
 
 /**
- * Backlog:3805161965cd: a `profile:` handle (any case) is a pilot key,
- * never a route — the same rule the composer enforces, so the two screens
+ * Backlog:3805161965cd: the profile-Gmail stand-in never votes Email —
+ * shared with Stato sync (`isProfileEmailStandinRow`), so the two screens
  * never disagree on Email.
- * @param {unknown} value
  */
-const isInviteProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
-
-/**
- * Backlog:3805161965cd: whether one row is a stand-in for the
- * space-profile Gmail rather than a real channel connection. The server
- * refuses the send with 409 CHANNEL_CONNECTION_NOT_ACTIVE without a real
- * connection, so these rows never vote Email on Oggi.
- * @param {unknown} row
- */
-const isInviteSyntheticEmailRow = (row) => row != null && typeof row === 'object'
-  && String(row.channel ?? '').toLowerCase() === 'email'
-  && (row.source === 'profile' || isInviteProfileKey(row.connectionKey));
+const isInviteSyntheticEmailRow = isProfileEmailStandinRow;
 
 /**
  * Backlog:3805161965cd: the rows Oggi votes on — the profile links merged

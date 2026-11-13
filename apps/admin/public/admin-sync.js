@@ -32,6 +32,7 @@ import {
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
+  isProfileEmailStandinRow,
   mergeProfileConnections,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -1245,7 +1246,13 @@ export function createSyncView(deps) {
     // pill but is not «collegato».
     // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
     // included, plus a linked channel outside the nine (review #647).
-    const count = channelConnectionCount(entriesOf(activity));
+    // Backlog:3805161965cd: the profile-Gmail stand-in never votes Email —
+    // without a real channel connection the send fails 409, so Stato sync
+    // prints the same number Oggi prints (cf365ada15b9). The table rows
+    // keep painting from the shared merge untouched (review #680).
+    const count = channelConnectionCount(
+      entriesOf(activity).filter((row) => !isProfileEmailStandinRow(row)),
+    );
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));
