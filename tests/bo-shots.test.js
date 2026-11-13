@@ -42,6 +42,10 @@ import {
   parseArgs,
   readPngSize,
   readProbe,
+  reportingBundleRows,
+  reportingModelFor,
+  reportingMonthLabel,
+  reportingShiftMonth,
   shotFloor,
 } from '../scripts/bo-shots.js';
 
@@ -241,6 +245,72 @@ test('checkShotSize gates existence and dimensions, never the floor', () => {
   assert.throws(
     () => checkShotSize(join(dir, 'missing.png'), 'oggi', 'desktop', { width: 1440, height: 1800 }),
     /oggi desktop: .* without writing the screenshot/,
+  );
+});
+
+test('the reporting demo follows the asked period (backlog:06d4b855fac4)', () => {
+  // Like the real server (formatMonth(query.period)): period, labels, the
+  // monthly window, the channel weeks and the CSV name follow the period
+  // the screen asks for, never a fixed October.
+  assert.equal(reportingMonthLabel('2026-10'), 'ottobre 2026');
+  assert.equal(reportingMonthLabel('2026-11'), 'novembre 2026');
+  assert.equal(reportingShiftMonth('2026-11', -1), '2026-10');
+  assert.equal(reportingShiftMonth('2026-01', -1), '2025-12');
+  const october = reportingModelFor('2026-10');
+  assert.equal(october.period, '2026-10');
+  assert.equal(october.periodLabel, 'ottobre 2026');
+  assert.ok(
+    october.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in ottobre 2026'),
+    'the won card names October',
+  );
+  assert.deepEqual(october.monthly.map((entry) => entry.month), ['2026-09', '2026-10']);
+  assert.equal(october.monthly.at(-1).label, 'ottobre 2026');
+  assert.equal(october.csv.filename, 'reporting-2026-10.csv');
+  assert.ok(october.csv.content.startsWith('reporting;2026-10;'), 'the CSV names October');
+  const november = reportingModelFor('2026-11');
+  assert.equal(november.period, '2026-11');
+  assert.equal(november.periodLabel, 'novembre 2026');
+  assert.ok(
+    november.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in novembre 2026'),
+    'the won card names November with November asked',
+  );
+  assert.deepEqual(november.monthly.map((entry) => entry.month), ['2026-10', '2026-11']);
+  assert.equal(november.csv.filename, 'reporting-2026-11.csv');
+  // The four Monday-start weeks opening the asked month (1 Nov 2026 is a
+  // Sunday, so the first week starts Mon 26 Oct), never the fixed October set.
+  assert.deepEqual(november.channels.weeks.map((week) => week.week), [
+    '2026-10-26',
+    '2026-11-02',
+    '2026-11-09',
+    '2026-11-16',
+  ]);
+  assert.deepEqual(october.channels.weeks.map((week) => week.week), [
+    '2026-09-28',
+    '2026-10-05',
+    '2026-10-12',
+    '2026-10-19',
+  ]);
+  // An invalid period falls back to the fixture's own month, never garbage.
+  assert.equal(reportingModelFor('nope').period, '2026-10');
+  // The bundle summary rows follow the same month as the cards.
+  assert.deepEqual(reportingBundleRows('2026-11'), [
+    { id: 'r1', metric: 'chiamate', period: '2026-11', value: 20, unit: 'call' },
+  ]);
+});
+
+test('the reporting harness answers the current period end to end', async () => {
+  // The fixture the page serves is built for the same currentPeriod() the
+  // screen asks for, so the painted month and the card labels coincide.
+  const { currentPeriod } = await import('../apps/admin/public/admin-reporting.js');
+  const asked = currentPeriod();
+  const page = harnessHtml('reporting', publicDir);
+  assert.ok(
+    page.includes(`"period":"${asked}"`),
+    `the harness model answers the asked period (${asked})`,
+  );
+  assert.ok(
+    page.includes(`"periodLabel":"${reportingMonthLabel(asked)}"`),
+    'the harness model labels the asked month',
   );
 });
 

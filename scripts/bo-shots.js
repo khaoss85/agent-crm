@@ -55,6 +55,7 @@ import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 // (backlog:1ce3a1f0): the obiettivo line can never again show cents as
 // euros, because no second formatter exists for it.
 import { formatMinor, formatMonth } from '../packages/analytics/src/dashboard.js';
+import { currentPeriod } from '../apps/admin/public/admin-reporting.js';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
@@ -476,6 +477,77 @@ const DEMO_REPORT = {
   csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;2;14000;1;9000;1;50%\n' },
 };
 
+/**
+ * Italian long month label for a YYYY-MM period (UTC), like the server's
+ * formatMonth(query.period).
+ * @param {string} period
+ */
+export function reportingMonthLabel(period) {
+  return new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1)));
+}
+
+/**
+ * Shift a YYYY-MM period by delta months.
+ * @param {string} period
+ * @param {number} delta
+ */
+export function reportingShiftMonth(period, delta) {
+  const date = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1 + delta, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Demo reporting model for the asked period (backlog:06d4b855fac4): like
+ * the real server, period, periodLabel, the «Vinte in» / «In chiusura in»
+ * card labels, the monthly window, the channel weeks and the CSV name all
+ * follow the period the screen asks for, never a fixed October. An invalid
+ * period falls back to the fixture's own month.
+ * @param {string} period YYYY-MM the screen asks for
+ */
+export function reportingModelFor(period) {
+  const asked = /^\d{4}-(0[1-9]|1[0-2])$/.test(period ?? '') ? period : DEMO_REPORT.period.slice(0, 7);
+  const periodLabel = reportingMonthLabel(asked);
+  const model = structuredClone(DEMO_REPORT);
+  model.period = asked;
+  model.periodLabel = periodLabel;
+  const labels = { 'won-period': `Vinte in ${periodLabel}`, 'closing-period': `In chiusura in ${periodLabel}` };
+  model.kpis = model.kpis.map((kpi) => (labels[kpi.id] ? { ...kpi, label: labels[kpi.id] } : kpi));
+  const last = model.monthly.length - 1;
+  model.monthly = model.monthly.map((entry, index) => {
+    const month = reportingShiftMonth(asked, index - last);
+    return { ...entry, month, label: reportingMonthLabel(month) };
+  });
+  // Like channelWeeksOf(period) on the server: the four Monday-start weeks
+  // opening the asked month, never a fixed «28 set … 19 ott».
+  const first = Date.UTC(Number(asked.slice(0, 4)), Number(asked.slice(5, 7)) - 1, 1);
+  const monday = first - ((new Date(first).getUTCDay() + 6) % 7) * 86400000;
+  const dayLabel = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  model.channels = {
+    ...model.channels,
+    weeks: model.channels.weeks.map((slot, index) => {
+      const start = new Date(monday + index * 7 * 86400000);
+      return { week: start.toISOString().slice(0, 10), label: dayLabel.format(start).replace(/\./g, '') };
+    }),
+  };
+  if (model.csv) {
+    model.csv = {
+      filename: `reporting-${asked}.csv`,
+      content: model.csv.content.replace(DEMO_REPORT.period.slice(0, 7), asked),
+    };
+  }
+  return model;
+}
+
+/**
+ * Demo reporting bundle rows for the asked period (backlog:06d4b855fac4):
+ * the summary table's «Ultimo periodo» follows the same month as the cards.
+ * @param {string} period YYYY-MM the screen asks for
+ */
+export function reportingBundleRows(period) {
+  return [{ id: 'r1', metric: 'chiamate', period, value: 20, unit: 'call' }];
+}
+
 const DEMO_UNITS = [
   { name: 'channels', kind: 'package', label: 'Canali', blurb: 'Messaggi in un unico inbox.' },
   { name: 'payments', kind: 'package', label: 'Pagamenti', blurb: 'Richieste di pagamento.' },
@@ -621,9 +693,10 @@ export const SCREENS = Object.freeze([
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
   // backlog:06d4b855fac4: the demo dashboard follows the requested period
-  // (the screen asks for the current UTC month), so the cards must read
-  // that month — never a hard-coded «ottobre 2026».
-  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(new Date().toISOString().slice(0, 7))}`] },
+  // (the screen asks for the current UTC month, the same currentPeriod()
+  // the fixture builds the demo with), so the cards must read that month —
+  // never a hard-coded «ottobre 2026».
+  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(currentPeriod())}`] },
   { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
@@ -1138,49 +1211,20 @@ document.getElementById('probe').textContent = JSON.stringify({
   talk: document.querySelectorAll('#view-module .bo-agent-talk').length,
 });
 document.title = 'agenti-ready';`;
-    case 'reporting': return `
+    case 'reporting': {
+      // backlog:06d4b855fac4: the whole demo answers the period the screen
+      // asks for (the current UTC month until --period lands): model, bundle
+      // rows, card labels and CSV name alike, never a fixed October.
+      const period = currentPeriod();
+      const MODEL = JSON.stringify(reportingModelFor(period));
+      const ROWS = JSON.stringify(reportingBundleRows(period));
+      return `
 import { createReportingView } from './admin-reporting.js';
-const MODEL = ${JSON.stringify(DEMO_REPORT)};
-const BUNDLE_ROWS = [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }];
-// backlog:06d4b855fac4: like the real server (formatMonth(query.period)),
-// period, periodLabel, card labels and the monthly window follow the
-// period the screen asks for, never a fixed October.
-const monthLabel = (period) => new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-  .format(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1)));
-const shiftMonth = (period, delta) => {
-  const date = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1 + delta, 1));
-  return date.getUTCFullYear() + '-' + String(date.getUTCMonth() + 1).padStart(2, '0');
-};
-function modelFor(path) {
-  const asked = new URL(path, 'http://demo.local').searchParams.get('period');
-  const period = /^\\d{4}-(0[1-9]|1[0-2])$/.test(asked ?? '') ? asked : MODEL.period.slice(0, 7);
-  const periodLabel = monthLabel(period);
-  const model = structuredClone(MODEL);
-  model.period = period;
-  model.periodLabel = periodLabel;
-  const labels = { 'won-period': 'Vinte in ' + periodLabel, 'closing-period': 'In chiusura in ' + periodLabel };
-  model.kpis = model.kpis.map((kpi) => (labels[kpi.id] ? { ...kpi, label: labels[kpi.id] } : kpi));
-  const last = model.monthly.length - 1;
-  model.monthly = model.monthly.map((entry, index) => {
-    const month = shiftMonth(period, index - last);
-    return { ...entry, month, label: monthLabel(month) };
-  });
-  // Like channelWeeksOf(period) on the server: the four Monday-start weeks
-  // opening the asked month, labels «2 nov», never a fixed «28 set … 19 ott».
-  const first = Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1);
-  const monday = first - ((new Date(first).getUTCDay() + 6) % 7) * 86400000;
-  const dayLabel = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-  model.channels = { ...model.channels, weeks: model.channels.weeks.map((slot, index) => {
-    const start = new Date(monday + index * 7 * 86400000);
-    return { week: start.toISOString().slice(0, 10), label: dayLabel.format(start).replace(/\\./g, '') };
-  }) };
-  if (model.csv) model.csv = { filename: 'reporting-' + period + '.csv', content: model.csv.content.replace(MODEL.period.slice(0, 7), period) };
-  return model;
-}
+const MODEL = ${MODEL};
 const client = {
   async request(path) {
-    if (path.includes('/api/reporting/dashboard')) return modelFor(path);
-    return { items: BUNDLE_ROWS };
+    if (path.includes('/api/reporting/dashboard')) return structuredClone(MODEL);
+    return { items: ${ROWS} };
   },
 };
 const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, log: () => {}, download: () => {} });
@@ -1189,6 +1233,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   kpis: (document.getElementById('view-module').textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
 });
 document.title = 'reporting-ready';`;
+    }
     case 'nuovo-modulo': return `
 import { createReportingView } from './admin-reporting.js';
 const client = { async request() { return { items: [] }; } };
