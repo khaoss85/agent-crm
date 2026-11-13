@@ -120,7 +120,10 @@ test('2f72000d4a4d: «Annulla» pressed while the move is being written undoes i
   toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
   await tick();
   assert.equal(client.posts.length, 1, 'no reverse POST before the first one lands');
-  assert.ok(toasts.some((item) => item.message === 'Riporto in Richiesta info…'), 'the toast says the undo is coming');
+  // backlog:3d811389bb4c: the card and «Riportata» come back at the click,
+  // the reverse write follows once the first one lands.
+  assert.ok(toasts.some((item) => item.message === 'Riportata in Richiesta info.'), 'the message is back at once');
+  assert.equal(cardOf(mount, 'a').parentNode.getAttribute('data-stage'), 'discovery', 'and so is the card');
   client.posts[0].answer();
   await tick(6);
   assert.equal(client.posts.length, 2);

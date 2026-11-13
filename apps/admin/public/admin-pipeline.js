@@ -47,7 +47,7 @@
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError, italianDay } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay, logWriteFailure, wakeWaitText } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
@@ -171,6 +171,9 @@ const CREATED_OPTIONS = [
 export const MOVE_PENDING_MS = 15000;
 /** backlog:2f72000d4a4d: how long the «Annulla» toast stays at least (the shell pauses it under the pointer). */
 export const UNDO_TOAST_MS = 10000;
+/** backlog:3d811389bb4c: after this long a move still being written says so on its card. */
+export const MOVE_SLOW_MS = 3000;
+const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -390,6 +393,29 @@ export function createPipelineBoard(deps) {
     }
   }
 
+  /**
+   * backlog:3d811389bb4c: while the board loads, a skeleton of columns and
+   * cards — the shape of what is coming, like Trello — never a bare
+   * «Caricamento…». The words stay for a screen reader (role=status).
+   */
+  function showSkeleton() {
+    clear();
+    const panel = el(doc, 'section', {
+      class: 'panel panel-wide pipeline-board-panel pipeline-skeleton',
+      attrs: { 'aria-busy': 'true', 'data-skeleton': 'board' },
+    });
+    panel.appendChild(el(doc, 'p', { class: 'sr-only', text: 'Caricamento…', attrs: { role: 'status' } }));
+    const board = el(doc, 'div', { class: 'pipeline-board', attrs: { 'aria-hidden': 'true' } });
+    for (const cards of [3, 2, 2, 1]) {
+      const column = el(doc, 'div', { class: 'pipeline-column pipeline-skeleton-column' });
+      column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-bar' }));
+      for (let index = 0; index < cards; index += 1) column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-card' }));
+      board.appendChild(column);
+    }
+    panel.appendChild(board);
+    mount.appendChild(panel);
+  }
+
   /** @param {string} message @param {{retry?: () => void}} [options] */
   function showMessage(message, { retry } = {}) {
     clear();
@@ -427,34 +453,55 @@ export function createPipelineBoard(deps) {
 
   /**
    * Run one stage move for every entry point (review #774, P2): the lock,
-   * «Spostamento in corso…», the bounded «Non ancora confermato» + Riprova
-   * once MOVE_PENDING_MS goes by without an answer, the toast, and the quiet
-   * board re-read. A queued move (BO_CRM_PENDING) stays locked: only a board
-   * read (Riprova) releases it, never a second POST.
-   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+   * «Spostamento in corso…», a slow signal after MOVE_SLOW_MS, the bounded
+   * «Non ancora confermato» + Riprova once MOVE_PENDING_MS goes by, the toast,
+   * and the quiet board re-read. A queued move (BO_CRM_PENDING) stays locked:
+   * only a board read (Riprova) releases it, never a second POST.
+   *
+   * backlog:3d811389bb4c: the card is seated in its new column first (drop,
+   * Sposta, Cambia fase alike), and only then «Spostata in …» shows — the
+   * message never runs ahead of the card. «Annulla» puts card and message
+   * back at once, whatever the write is still doing (see undoMove).
+   * @param {{ undo?: boolean, done?: string | null, seated?: boolean, quietToast?: boolean }} [options]
+   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, undone?: true, message?: string }>}
    */
-  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null } = {}) {
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null, seated = false, quietToast = false } = {}) {
     const id = String(recordId);
     if (moveLocks.has(id)) return { busy: true };
     moveLocks.set(id, 'flight');
+    // The card and its column numbers move first; `restore` brings both back.
+    let restore = seated ? null : placeCardNow(id, fromStage, toStage);
     for (const view of moveViewsOf(id)) view.start();
-    // backlog:2f72000d4a4d: the toast comes at once, with the card already
-    // in its new place — not after the write (4 s on the pilot) — and keeps
-    // «Annulla» (backlog:7b2203e69826) for at least 10 s. Only between
-    // working stages: a won or lost offer never reopens (TERMINAL_STAGE).
     const working = (key) => {
       const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
       return type === 'open' || type === 'renewal';
     };
     const undoable = undo && working(fromStage) && working(toStage);
+    /** Set by «Annulla»: the card is already back; this move only finishes its write. */
+    const intent = { undone: false };
     /** @type {(outcome: any) => void} */
     let settle = () => {};
     const outcomeOf = new Promise((resolve) => { settle = resolve; });
-    toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
-      action: { label: 'Annulla', run: () => { void undoMove(pipeline, id, fromStage, toStage, outcomeOf); } },
-      duration: UNDO_TOAST_MS,
-    } : undefined);
+    if (!quietToast) {
+      toast(done ?? `Spostata in ${stageLabel(pipeline, toStage)}.`, false, undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            intent.undone = true;
+            // Card, numbers and message go back together, now — on the
+            // board as it is (a re-read may have replaced the card node).
+            restore = null;
+            placeCardNow(id, toStage, fromStage);
+            void undoMove(pipeline, id, fromStage, toStage, outcomeOf);
+          },
+        },
+        duration: UNDO_TOAST_MS,
+      } : undefined);
+    }
     let settled = false;
+    void wait(MOVE_SLOW_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.slow?.();
+    });
     void wait(MOVE_PENDING_MS).then(() => {
       if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
     });
@@ -462,9 +509,11 @@ export function createPipelineBoard(deps) {
       await postMove(pipeline, id, fromStage, toStage, reason);
       settled = true;
       moveLocks.delete(id);
-      await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      // An undone move does not repaint its landing: the reverse write is
+      // next, and the board re-reads after it.
+      if (!intent.undone) await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
       settle({ moved: true });
-      return { moved: true };
+      return { moved: true, ...(intent.undone ? { undone: true } : {}) };
     } catch (error) {
       settled = true;
       if (isMovePending(error)) {
@@ -477,46 +526,49 @@ export function createPipelineBoard(deps) {
         const views = moveViewsOf(id);
         for (const view of views) view.unconfirmed();
         // A card no view shows (filtered out) still says where it stands.
-        if (!views.length) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+        if (!views.length && !intent.undone) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
         settle({ pending: true });
         return { pending: true };
       }
       moveLocks.delete(id);
+      if (restore) { restore(); restore = null; }
       const message = moveFailureText(error);
       for (const view of moveViewsOf(id)) view.fail(message);
-      // The toast that said «Spostata» is replaced by the truth.
-      toast(message, true);
+      // The toast that said «Spostata» is replaced by the truth — unless the
+      // person already undid it: the card is where they wanted it.
+      if (!intent.undone) toast(message, true);
       settle({ failed: true, message });
       return { failed: true, message };
     }
   }
 
   /**
-   * «Annulla» (review Muse #799, P2): the reverse move, never fire-and-forget.
-   * It waits for the first move to land (a click while it is still being
-   * written undoes it as soon as it lands), then every outcome says so — a
-   * failure, a queued undo or a busy card toasts even when no card shows it
-   * (a filter hides it).
+   * «Annulla» (review Muse #799, P2; backlog:3d811389bb4c): card, column
+   * numbers and «Riportata in …» are already back when this runs (runMove's
+   * action did it at the click). Here the server follows: once the first
+   * write lands, the reverse write runs; every outcome that disagrees with
+   * the screen says so and puts the card where the server has it.
    */
   async function undoMove(pipeline, id, fromStage, toStage, outcomeOf) {
-    toast(`Riporto in ${stageLabel(pipeline, fromStage)}…`);
+    toast(`Riportata in ${stageLabel(pipeline, fromStage)}.`);
     const first = await outcomeOf;
+    if (first?.failed) return; // the first move never landed: the card is right where it is
     if (first?.pending) {
       // Review Muse #809: a move the server still holds cannot be undone yet
-      // — never a silent drop of the undo: say so, the board re-read
-      // (Riprova) tells where the card is.
+      // — never a silent drop of the undo: say so; the card shows where the
+      // queued move will land, the board re-read (Riprova) tells the truth.
+      placeCardNow(id, fromStage, toStage);
       toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
       return;
     }
-    if (!first?.moved) return; // a failed first move has nothing to undo; its own toast said why
-    // backlog:07d29c0d1b06: the card and its column numbers go back together
-    // at once; a refused undo puts both where the server says they are.
-    const restore = placeCardNow(id, toStage, fromStage);
-    const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
-      undo: false, done: `Riportata in ${stageLabel(pipeline, fromStage)}.`,
-    });
-    if ((back.failed || back.busy) && restore) restore();
-    if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+    if (!first?.moved) return;
+    const back = await runMove(pipeline, id, toStage, fromStage, undefined, { undo: false, seated: true, quietToast: true });
+    if (back.failed || back.busy) {
+      // The server kept the card where the first move put it.
+      placeCardNow(id, fromStage, toStage);
+      if (back.busy) toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+      else toast(back.message, true);
+    }
     // Review Muse #809: a queued undo is announced whether or not its card is on screen.
     if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
   }
@@ -587,9 +639,9 @@ export function createPipelineBoard(deps) {
     if (controls && typeof controls.move === 'function') {
       // backlog:07d29c0d1b06: card, count and totals move together now,
       // and come back together on a failure (runMove's toast names it).
-      const restore = placeCardNow(recordId, fromStage, toStage);
-      const outcome = await controls.move(toStage);
-      if ((outcome?.failed || outcome?.busy) && restore) restore();
+      // runMove seats the card (and its numbers) before the message, and
+      // brings both back on a failure (backlog:3d811389bb4c).
+      await controls.move(toStage);
       return;
     }
     try {
@@ -617,7 +669,7 @@ export function createPipelineBoard(deps) {
     // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
     // the parent node itself — ask it whether it holds the panel.
     if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
-    if (!quiet || !mount.firstChild) showMessage('Caricamento…');
+    if (!quiet || !mount.firstChild) showSkeleton();
     let pipeline;
     let records;
     let composed = [];
@@ -1429,30 +1481,17 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
-  /**
-   * backlog:2f72000d4a4d: the shared /bo write-failure line — «[bo] scrittura
-   * fallita POST <percorso> · <stato> <codice>: messaggio» — the format of
-   * admin-core's reportFailure, which #808 exports as logWriteFailure. Until
-   * that lands on main the board writes the same line here; then this
-   * becomes a call to logWriteFailure.
-   */
-  function logMoveFailure(record, code, message) {
-    if (typeof console === 'undefined' || typeof console.error !== 'function') return;
-    const method = typeof record.method === 'string' ? record.method.toUpperCase() : 'POST';
-    const path = typeof record.path === 'string' ? record.path.split('?')[0] : null;
-    const status = typeof record.status === 'number' ? record.status : null;
-    const outcome = [status === null ? '' : String(status), code || 'UNKNOWN'].filter((part) => part !== '').join(' ');
-    const request = path !== null ? ` ${method} ${path}` : '';
-    console.error(`[bo] scrittura fallita${request} · ${outcome}${message !== '' ? `: ${message}` : ''}`,
-      { code: code || 'UNKNOWN', status, message, method, path });
-  }
-
   function moveFailureText(error) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    logMoveFailure(record, code, message);
+    // The shared /bo write-failure line (admin-core, #808).
+    logWriteFailure(error);
+    // backlog:3d811389bb4c: a waking workspace (503 «Spazio di lavoro in
+    // avvio») is a wait, said in plain words — never «Riprova più tardi».
+    const wake = wakeWaitText(error);
+    if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
@@ -1668,6 +1707,7 @@ export function createPipelineBoard(deps) {
         confirmError.setAttribute('class', 'field-error hidden');
         showStatus(MOVE_IN_FLIGHT, false);
       },
+      slow() { showStatus(MOVE_SLOW, false); },
       unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
       fail(message) {
         markCardBusy(false);
@@ -1976,6 +2016,7 @@ export function createPipelineBoard(deps) {
         say(status, MOVE_IN_FLIGHT);
         retry.setAttribute('class', 'small secondary hidden');
       },
+      slow() { say(status, MOVE_SLOW); },
       unconfirmed() {
         say(status, MOVE_UNCONFIRMED);
         retry.setAttribute('class', 'small secondary');

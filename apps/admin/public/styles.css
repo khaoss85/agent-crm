@@ -2239,6 +2239,13 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 /* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */
 .pipeline-column .stage-totals { display: contents; }
+/* backlog:3d811389bb4c: lo scheletro della Pipeline mentre carica. */
+.pipeline-skeleton .pipeline-skeleton-bar { height: 14px; width: 60%; margin: 2px 0 14px; border-radius: 7px; background: var(--line-soft); }
+.pipeline-skeleton .pipeline-skeleton-card { height: 84px; margin-bottom: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-faint); }
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-skeleton .pipeline-skeleton-bar, .pipeline-skeleton .pipeline-skeleton-card { animation: pipeline-skeleton-pulse 1.2s ease-in-out infinite; }
+  @keyframes pipeline-skeleton-pulse { 50% { opacity: .55; } }
+}
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
