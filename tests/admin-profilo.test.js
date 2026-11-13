@@ -369,3 +369,42 @@ test('backlog:1cfc68175ab7 Salva shows «Salvo…» and locks the form while the
   await flush(20);
   assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
 });
+
+// Muse P2 on #849: after the PATCH succeeds the reread is still in flight;
+// a click on Salva then must not start a second write.
+test('backlog:1cfc68175ab7 a click or Enter during the reread after Salva writes nothing more', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let releaseRead = null;
+  const patches = [];
+  let gets = 0;
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        patches.push(path);
+        return { member: { name: 'Elena Presti' } };
+      }
+      gets += 1;
+      if (patches.length > 0) await new Promise((resolve) => { releaseRead = resolve; });
+      return { member: { name: patches.length > 0 ? 'Elena Presti' : 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({ doc, mount, client, member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }) });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
+  const save = mount.findAll('button').find((node) => node.textContent === 'Salva');
+  save.dispatch('click');
+  await flush();
+  assert.ok(releaseRead, 'the reread is in flight');
+  save.dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').dispatch('keydown', { key: 'Enter' });
+  await flush();
+  assert.equal(patches.length, 1, 'no second write while the reread runs');
+  releaseRead();
+  await flush(20);
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
+});

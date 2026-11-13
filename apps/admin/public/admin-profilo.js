@@ -367,9 +367,11 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
         cancel.disabled = true;
         void uiBusy(save, 'Salvo…', () => bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
           async () => {
-            saving = false;
+            // The write stays in flight until the reread lands: saving drops
+            // only then, with uiBusy, so no second PATCH slips in meanwhile.
             const mine = ++token;
             const fresh = await read();
+            saving = false;
             if (mine !== token) return;
             if (fresh === null) {
               editError = 'Il nome è stato salvato, ma la rilettura non è riuscita. Riprova più tardi.';
