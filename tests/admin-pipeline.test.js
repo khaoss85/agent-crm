@@ -119,7 +119,7 @@ test('a failed move restores the control and shows a friendly line, never the se
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient(records, {
-    failMove: { message: 'Stale move: expected "discovery"', status: 409, code: 'STALE_STAGE' },
+    failMove: { message: 'boom', status: 500, code: 'INTERNAL' },
   });
   const board = createPipelineBoard({ doc, mount, client });
   await board.renderBoard('b2b-sales');
@@ -129,9 +129,11 @@ test('a failed move restores the control and shows a friendly line, never the se
   await card.__move();
   const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
   assert.ok(error.textContent.includes('Riprova più tardi'), `friendly retry line (${error.textContent})`);
-  assert.ok(!error.textContent.includes('Stale move'), 'no raw server message in the DOM');
-  assert.ok(!error.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
+  assert.ok(!error.textContent.includes('boom'), 'no raw server message in the DOM');
+  assert.ok(!error.textContent.includes('INTERNAL'), 'no error code in the DOM');
   assert.equal(card.findAll('select').length, 1, 'the move control is restored');
+  const retry = card.findAll('button').find((n) => n.getAttribute('data-action') === 'move-retry');
+  assert.ok(retry && !(retry.getAttribute('class') ?? '').includes('hidden'), 'Riprova stays on the card');
 });
 
 test('move toasts name the stage label and failures stay friendly (C25)', async () => {
