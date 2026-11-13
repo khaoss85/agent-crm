@@ -896,6 +896,8 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
+const NOTE_TOAST_SCOPE = 'scheda-nota';
 /** The LLM gate codes that mean «the AI is off here», not an outage. */
 const COMPOSER_AI_OFF_CODES = new Set(['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']);
 
@@ -917,6 +919,9 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // backlog:947260f9f036: the shell hides a toast of one owner (its scope),
+  // so an «Annulla» that no longer works never stays on screen.
+  const hideToast = typeof deps.hideToast === 'function' ? deps.hideToast : () => {};
   // The composer's poll-back pause (BO_SEND_PENDING): injectable so tests
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
@@ -1096,6 +1101,8 @@ export function createCustomerCardView(deps) {
   // definitive answer (sent, refused, failed) drops the key.
   const composerSendKeys = new Map();
   let shownKey = null;
+  /** The router left the scheda and cleared the mount (backlog:947260f9f036). */
+  let offScreen = false;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
   // the open Dettagli form, a phone number) when a re-read swaps it. The new
@@ -3459,8 +3466,49 @@ export function createCustomerCardView(deps) {
     const shownOffer = quotes[0] ?? offers[0] ?? null;
     const historyId = historyTarget(shownOffer, quotes.length > 0);
     const historyName = offers.find((row) => row?.id === historyId)?.name ?? null;
+    /** The stage moves of the shown offer as cronologia rows. @param {{items: any, people: Array<any>}} answer */
+    const stageRowsOf = ({ items, people }) => {
+      const owner = offers.find((row) => row?.id === historyId)?.owner ?? null;
+      const rows = [];
+      for (const entry of Array.isArray(items) ? items : []) {
+        const move = stageMoveOf(entry);
+        if (move === null || !Number.isFinite(Date.parse(String(entry?.createdAt ?? '')))) continue;
+        const words = stageMoveLabels(pipelines, move);
+        const what = words === null ? 'stato cambiato' : `da ${words.from} a ${words.to}`;
+        rows.push({
+          entry: 'stage-moved', id: `stato:${String(entry?.id ?? rows.length)}`, occurredAt: entry.createdAt,
+          text: historyName ? `${historyName}: ${what}` : what,
+          who: auditActorLabel(entry, [owner, companyName], people),
+        });
+      }
+      return rows;
+    };
+    // backlog:947260f9f036: «Tutti» is shown whole or says it is still
+    // reading — never two events that become three a moment later. A history
+    // already read (a repaint) draws complete at once.
+    /** @type {'none' | 'pending' | 'done' | 'failed'} */
+    let historyState = 'none';
+    if (typeof historyId === 'string' && historyId !== '') {
+      const settled = historySettled.get(historyId);
+      if (settled !== undefined) {
+        stageEvents = stageRowsOf(settled);
+        historyState = 'done';
+      } else {
+        historyState = 'pending';
+      }
+    }
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
+      const movesPending = channelFilter === 'all' && historyState === 'pending';
+      list.setAttribute('aria-busy', movesPending ? 'true' : 'false');
+      if (movesPending) {
+        const wait = el('p', 'bo-scheda-moves-wait');
+        wait.setAttribute('data-loading', 'true');
+        wait.appendChild(uiSkeleton(doc, { width: '60%', block: true }));
+        list.appendChild(wait);
+      } else if (channelFilter === 'all' && historyState === 'failed') {
+        list.appendChild(el('p', 'bo-muted', 'Cambi di stato non leggibili: riprova più tardi.'));
+      }
       const events = channelFilter === 'all' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
@@ -3484,6 +3532,7 @@ export function createCustomerCardView(deps) {
         // backlog:82235e46e3e9: the field below writes a note, not a
         // message: the empty state names the right tool for each.
         if (channelFilter === 'all') {
+          if (movesPending) return;
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
           list.appendChild(el('p', 'bo-muted', 'Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
           return;
@@ -3717,25 +3766,15 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (typeof historyId === 'string' && historyId !== '') {
-      void readHistory(historyId).then(({ items, people }) => {
-        const owner = offers.find((row) => row?.id === historyId)?.owner ?? null;
-        const rows = [];
-        for (const entry of Array.isArray(items) ? items : []) {
-          const move = stageMoveOf(entry);
-          if (move === null || !Number.isFinite(Date.parse(String(entry?.createdAt ?? '')))) continue;
-          const words = stageMoveLabels(pipelines, move);
-          const what = words === null ? 'stato cambiato' : `da ${words.from} a ${words.to}`;
-          rows.push({
-            entry: 'stage-moved', id: `stato:${String(entry?.id ?? rows.length)}`, occurredAt: entry.createdAt,
-            text: historyName ? `${historyName}: ${what}` : what,
-            who: auditActorLabel(entry, [owner, companyName], people),
-          });
-        }
-        if (rows.length === 0 || list.parentNode == null) return;
-        stageEvents = rows;
+    if (historyState === 'pending') {
+      void readHistory(historyId).then((answer) => {
+        historyState = 'done';
+        stageEvents = stageRowsOf(answer);
         drawList();
-      }, () => {});
+      }, () => {
+        historyState = 'failed';
+        drawList();
+      });
     }
     // Voce 714433c2: "Aggiungi nota" — the operator statement that reads
     // back in the cronologia above. Plain text only, like the work views; it
@@ -3932,8 +3971,11 @@ export function createCustomerCardView(deps) {
       ? (typeof first?.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null)
       : (typeof first?.id === 'string' && first.id !== '' ? first.id : null);
     const quoteOnly = offerId === null && fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // backlog:96c7b56001ba: the offer page goes back to this scheda.
+    const here = offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string'
+      ? `/cliente/${encodeURIComponent(offerCtx.resource)}/${encodeURIComponent(offerCtx.id)}` : '';
     const offerHref = offerId !== null
-      ? `#/offerte/${encodeURIComponent(offerId)}`
+      ? `#/offerte/${encodeURIComponent(offerId)}${here}`
       : (quoteOnly !== null ? `#/quotes/${encodeURIComponent(quoteOnly)}` : null);
     // Voce 59def6cb805d (C25): the prototype's big amount, read from the
     // server total the profile carries — never summed here. No figure (a
@@ -4016,6 +4058,7 @@ export function createCustomerCardView(deps) {
             // backlog:2a214b66fe12: the pill moves the moment the toast
             // says so; then only card and profile are read again.
             historyReads.delete(stageMenu.id);
+            historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               (loaded) => withOfferStage(loaded, stageMenu.id, 'pipeline', voice.key));
             toast(`Spostata in ${voice.label}.`);
@@ -4032,6 +4075,7 @@ export function createCustomerCardView(deps) {
             // for approval did not happen yet: nothing moves on screen.
             const waiting = result?.output?.outcome === 'approval_required';
             historyReads.delete(stageMenu.id);
+            historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               waiting ? null : (loaded) => withOfferStage(loaded, stageMenu.id, 'core', voice.key));
             toast(waiting
@@ -4140,7 +4184,9 @@ export function createCustomerCardView(deps) {
       && profile.identity.company.name !== '' ? profile.identity.company.name : null;
     box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
     const loading = el('p', 'bo-muted', 'Caricamento…');
-    box.appendChild(loading);
+    // backlog:947260f9f036: a history already read fills at once on a repaint.
+    const settled = historySettled.get(targetId);
+    if (settled === undefined) box.appendChild(loading);
     const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
       const rows = [];
@@ -4176,6 +4222,10 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
+    if (settled !== undefined) {
+      fill(settled.items, settled.people);
+      return;
+    }
     const historyRead = readHistory(targetId);
     void historyRead.then(
       ({ items, people }) => fill(items, people),
@@ -4441,11 +4491,18 @@ export function createCustomerCardView(deps) {
     for (const part of Object.keys(partSeq)) partSeq[part] += 1;
     const startSeq = { ...partSeq };
     historyReads.clear();
+    historySettled.clear();
     rosterRead = null;
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
     meRead = null;
-    if (key !== shownKey) {
+    // backlog:947260f9f036: back on the same customer after another screen
+    // (the router cleared the mount): the skeleton at once like a first
+    // visit, but it is still this customer — a note in its «Annulla»
+    // window stays waiting, and an open «Modifica» stays open.
+    const returning = key === shownKey && offScreen;
+    offScreen = false;
+    if (key !== shownKey || returning) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
       // line, so a direct link stayed blank for the whole read (5.8 s on
@@ -4463,8 +4520,10 @@ export function createCustomerCardView(deps) {
       // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
       // leaves now — never silently undone by opening another customer —
       // and an open «Modifica» closes with the scheda it belonged to.
-      flushWithdrawals();
-      noteEditing = null;
+      if (!returning) {
+        flushWithdrawals();
+        noteEditing = null;
+      }
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
       // with the same name re-narrows the crumb instead of staying silent.
@@ -4604,6 +4663,13 @@ export function createCustomerCardView(deps) {
   /** The «Storia stati» reads by offer id, shared by the repaints of one read. @type {Map<string, Promise<any>>} */
   const historyReads = new Map();
   /**
+   * backlog:947260f9f036: what those reads answered, so a repaint (the
+   * roster arriving, a section landing) draws the same complete history at
+   * once instead of «Caricamento…» and a cronologia without its moves.
+   * @type {Map<string, any>}
+   */
+  const historySettled = new Map();
+  /**
    * The offer's stage history with the roster that names its actors —
    * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
    * a repaint after a note or a Dettagli save reuses it; a full re-read or a
@@ -4614,7 +4680,11 @@ export function createCustomerCardView(deps) {
     let read = historyReads.get(targetId);
     if (read === undefined) {
       const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
-      read = readRoster().then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
+      // backlog:947260f9f036: the roster and the trail leave together — in
+      // a row they made «Storia stati» and the cronologia the last to land.
+      read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
+      const mine = read;
+      void read.then((answer) => { if (historyReads.get(targetId) === mine) historySettled.set(targetId, answer); }, () => {});
       historyReads.set(targetId, read);
       // A failed read is not kept: the next paint asks again (after the
       // sections of a first read have landed, backlog:1a96094db71d).
@@ -4757,8 +4827,14 @@ export function createCustomerCardView(deps) {
       }
     }
   }
-  /** Every withdrawal still waiting leaves now (the scheda opens another customer). */
+  /**
+   * Every withdrawal still waiting leaves now (the scheda opens another
+   * customer): its «Annulla» would no longer work, so the toast that offers
+   * it leaves too.
+   */
   function flushWithdrawals() {
+    if (pendingWithdrawals.size === 0) return;
+    hideToast(NOTE_TOAST_SCOPE);
     for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey);
   }
   /**
@@ -4774,6 +4850,7 @@ export function createCustomerCardView(deps) {
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
     toast('Nota eliminata', false, {
+      scope: NOTE_TOAST_SCOPE,
       duration: NOTE_WITHDRAW_GRACE_MS,
       action: {
         label: 'Annulla',
@@ -5078,6 +5155,11 @@ export function createCustomerCardView(deps) {
    */
   function invalidate() {
     cardRenderToken += 1;
+    // backlog:947260f9f036: the router leaves the scheda and clears the
+    // mount, so nothing of it stays on screen: coming back to the same
+    // customer paints the skeleton at once, never the router's lone
+    // «Carico Clienti…» for the whole read (renderCard reads the flag).
+    offScreen = true;
     resetTitle();
   }
 

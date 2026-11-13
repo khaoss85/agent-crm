@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   NOTE_WITHDRAW_GRACE_MS,
@@ -131,14 +132,16 @@ async function open(client = fakeClient(), spaceId = 'spazio-prova') {
   const doc = createFakeDocument();
   const mount = createMount();
   const toasts = [];
+  const hidden = [];
   const timer = manualWait();
   const view = createCustomerCardView({
     doc, mount, client, spaceId, wait: timer.wait,
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
+    hideToast: (scope) => hidden.push(scope),
   });
   await view.renderCard('contact', 'c1');
   await flush();
-  return { mount, view, client, toasts, timer };
+  return { mount, view, client, toasts, timer, hidden };
 }
 
 /** The note row in the cronologia that shows `text`, or undefined. */
@@ -336,6 +339,61 @@ test('cb348c9fcaeb: opening another customer sends a waiting withdrawal at once'
   await view.renderCard('contact', 'c2');
   await flush();
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+});
+
+// backlog:947260f9f036 (review Muse #871 giro 1): leaving the scheda and
+// coming back to the same customer (scheda → offerta → «← cliente») paints
+// the skeleton at once, but a note in its «Annulla» window stays waiting:
+// Annulla keeps working until the window ends. Only another customer sends
+// it at once (#867), and then the toast with its Annulla leaves.
+test('947260f9f036: back on the same customer after another screen, a waiting withdrawal keeps its Annulla', async () => {
+  const { mount, view, client, toasts, timer, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing is sent on the way back');
+  assert.deepEqual(hidden, [], 'the Annulla toast stays');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays hidden while the window is open');
+  toasts[0].options.action.run();
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'Annulla still brings it back');
+  timer.endAll();
+  await flush();
+  assert.equal(client.writes.length, 0, 'and nothing is ever sent');
+});
+
+test('947260f9f036: back on the same customer, a withdrawal not undone leaves when its window ends', async () => {
+  const { mount, view, client, timer } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  timer.endAll();
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined);
+});
+
+test('947260f9f036: opening another customer sends the waiting withdrawal and takes its Annulla away', async () => {
+  const { mount, view, client, toasts, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  const scope = toasts[0].options.scope;
+  assert.ok(typeof scope === 'string' && scope !== '', 'the Annulla toast has an owner the shell can hide');
+  view.invalidate();
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.deepEqual(hidden, [scope], 'the Annulla toast leaves when the withdrawal is sent');
+});
+
+test('947260f9f036: the shell hides the scheda toast by its owner', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const wiring = /const customerCardView = createCustomerCardView\(\{([\s\S]*?)\n\}\);/.exec(app);
+  assert.ok(wiring && /hideToast: \(scope\) => \{ if \(toaster !== null\) toaster\.hideScope\(scope\); \}/.test(wiring[1]));
 });
 
 test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
