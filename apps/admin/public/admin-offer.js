@@ -10,10 +10,10 @@
 // same three commercial facts as the old card editor through
 // `/api/opportunities/:id`.
 
-import { elFor, uiBusy, uiSelect } from './admin-ui.js';
+import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
-import { auditActorLabel, offerCustomer, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { auditActorLabel, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -236,12 +236,56 @@ export function createOfferDetail(deps) {
     }
   }
 
+  /**
+   * backlog:d8175e1c3495: the offer page skeleton — the same frame the page
+   * paints (sheet with the hero and the facts strip, the quotes card, the
+   * history card) with grey bars where values arrive. Busy for assistive
+   * tech, with one spoken line; the real paint replaces it whole.
+   */
+  function offerSkeleton() {
+    const page = el('div', 'bo-offer bo-offer-skeleton');
+    page.setAttribute('aria-busy', 'true');
+    page.setAttribute('data-offer-skeleton', 'true');
+    const spoken = el('p', 'sr-only', 'Carico l’offerta…');
+    spoken.setAttribute('role', 'status');
+    page.appendChild(spoken);
+    const sheet = el('article', 'bo-offer-sheet');
+    const hero = el('header', 'bo-offer-hero');
+    const words = el('div', 'bo-offer-hero-words');
+    words.appendChild(el('p', 'kicker', 'Offerta'));
+    words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+    words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    hero.appendChild(words);
+    const value = el('div', 'bo-offer-value');
+    value.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    hero.appendChild(value);
+    sheet.appendChild(hero);
+    const facts = el('div', 'offer-facts');
+    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+      const cell = el('p', 'offer-fact');
+      cell.appendChild(el('span', 'offer-fact-label', label));
+      cell.appendChild(uiSkeleton(doc, { width: '70%', block: true }));
+      facts.appendChild(cell);
+    }
+    sheet.appendChild(facts);
+    page.appendChild(sheet);
+    for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
+      const card = el('div', cls);
+      card.appendChild(el('h3', undefined, title));
+      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
+      page.appendChild(card);
+    }
+    return page;
+  }
+
   async function renderOfferDetail(offerId) {
     const token = ++renderToken;
     editing = false;
     clear();
-    const status = el('p', 'muted', 'Caricamento…');
-    mount.appendChild(status);
+    // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
+    // the facts, the quotes and the history as grey bars — never a lone
+    // «Caricamento…»; the wait is announced once, to assistive tech.
+    mount.appendChild(offerSkeleton());
     let schema;
     let record;
     let quotes;
@@ -251,38 +295,49 @@ export function createOfferDetail(deps) {
     /** @type {Array<any>} */
     let people = [];
     try {
-      schema = await client.request('/api/schema');
-      record = await readOffer(offerId);
-      quotes = await fetchLinked('quote', 'opportunityId', record.id);
-      try {
-        const audit = await client.request(
-          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
-        );
-        auditItems = Array.isArray(audit?.items) ? audit.items : [];
+      // backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s):
+      // the reads that do not depend on each other leave together — the
+      // schema with the offer, then the quotes, the history and the team
+      // with each other — instead of one after the other.
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      [schema, record] = await Promise.all([schemaRead, readOffer(offerId)]);
+      const quotesRead = fetchLinked('quote', 'opportunityId', record.id);
+      quotesRead.catch(() => {});
+      const auditRead = client.request(
+        `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
+      ).then(
+        (audit) => ({ items: Array.isArray(audit?.items) ? audit.items : [], unreadable: false }),
         // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
         // the trail order is newest first, so the creation event may sit
         // past it and the author must not be read from a partial page.
-        auditTruncated = auditItems.length >= AUDIT_LIMIT;
-      } catch (error) {
-        // The audit trail is decoration: facts, quotes and lines render
-        // without it rather than failing the whole detail. An unreadable
-        // trail is not an empty one: it gets its own line and a log cause.
-        logReadFailure('audit', error);
-        auditItems = [];
-        auditUnreadable = true;
-      }
-      try {
-        // The team names the referente and the authors by their profile
-        // name (backlog:ddf7f416ad22); without it the deal still renders.
-        const team = await client.request('/api/spine/memberships');
-        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
-      } catch (error) {
-        logReadFailure('team', error);
-        people = [];
-      }
+        (error) => {
+          // The audit trail is decoration: facts, quotes and lines render
+          // without it rather than failing the whole detail. An unreadable
+          // trail is not an empty one: it gets its own line and a log cause.
+          logReadFailure('audit', error);
+          return { items: [], unreadable: true };
+        },
+      );
+      // The team names the referente and the authors by their profile
+      // name (backlog:ddf7f416ad22); without it the deal still renders.
+      const teamRead = client.request('/api/spine/memberships').then(
+        (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
+        (error) => {
+          logReadFailure('team', error);
+          return [];
+        },
+      );
+      const [readQuotes, audit, team] = await Promise.all([quotesRead, auditRead, teamRead]);
+      quotes = readQuotes;
+      auditItems = audit.items;
+      auditUnreadable = audit.unreadable;
+      auditTruncated = auditItems.length >= AUDIT_LIMIT;
+      people = team;
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' });
+      clear();
+      mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' })));
       return;
     }
     if (token !== renderToken || !record || typeof record !== 'object') return;
@@ -373,10 +428,11 @@ export function createOfferDetail(deps) {
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
-    for (const quote of quotes.rows) {
-      quotesPanel.appendChild(await paintQuote(quote, token, record));
-      if (token !== renderToken) return;
-    }
+    // backlog:d8175e1c3495: every quote reads its lines and versions at the
+    // same time; the cards still paint in the order the quotes were read.
+    const quoteCards = await Promise.all(quotes.rows.map((quote) => paintQuote(quote, token, record)));
+    if (token !== renderToken) return;
+    for (const card of quoteCards) quotesPanel.appendChild(card);
     page.appendChild(quotesPanel);
 
     const historyPanel = el('div', 'offer-history');
@@ -708,7 +764,7 @@ export function createOfferDetail(deps) {
         const node = uiSelect(doc, {
           name: 'priceBookId',
           value: books[0].id,
-          options: books.map((book) => ({ value: book.id, label: `${String(book.name ?? 'Listino')} (${String(book.currency ?? '')})` })),
+          options: books.map((book) => ({ value: book.id, label: priceBookLabel(book) })),
         });
         const select = node.querySelector('select');
         select.setAttribute('aria-label', 'Listino del preventivo');
@@ -794,11 +850,13 @@ export function createOfferDetail(deps) {
     let versions = [];
     let partial = false;
     try {
-      const fetchedLines = await fetchLinked('quote-line', 'quoteId', quote.id);
+      const [fetchedLines, fetchedVersions] = await Promise.all([
+        fetchLinked('quote-line', 'quoteId', quote.id),
+        fetchLinked('quote-version', 'quoteId', quote.id),
+      ]);
       lines = fetchedLines.rows
         .filter((line) => line?.removed === false)
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      const fetchedVersions = await fetchLinked('quote-version', 'quoteId', quote.id);
       versions = fetchedVersions.rows
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
       partial = fetchedLines.truncated || fetchedVersions.truncated;

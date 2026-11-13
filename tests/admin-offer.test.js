@@ -741,7 +741,7 @@ test('169cd4bc988c: Crea preventivo retries on the same key, offers a menu for s
   const many = await openPage({ books });
   const select = many.mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Listino del preventivo');
   assert.ok(select, 'several books are a menu');
-  assert.deepEqual(select.findAll('option').map((node) => node.textContent), ['Listino (EUR)', 'Listino US (USD)'],
+  assert.deepEqual(select.findAll('option').map((node) => node.textContent), ['Listino (€)', 'Listino US (USD)'],
     'active books only, the offer currency first');
   select.value = 'pb-usd';
   button(many.mount, 'offer-create-quote').dispatch('click');
@@ -911,4 +911,110 @@ test('a2ea75f705fd: #/offerte/<quote id> opens the offer the quote belongs to, n
   await view.renderOfferDetail('q9');
   assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the offer behind the quote paints');
   assert.ok(!mount.textContent.includes('non trovata'), 'never «Offerta non trovata» for a quote of an offer');
+});
+
+
+// backlog:a3d3b99c738e (verifica 12/11): the price book menu never says the
+// currency twice — «Manuale EUR (EUR)» reads «Listino manuale (€)».
+test('a3d3b99c738e: the price book menu names each book once, the currency once', async () => {
+  const { priceBookLabel } = await import('../apps/admin/public/admin-labels.js');
+  assert.equal(priceBookLabel({ name: 'Manuale EUR', currency: 'EUR' }), 'Listino manuale (€)');
+  assert.equal(priceBookLabel({ name: 'Listino Presti', currency: 'EUR' }), 'Listino Presti (€)');
+  assert.equal(priceBookLabel({ name: 'Stripe USD', currency: 'USD' }), 'Stripe (USD)');
+  assert.equal(priceBookLabel({ name: '', currency: 'EUR' }), 'Listino (€)');
+  const many = await openPage({ books: [
+    { id: 'pb-man', name: 'Manuale EUR', currency: 'EUR', active: true },
+    { id: 'pb-presti', name: 'Listino Presti', currency: 'EUR', active: true },
+  ] });
+  const select = many.mount.findAll('select').find((node) => node.getAttribute('aria-label') === 'Listino del preventivo');
+  const labels = select.findAll('option').map((node) => node.textContent);
+  assert.deepEqual(labels, ['Listino manuale (€)', 'Listino Presti (€)']);
+  assert.ok(labels.every((label) => !/EUR\)?.*\(EUR\)/.test(label)), 'never «Manuale EUR (EUR)»');
+});
+
+// backlog:d8175e1c3495 (pilota 12/11: «Caricamento…» up to 6,6 s): reads
+// that do not depend on each other leave together, in three rounds instead
+// of one long chain.
+test('d8175e1c3495: the offer page reads in rounds — schema with offer, then quotes, history and team, then each quote’s lines and versions', async () => {
+  const base = pageClient({ books: [] });
+  const quotes = [{ ...QUOTE, id: 'q1' }, { ...QUOTE, id: 'q2' }];
+  const pending = [];
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({
+          path,
+          go: () => {
+            if (path.startsWith('/api/modules/quote/records')) return resolve({ items: quotes });
+            if (path.startsWith('/api/modules/quote-line/records') || path.startsWith('/api/modules/quote-version/records')) return resolve({ items: [] });
+            base.request(path, options).then(resolve, reject);
+          },
+        });
+      });
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  const round = async () => {
+    await flushAll(3);
+    const now = pending.splice(0).map((entry) => entry);
+    for (const entry of now) entry.go();
+    await flushAll(3);
+    return now.map((entry) => entry.path.split('?')[0]);
+  };
+  const first = await round();
+  assert.deepEqual(first.sort(), ['/api/opportunities/off1', '/api/schema'], 'schema and offer together');
+  const second = await round();
+  assert.deepEqual(second.sort(), ['/api/audit', '/api/modules/quote/records', '/api/spine/memberships'], 'quotes, history and team together');
+  const third = await round();
+  assert.equal(third.filter((path) => path === '/api/modules/quote-line/records').length, 2, 'both quotes read their lines at once');
+  assert.equal(third.filter((path) => path === '/api/modules/quote-version/records').length, 2, 'and their versions, in the same round');
+  while (pending.length > 0) await round();
+  await done;
+  const cards = mount.findAll('div').filter((node) => node.getAttribute('data-quote'));
+  assert.deepEqual(cards.map((node) => node.getAttribute('data-quote')), ['q1', 'q2'], 'cards keep the order the quotes were read');
+});
+
+test('d8175e1c3495: the page shows its frame at once as a skeleton, never «Caricamento…», and the paint replaces it', async () => {
+  const base = pageClient();
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const client = { calls: base.calls, request: (path, options) => held.then(() => base.request(path, options)) };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  // Painted in the same tick the page opens, before any answer.
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the skeleton is on screen at once');
+  assert.equal(skeleton.getAttribute('aria-busy'), 'true');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'never a lone loading line');
+  for (const label of ['Offerta', 'Referente', 'Stato', 'Chiusura prevista', 'Preventivo', 'Cronologia']) {
+    assert.ok(mount.textContent.includes(label), `the frame names «${label}»`);
+  }
+  assert.ok(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length >= 10, 'grey bars where values arrive');
+  assert.equal(mount.findAll('p').find((node) => node.getAttribute('role') === 'status')?.textContent, 'Carico l’offerta…', 'the wait is said once');
+  release();
+  await done;
+  await flushAll();
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0, 'the skeleton is gone');
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no bar left');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+});
+
+test('d8175e1c3495: an offer that cannot be read replaces the skeleton with the honest line', async () => {
+  const mount = createMount();
+  const client = { request: () => Promise.reject(Object.assign(new Error('boom'), { status: 500, code: 'BOOM' })) };
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    await view.renderOfferDetail('off1');
+  } finally {
+    console.error = realError;
+  }
+  assert.equal(mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true').length, 0, 'no skeleton over a failure');
+  assert.match(mount.textContent, /Offerta non trovata o non leggibile/);
 });

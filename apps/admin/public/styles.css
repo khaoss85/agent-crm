@@ -407,6 +407,12 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-create-line:empty { display: none; }
 /* backlog:a2ea75f705fd: «Apri il preventivo» is a link that reads as the main button. */
 .bo-offer a.offer-quote-open-main { display: inline-flex; align-items: center; text-decoration: none; }
+/* backlog:d8175e1c3495: the offer page skeleton keeps the page's frame; bars fill the room their values take. */
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton { height: 18px; margin: 8px 0 0; }
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton:first-of-type { height: 30px; }
+.bo-offer-skeleton .bo-offer-value .ui-skeleton { height: 36px; }
+.bo-offer-skeleton .offer-fact .ui-skeleton { height: 14px; margin-top: 4px; }
+.bo-offer-skeleton .offer-quotes .ui-skeleton, .bo-offer-skeleton .offer-history .ui-skeleton { height: 14px; margin: 10px 0 0; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
