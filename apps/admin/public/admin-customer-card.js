@@ -1319,20 +1319,26 @@ export function createCustomerCardView(deps) {
         toast(`Numero salvato, ma la scheda chiama ancora ${phone}: la chiamata non parte. Riprova da «Chiama».`, true);
       } else if (same) toast('Numero salvato, ma la scheda non lo mostra ancora: riprova tra poco.', true);
     }
-    // Backlog:e9b4fc2f: no mailto: anymore — «Scrivi» opens the composer
-    // inside the scheda, and Invia sends through the outbox worker.
+    // Voce 2f2d22f2: the prototype names its channels — «WhatsApp» and
+    // «Email» open the same composer with their channel preselected
+    // (backlog:e9b4fc2f: no mailto: anywhere, Invia sends through the
+    // outbox worker). A channel tile stays honest: it opens the composer
+    // even when its own channel is off, and the composer says so there.
     const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
     if (writable.length === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
     } else {
-      const write = tile('Scrivi', 'messaggio');
-      write.setAttribute('type', 'button');
-      write.setAttribute('data-action', 'compose-message');
-      write.setAttribute('title', 'Scrivi al cliente sui suoi canali');
-      write.addEventListener('click', () => {
-        openComposer(card, navCtx);
-      });
-      row.appendChild(write);
+      for (const channel of ['whatsapp', 'email']) {
+        const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+        const channelTile = tile(label, 'messaggio');
+        channelTile.setAttribute('type', 'button');
+        channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
+        channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
+        channelTile.addEventListener('click', () => {
+          openComposer(card, navCtx, channel);
+        });
+        row.appendChild(channelTile);
+      }
     }
   /**
    * «Chiama» without a number, or with several (Dan 11/11): the number
@@ -1557,7 +1563,10 @@ export function createCustomerCardView(deps) {
    * the panel only shows it.
    */
 
-  function openComposer(card, navCtx) {
+  // Voce 2f2d22f2: the quick-action tile names its channel — the composer
+  // opens with that channel preselected when it is usable, and falls back
+  // to the first usable channel when it is not (never a dead selection).
+  function openComposer(card, navCtx, preferChannel = null) {
     const generation = (composerGeneration += 1);
     closeSchedaWindows('data-composer');
     // The window hangs off the view, not off the Azioni column: a sticky
@@ -1617,13 +1626,13 @@ export function createCustomerCardView(deps) {
       (sync) => {
         if (generation !== composerGeneration) return;
         if (wait.parentNode === panel) panel.removeChild(wait);
-        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile);
+        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile, preferChannel);
       },
       (error) => {
         if (generation !== composerGeneration) return;
         if (wait.parentNode === panel) panel.removeChild(wait);
         if (isNotComposedFailure(error)) {
-          buildComposerForm(panel, card, navCtx, spaceId, [], profile);
+          buildComposerForm(panel, card, navCtx, spaceId, [], profile, preferChannel);
           return;
         }
         panel.appendChild(el('p', 'field-error', humanReadError(error, {
@@ -1967,7 +1976,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function buildComposerForm(panel, card, navCtx, spaceId, connections, profile) {
+  function buildComposerForm(panel, card, navCtx, spaceId, connections, profile, preferChannel = null) {
     // Keyed by space too: a draft never crosses into another workspace
     // (Muse P2 on #588), the same boundary the send payload keeps.
     const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
@@ -2078,6 +2087,14 @@ export function createCustomerCardView(deps) {
       }
       list.appendChild(chip);
       radios.push({ entry, radio, chip });
+    }
+    // Voce 2f2d22f2: the tile's channel wins over the first-usable default —
+    // but only when it is usable (a recipient and a connection). Otherwise
+    // the honest default stays, never a disabled selection.
+    if (typeof preferChannel === 'string' && preferChannel !== '') {
+      const preferred = radios.find((row) => row.entry.channel === preferChannel
+        && row.entry.recipient !== null && row.entry.connected === true);
+      if (preferred) select(preferred.entry);
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -2287,7 +2304,7 @@ export function createCustomerCardView(deps) {
     const pick = customerPickFor(navCtx, card);
     // Voce c2793930850a: the creation voices are tiles like Chiama and
     // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
-    const offer = tile('Nuova offerta', 'offerta');
+    const offer = tile('Offerta', 'offerta');
     offer.setAttribute('type', 'button');
     offer.setAttribute('data-action', 'new-offer');
     // Dan 06/11: the offer is written where the customer is — a window
@@ -2317,7 +2334,7 @@ export function createCustomerCardView(deps) {
       });
     });
     row.appendChild(offer);
-    const appointment = tile('Nuovo appuntamento', 'appuntamento');
+    const appointment = tile('Appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
     // Dan 11/11: the appointment is booked where the customer is — a
@@ -2346,6 +2363,23 @@ export function createCustomerCardView(deps) {
       });
     });
     row.appendChild(appointment);
+    // Voce 2f2d22f2: the prototype's sixth tile — the same AI voice as
+    // Dettagli (voce d525f4aa48b2): the BO-F0-04 bar with this customer
+    // already in the context. Without a named record there is no context
+    // to open, so the tile stays out like the creation tiles' windows do.
+    if (typeof navCtx?.resource === 'string' && navCtx.resource !== ''
+      && typeof navCtx?.id === 'string' && navCtx.id !== '') {
+      const ask = tile("✦ Chiedi all'AI", 'ai');
+      ask.setAttribute('type', 'button');
+      ask.setAttribute('data-action', 'quick-ask-ai');
+      ask.setAttribute('title', 'Chiedi all\u2019assistente con questo cliente nel contesto (⌘K)');
+      ask.addEventListener('click', () => {
+        const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'senza nome';
+        if (onAskAi) onAskAi('scheda-cliente', `Cliente ${name} (${navCtx.resource}/${navCtx.id})`, { resource: navCtx.resource, id: navCtx.id });
+        else toast('Apri la barra AI (⌘K) e descrivi cosa vuoi fare per questo cliente.');
+      });
+      row.appendChild(ask);
+    }
     box.appendChild(row);
   }
 
