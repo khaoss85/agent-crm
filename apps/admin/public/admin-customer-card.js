@@ -2943,13 +2943,28 @@ export function createCustomerCardView(deps) {
     const extract = ctx !== null && typeof ctx === 'object' ? ctx.extract ?? null : null;
     const sourcesOf = ctx !== null && typeof ctx === 'object' ? ctx.timeline ?? null : null;
     if (typeof reload === 'function' && typeof extract === 'function') {
+      // Backlog e5e3e886, review #853 giro 1 (P2): the run outlives this
+      // paint — a repaint while it flies (a note save repaints the card)
+      // must neither start a second run nor land in the detached box.
+      const runKey = ctx !== null && typeof ctx === 'object' && typeof ctx.key === 'string' ? ctx.key : null;
       const refresh = el('button', 'bo-scheda-refresh', 'Aggiorna');
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
       refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
-        if (busy) return;
+        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return;
         busy = true;
+        // The paint this click was painted on: landing anywhere else means
+        // a repaint detached this box while the run flew.
+        const painted = lastShown;
+        // One POST per customer, however many paints happen while the run
+        // flies; only the run that set it deletes it.
+        const flight = {};
+        if (runKey !== null) enrichmentRuns.set(runKey, flight);
+        const release = () => {
+          busy = false;
+          if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+        };
         try {
           const sources = extractionSourcesFromTimeline(sourcesOf);
           if (sources.length === 0) {
@@ -2963,15 +2978,15 @@ export function createCustomerCardView(deps) {
           try {
             answer = await extract(sources);
           } catch (error) {
-            if (status.parentNode) status.parentNode.removeChild(status);
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
             return;
+          } finally {
+            if (status.parentNode) status.parentNode.removeChild(status);
           }
-          if (status.parentNode) status.parentNode.removeChild(status);
           // The run landed but the re-read failed: the stored proposals
           // stay stored (a later «Aggiorna» replays instead of doubling
           // them) and the section keeps its previous rows with the retry
@@ -2984,8 +2999,22 @@ export function createCustomerCardView(deps) {
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
-          while (box.firstChild) box.removeChild(box.firstChild);
-          enriched(box, fresh, reload, null, ctx, freshProposals);
+          // The flight is over before the landing paints, so the landing
+          // paint never reads its own «Estraggo…» state.
+          if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+          if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+            // A repaint detached this box while the run flew: the run lands
+            // on the screen, never in the detached box.
+            enrichmentProposals.set(runKey, freshProposals);
+            try {
+              paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+            } finally {
+              enrichmentProposals.delete(runKey);
+            }
+          } else {
+            while (box.firstChild) box.removeChild(box.firstChild);
+            enriched(box, fresh, reload, null, ctx, freshProposals);
+          }
           if (freshProposals.length > 0) {
             const count = freshProposals.length;
             toast(`L\u2019AI propone ${count} campo${count === 1 ? '' : 'i'} da decidere qui sotto.`);
@@ -2993,10 +3022,18 @@ export function createCustomerCardView(deps) {
             toast('Nessun dato nuovo');
           }
         } finally {
-          busy = false;
+          release();
         }
       }));
       box.appendChild(refresh);
+      if (runKey !== null && enrichmentRuns.has(runKey)) {
+        // A run this button did not start is still flying (a repaint
+        // detached its box): the section still reads «Estraggo…», and the
+        // button above no-ops until it lands.
+        const flying = el('p', 'bo-scheda-extracting', 'Estraggo…');
+        flying.setAttribute('role', 'status');
+        box.appendChild(flying);
+      }
     }
     const items = Array.isArray(enrichment?.items) ? enrichment.items : null;
     if (items === null) {
@@ -3013,7 +3050,12 @@ export function createCustomerCardView(deps) {
     // so a first run never reads as «Nessun dato arricchito ancora».
     // Accepting or dismissing one is a later voce (it needs the decide
     // route first): here they read as proposals, never as facts.
-    const pending = Array.isArray(proposals) ? proposals : [];
+    // Backlog e5e3e886, review #853 giro 1 (P2): proposals a landed run
+    // stored while a repaint detached its box, until the repaint that
+    // shows them.
+    const runKey = ctx !== null && typeof ctx === 'object' && typeof ctx.key === 'string' ? ctx.key : null;
+    const pending = Array.isArray(proposals) ? proposals
+      : runKey !== null ? enrichmentProposals.get(runKey) ?? [] : [];
     if (items.length === 0 && pending.length === 0) {
       box.appendChild(el('p', 'bo-muted', 'Nessun dato arricchito ancora'));
       return;
@@ -4325,6 +4367,16 @@ export function createCustomerCardView(deps) {
   const loggedHistoryFailures = new WeakSet();
   /** A note being saved, view-wide (review #793): one POST per note. */
   let noteSaving = false;
+  /**
+   * Backlog e5e3e886, review #853 giro 1 (P2): extraction runs in flight,
+   * by customer key — one POST per customer, however many paints happen
+   * while a run flies. The proposals a landed run stored, by customer key,
+   * live only until the repaint that shows them.
+   * @type {Map<string, unknown>}
+   */
+  const enrichmentRuns = new Map();
+  /** @type {Map<string, Array<any>>} */
+  const enrichmentProposals = new Map();
   /** @type {Array<any> | null} */
   let rosterPeople = null;
   function readRoster() {
@@ -4522,6 +4574,7 @@ export function createCustomerCardView(deps) {
     }
     if (waits('enrichment')) skeleton(left, '', "Arricchito dall'AI");
     else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError, {
+      key,
       timeline,
       extract: (sources) => client.request(
         `/api/customer-data/enriched/${encodeURIComponent(resource)}/${encodeURIComponent(id)}/extract`,

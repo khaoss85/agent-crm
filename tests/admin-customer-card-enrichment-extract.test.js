@@ -220,6 +220,32 @@ test('e5e3e886: a run that landed but re-reads nothing keeps its rows with the r
   assert.ok(toasts.some((text) => text.includes('Riprova')), 'the failed re-read toasts the retry, never silence');
 });
 
+test('e5e3e886 review #853 P2: a repaint while the run flies starts no second run and lands on screen', async () => {
+  const client = fakeClient();
+  const { mount, view, toasts } = await open(client);
+  const first = byAction(mount, 'refresh-enrichment');
+  assert.ok(first, 'the «Aggiorna» button exists');
+  client.hold();
+  const running = first.listeners.click[0]();
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the run in flight reads «Estraggo…»');
+  // A repaint while the run flies (a note save repaints the card): the old
+  // box is detached and its guard is gone with it.
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the repaint keeps the «Estraggo…» state');
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(client.writes.length, 1, 'the second click starts no run: still only the in-flight one');
+  client.release();
+  await running;
+  await flush();
+  assert.equal(client.writes.length, 1, 'exactly one run leaves');
+  assert.ok(toasts.some((text) => text.includes('L\u2019AI propone 1 campo')), 'the landed run toasts its proposals');
+  assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the proposals land on the screen, not in a detached box');
+  assert.ok(mount.textContent.includes('fonte: messaggio'), 'the proposal cites its source');
+});
+
 test('e5e3e886: the run sources are messages only, capped, with channel and handle as detail', () => {
   const timeline = {
     entries: {
