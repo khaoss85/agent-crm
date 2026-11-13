@@ -22,7 +22,8 @@ function oggiPreview(body, mailSubject = null) {
     conversations: [],
     messages: [{ id: 'm1', conversationId: 'k1', channel: 'email', direction: 'inbound', occurredAt: '2026-11-12T10:00:00.000Z', body, mailSubject, remoteHandle: 'a@example.com' }],
   });
-  return inbox.rows[0].preview;
+  // A mass mail sits in «Notifiche automatiche» (backlog:bab63e32acdb): the preview is the same.
+  return (inbox.rows[0] ?? inbox.notifications.rows[0]).preview;
 }
 
 test('«<!DOCTYPE html>» and other declarations never reach a preview', () => {
