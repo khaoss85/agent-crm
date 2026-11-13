@@ -2259,6 +2259,59 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
 });
 
+test('2c1c0e149cf9: the scheda matches the prototype — action order, violet AI, offer menu, recap, suggeriti', async () => {
+  const profile = {
+    ...PROFILE,
+    workTasks: {
+      available: true, count: 2, countIsComplete: true, truncated: false,
+      items: [
+        { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
+        { id: 'w2', status: 'done', name: 'Inviare il listino' },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({ profile, calls: CALLS }));
+  // Prototype order: Chiama, WhatsApp, Email, Appuntamento, Offerta, ✦ Chiedi all'AI.
+  const actions = mount.findAll('button')
+    .filter((node) => ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai']
+      .includes(node.getAttribute('data-action')))
+    .map((node) => node.getAttribute('data-action'));
+  assert.deepEqual(actions,
+    ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai'],
+    'Appuntamento before Offerta, the AI tile last');
+  // The AI tile wears the assistant violet, never the plain tile style.
+  const ask = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'quick-ask-ai');
+  assert.ok(String(ask.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile-ai'),
+    'the AI tile carries the violet class');
+  // Offerta is a menu like the other creation points, never a direct window.
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'ai'),
+    'the Crea con l\u2019AI voice exists');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'manual'),
+    'the Compila manualmente voice exists');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'no offer window before a voice is chosen');
+  // The violet recap panel replaces the standalone summary and calls cards.
+  assert.ok(mount.textContent.includes('✦ Recap per Guido Presti'), 'the recap names the customer');
+  assert.ok(mount.textContent.includes('Vista per'), 'the Vista per tabs exist');
+  assert.deepEqual(
+    mount.findAll('button').filter((node) => node.getAttribute('data-vista') !== null)
+      .map((node) => node.getAttribute('data-vista')),
+    ['chiamate', 'messaggi', 'appuntamenti'], 'the three viste in prototype order');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'Chiamate is the default vista');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card');
+  assert.ok(!heads.includes('Chiamate'), 'no standalone calls card');
+  // Prossime azioni shares the server list with Prossimi passi; the
+  // agent-opened step carries the prototype «✦ suggeriti» mark.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(mount.textContent.includes('Prossimi passi'), 'the Prossimi passi card stays');
+  assert.ok(mount.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
   // #616: «Nuova offerta» opens its window over the scheda; the pick it
   // files under is the companyId the window's Crea offerta posts.

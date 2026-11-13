@@ -305,7 +305,7 @@ const DEMO_PROFILE = {
   workTasks: {
     available: true, count: 2, countIsComplete: true,
     items: [
-      { id: 'w1', status: 'open', name: 'Richiamare per la prova' },
+      { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
       { id: 'w2', status: 'done', name: 'Inviare il listino' },
     ],
     truncated: false,
