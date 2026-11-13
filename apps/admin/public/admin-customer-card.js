@@ -12,6 +12,7 @@ import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
+import { ASSISTANT_STATUS_PATH } from './admin-assistant.js';
 import {
   addFieldForm,
   defineField,
@@ -895,6 +896,9 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/** The LLM gate codes that mean «the AI is off here», not an outage. */
+const COMPOSER_AI_OFF_CODES = new Set(['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']);
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -978,6 +982,42 @@ export function createCustomerCardView(deps) {
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
+  // backlog:f48593bb06d4: the space AI state, from the read the Assistente
+  // panel already probes (GET /api/assistant/status: the pilot answers 200
+  // `{ enabled, reason }` from the worker's own gate). Only a settled «off»
+  // — enabled false with an LLM gate code — switches Genera off at open;
+  // anything else (pending, failed, unknown shape) is «unknown», Genera
+  // stays and the draft POST still meets the gate. Kept a minute per space;
+  // a draft the gate refused updates it, so a reopen paints off at once.
+  /** @type {{ spaceId: string, at: number, promise: Promise<string|null> } | null} */
+  let spaceAiRead = null;
+  const readSpaceAi = (spaceId) => {
+    if (spaceAiRead !== null && spaceAiRead.spaceId === spaceId
+      && Date.now() - spaceAiRead.at < 60000) return spaceAiRead.promise;
+    const promise = Promise.resolve()
+      .then(() => client.request(ASSISTANT_STATUS_PATH))
+      .then((status) => {
+        const reason = status?.reason ?? status?.code ?? null;
+        return status?.enabled === false && COMPOSER_AI_OFF_CODES.has(reason) ? reason : null;
+      }, (error) => {
+        // A handled «unknown»: one info line with the safe fields, never an error.
+        if (typeof console !== 'undefined' && typeof console.info === 'function') {
+          console.info('bo-scheda ai state unreadable:', typeof error?.code === 'string' ? error.code : '',
+            Number.isFinite(error?.status) ? error.status : '', `spaceId=${spaceId}`);
+        }
+        return null;
+      });
+    spaceAiRead = { spaceId, at: Date.now(), promise };
+    return promise;
+  };
+  const rememberSpaceAiOff = (spaceId, code) => {
+    if (typeof spaceId === 'string' && COMPOSER_AI_OFF_CODES.has(code)) {
+      spaceAiRead = { spaceId, at: Date.now(), promise: Promise.resolve(code) };
+    }
+  };
+  // The session role: only the titolare is sent to Spazi e accessi, the
+  // others are told who turns the AI on (the Assistente idiom, 1968c3320cd3).
+  const readRole = typeof deps.role === 'function' ? deps.role : () => null;
   // Azioni rapide: the prototype's stroke icon above the label, drawn as a
   // real SVG element. A CSS data: mask is blocked by the host CSP
   // (default-src 'self'), so the icons of #627 never painted in production.
@@ -1704,6 +1744,9 @@ export function createCustomerCardView(deps) {
     }
     const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
     panel.appendChild(wait);
+    // backlog:f48593bb06d4: the AI state starts with the channel reads, in
+    // parallel; the AI row reads the same (cached) answer when it paints.
+    void readSpaceAi(spaceId);
     // Voce a935af6a6d19: Email also reads the space profile's Gmail link
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
@@ -1808,10 +1851,34 @@ export function createCustomerCardView(deps) {
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
-    const off = (sentence) => {
-      while (row.firstChild) row.removeChild(row.firstChild);
+    // Genera switched off with its reason beside it (backlog:f48593bb06d4).
+    // The field and the words typed in it stay — read-only, still there to
+    // copy — never a row wiped after a refusal.
+    const switchOff = () => {
+      go.setAttribute('disabled', 'disabled');
+      go.setAttribute('aria-disabled', 'true');
+      if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
+    };
+    const off = (code, status = null) => {
       row.setAttribute('data-off', 'true');
-      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+      switchOff();
+      prompt.setAttribute('readonly', 'readonly');
+      prompt.setAttribute('placeholder', 'L’AI è spenta: scrivi il messaggio qui sotto');
+      say('');
+      if (code === 'LLM_SPACE_DISABLED') {
+        // Who turns it on: the titolare gets the way there, one click; the
+        // others are told whom to ask (the Assistente idiom).
+        if (readRole() === 'owner') {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto, o '));
+          line.appendChild(link('#/spazi-accessi', 'accendila da Spazi e accessi', 'composer-ai-settings'));
+        } else {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto. Per accenderla chiedi al titolare.'));
+        }
+      } else if (code === 'LLM_SECRET_UNAVAILABLE') {
+        line.appendChild(el('span', undefined, 'L’AI non è ancora configurata: scrivi il messaggio qui sotto.'));
+      } else if (status === 404 || status === 405) {
+        line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
+      }
     };
     const say = (sentence, undo = false) => {
       beforeConfirm = null;
@@ -1842,10 +1909,13 @@ export function createCustomerCardView(deps) {
         line.appendChild(back);
       }
     };
-    // No channel to write on: the one way forward is Connettori.
+    // No channel to write on: the one way forward is Connettori. Genera is
+    // off with this reason beside it from the opening (backlog:f48593bb06d4):
+    // the draft is written for one channel, and Invia has none either.
     const sayConnect = () => {
       say('');
-      line.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato · '));
+      line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     };
     // The line under an AI draft: reread it, and Annulla when there is a
     // text of the person's own to go back to.
@@ -1854,6 +1924,8 @@ export function createCustomerCardView(deps) {
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
+      // AI off: Invio in the prompt asks nothing either (backlog:f48593bb06d4).
+      if (row.getAttribute('data-off') === 'true') return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
       // Review #664: during the minute of read-back a Genera with other
@@ -1861,16 +1933,16 @@ export function createCustomerCardView(deps) {
       // Genera with those words); the same words keep the read going. While
       // the POST itself is in flight Genera stays off, as before.
       if (busy && (reading === null || reading === pendingKey(words, picked))) return;
-      if (words === '') {
-        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
-        return;
-      }
       if (picked === null) {
         // backlog:bd9ae1482194 (verifica 11/11): with nothing to pick, the
         // line says what to do. Scrivi only opens for a customer with an
         // address, so «no channel to pick» always means the customer's
         // channels are not linked (or not usable) yet: Connettori.
         sayConnect();
+        return;
+      }
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
       }
       const mine = ++drafting;
@@ -2046,15 +2118,16 @@ export function createCustomerCardView(deps) {
         if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
-        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
-        // The operator sees why the row went quiet; never the person's prompt.
-        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
-          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
-        }
-        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
-        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
-        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
-        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        const aiOff = COMPOSER_AI_OFF_CODES.has(code) || status === 404 || status === 405;
+        if (aiOff) {
+          // A handled state, not a fault (backlog:f48593bb06d4): one warn
+          // line for the operator, never console.error, never the prompt.
+          if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+            console.warn('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+          }
+          rememberSpaceAiOff(spaceId, code);
+          off(code, status);
+        } else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
         if (mine !== drafting) return;
@@ -2072,6 +2145,19 @@ export function createCustomerCardView(deps) {
     if (kept !== null) {
       go.textContent = 'Rigenera';
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept.text.trim() !== '' || kept.subject.trim() !== '');
+    }
+    // backlog:f48593bb06d4: the row knows at opening whether Genera can work.
+    // No usable channel: off, with Connettori beside it. AI off in the space
+    // (the cached state read): off, with the reason and who turns it on. A
+    // Genera already in flight is left to the gate's own answer.
+    if (channel() === null) {
+      switchOff();
+      sayConnect();
+    } else {
+      void readSpaceAi(spaceId).then((code) => {
+        if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
+        off(code);
+      });
     }
     prompt.addEventListener?.('keydown', (event) => {
       if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
@@ -2180,10 +2266,12 @@ export function createCustomerCardView(deps) {
       if (entry.recipient === null) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
         // Voce 8ce25b0f445f: the address reads in the line too, not only in
         // the title — a phone has no hover.
