@@ -4417,7 +4417,11 @@ export function createCustomerCardView(deps) {
     }
     if (waits('enrichment')) skeleton(left, '', "Arricchito dall'AI");
     else section(left, '', enriched, enrichment, reloadEnrichment, enrichmentError);
-    if (waits('timeline', 'profile', 'pipelines')) {
+    // Voce 908f2eb9bbfb (AC-3): the cronologia paints from the timeline read
+    // alone — timelineBox only takes optional extras from the profile
+    // (company name, offers, quotes, all null-safe), so a slow profile never
+    // holds the entries hostage.
+    if (waits('timeline')) {
       skeleton(center, 'bo-scheda-card-timeline', 'Tutti i contatti');
     } else if (timelineError) {
       section(center, 'bo-scheda-card-timeline', (box) => {
