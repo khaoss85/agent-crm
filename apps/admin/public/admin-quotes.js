@@ -409,11 +409,14 @@ export function createQuoteView(deps) {
       row.appendChild(value);
       totalsPanel.appendChild(row);
     };
-    if (totals.oneTimeTotal) totalRow('Una tantum', totals.oneTimeTotal, totals.vat?.oneTime ?? null);
+    // The Totale panel names only valued groups, like the hero above: a
+    // zero-valued group is an unpriced component, never a «0 €» row.
+    if (valuedOneTime !== null) totalRow('Una tantum', valuedOneTime, totals.vat?.oneTime ?? null);
     totals.recurringTotals.forEach((group, index) => {
+      if (!groupHasValue(group)) return;
       totalRow(`Ricorrente ogni ${group.intervalCount} ${periodLabel(group.intervalCount, group.interval)}`, group, totals.vat?.recurring?.[index] ?? null);
     });
-    if (!totals.oneTimeTotal && totals.recurringTotals.length === 0) {
+    if (valuedOneTime === null && !totals.recurringTotals.some(groupHasValue)) {
       totalsPanel.appendChild(el('p', 'empty', 'Ancora nessuna riga.'));
     }
     totalsPanel.appendChild(el('p', 'quote-totals-note', 'Una tantum e importi ricorrenti restano separati: non si sommano tra loro.'));

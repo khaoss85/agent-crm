@@ -270,6 +270,30 @@ test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total
   assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200 € ogni 1 mese'), 'the history row keeps the recurring period');
 });
 
+test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
+  const recurringOnly = {
+    oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    recurringTotals: [
+      { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320_000, discountAmountCents: 0, netAmountCents: 320_000 },
+      { currency: 'EUR', interval: 'year', intervalCount: 1, listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    ],
+  };
+  const record = quote({ totalsJson: JSON.stringify(recurringOnly) });
+  const versions = [
+    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(recurringOnly), currency: 'EUR' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
+  const totals = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-totals');
+  assert.ok(totals, 'the detail paints a Totale panel');
+  const rows = totals.findAll('p').filter((node) => node.getAttribute('data-total') !== null);
+  const labels = rows.map((row) => row.getAttribute('data-total'));
+  assert.ok(!labels.includes('Una tantum'), 'the Totale panel never shows a zero one-time total');
+  assert.ok(!labels.some((label) => label.startsWith('Ricorrente')) || labels.length === 1, 'only valued groups get a row');
+  assert.ok(labels.some((label) => label.startsWith('Ricorrente')), 'the valued recurring group keeps its row');
+});
+
 test('8dc6d4a456e1: a version with no valued group paints a dash like the header', async () => {
   const empty = {
     oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
