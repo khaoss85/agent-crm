@@ -428,26 +428,29 @@ const DEMO_REPORT = {
     { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
     { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 preventivi' },
   ],
+  // backlog:6e927ba9dd16: one scale everywhere (minor cents): the open
+  // stages add up to the open-value KPI (6 quotes, 2.600.000) and the won
+  // stage to the won-period KPI (2 closures, 1.400.000).
   funnel: [
-    { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
-    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 10000 },
-    { stage: 'won', label: 'Vinte', count: 2, minor: 14000 },
+    { stage: 'qualification', label: 'Qualifica', count: 4, minor: 1500000 },
+    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 1100000 },
+    { stage: 'won', label: 'Vinte', count: 2, minor: 1400000 },
   ],
   valueByStage: [
-    { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
-    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 10000 },
+    { stage: 'qualification', label: 'Qualifica', count: 4, minor: 1500000 },
+    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 1100000 },
   ],
   monthly: [
-    { month: '2026-09', label: 'settembre 2026', openCount: 1, expectedMinor: 2500, wonCount: 0, wonMinor: 0 },
-    { month: '2026-10', label: 'ottobre 2026', openCount: 2, expectedMinor: 14000, wonCount: 2, wonMinor: 14000 },
+    { month: '2026-09', label: 'settembre 2026', openCount: 1, expectedMinor: 250000, wonCount: 0, wonMinor: 0 },
+    { month: '2026-10', label: 'ottobre 2026', openCount: 2, expectedMinor: 1400000, wonCount: 2, wonMinor: 1400000 },
   ],
   team: [
-    { owner: 'alice', openCount: 2, openMinor: 14000, wonCount: 1, wonMinor: 9000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
-    { owner: 'bob', openCount: 0, openMinor: 0, wonCount: 1, wonMinor: 5000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
+    { owner: 'alice', openCount: 4, openMinor: 1500000, wonCount: 1, wonMinor: 900000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
+    { owner: 'bob', openCount: 2, openMinor: 1100000, wonCount: 1, wonMinor: 500000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
   ],
   owners: ['alice', 'bob'],
   forecast: {
-    currency: 'EUR', closedMinor: 14000, probableMinor: 9333, bestMinor: 14000, targetMinor: 2000000,
+    currency: 'EUR', closedMinor: 1400000, probableMinor: 933333, bestMinor: 1400000, targetMinor: 2000000,
     heuristic: true, label: 'Stima',
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
     note: `Obiettivo ${formatMinor(2000000, 'EUR')}.`,
@@ -474,7 +477,7 @@ const DEMO_REPORT = {
     moves: [{ from: 'alice', to: 'bob', count: 1, reason: '1 preventivi senza data, tasso 50% contro 100%' }],
     note: 'La proposta non sposta nulla da sola: la riassegnazione resta dell\u2019operatore.',
   },
-  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;2;14000;1;9000;1;50%\n' },
+  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;4;1500000;1;900000;1;50%\nbob;2;1100000;1;500000;0;100%\n' },
 };
 
 /**

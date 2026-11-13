@@ -20,6 +20,7 @@
 
 import test from 'node:test';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
+import { formatMinor } from '../packages/analytics/src/dashboard.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -296,6 +297,30 @@ test('the reporting demo follows the asked period (backlog:06d4b855fac4)', () =>
   assert.deepEqual(reportingBundleRows('2026-11'), [
     { id: 'r1', metric: 'chiamate', period: '2026-11', value: 20, unit: 'call' },
   ]);
+});
+
+test('the reporting demo uses one money scale with totals that add up (backlog:6e927ba9dd16)', () => {
+  // Cards, funnel, monthly, forecast, team and CSV all read minor cents on
+  // the same scale: open stages add up to the open-value KPI, won to the
+  // won-period KPI, the team splits both, and the forecast closes on won.
+  const model = reportingModelFor('2026-10');
+  const kpi = (id) => model.kpis.find((entry) => entry.id === id);
+  const openStages = model.funnel.filter((entry) => entry.stage !== 'won');
+  const openMinor = openStages.reduce((sum, entry) => sum + entry.minor, 0);
+  const openCount = openStages.reduce((sum, entry) => sum + entry.count, 0);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-value').display);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-count').sub);
+  assert.equal(openCount, Number(kpi('open-count').display));
+  const won = model.funnel.find((entry) => entry.stage === 'won');
+  assert.equal(formatMinor(won.minor, 'EUR'), kpi('won-period').display);
+  assert.equal(model.forecast.closedMinor, won.minor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openMinor, 0), openMinor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openCount, 0), openCount);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.wonMinor, 0), won.minor);
+  assert.equal(model.monthly.at(-1).wonMinor, won.minor);
+  const csvRows = model.csv.content.trim().split('\n').slice(1).map((line) => line.split(';'));
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[1]), 0), openCount);
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[2]), 0), openMinor);
 });
 
 test('the reporting harness answers the current period end to end', async () => {
