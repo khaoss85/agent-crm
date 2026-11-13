@@ -76,16 +76,13 @@ const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
 
 /**
  * Rome calendar day (YYYY-MM-DD) of a stored day or instant, null when
- * absent/unparseable: the same day the screen prints with italianDay
- * (review #761), never the UTC day.
+ * absent/unparseable or an impossible day («2026-99-99», «2026-02-30»):
+ * the same day the screen prints with italianDay (review #761), never the
+ * UTC day. One rule with the sort key: it delegates to romeDayKey.
  * @param {unknown} value
  */
 function romeDayOf(value) {
-  if (typeof value !== 'string' || !value) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
-  const time = Date.parse(value);
-  if (Number.isNaN(time)) return null;
-  return ROME_DAY_KEY.format(new Date(time));
+  return romeDayKey(value);
 }
 
 /**
@@ -99,7 +96,10 @@ export function romeDayKey(value) {
   const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
   const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
   if (Number.isNaN(time)) return null;
-  return ROME_DAY_KEY.format(new Date(time));
+  const day = ROME_DAY_KEY.format(new Date(time));
+  // A bare day must exist: V8 rolls «2026-02-30» over to 2 March, so the
+  // day must read back unchanged (review #761 P1: fail closed).
+  return bareDay && day !== value ? null : day;
 }
 
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */

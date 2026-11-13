@@ -159,6 +159,10 @@ test('review #761: the Creata filter reads the Rome day the column shows', () =>
   // 23:30Z on 3 nov is 4 nov in Rome: inside «ultimi 7 giorni» (cutoff 4 nov).
   assert.equal(createdWithin('2026-11-03T23:30:00.000Z', 7, now), true, 'the Rome day, not the UTC day');
   assert.equal(createdWithin('2026-11-03T22:30:00.000Z', 7, now), false, '3 nov in Rome is out');
+  // Review #761 P1: an impossible bare day fails closed, never a guessed day.
+  assert.equal(createdWithin('2026-99-99', 7, now), false, 'impossible month/day');
+  assert.equal(createdWithin('2026-11-31', 7, now), false, '31 nov does not exist (V8 would roll it to 1 dic)');
+  assert.equal(createdWithin('2026-11-10', 7, now), true, 'a real bare day still counts');
   // Rome after midnight while UTC is still the day before.
   const lateNight = new Date('2026-11-10T23:30:00.000Z'); // 11 nov 00:30 in Rome
   assert.equal(createdWithin('2026-11-04T12:00:00.000Z', 7, lateNight), true, 'today is the Rome today');
