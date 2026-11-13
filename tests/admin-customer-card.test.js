@@ -331,6 +331,13 @@ test('BO-F6-09 fetta 2a: the header shows back, avatar initials, H1 name and the
   assert.equal(badge.textContent, 'Contatto', 'the pill shows the card stato in Italian, not a lowercase code');
 });
 
+test('a581a9af2df4: the scheda renders «UB» like Oggi and Clienti (first+last)', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: 'UX Esplorativo 1111 B' } }));
+  const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
+  assert.ok(avatar, 'the avatar circle exists');
+  assert.equal(avatar.textContent, 'UB', 'same initials as the Oggi badge and the Clienti row');
+});
+
 test('BO-F6-09 fetta 2a: a hostile name stays text in the H1 and the avatar', async () => {
   const nasty = '<img src=x onerror=alert(1)>';
   const mount = await renderCard(stubClient({ card: { ...CARD, name: nasty } }));
