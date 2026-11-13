@@ -320,11 +320,14 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       });
       words.appendChild(edit);
     } else {
-      const form = el(doc, 'div', 'bo-profilo-edit');
-      const label = el(doc, 'label', 'bo-profilo-edit-label', 'Nome');
+      const form = el(doc, 'div', 'ui-field-row bo-profilo-edit');
+      const label = el(doc, 'label', 'ui-label bo-profilo-edit-label', 'Nome');
+      label.setAttribute('for', 'bo-profilo-name-input');
       const input = doc.createElement('input');
+      input.setAttribute('class', 'ui-field');
       input.setAttribute('type', 'text');
       input.setAttribute('name', 'profile-name');
+      input.setAttribute('id', 'bo-profilo-name-input');
       input.setAttribute('aria-label', 'Nome');
       input.setAttribute('maxlength', String(PROFILE_NAME_MAX));
       input.value = draft;
@@ -415,7 +418,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       form.appendChild(actions);
       if (editError !== '') form.appendChild(el(doc, 'p', 'field-error', editError));
       words.appendChild(form);
+      // Opening Modifica hands the Nome field over ready to type: focus it
+      // with the current name selected, so typing replaces it at once.
       if (typeof input.focus === 'function') input.focus();
+      if (typeof input.select === 'function') input.select();
     }
     const meta = el(doc, 'div', 'bo-profilo-meta');
     const email = personText(person.email);
