@@ -786,10 +786,13 @@ export function withRevisedNote(loaded, noteId, body) {
 export function withoutNote(loaded, noteId) {
   const entries = loaded?.timeline?.entries;
   if (!entries || !Array.isArray(entries.items)) return loaded;
+  // The count before the filter (review Muse #867, P2): a shape without
+  // `count` starts from the list as it was, never from the filtered one.
+  const before = Number(entries.count ?? entries.items.length);
   const items = entries.items.filter((item) => !(item?.entry === 'note' && item.id === noteId));
   return {
     ...loaded,
-    timeline: { ...loaded.timeline, entries: { ...entries, count: Math.max(0, Number(entries.count ?? items.length) - (entries.items.length - items.length)), items } },
+    timeline: { ...loaded.timeline, entries: { ...entries, count: Math.max(0, before - (entries.items.length - items.length)), items } },
   };
 }
 
@@ -866,13 +869,16 @@ export function noteRefusalText(error) {
  * refusal the server names reads what happened and what to do — never
  * «Riprova più tardi», which would only meet the same refusal again.
  * @param {unknown} error @param {string} failed the sentence for a failure the server did not name
+ * @param {'revise' | 'withdraw'} [change] which command was refused
  */
-export function noteChangeRefusalText(error, failed) {
+export function noteChangeRefusalText(error, failed, change = 'revise') {
   const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
   if (code === 'WORK_NOTE_NOT_AUTHOR') return 'Solo chi ha scritto la nota può modificarla o eliminarla.';
   if (code === 'WORK_NOTE_NOT_FOUND') return 'Questa nota non c’è più: ricarica la scheda.';
-  if (code === 'WORK_NOTE_WITHDRAWN') return 'Questa nota è stata eliminata: non si può più modificare.';
+  if (code === 'WORK_NOTE_WITHDRAWN') {
+    return change === 'withdraw' ? 'Questa nota è già stata eliminata.' : 'Questa nota è stata eliminata: non si può più modificare.';
+  }
   const status = typeof record.status === 'number' ? record.status : null;
   if (code === 'VALIDATION_ERROR' || code === 'BO_CRM_BODY_REFUSED' || status === 400 || status === 422) {
     return noteRefusalText(error);
@@ -3379,8 +3385,9 @@ export function createCustomerCardView(deps) {
           const paper = el('div', 'bo-scheda-note-paper');
           paper.appendChild(el('p', 'bo-scheda-entry-head',
             when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
-          const own = noteCtx !== null && meActorId !== null && typeof item?.id === 'string' && item.id !== ''
-            && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === meActorId;
+          const mine = myActorId();
+          const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
+            && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
           if (own && noteEditing !== null && noteEditing.key === timelineKey && noteEditing.noteId === item.id) {
             paper.appendChild(noteEditor(item, noteCtx));
           } else {
@@ -4263,10 +4270,9 @@ export function createCustomerCardView(deps) {
     const startSeq = { ...partSeq };
     historyReads.clear();
     rosterRead = null;
-    if (meFailed) {
-      meFailed = false;
-      meRead = null;
-    }
+    // Who the operator is, asked again with every full read (review Muse
+    // #867): the id belongs to the space, which may have changed.
+    meRead = null;
     if (key !== shownKey) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
@@ -4495,49 +4501,56 @@ export function createCustomerCardView(deps) {
   /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
-   * this id. Read once per view, at the first paint; unread or failed, no
-   * note offers «Modifica» or «Elimina». A failed read is asked again at
-   * the next full read of a scheda, never at every repaint.
-   * @type {Promise<string | null> | null}
+   * this id. The id belongs to a space — on the pilot it is the space
+   * binding — so it is read per space (review Muse #867, P2): asked again
+   * at every full read of a scheda and whenever the space changes, never at
+   * a repaint. Unread, failed or read for another space, no note offers
+   * «Modifica» or «Elimina».
+   * @type {{ spaceId: string | null, promise: Promise<string | null> } | null}
    */
   let meRead = null;
-  let meFailed = false;
-  /** @type {string | null} */
-  let meActorId = null;
+  /** @type {{ spaceId: string | null, id: string } | null} */
+  let me = null;
+  /** The operator's actor id in the space on screen, or null. */
+  function myActorId() {
+    return me !== null && me.spaceId === activeSpaceId() ? me.id : null;
+  }
   function readMe() {
-    if (meRead === null) {
-      const read = client.request('/api/spine/context').then(
-        (context) => {
-          const id = typeof context?.actor?.id === 'string' ? context.actor.id.trim() : '';
-          return id === '' ? null : id;
-        },
-        (error) => {
-          // Logged with its cause, never its payload; the notes simply
-          // show no commands, and the next paint asks again.
-          if (typeof console !== 'undefined' && typeof console.error === 'function') {
-            console.error('[bo] autore delle note non leggibile', {
-              area: 'scheda-nota-autore',
-              code: error?.code ?? null,
-              name: typeof error?.name === 'string' ? error.name : null,
-              spaceId: activeSpaceId(),
-              status: Number(error?.status ?? 0) || null,
-            });
-          }
-          meFailed = true;
-          return null;
-        },
-      );
-      meRead = read;
-      void read.then((id) => {
-        if (meRead !== read || id === null || id === meActorId) return;
-        meActorId = id;
-        // The commands arrive after the first paint: paint once more, no read.
-        if (lastShown !== null && lastShown.key === shownKey) {
-          paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+    const spaceId = activeSpaceId();
+    if (meRead !== null && meRead.spaceId === spaceId) return meRead.promise;
+    const promise = client.request('/api/spine/context').then(
+      (context) => {
+        const id = typeof context?.actor?.id === 'string' ? context.actor.id.trim() : '';
+        return id === '' ? null : id;
+      },
+      (error) => {
+        // Logged with its cause, never its payload; the notes simply show
+        // no commands, and the next full read asks again.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] autore delle note non leggibile', {
+            area: 'scheda-nota-autore',
+            code: error?.code ?? null,
+            name: typeof error?.name === 'string' ? error.name : null,
+            spaceId,
+            status: Number(error?.status ?? 0) || null,
+          });
         }
-      });
-    }
-    return meRead;
+        return null;
+      },
+    );
+    const read = { spaceId, promise };
+    meRead = read;
+    void promise.then((id) => {
+      if (meRead !== read) return;
+      const before = myActorId();
+      me = id === null ? null : { spaceId, id };
+      if (myActorId() === before) return;
+      // The commands arrive (or leave) after the paint: paint once more, no read.
+      if (lastShown !== null && lastShown.key === shownKey) {
+        paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+      }
+    });
+    return promise;
   }
   /** The scheda again from what it shows, only when it still shows this customer. @param {string} resource @param {string} id */
   function repaintIfShown(resource, id) {
@@ -4564,7 +4577,7 @@ export function createCustomerCardView(deps) {
       }
     } catch (error) {
       pendingWithdrawals.delete(pendingKey);
-      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.'), true);
+      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
       // The note comes back where it was, then the cronologia is read again.
       repaintIfShown(resource, id);
       if (lastShown !== null && lastShown.key === key && shownKey === key) {

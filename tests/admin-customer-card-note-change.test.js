@@ -102,8 +102,9 @@ function fakeClient({ items = [MINE, THEIRS], context = { actor: { type: 'user',
       if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
       if (path === '/api/spine/memberships') return ROSTER;
       if (path === '/api/spine/context') {
-        if (context instanceof Error) throw context;
-        return context;
+        const answer = typeof context === 'function' ? context() : context;
+        if (answer instanceof Error) throw answer;
+        return answer;
       }
       if (path.startsWith('/api/audit')) return { items: [] };
       if (path === '/api/schema') return { pipelines: [] };
@@ -126,13 +127,13 @@ function manualWait() {
   };
 }
 
-async function open(client = fakeClient()) {
+async function open(client = fakeClient(), spaceId = 'spazio-prova') {
   const doc = createFakeDocument();
   const mount = createMount();
   const toasts = [];
   const timer = manualWait();
   const view = createCustomerCardView({
-    doc, mount, client, spaceId: 'spazio-prova', wait: timer.wait,
+    doc, mount, client, spaceId, wait: timer.wait,
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
   });
   await view.renderCard('contact', 'c1');
@@ -163,6 +164,21 @@ test('cb348c9fcaeb: without the actor of the session no note offers a command', 
     assert.ok(noteRow(mount, 'Richiamare lunedì'), 'the note is shown');
     assert.deepEqual(commandsIn(noteRow(mount, 'Richiamare lunedì')), [], JSON.stringify(context));
   }
+});
+
+test('cb348c9fcaeb: the operator is read per space — another space names another actor (review Muse #867)', async () => {
+  let space = 'spazio-a';
+  const actors = { 'spazio-a': ME, 'spazio-b': OTHER };
+  const client = fakeClient({ context: () => ({ actor: { type: 'user', id: actors[space] } }) });
+  const { mount, view } = await open(client, () => space);
+  assert.deepEqual(commandsIn(noteRow(mount, 'Richiamare lunedì')), ['edit-note', 'withdraw-note']);
+  assert.deepEqual(commandsIn(noteRow(mount, 'Preventivo inviato')), []);
+  space = 'spazio-b';
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.deepEqual(commandsIn(noteRow(mount, 'Richiamare lunedì')), [], 'the note of space A\u2019s actor has no command in space B');
+  assert.deepEqual(commandsIn(noteRow(mount, 'Preventivo inviato')), ['edit-note', 'withdraw-note'], 'the operator\u2019s own note in space B has them');
+  assert.equal(client.reads.filter((path) => path === '/api/spine/context').length, 2, 'one read per full read, never per repaint');
 });
 
 test('cb348c9fcaeb: Modifica edits in place — Maiusc+Invio goes to a new line, Invio saves and the cronologia is read again', async () => {
@@ -332,6 +348,10 @@ test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
   const without = withoutNote(loaded, 'n-mia');
   assert.deepEqual(without.timeline.entries.items.map((item) => item.id), ['n-altra']);
   assert.equal(without.timeline.entries.count, 1);
+  // Review Muse #867 (P2): a shape without count starts from the list before the filter.
+  const uncounted = { timeline: { entries: { available: true, items: [MINE, THEIRS] } } };
+  assert.equal(withoutNote(uncounted, 'n-mia').timeline.entries.count, 1);
+  assert.equal(noteChangeRefusalText({ status: 409, code: 'WORK_NOTE_WITHDRAWN' }, 'x', 'withdraw'), 'Questa nota è già stata eliminata.');
   for (const [error, sentence] of [
     [{ status: 403, code: 'WORK_NOTE_NOT_AUTHOR' }, 'Solo chi ha scritto la nota può modificarla o eliminarla.'],
     [{ status: 404, code: 'WORK_NOTE_NOT_FOUND' }, 'Questa nota non c’è più: ricarica la scheda.'],
