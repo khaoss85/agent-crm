@@ -1305,3 +1305,17 @@ test('f2d39e473e3a: app.js hands every crumb writer to the same keeper', async (
   const route = app.slice(app.indexOf('async function route()'), app.indexOf("if (targetForHash(hash).view === 'settings')"));
   assert.match(route, /offerCrumbs\.routed\(targetForHash\(hash\)\);/, 'every navigation, settings included');
 });
+
+// backlog:a762c28a646c: «Per <cliente>» opens a scheda that reads the name
+// at once — the offer page remembers who it is for.
+test('a762c28a646c: the offer page remembers its customer for the scheda', async () => {
+  const { createKnownNames } = await import('../apps/admin/public/admin-known-names.js');
+  const names = createKnownNames({ space: () => 's1' });
+  const view = createOfferDetail({ doc: createFakeDocument(), mount: createMount(), client: pageClient(), knownNames: names });
+  await view.renderOfferDetail('off1');
+  assert.equal(names.get('contact', 'c1'), 'Giulia Verdi');
+  const company = createKnownNames({ space: () => 's1' });
+  const other = createOfferDetail({ doc: createFakeDocument(), mount: createMount(), client: pageClient({ record: { contactName: null, contactId: null, companyName: 'Palestra Sole' } }), knownNames: company });
+  await other.renderOfferDetail('off1');
+  assert.equal(company.get('company', 'co1'), 'Palestra Sole', 'without a contact, the company');
+});

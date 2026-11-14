@@ -1210,3 +1210,13 @@ test('4968615de0a4: «Importa da file» has its own file mark, not the pencil of
   const { UI_ICONS } = await import('../apps/admin/public/admin-ui.js');
   assert.ok(UI_ICONS.includes('importa'));
 });
+
+// backlog:a762c28a646c: every name the list shows is remembered for the
+// scheda it opens.
+test('a762c28a646c: the Clienti list remembers the names it shows', async () => {
+  const { createKnownNames } = await import('../apps/admin/public/admin-known-names.js');
+  const names = createKnownNames({ space: () => 's1' });
+  await render(stubClient(), { knownNames: names });
+  assert.equal(names.get('contact', 'c1'), 'Marco Rossi');
+  assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
+});
