@@ -231,7 +231,26 @@ const moduleClient = {
     return withWakeRetry(once, { method, onWaking: wakingNotice });
   },
 };
-const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options));
+// backlog:c048bf6f2dd3: the schema answers from the space's last copy and
+// renews behind it; a renewed copy that differs repaints the shell and the
+// screen. The key is the mount (one per space) plus the active space.
+const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options), {
+  space: () => `${ADMIN_BASE}|${shellActiveSpace ?? ''}`,
+  storage: tabSessionStorage(),
+  onChange: () => {
+    void populateNav();
+    void route();
+  },
+});
+
+/** The tab's sessionStorage, or null where the browser refuses it. */
+function tabSessionStorage() {
+  try {
+    return typeof window !== 'undefined' && window.sessionStorage ? window.sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * backlog:2b62c771f1f9: while reads wait for the host to wake, the shell
