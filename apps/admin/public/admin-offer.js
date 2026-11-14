@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { centsToField, euroToCents } from './admin-offer-panel.js';
+import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -178,6 +178,9 @@ export function createOfferDetail(deps) {
   const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
+  const spaceOrigin = typeof deps.origin === 'string' && deps.origin !== ''
+    ? deps.origin
+    : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
 
   const el = elFor(doc);
 
@@ -196,6 +199,14 @@ export function createOfferDetail(deps) {
     if (typeof knownNames.rememberOffer === 'function') knownNames.rememberOffer(parts[1], id, String(record?.id ?? ''));
   }
   let renderToken = 0;
+  /** backlog:7fa422415232: minted links by quote, so a second «Invia offerta» press reuses the same URL the server keeps. */
+  const shareLinks = new Map();
+  /** The history panel of the current render, or null before it paints. */
+  let shareHistoryBox = null;
+  /** «Offerta inviata» rows written before the history panel painted, in order. */
+  let shareHistoryQueued = [];
+  /** The offer name the share message uses; set when the record lands. */
+  let shareOfferName = '';
   /** Record id with the edit form open. */
   let editing = false;
 
@@ -433,6 +444,9 @@ export function createOfferDetail(deps) {
     if (entry !== undefined) origin = entry?.from ?? null;
     const token = ++renderToken;
     editing = false;
+    shareHistoryBox = null;
+    shareHistoryQueued = [];
+    shareOfferName = '';
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
     // the facts, the quotes and the history as grey bars — never a lone
@@ -480,6 +494,7 @@ export function createOfferDetail(deps) {
         mount.appendChild(offerSkeleton(record));
         onTitle(offerCrumb(record));
         rememberCustomer(record);
+        shareOfferName = typeof record.name === 'string' ? record.name : '';
       }
       schema = await schemaRead;
       const sameId = String(record?.id ?? '') === offerId;
@@ -646,6 +661,11 @@ export function createOfferDetail(deps) {
       row.appendChild(el('span', 'history-what', line.what));
       historyPanel.appendChild(row);
     }
+    // backlog:7fa422415232: links minted before the panel painted land here
+    // now, in the order they were pressed; later ones go straight in.
+    shareHistoryBox = historyPanel;
+    for (const entry of shareHistoryQueued) appendShareHistoryRow(shareHistoryBox, entry);
+    shareHistoryQueued = [];
     page.appendChild(historyPanel);
     // The page is complete when every place has filled (the shell's badges
     // wait for this, backlog:94eabbd4762f).
@@ -1030,6 +1050,131 @@ export function createOfferDetail(deps) {
   }
 
   /**
+   * backlog:7fa422415232: one «Offerta inviata» row of the offer cronologia
+   * for a minted (or reused) public link. The link rides along as its own
+   * anchor so it stays tappable; the message the operator sends lives in the
+   * scheda composer, never here.
+   */
+  function appendShareHistoryRow(box, entry) {
+    const row = el('p', 'history-event');
+    row.appendChild(el('span', 'history-when', entry.when));
+    const what = el('span', 'history-what', entry.what);
+    if (typeof entry.href === 'string' && entry.href !== '') {
+      what.appendChild(el('span', 'bo-scheda-sep', ' · '));
+      const open = el('a', 'offer-share-history-link', 'Apri il link');
+      open.setAttribute('href', entry.href);
+      what.appendChild(open);
+    }
+    row.appendChild(what);
+    box.appendChild(row);
+  }
+
+  /**
+   * backlog:7fa422415232: remember an «Offerta inviata» row for the current
+   * render — straight into the history panel when it already painted, queued
+   * in press order when the share landed first.
+   */
+  function noteOfferShared(entry, token) {
+    if (token !== renderToken) return;
+    if (shareHistoryBox !== null) {
+      appendShareHistoryRow(shareHistoryBox, entry);
+      return;
+    }
+    shareHistoryQueued.push(entry);
+  }
+
+  /**
+   * backlog:7fa422415232: «Invia offerta» on an approved quote — the /bo end
+   * of the offer link. One press mints the public acceptance link through the
+   * quote `share-link` action; the server reuses the live link of the same
+   * version, so a second press shows the same URL instead of a new one. The
+   * ready Italian message stays on screen for the operator to send from the
+   * scheda composer, and an «Offerta inviata» row lands in the cronologia.
+   * The send itself stays the operator's gesture: this button never sends.
+   * What it does not cover: a link minted before this page opened is not
+   * listed (the server keeps it, the page never read it), and the public page
+   * behind the URL is the pilot's own route (its own PR with a contract test).
+   */
+  function paintShareBox(panel, quote, token) {
+    const box = el('div', 'offer-share');
+    const button = el('button', 'secondary', 'Invia offerta');
+    button.setAttribute('type', 'button');
+    button.setAttribute('data-action', 'offer-share-link');
+    const line = el('p', 'bo-muted offer-share-line', '');
+    line.setAttribute('role', 'status');
+    /** @type {null | {key: string}} */
+    let pending = null;
+    let busy = false;
+    const showLink = (url, expiresAt, reused) => {
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
+      line.appendChild(el('span', 'bo-scheda-sep', ' '));
+      const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già inviato' : 'Apri il link');
+      open.setAttribute('href', url);
+      open.setAttribute('data-action', 'offer-share-open');
+      line.appendChild(open);
+    };
+    const send = async () => {
+      if (busy) return;
+      busy = true;
+      // One key per link being minted: a double press, a retry after an
+      // uncertain failure or Enter+click mints one link, never two — the
+      // same rule as «Crea preventivo» above.
+      if (pending === null) pending = { key: submissions.issueKey() };
+      button.setAttribute('disabled', 'disabled');
+      button.setAttribute('aria-busy', 'true');
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = 'Creo il link…';
+      try {
+        const answer = await client.request(
+          `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/share-link`,
+          { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({}) },
+        );
+        pending = null;
+        if (token !== renderToken) return;
+        const result = answer?.result ?? answer ?? {};
+        const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+        const share = result.share ?? null;
+        const expiresAt = typeof share?.expiresAt === 'string' ? share.expiresAt : null;
+        let url = null;
+        if (fresh !== null) {
+          url = offerShareUrl(spaceOrigin, fresh);
+          if (url !== null) shareLinks.set(quote.id, { url, expiresAt });
+        } else {
+          url = shareLinks.get(quote.id)?.url ?? null;
+        }
+        if (url === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = result.alreadyExisted === true
+            ? 'Il link esiste già ma non è più visibile qui: cercalo nella cronologia.'
+            : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        showLink(url, expiresAt, fresh === null);
+        noteOfferShared({ when: italianDateTime(new Date().toISOString()) ?? 'adesso', what: 'Offerta inviata', href: url }, token);
+        toast(fresh === null ? 'Link già pronto: è lo stesso di prima.' : 'Link pronto: invialo dal composer della scheda.');
+      } catch (error) {
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+        if (token !== renderToken) return;
+        line.setAttribute('class', 'field-error offer-share-line');
+        line.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        busy = false;
+        button.removeAttribute('disabled');
+        button.setAttribute('aria-busy', 'false');
+      }
+    };
+    button.addEventListener('click', () => { void send(); });
+    box.appendChild(button);
+    box.appendChild(line);
+    box.__share = send;
+    const known = shareLinks.get(quote.id);
+    if (known) showLink(known.url, known.expiresAt, true);
+    panel.appendChild(box);
+  }
+
+  /**
    * One linked quote: stato, totali per periodo, righe e versioni. Periods
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
@@ -1046,6 +1191,11 @@ export function createOfferDetail(deps) {
     link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
     head.appendChild(link);
     panel.appendChild(head);
+    // backlog:7fa422415232: only an approved quote has a version to share —
+    // the server refuses the action on any other state with 409.
+    if (quote.status === 'approved' && typeof quote.id === 'string' && quote.id !== '') {
+      paintShareBox(panel, quote, token);
+    }
 
     let lines = [];
     let versions = [];
