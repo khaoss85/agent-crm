@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createMountGate, paintScreenFailure, paintScreenLoading } from '../apps/admin/public/admin-navigation.js';
+import { afterScreen, createMountGate, paintScreenFailure, paintScreenLoading } from '../apps/admin/public/admin-navigation.js';
 import { createOggiView } from '../apps/admin/public/admin-oggi.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -227,4 +227,39 @@ test('an inert handle reads empty and accepts no text, child or listener', () =>
   mount.dispatch('click', {});
   assert.equal(heard, 0, 'no listener lands on the real mount');
   assert.equal(mount.textContent, 'schermata nuova');
+});
+
+// backlog:94eabbd4762f (pilota 13/11): from a direct link the offer page
+// took 4,6-5,9 s — the sidebar badges (data-quality-issue,
+// duplicate-candidate, customers?pageSize=10) left with the schema and
+// queued in front of the page's reads on a host serving one or two at a
+// time. The badges now wait for the screen opened at boot.
+test('94eabbd4762f: the badges wait for the screen opened at boot, either way it ends', async () => {
+  const neverCap = () => new Promise(() => {});
+  const screen = deferred();
+  let badges = false;
+  const after = afterScreen(screen.promise, { wait: neverCap }).then(() => { badges = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(badges, false, 'no badge read while the screen still reads');
+  screen.resolve();
+  await after;
+  assert.equal(badges, true, 'the badges read once the screen is complete');
+
+  const failed = Promise.reject(new Error('screen failed'));
+  await afterScreen(failed, { wait: neverCap });
+  // A screen that never ends never keeps the badges away for good.
+  let capped = false;
+  await afterScreen(new Promise(() => {}), { wait: () => Promise.resolve() }).then(() => { capped = true; });
+  assert.equal(capped, true);
+  await afterScreen(null, { wait: neverCap });
+});
+
+test('94eabbd4762f: at boot the shell reads its badges only after the routed screen', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const nav = /async function populateNav\(\) \{([\s\S]*?)\n\}\n/.exec(app);
+  assert.ok(nav, 'populateNav is there');
+  assert.ok(!/await refreshShellCounts\(\)/.test(nav[1]), 'the boot never reads the badges in front of the screen');
+  assert.match(nav[1], /afterScreen\(bootScreen\)\.then\(\(\) => refreshShellCounts\(\)\)/);
+  assert.match(app, /\nbootScreen = route\(\);\n/, 'the screen opened at boot is the one the badges wait for');
+  assert.ok(app.indexOf('\npopulateNav();\n') < app.indexOf('\nbootScreen = route();\n'));
 });

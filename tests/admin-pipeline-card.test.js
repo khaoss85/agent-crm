@@ -92,7 +92,8 @@ test('7b2203e69826: after a move between working stages the toast offers «Annul
   const posts = client.calls.filter((call) => call.method === 'POST').map((call) => JSON.parse(call.body));
   assert.deepEqual(posts, [
     { toStage: 'demo', fromStage: 'discovery' },
-    { toStage: 'discovery', fromStage: 'demo' },
+    // 67a3116f4f65: back to the very place it left (here, first).
+    { toStage: 'discovery', fromStage: 'demo', first: true },
   ], 'Annulla is the reverse move, through the same write');
   const back = toasts.find((item) => item.message === 'Riportata in Scoperta.');
   assert.ok(back, 'the undo says where the card went back');

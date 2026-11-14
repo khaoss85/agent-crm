@@ -197,7 +197,7 @@ test('dashboard KPIs match hand-computed totals for 2026-10 EUR', (t) => {
   assert.equal(wonPeriod.display, formatMinor(14000, 'EUR'));
   assert.equal(wonPeriod.sub, '2 chiusure');
   assert.equal(winRate.display, '67%');
-  assert.equal(winRate.sub, '2 vinte, 1 perse');
+  assert.equal(winRate.sub, '2 vinte, 1 persa', 'one lost reads «1 persa» (review #761)');
   assert.equal(closing.display, formatMinor(14000, 'EUR'));
   assert.equal(closing.sub, '2 preventivi, 1 senza data attesa');
   assert.deepEqual(model.currencies.others, ['USD']);
@@ -754,7 +754,7 @@ test('pipeline dashboard names the board phases with the board counts and total'
   assert.equal(openCount.sub, formatMinor(20000, 'EUR'));
   assert.equal(wonPeriod.display, formatMinor(9000, 'EUR'));
   assert.equal(winRate.display, '50%');
-  assert.equal(winRate.sub, '1 vinte, 1 perse');
+  assert.equal(winRate.sub, '1 vinta, 1 persa');
   assert.deepEqual(model.currencies.others, ['USD']);
   // Parity with the board's own counting rule over the same rows: placed on
   // this pipeline, on-definition, open type.

@@ -27,10 +27,37 @@ export const BO_VERSION_POLL_MS = 60000;
 
 export const BO_UPDATE_BANNER_ID = 'bo-update-banner';
 
-export const BO_UPDATE_NOTICE = 'È disponibile una nuova versione · Ricarica';
+/** backlog:52f76db1a3ef: the action word is «Aggiorna» (verifica Mac 10/11). */
+export const BO_UPDATE_NOTICE = 'È disponibile una nuova versione · Aggiorna';
 
 /** The notice after a first press while text is still unsent. */
-export const BO_UPDATE_UNSAVED_NOTICE = 'Hai del testo non salvato: salvalo, poi premi di nuovo per ricaricare';
+export const BO_UPDATE_UNSAVED_NOTICE = 'Hai del testo non salvato: salvalo, poi premi di nuovo per aggiornare';
+
+/** How often a warned notice looks again for the unsent text (ms). */
+export const BO_UNSAVED_RECHECK_MS = 1000;
+
+/**
+ * Most rechecks of one warning (review #761): a field that keeps text (a
+ * search box, a draft left open) must not tick forever. Past the cap the
+ * minute poll (and every navigation) still clears a stale warning.
+ */
+export const BO_UNSAVED_RECHECK_LIMIT = 120;
+
+/**
+ * backlog:52f76db1a3ef: once the text is saved (the note box empties) the
+ * warning «Hai del testo non salvato…» gives way to the plain notice again:
+ * the banner keeps no stale warning. Returns true when the banner reads the
+ * plain notice afterwards. Never reloads.
+ * @param {any} banner
+ * @param {{ querySelectorAll?: Function } | undefined} [doc]
+ */
+export function refreshUpdateNotice(banner, doc) {
+  if (banner === null || typeof banner !== 'object') return false;
+  if (banner.textContent !== BO_UPDATE_UNSAVED_NOTICE) return true;
+  if (hasUnsavedWork(doc)) return false;
+  banner.textContent = BO_UPDATE_NOTICE;
+  return true;
+}
 
 const BO_BUNDLE_NAME_PATTERN = /^bo-[0-9a-f]+\.js$/;
 
@@ -331,18 +358,47 @@ export async function checkBundleVersion(options = {}) {
   const current = { jsName, cssName: currentStyleName(doc) };
   if (!isUpdateAvailable(current, served)) return 'current';
   // Unsent text on the page: the first press warns, the next one reloads.
-  let warned = false;
-  ensureUpdateBanner(doc, {
-    onUpdate: (banner) => {
+  // The warning lives on the banner itself (its text), so every later poll
+  // and the short recheck below read the same state (backlog:52f76db1a3ef):
+  // when the text is saved the warning goes and the plain notice is back;
+  // a press then updates at once. Nothing ever reloads without a press.
+  const setTimer = typeof options?.setInterval === 'function' ? options.setInterval : globalThis.setInterval;
+  const clearTimer = typeof options?.clearInterval === 'function' ? options.clearInterval : globalThis.clearInterval;
+  let recheck = null;
+  const stopRecheck = () => {
+    if (recheck === null) return;
+    try {
+      clearTimer(recheck);
+    } catch {
+      // Stopping is best-effort.
+    }
+    recheck = null;
+  };
+  const banner = ensureUpdateBanner(doc, {
+    onUpdate: (pressed) => {
+      const warned = pressed && typeof pressed === 'object' && pressed.textContent === BO_UPDATE_UNSAVED_NOTICE;
       if (!warned && hasUnsavedWork(doc)) {
-        warned = true;
-        if (banner && typeof banner === 'object') banner.textContent = BO_UPDATE_UNSAVED_NOTICE;
+        if (pressed && typeof pressed === 'object') pressed.textContent = BO_UPDATE_UNSAVED_NOTICE;
+        if (recheck === null && typeof setTimer === 'function') {
+          let ticks = 0;
+          try {
+            recheck = setTimer(() => {
+              ticks += 1;
+              if (refreshUpdateNotice(pressed, doc) || ticks >= BO_UNSAVED_RECHECK_LIMIT) stopRecheck();
+            }, BO_UNSAVED_RECHECK_MS);
+            if (recheck && typeof recheck.unref === 'function') recheck.unref();
+          } catch {
+            recheck = null;
+          }
+        }
         return;
       }
+      stopRecheck();
       if (typeof options?.reload === 'function') options.reload();
       else if (win?.location && typeof win.location.reload === 'function') win.location.reload();
     },
   });
+  refreshUpdateNotice(banner, doc);
   return 'deferred';
 }
 

@@ -85,11 +85,25 @@ const PROPOSAL = {
 
 const EXTRACT_PATH = '/api/customer-data/enriched/contact/c1/extract';
 
-function fakeClient({ timeline = TIMELINE, enriched = ENRICHED, extract = null, failEnriched = null } = {}) {
+const ENRICHED_AFTER = {
+  customerEnrichmentContract: 1,
+  subject: { resource: 'contact', id: 'c1' },
+  linked: false,
+  optedOut: null,
+  items: [
+    {
+      field: 'role', value: 'Istruttore', source: 'channel-message',
+      sourceDetail: 'whatsapp:+393331234567', observedAt: '2026-11-13T08:00:00.000Z',
+    },
+  ],
+};
+
+function fakeClient({ timeline = TIMELINE, enriched = ENRICHED, enrichedAfter = null, extract = null, failEnriched = null } = {}) {
   const reads = [];
   const writes = [];
   let gate = null;
   let open = () => {};
+  let enrichedReads = 0;
   return {
     reads,
     writes,
@@ -114,6 +128,8 @@ function fakeClient({ timeline = TIMELINE, enriched = ENRICHED, extract = null, 
       if (path.startsWith('/api/customer-data/profile/')) return PROFILE;
       if (path.startsWith('/api/customer-data/enriched/')) {
         if (typeof failEnriched === 'function' && failEnriched(path)) throw Object.assign(new Error('boom'), { status: 500 });
+        enrichedReads += 1;
+        if (enrichedAfter !== null && enrichedReads > 1) return enrichedAfter;
         return enriched;
       }
       if (path === '/api/schema') return { pipelines: [] };
@@ -204,7 +220,39 @@ test('e5e3e886: with no messages the button sends nothing and says where the AI 
   await byAction(mount, 'refresh-enrichment').listeners.click[0]();
   await flush();
   assert.equal(client.writes.length, 0, 'no run starts with no source to read');
+  assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
+    'the facts are still re-read, like main (arbitrato #853 P1)');
+  assert.ok(toasts.includes('Nessun dato nuovo'), 'unchanged facts read as nothing new, like main');
   assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')), 'the button says the AI starts from messages');
+});
+
+test('e5e3e886 arbitrato #853 P1: with no messages and changed facts the button says «Dati aggiornati»', async () => {
+  const client = fakeClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } },
+    enrichedAfter: ENRICHED_AFTER,
+  });
+  const { mount, toasts } = await open(client);
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(client.writes.length, 0, 'no run starts with no source to read');
+  assert.ok(client.reads.some((path) => path.startsWith('/api/customer-data/enriched/contact/c1') && !path.endsWith('/extract')),
+    'the GET leaves even with no messages');
+  assert.ok(toasts.includes('Dati aggiornati'), 'changed facts read as updated, like main');
+  assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the changed facts are on screen');
+});
+
+test('e5e3e886 arbitrato #853 P1: a run with no proposals says «Dati aggiornati» when the facts changed', async () => {
+  const client = fakeClient({
+    enrichedAfter: ENRICHED_AFTER,
+    extract: () => ({ status: 'done', subject: { resource: 'contact', id: 'c1' }, runId: 'run-3', proposals: [] }),
+  });
+  const { mount, toasts } = await open(client);
+  await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+  await flush();
+  assert.equal(client.writes.length, 1, 'the run happened');
+  assert.ok(toasts.includes('Dati aggiornati'), 'changed facts read as updated, never «nothing new»');
+  assert.ok(!toasts.includes('Nessun dato nuovo'), 'a run that changed the facts never reads as «nothing new»');
+  assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the changed facts are on screen');
 });
 
 test('e5e3e886: a run that landed but re-reads nothing keeps its rows with the retry line', async () => {

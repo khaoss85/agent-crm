@@ -10,10 +10,10 @@
 // same three commercial facts as the old card editor through
 // `/api/opportunities/:id`.
 
-import { elFor, uiBusy, uiSelect } from './admin-ui.js';
+import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
-import { auditActorLabel, offerCustomer, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { auditActorLabel, isBoardPlacement, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -45,7 +45,8 @@ function auditActionLabel(action) {
  * and states read capitalised («Proposta»).
  */
 function historyLine(entry, schema, record, people = []) {
-  const when = italianDay(entry?.createdAt) ?? '—';
+  // backlog:a060a4aa65b6: the day and the hour, like «Storia stati».
+  const when = italianDateTime(entry?.createdAt) ?? '—';
   const who = actorLabel(entry, record, people);
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
@@ -142,13 +143,62 @@ function pipelineHref(schema, record) {
   return composed && /^[a-z][a-z0-9-]*$/.test(key) ? `#/pipelines/${key}` : '#/pipeline';
 }
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void}} deps */
+/**
+ * backlog:96c7b56001ba: the page's way back. Opened from a customer's
+ * scheda it returns to that scheda — named after the customer when the
+ * offer is theirs — otherwise to the board the offer sits on.
+ * @param {any} schema @param {any} record
+ * @param {{resource: string, subjectId: string} | null} from
+ * @returns {{href: string, label: string}}
+ */
+export function backLink(schema, record, from) {
+  if (from && typeof from.resource === 'string' && typeof from.subjectId === 'string' && from.subjectId !== '') {
+    const href = `#/customer-card/${encodeURIComponent(from.resource)}/${encodeURIComponent(from.subjectId)}`;
+    const customer = offerCustomer(record);
+    return { href, label: customer !== null && customer.href === href ? `← ${customer.name}` : '← Scheda cliente' };
+  }
+  return { href: pipelineHref(schema, record), label: '← Pipeline' };
+}
+
+/**
+ * backlog:f2d39e473e3a: the breadcrumb of the offer page names the customer
+ * and the offer — «Offerta / Giulia Verdi / Cucina per Giulia» — never the
+ * bare «Offerta». Missing parts are left out.
+ * @param {any} record
+ * @returns {string}
+ */
+export function offerCrumb(record) {
+  const customer = offerCustomer(record);
+  const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name.trim() : null;
+  return ['Offerta', customer?.name ?? null, name].filter((part) => part !== null).join(' / ');
+}
+
+/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void, onTitle?: (label: string) => void}} deps */
 export function createOfferDetail(deps) {
   const { doc, mount, navigate = () => {} } = deps;
+  const onTitle = typeof deps.onTitle === 'function' ? deps.onTitle : () => {};
+  // backlog:a762c28a646c: «Per <cliente>» opens a scheda that reads the
+  // name at once.
+  const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
 
   const el = elFor(doc);
+
+  /** The offer's customer, remembered by the scheda it links to. @param {any} record */
+  function rememberCustomer(record) {
+    const customer = offerCustomer(record);
+    const parts = customer?.href ? /^#\/customer-card\/([a-z][a-z0-9-]*)\/([^/]+)$/.exec(customer.href) : null;
+    if (knownNames === null || parts === null) return;
+    let id;
+    try {
+      id = decodeURIComponent(parts[2]);
+    } catch {
+      return;
+    }
+    knownNames.remember(parts[1], id, customer?.name);
+    if (typeof knownNames.rememberOffer === 'function') knownNames.rememberOffer(parts[1], id, String(record?.id ?? ''));
+  }
   let renderToken = 0;
   /** Record id with the edit form open. */
   let editing = false;
@@ -236,53 +286,226 @@ export function createOfferDetail(deps) {
     }
   }
 
-  async function renderOfferDetail(offerId) {
-    const token = ++renderToken;
-    editing = false;
-    clear();
-    const status = el('p', 'muted', 'Caricamento…');
-    mount.appendChild(status);
-    let schema;
-    let record;
-    let quotes;
-    let auditItems;
-    let auditUnreadable = false;
-    let auditTruncated = false;
-    /** @type {Array<any>} */
-    let people = [];
-    try {
-      schema = await client.request('/api/schema');
-      record = await readOffer(offerId);
-      quotes = await fetchLinked('quote', 'opportunityId', record.id);
-      try {
-        const audit = await client.request(
-          `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(record.id)}&limit=${AUDIT_LIMIT}`,
-        );
-        auditItems = Array.isArray(audit?.items) ? audit.items : [];
-        // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
-        // the trail order is newest first, so the creation event may sit
-        // past it and the author must not be read from a partial page.
-        auditTruncated = auditItems.length >= AUDIT_LIMIT;
-      } catch (error) {
+  /**
+   * backlog:d8175e1c3495: the offer page skeleton — the same frame the page
+   * paints (sheet with the hero and the facts strip, the quotes card, the
+   * history card) with grey bars where values arrive. Busy for assistive
+   * tech, with one spoken line; the real paint replaces it whole.
+   */
+  function offerSkeleton(record = null) {
+    const page = el('div', 'bo-offer bo-offer-skeleton');
+    page.setAttribute('aria-busy', 'true');
+    page.setAttribute('data-offer-skeleton', 'true');
+    const spoken = el('p', 'sr-only', 'Carico l’offerta…');
+    spoken.setAttribute('role', 'status');
+    page.appendChild(spoken);
+    const sheet = el('article', 'bo-offer-sheet');
+    const hero = el('header', 'bo-offer-hero');
+    const words = el('div', 'bo-offer-hero-words');
+    words.appendChild(el('p', 'kicker', 'Offerta'));
+    // backlog:a060a4aa65b6 (pilota 14/11: the title waited for the slowest
+    // read, 2,9-5,8 s from a direct link): with the offer read, the title,
+    // who it is for, the amount and the dates show at once; the stage, the
+    // team and the history keep their grey bars until they land.
+    const customer = record !== null ? offerCustomer(record) : null;
+    const close = record !== null ? italianDay(record.expectedCloseDate) : null;
+    if (record !== null) {
+      words.appendChild(el('h2', 'bo-offer-title', String(record.name ?? 'Offerta')));
+      const meta = el('p', 'bo-offer-meta');
+      if (customer !== null) meta.appendChild(el('span', 'bo-offer-for', `Per ${customer.name}`));
+      meta.appendChild(uiSkeleton(doc, { width: '6em' }));
+      words.appendChild(meta);
+    } else {
+      words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+      words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    }
+    hero.appendChild(words);
+    const value = el('div', 'bo-offer-value');
+    if (record !== null) {
+      value.appendChild(el('span', 'bo-offer-amount', money(record.valueCents, record.currency)));
+      value.appendChild(el('span', 'bo-offer-amount-note', close !== null ? `chiusura prevista ${close}` : 'valore dell’offerta'));
+    } else {
+      value.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    }
+    hero.appendChild(value);
+    sheet.appendChild(hero);
+    const facts = el('div', 'offer-facts');
+    /** @type {Record<string, string | null>} */
+    const known = record === null ? {} : {
+      'Chiusura prevista': close ?? '—',
+      'Creata il': italianDay(record.createdAt) ?? '—',
+      'Ultima modifica': italianDay(record.updatedAt) ?? '—',
+    };
+    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+      const cell = el('p', 'offer-fact');
+      cell.appendChild(el('span', 'offer-fact-label', label));
+      if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
+      else cell.appendChild(uiSkeleton(doc, { width: '70%', block: true }));
+      facts.appendChild(cell);
+    }
+    sheet.appendChild(facts);
+    page.appendChild(sheet);
+    for (const [cls, title] of [['offer-quotes', 'Preventivo'], ['offer-history', 'Cronologia']]) {
+      const card = el('div', cls);
+      card.appendChild(el('h3', undefined, title));
+      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
+      page.appendChild(card);
+    }
+    return page;
+  }
+
+  /**
+   * backlog:96c7b56001ba: where the page goes back to. The router hands the
+   * origin on entry (`#/offerte/<id>/cliente/<resource>/<id>` from the
+   * scheda); the page's own re-reads (Salva, Cambia stato) keep it.
+   * @type {{resource: string, subjectId: string} | null}
+   */
+  let origin = null;
+
+  /**
+   * The audit trail of an offer, never failing the page: an unreadable
+   * trail is its own state, logged with its cause.
+   * @param {string} id
+   */
+  function readAudit(id) {
+    return client.request(
+      `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(id)}&limit=${AUDIT_LIMIT}`,
+    ).then(
+      (audit) => ({ items: Array.isArray(audit?.items) ? audit.items : [], unreadable: false }),
+      // Backlog 8dc6d4a456e1: a page that fills the cap is truncated —
+      // the trail order is newest first, so the creation event may sit
+      // past it and the author must not be read from a partial page.
+      (error) => {
         // The audit trail is decoration: facts, quotes and lines render
         // without it rather than failing the whole detail. An unreadable
         // trail is not an empty one: it gets its own line and a log cause.
         logReadFailure('audit', error);
-        auditItems = [];
-        auditUnreadable = true;
+        return { items: [], unreadable: true };
+      },
+    );
+  }
+
+  /**
+   * The quotes of an offer and, as soon as they land, every quote's lines
+   * and versions (backlog:94eabbd4762f): each card is read while the rest
+   * of the page still reads, and fills its own place when ready — never
+   * holding the page (review Muse #871).
+   * @param {string} id @param {number} token
+   */
+  function readQuotes(id, token) {
+    const read = fetchLinked('quote', 'opportunityId', id).then((quotes) => ({
+      quotes,
+      cards: quotes.rows.map((quote) => paintQuote(quote, token)),
+    }));
+    read.catch(() => {});
+    return read;
+  }
+
+  /** A place still filling: grey bars, busy for assistive tech. @param {string} cls */
+  function waitingPlace(cls) {
+    const node = el('div', cls);
+    node.setAttribute('aria-busy', 'true');
+    node.setAttribute('data-loading', 'true');
+    for (const width of ['64%', '42%']) node.appendChild(uiSkeleton(doc, { width, block: true }));
+    return node;
+  }
+
+  /**
+   * backlog:94eabbd4762f: the price books, read beside the offer — never
+   * after the page painted — so «Crea preventivo» and the empty line paint
+   * together (backlog:96c7b56001ba). Only where the commercial block is
+   * composed; an unreadable list is its own state.
+   * @param {Promise<any>} schemaRead
+   */
+  function readBooks(schemaRead) {
+    // backlog:f2d39e473e3a (pilota 13/11: the price books left 1,3-4,4 s
+    // late, after the schema): the read leaves with the others; the schema
+    // only decides, once in, whether its answer is used.
+    const read = client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then(
+      (answer) => ({ books: Array.isArray(answer?.items) ? answer.items : [], error: null }),
+      (error) => ({ books: null, error }),
+    );
+    const composed = schemaRead.then((schema) => Boolean(commercialBlock(schema)), () => false);
+    return Promise.all([composed, read]).then(([commercial, answer]) => (commercial ? answer : { books: null, error: null }));
+  }
+
+  /**
+   * @param {string} offerId
+   * @param {{from?: {resource: string, subjectId: string} | null}} [entry] the router's entry; absent on the page's own re-reads
+   */
+  async function renderOfferDetail(offerId, entry) {
+    if (entry !== undefined) origin = entry?.from ?? null;
+    const token = ++renderToken;
+    editing = false;
+    clear();
+    // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
+    // the facts, the quotes and the history as grey bars — never a lone
+    // «Caricamento…»; the wait is announced once, to assistive tech.
+    mount.appendChild(offerSkeleton());
+    let schema;
+    let record;
+    let quotes;
+    /** @type {Array<Promise<any>>} */
+    let quoteCards = [];
+    let auditItems;
+    let auditUnreadable = false;
+    let auditTruncated = false;
+    /** @type {Promise<{books: Array<any> | null, error: any}>} */
+    let bookRead = Promise.resolve({ books: null, error: null });
+    /** @type {Array<any>} */
+    let people = [];
+    try {
+      // backlog:94eabbd4762f (pilota 13/11: 1,8-4 s dal clic, 4,6-5,9 s da
+      // link diretto): every read of the page leaves at once, the offer
+      // first. Quotes and history are asked by the id the page opened —
+      // the offer's own id in every link — and asked again only when the
+      // record turns out to be another one (a link naming a quote).
+      const offerRead = readOffer(offerId);
+      offerRead.catch(() => {});
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      const quotesFirst = readQuotes(offerId, token);
+      const auditFirst = readAudit(offerId);
+      // The team names the referente and the authors by their profile
+      // name (backlog:ddf7f416ad22); without it the deal still renders.
+      const teamRead = client.request('/api/spine/memberships').then(
+        (team) => teamPeople(Array.isArray(team?.items) ? team.items : []),
+        (error) => {
+          logReadFailure('team', error);
+          return [];
+        },
+      );
+      const booksRead = readBooks(schemaRead);
+      // backlog:a060a4aa65b6: the offer paints its headline the moment it
+      // is read, before the schema and the rest.
+      record = await offerRead;
+      if (token === renderToken && record && typeof record === 'object') {
+        clear();
+        mount.appendChild(offerSkeleton(record));
+        onTitle(offerCrumb(record));
+        rememberCustomer(record);
       }
-      try {
-        // The team names the referente and the authors by their profile
-        // name (backlog:ddf7f416ad22); without it the deal still renders.
-        const team = await client.request('/api/spine/memberships');
-        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
-      } catch (error) {
-        logReadFailure('team', error);
-        people = [];
-      }
+      schema = await schemaRead;
+      const sameId = String(record?.id ?? '') === offerId;
+      // Review Muse #871 (P1): the page paints with the offer, its quotes
+      // list, the history and the team; the price books and each quote's
+      // lines and versions fill their own place afterwards.
+      const [quotesAnswer, audit, team] = await Promise.all([
+        sameId ? quotesFirst : readQuotes(String(record.id), token),
+        sameId ? auditFirst : readAudit(String(record.id)),
+        teamRead,
+      ]);
+      quotes = quotesAnswer.quotes;
+      quoteCards = quotesAnswer.cards;
+      auditItems = audit.items;
+      auditUnreadable = audit.unreadable;
+      auditTruncated = auditItems.length >= AUDIT_LIMIT;
+      people = team;
+      bookRead = booksRead;
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' });
+      clear();
+      mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Offerta non trovata o non leggibile. Riprova più tardi.' })));
       return;
     }
     if (token !== renderToken || !record || typeof record !== 'object') return;
@@ -294,9 +517,11 @@ export function createOfferDetail(deps) {
     // is for, the stage and the value up front, the facts in one strip, the
     // quotes as cards and the history as a timeline.
     const page = el('div', 'bo-offer');
-    // Backlog 169cd4bc988c: never a dead end — the way back to the board.
-    const back = el('a', 'quote-back', '← Pipeline');
-    back.setAttribute('href', pipelineHref(schema, record));
+    // Backlog 169cd4bc988c: never a dead end — the way back to the board,
+    // or (backlog:96c7b56001ba) to the scheda the offer was opened from.
+    const way = backLink(schema, record, origin);
+    const back = el('a', 'quote-back', way.label);
+    back.setAttribute('href', way.href);
     back.setAttribute('data-action', 'offer-back');
     page.appendChild(back);
     const sheet = el('article', 'bo-offer-sheet');
@@ -366,16 +591,37 @@ export function createOfferDetail(deps) {
     const quotesHead = el('div', 'offer-quotes-head');
     quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     quotesPanel.appendChild(quotesHead);
-    if (quotes.rows.length === 0) {
-      quotesPanel.appendChild(el('p', 'empty', 'Ancora nessun preventivo per questa offerta.'));
-    }
-    if (commercialBlock(schema)) paintCreateQuote(quotesHead, quotesPanel, record, token, latestQuote(quotes.rows));
+    // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
+    // arrive together; while the price books read, their place is grey.
+    const emptyLine = quotes.rows.length === 0 ? el('p', 'empty', 'Ancora nessun preventivo per questa offerta.') : null;
+    const commercial = Boolean(commercialBlock(schema));
+    const createPlace = commercial ? waitingPlace('offer-quote-create-wait') : null;
+    if (createPlace !== null) quotesPanel.appendChild(createPlace);
+    else if (emptyLine !== null) quotesPanel.appendChild(emptyLine);
     if (quotes.truncated) {
       quotesPanel.appendChild(el('p', 'muted', `Mostro solo i primi ${LIST_LIMIT} preventivi.`));
     }
-    for (const quote of quotes.rows) {
-      quotesPanel.appendChild(await paintQuote(quote, token, record));
-      if (token !== renderToken) return;
+    // backlog:d8175e1c3495: every quote reads its lines and versions at the
+    // same time; each card fills its own place, in the order the quotes
+    // were read.
+    const fills = quoteCards.map((cardRead) => {
+      const place = waitingPlace('offer-quote');
+      quotesPanel.appendChild(place);
+      return cardRead.then((card) => {
+        if (token !== renderToken || place.parentNode == null) return;
+        place.parentNode.insertBefore(card, place);
+        place.parentNode.removeChild(place);
+      });
+    });
+    if (createPlace !== null) {
+      fills.push(bookRead.then((answer) => {
+        if (token !== renderToken || createPlace.parentNode == null) return;
+        const tail = el('div', 'offer-quote-create-fill');
+        if (emptyLine !== null) tail.appendChild(emptyLine);
+        paintCreateQuote(quotesHead, tail, record, token, latestQuote(quotes.rows), answer);
+        while (tail.firstChild) createPlace.parentNode.insertBefore(tail.firstChild, createPlace);
+        createPlace.parentNode.removeChild(createPlace);
+      }));
     }
     page.appendChild(quotesPanel);
 
@@ -383,12 +629,21 @@ export function createOfferDetail(deps) {
     historyPanel.appendChild(el('h3', undefined, 'Cronologia'));
     if (auditUnreadable) {
       historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
-    } else if (auditItems.length === 0) {
-      historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
-    } else if (auditTruncated) {
-      historyPanel.appendChild(el('p', 'muted', `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     }
-    for (const entry of auditItems) {
+    // backlog:a060a4aa65b6: one row per state move — the card's order on
+    // the board, written beside a drag move, is no event of the offer.
+    const events = auditItems.filter((entry) => !isBoardPlacement(entry));
+    // Review Muse #887: the server answers the last AUDIT_LIMIT rows, board
+    // placements included. A full page says it is cut first — even when
+    // the placements leave no row to show — never «nessun evento».
+    if (!auditUnreadable && auditTruncated) {
+      historyPanel.appendChild(el('p', 'muted', events.length === 0
+        ? `Gli ultimi ${AUDIT_LIMIT} eventi sono solo spostamenti sulla board: quelli precedenti non sono mostrati.`
+        : `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
+    } else if (!auditUnreadable && events.length === 0) {
+      historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
+    }
+    for (const entry of events) {
       const line = historyLine(entry, schema, record, people);
       const row = el('p', 'history-event');
       row.appendChild(el('span', 'history-when', line.when));
@@ -396,6 +651,9 @@ export function createOfferDetail(deps) {
       historyPanel.appendChild(row);
     }
     page.appendChild(historyPanel);
+    // The page is complete when every place has filled (the shell's badges
+    // wait for this, backlog:94eabbd4762f).
+    await Promise.all(fills);
   }
 
   /**
@@ -669,14 +927,6 @@ export function createOfferDetail(deps) {
     box.appendChild(wrap);
   }
 
-  /**
-   * Backlog 169cd4bc988c: «Crea preventivo» on the offer — the same
-   * `create-quote` action as the quotes screen, on an active price book
-   * (the one in the offer's currency first). One book is one button; more
-   * books are a menu beside it; none is one honest line, never a dead
-   * button. The new quote opens where its lines are added.
-   * @param {any} head @param {any} panel @param {any} record @param {number} token
-   */
   /** The main action beside an existing quote: open it. @param {{id: string}} quote */
   function openQuoteLink(quote) {
     const open = el('a', 'ui-btn ui-btn-primary offer-quote-open-main', 'Apri il preventivo');
@@ -685,91 +935,102 @@ export function createOfferDetail(deps) {
     return open;
   }
 
-  function paintCreateQuote(head, panel, record, token, existing = null) {
+  /**
+   * Backlog 169cd4bc988c: «Crea preventivo» on the offer — the same
+   * `create-quote` action as the quotes screen, on an active price book
+   * (the one in the offer's currency first). One book is one button; more
+   * books are a menu beside it; none is one honest line, never a dead
+   * button. The new quote opens where its lines are added.
+   * backlog:96c7b56001ba: the price books arrive with the page's other
+   * reads, so the empty line and the action paint together, never a
+   * «nessun preventivo» that changes a moment later.
+   * @param {any} head @param {any} panel @param {any} record @param {number} token
+   * @param {any} [existing] @param {{books: Array<any> | null, error: any}} [answer]
+   */
+  function paintCreateQuote(head, panel, record, token, existing = null, answer = { books: null, error: null }) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
-    void client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then((answer) => {
-      if (token !== renderToken) return;
-      const books = (Array.isArray(answer?.items) ? answer.items : [])
-        .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
-        .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
-      if (books.length === 0) {
-        if (existing !== null) {
-          head.appendChild(openQuoteLink(existing));
-          return;
-        }
-        line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
-        panel.appendChild(line);
-        return;
-      }
-      const bar = el('div', 'offer-quote-create');
-      let pickBook = () => books[0].id;
-      if (books.length > 1) {
-        const node = uiSelect(doc, {
-          name: 'priceBookId',
-          value: books[0].id,
-          options: books.map((book) => ({ value: book.id, label: `${String(book.name ?? 'Listino')} (${String(book.currency ?? '')})` })),
-        });
-        const select = node.querySelector('select');
-        select.setAttribute('aria-label', 'Listino del preventivo');
-        select.value = books[0].id;
-        pickBook = () => String(select.value ?? books[0].id);
-        bar.appendChild(node);
-      }
-      // backlog:a2ea75f705fd: with a quote already there, the main action
-      // opens it; a new quote stays possible, as the quiet second choice.
-      if (existing !== null) bar.appendChild(openQuoteLink(existing));
-      const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
-      create.setAttribute('type', 'button');
-      create.setAttribute('data-action', 'offer-create-quote');
-      let busy = false;
-      // One key per quote being created: a retry after an uncertain failure
-      // never opens a second quote; a refusal or another book frees it.
-      /** @type {null | {key: string, book: string}} */
-      let pending = null;
-      const offerId = String(record.id);
-      create.addEventListener('click', async () => {
-        if (busy) return;
-        busy = true;
-        const book = pickBook();
-        if (pending === null || pending.book !== book) pending = { key: submissions.issueKey(), book };
-        create.setAttribute('disabled', 'disabled');
-        create.setAttribute('aria-busy', 'true');
-        line.textContent = '';
-        try {
-          const created = await client.request(
-            `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
-            { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
-          );
-          pending = null;
-          // Review #786: the page changed meanwhile — never pull the person
-          // away from the offer they opened since.
-          if (token !== renderToken) return;
-          const quoteId = created?.result?.quote?.id;
-          if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
-          toast('Preventivo creato: aggiungi le righe.');
-          navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
-        } catch (error) {
-          const status = typeof error?.status === 'number' ? error.status : 0;
-          if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
-          if (token !== renderToken) return;
-          line.setAttribute('class', 'field-error offer-quote-create-line');
-          line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
-        } finally {
-          busy = false;
-          create.removeAttribute('disabled');
-          create.setAttribute('aria-busy', 'false');
-        }
-      });
-      bar.appendChild(create);
-      head.appendChild(bar);
-      panel.appendChild(line);
-    }, (error) => {
-      if (token !== renderToken) return;
-      logReadFailure('price-books', error);
+    if (answer.books === null) {
+      if (answer.error) logReadFailure('price-books', answer.error);
+      if (existing !== null) head.appendChild(openQuoteLink(existing));
       line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
       panel.appendChild(line);
+      return;
+    }
+    const books = answer.books
+      .filter((book) => book?.active === true && typeof book?.id === 'string' && book.id !== '')
+      .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
+    if (books.length === 0) {
+      if (existing !== null) {
+        head.appendChild(openQuoteLink(existing));
+        return;
+      }
+      line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
+      panel.appendChild(line);
+      return;
+    }
+    const bar = el('div', 'offer-quote-create');
+    let pickBook = () => books[0].id;
+    if (books.length > 1) {
+      const node = uiSelect(doc, {
+        name: 'priceBookId',
+        value: books[0].id,
+        options: books.map((book) => ({ value: book.id, label: priceBookLabel(book) })),
+      });
+      const select = node.querySelector('select');
+      select.setAttribute('aria-label', 'Listino del preventivo');
+      select.value = books[0].id;
+      pickBook = () => String(select.value ?? books[0].id);
+      bar.appendChild(node);
+    }
+    // backlog:a2ea75f705fd: with a quote already there, the main action
+    // opens it; a new quote stays possible, as the quiet second choice.
+    if (existing !== null) bar.appendChild(openQuoteLink(existing));
+    const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
+    create.setAttribute('type', 'button');
+    create.setAttribute('data-action', 'offer-create-quote');
+    let busy = false;
+    // One key per quote being created: a retry after an uncertain failure
+    // never opens a second quote; a refusal or another book frees it.
+    /** @type {null | {key: string, book: string}} */
+    let pending = null;
+    const offerId = String(record.id);
+    create.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      const book = pickBook();
+      if (pending === null || pending.book !== book) pending = { key: submissions.issueKey(), book };
+      create.setAttribute('disabled', 'disabled');
+      create.setAttribute('aria-busy', 'true');
+      line.textContent = '';
+      try {
+        const created = await client.request(
+          `/api/modules/opportunity/records/${encodeURIComponent(offerId)}/actions/create-quote`,
+          { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({ priceBookId: book }) },
+        );
+        pending = null;
+        // Review #786: the page changed meanwhile — never pull the person
+        // away from the offer they opened since.
+        if (token !== renderToken) return;
+        const quoteId = created?.result?.quote?.id;
+        if (typeof quoteId !== 'string' || quoteId === '') throw new Error('quote without id');
+        toast('Preventivo creato: aggiungi le righe.');
+        navigate(`#/quotes/${encodeURIComponent(quoteId)}`);
+      } catch (error) {
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+        if (token !== renderToken) return;
+        line.setAttribute('class', 'field-error offer-quote-create-line');
+        line.textContent = humanWriteError(error, { failed: 'Preventivo non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        busy = false;
+        create.removeAttribute('disabled');
+        create.setAttribute('aria-busy', 'false');
+      }
     });
+    bar.appendChild(create);
+    head.appendChild(bar);
+    panel.appendChild(line);
   }
 
   /**
@@ -778,7 +1039,7 @@ export function createOfferDetail(deps) {
    * value, and each recurring group paints with its own period, mirroring
    * the quote screen's `Totali per periodo commerciale`.
    */
-  async function paintQuote(quote, token, record) {
+  async function paintQuote(quote, token) {
     const panel = el('div', 'offer-quote');
     panel.setAttribute('data-quote', quote.id);
     const totals = parseTotals(quote.totalsJson);
@@ -794,11 +1055,13 @@ export function createOfferDetail(deps) {
     let versions = [];
     let partial = false;
     try {
-      const fetchedLines = await fetchLinked('quote-line', 'quoteId', quote.id);
+      const [fetchedLines, fetchedVersions] = await Promise.all([
+        fetchLinked('quote-line', 'quoteId', quote.id),
+        fetchLinked('quote-version', 'quoteId', quote.id),
+      ]);
       lines = fetchedLines.rows
         .filter((line) => line?.removed === false)
         .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      const fetchedVersions = await fetchLinked('quote-version', 'quoteId', quote.id);
       versions = fetchedVersions.rows
         .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
       partial = fetchedLines.truncated || fetchedVersions.truncated;

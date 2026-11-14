@@ -308,23 +308,33 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     const words = el(doc, 'div', 'bo-profilo-words');
     words.appendChild(el(doc, 'p', 'bo-kicker', 'Il tuo profilo'));
     const shown = personText(person.name) ?? personText(person.email) ?? 'Il tuo profilo';
-    words.appendChild(el(doc, 'h2', 'bo-profilo-name', shown));
+    // backlog:f7d2f7f362cf: the name and its Modifica sit on one row — the
+    // button keeps its text measure beside the name instead of stretching
+    // like an empty field between the name and the email.
+    const nameRow = el(doc, 'div', 'bo-profilo-name-row');
+    nameRow.appendChild(el(doc, 'h2', 'bo-profilo-name', shown));
     if (!editing) {
       const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
         attrs: { type: 'button', 'data-action': 'modifica-nome' } });
+      edit.setAttribute('class', `${edit.getAttribute('class')} bo-profilo-edit-open`);
       edit.addEventListener('click', () => {
         editing = true;
         editError = '';
         draft = personText(person.name) ?? '';
         paintLast();
       });
-      words.appendChild(edit);
-    } else {
-      const form = el(doc, 'div', 'bo-profilo-edit');
-      const label = el(doc, 'label', 'bo-profilo-edit-label', 'Nome');
+      nameRow.appendChild(edit);
+    }
+    words.appendChild(nameRow);
+    if (editing) {
+      const form = el(doc, 'div', 'ui-field-row bo-profilo-edit');
+      const label = el(doc, 'label', 'ui-label bo-profilo-edit-label', 'Nome');
+      label.setAttribute('for', 'bo-profilo-name-input');
       const input = doc.createElement('input');
+      input.setAttribute('class', 'ui-field');
       input.setAttribute('type', 'text');
       input.setAttribute('name', 'profile-name');
+      input.setAttribute('id', 'bo-profilo-name-input');
       input.setAttribute('aria-label', 'Nome');
       input.setAttribute('maxlength', String(PROFILE_NAME_MAX));
       input.value = draft;
@@ -415,7 +425,10 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       form.appendChild(actions);
       if (editError !== '') form.appendChild(el(doc, 'p', 'field-error', editError));
       words.appendChild(form);
+      // Opening Modifica hands the Nome field over ready to type: focus it
+      // with the current name selected, so typing replaces it at once.
       if (typeof input.focus === 'function') input.focus();
+      if (typeof input.select === 'function') input.select();
     }
     const meta = el(doc, 'div', 'bo-profilo-meta');
     const email = personText(person.email);
