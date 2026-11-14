@@ -1476,16 +1476,17 @@ export function createCustomerCardView(deps) {
       // row's key is a route readSyncState knows and its account is the
       // mailbox that route sends from, so «Da» and the route agree. The
       // synthetic row only stands in when it is the sole active one.
-      // Backlog:3805161965cd (review giro 6 P1): the lookup is
-      // alias-aware like the counts — a real row stored under an alias
-      // spelling (channel 'gmail') is the Email Oggi and Stato sync count,
-      // so the composer must see it too. Same key discipline as
-      // matchConnections: the row carries the connectionKey the send
-      // queues on.
-      const active = list.filter((entry) => entry !== null && typeof entry === 'object'
-        && countedChannel(String(entry.channel ?? '').toLowerCase()) === channel
-        && typeof entry.connectionKey === 'string'
-        && entry.status === 'active');
+      // Backlog:3805161965cd (Muse P1 giro 6 su #848): the lookup
+      // follows the server contract (POST /api/customer-hub/messages
+      // matches entry.channel === channel exactly with a non-empty key):
+      // a real row stored under an alias spelling (channel 'gmail') can
+      // never send, so the composer leaves it off instead of enabling an
+      // Invia the server refuses 404/409. DECISION (to be confirmed): the
+      // composer stays on the canonical spelling until the server
+      // normalizes aliases; Oggi keeps counting alias rows as before.
+      const active = matchConnections(channel, list)
+        .filter((entry) => entry.status === 'active'
+          && typeof entry.connectionKey === 'string' && entry.connectionKey !== '');
       const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
       // queues on). The profile Gmail mailbox never stands in for it:

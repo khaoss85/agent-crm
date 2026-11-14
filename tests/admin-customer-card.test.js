@@ -2845,10 +2845,12 @@ test('3805161965cd: composer cure per adapter state against Stato sync', async (
   // the pre-existing generic way to Connettori, unchanged by this cure.
 });
 
-// Backlog:3805161965cd (review giro 6 P1, paired): a real Email row
-// stored under the alias spelling is sendable in the composer, like the
-// Email Oggi counts — the two screens agree on alias-spelled rows.
-test('3805161965cd: the composer connects an alias-spelled real Email row', async () => {
+// Backlog:3805161965cd (Muse P1 giro 6 su #848, paired): the server
+// matches entry.channel === channel exactly, so a real row stored under
+// the alias spelling (channel 'gmail') can never send — the composer
+// leaves Email off instead of enabling an Invia the server refuses
+// 404/409. The canonical spelling still sends (see the gmail-1 test).
+test('3805161965cd: the composer leaves an alias-spelled row off like the server', async () => {
   const { panel } = await openComposerMount({
     client: composerClient({
       connectors: { connectors: [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }] },
@@ -2856,8 +2858,8 @@ test('3805161965cd: the composer connects an alias-spelled real Email row', asyn
     }),
   });
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
-  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null, 'the alias-spelled real row enables Email');
-  assert.equal(fromValueOf(panel), 'studio@palestra.it', '«Da» names the row mailbox');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the alias-spelled row never enables Email');
+  assert.equal(fromValueOf(panel), '', 'no route, no sender: «Da» stays empty');
 });
 
 // Voce eaa84ccafc53: the pilot merges the profile mailbox into the
