@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openOfferPanel, euroToCents } from '../apps/admin/public/admin-offer-panel.js';
+import { openOfferPanel, euroToCents, offerShareMessage, offerSharePath, offerShareUrl } from '../apps/admin/public/admin-offer-panel.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
 /**
