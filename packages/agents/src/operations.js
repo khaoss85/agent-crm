@@ -1,7 +1,13 @@
 // @ts-check
 
-import { AppError, ConflictError, nowIso, withTimeout } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, nowIso, withTimeout } from '../../core/index.js';
 import { agentMentionName } from './catalog.js';
+import {
+  buildSquadOverview,
+  checkSquadInput,
+  decodeSquadRow,
+  squadMemberAgentName,
+} from './squads.js';
 import {
   AGENTS_DOMAIN,
   AGENT_APPLY_PERMISSION,
@@ -338,6 +344,7 @@ export function createAgentOperations(options = {}) {
   const agents = () => trusted(modules, 'teammate-agent');
   const assignments = () => trusted(modules, 'teammate-assignment');
   const runs = () => trusted(modules, 'teammate-run');
+  const squads = () => trusted(modules, 'teammate-squad');
 
   /**
    * Create one row keyed by a caller source key, replaying the winner when a
@@ -1179,5 +1186,216 @@ export function createAgentOperations(options = {}) {
     });
   }
 
-  return { createAgent, createAssignment, runDue, approveRun, rejectRun, reviseRun, updateAgent, setAgentStatus };
+  // Union of the lot (update-agent, set-agent-status) and main squads
+  // (create-squad, read-squad-overview): both sets stay available.
+  /**
+   * The member @names one squad would take, folded the way agents answer.
+   * @param {{ spaceId: string, sourceKey: string, name: string, members: ReadonlyArray<{ name: string }> }} input
+   */
+  async function takenSquadMentions(input) {
+    const rows = await squads().listWhere({ spaceId: input.spaceId });
+    const taken = new Set();
+    for (const row of rows) {
+      if (row?.sourceKey === input.sourceKey) continue;
+      if (typeof row?.name !== 'string') continue;
+      let members = null;
+      try {
+        members = JSON.parse(String(row?.membersJson ?? '[]'));
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(members)) continue;
+      for (const member of members) {
+        if (!member || typeof member !== 'object' || typeof member.name !== 'string') continue;
+        taken.add(agentMentionName(squadMemberAgentName(row.name, member.name)));
+      }
+    }
+    return taken;
+  }
+
+  /**
+   * A stored squad row holds the same squad definition as the row about to
+   * be written: every spec-carrying field matches, nulls included.
+   * @param {any} stored @param {Record<string, unknown>} row
+   */
+  function sameSquadDefinition(stored, row) {
+    return stored?.name === row.name
+      && stored?.objective === row.objective
+      && stored?.metricName === row.metricName
+      && stored?.metricTarget === row.metricTarget
+      && stored?.metricUnit === row.metricUnit
+      && String(stored?.membersJson ?? '') === String(row.membersJson ?? '')
+      && String(stored?.phasesJson ?? '') === String(row.phasesJson ?? '')
+      && String(stored?.sourcesJson ?? '') === String(row.sourcesJson ?? '')
+      && String(stored?.outputsJson ?? '') === String(row.outputsJson ?? '')
+      && (stored?.spendingCapCents ?? null) === (row.spendingCapCents ?? null)
+      && (stored?.templateSlug ?? null) === (row.templateSlug ?? null)
+      && (stored?.brief ?? null) === (row.brief ?? null);
+  }
+
+  /**
+   * Create one squad (backlog:0d2d8f2e): from a ready-made template, from a
+   * free-text brief matched to a template by keywords, or from an explicit
+   * plan. The member agents and their routines are created through the
+   * existing create-agent / create-assignment operations, so a squad never
+   * duplicates the agent engine: every member answers in the squad's name
+   * (`<squad> · <member>`). A retry with the same key and the same spec
+   * replays the stored rows; anything that would fail is validated before
+   * the first write, and a changed spec or a taken member @name refuses
+   * with its own code.
+   */
+  async function createSquad(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireAgentActor(record.actor, 'Creating a squad');
+    const input = checkSquadInput(record);
+    const at = now();
+    // backlog:0d2d8f2e (review #875): everything createAssignment would
+    // refuse on (an invalid routine plan, a missing cost estimate on a
+    // capped member, an unclear phrase) is validated before the first
+    // member write, so a bad plan leaves no orphan agents behind.
+    for (const routine of input.routines) {
+      if (routine.plan !== null) checkSchedulePlan(routine.plan);
+      else parsePhraseSchedule(routine.phrase, at);
+      const member = input.members.find((candidate) => candidate.key === routine.memberKey);
+      requireCostEstimate(member?.spendingCapCents ?? null, routine.costPerRunCents);
+    }
+    const memberKeys = input.members.map((member) => `${input.sourceKey}:member:${member.key}`);
+    const wanted = input.members.map((member) => agentMentionName(squadMemberAgentName(input.name, member.name)));
+    if (new Set(wanted).size !== wanted.length) {
+      throw new ValidationError('squad member names must answer to different @names', { field: 'members.name' });
+    }
+    const squadRow = {
+      sourceKey: input.sourceKey,
+      spaceId: input.spaceId,
+      name: input.name,
+      objective: input.objective,
+      metricName: input.metric.name,
+      metricTarget: input.metric.target,
+      metricUnit: input.metric.unit,
+      membersJson: JSON.stringify(input.members.map((member, index) => ({
+        key: member.key,
+        agentSourceKey: memberKeys[index],
+        name: member.name,
+        role: member.role,
+      }))),
+      phasesJson: JSON.stringify(input.phases),
+      sourcesJson: JSON.stringify(input.sources),
+      outputsJson: JSON.stringify(input.outputs),
+      ...(input.spendingCapCents === null ? {} : { spendingCapCents: input.spendingCapCents }),
+      ...(input.templateSlug === null ? {} : { templateSlug: input.templateSlug }),
+      ...(input.brief === null ? {} : { brief: input.brief }),
+      status: 'active',
+      decidedAt: at,
+      actorType: actor.type,
+      actorId: actor.id,
+      sourcePackage: AGENTS_DOMAIN,
+      sourceAction: 'create-squad',
+    };
+    const stored = (await squads().listWhere({ spaceId: input.spaceId, sourceKey: input.sourceKey }))[0] ?? null;
+    if (stored) {
+      // A retry replays the stored squad: the same spec returns the stored
+      // members and routines with no new write, while a changed spec
+      // refuses — answering the new spec with the old rows (or mixing old
+      // and new rows) would lie about what the retry created.
+      if (!sameSquadDefinition(stored, squadRow)) {
+        throw new AppError('This squad key already holds a different squad: retry with the same plan or a new key', {
+          code: 'SQUAD_SPEC_CHANGED', status: 409,
+        });
+      }
+      const squad = decodeSquadRow(stored);
+      const keys = new Set(squad.members.map((member) => member.agentSourceKey));
+      const spaceAgents = await agents().listWhere({ spaceId: input.spaceId });
+      const spaceAssignments = await assignments().listWhere({ spaceId: input.spaceId });
+      return {
+        duplicate: true,
+        squad,
+        members: spaceAgents.filter((agent) => keys.has(agent?.sourceKey)),
+        routines: spaceAssignments.filter((assignment) => typeof assignment?.sourceKey === 'string'
+          && assignment.sourceKey.startsWith(`${input.sourceKey}:routine:`)),
+      };
+    }
+    // Two squads of one space never share a member @name (agents answer by
+    // name): a second squad from the same template refuses here with its
+    // own code, before any write, instead of leaking AGENT_NAME_TAKEN
+    // halfway through the member creates.
+    const taken = await takenSquadMentions(input);
+    if (wanted.some((name) => taken.has(name))) {
+      throw new AppError('Another squad of this space already uses one of these member names: pass a different squad name', {
+        code: 'SQUAD_NAME_TAKEN', status: 409,
+      });
+    }
+    const memberRows = [];
+    for (let index = 0; index < input.members.length; index += 1) {
+      const member = input.members[index];
+      const made = await createAgent({
+        actor,
+        spaceId: input.spaceId,
+        sourceKey: memberKeys[index],
+        name: squadMemberAgentName(input.name, member.name),
+        role: member.role,
+        instructions: member.instructions,
+        ...(member.spendingCapCents === null ? {} : { spendingCapCents: member.spendingCapCents }),
+      });
+      memberRows.push(made.agent);
+    }
+    const routineRows = [];
+    for (let index = 0; index < input.routines.length; index += 1) {
+      const routine = input.routines[index];
+      const memberIndex = input.members.findIndex((member) => member.key === routine.memberKey);
+      const made = await createAssignment({
+        actor,
+        spaceId: input.spaceId,
+        sourceKey: `${input.sourceKey}:routine:${routine.memberKey}:${index}`,
+        agentSourceKey: memberKeys[memberIndex],
+        phrase: routine.phrase,
+        ...(routine.plan === null ? {} : { plan: routine.plan }),
+        ...(routine.costPerRunCents === 0 ? {} : { costPerRunCents: routine.costPerRunCents }),
+      });
+      routineRows.push(made.assignment);
+    }
+    const made = await createOrReplay(squads(), input.spaceId, input.sourceKey, squadRow, actor);
+    return {
+      duplicate: made.duplicate,
+      squad: decodeSquadRow(made.row),
+      members: memberRows,
+      routines: routineRows,
+    };
+  }
+
+  /**
+   * The per-squad view (backlog:0d2d8f2e §2), read from production rows:
+   * backlog A, routines, backlog B (the proposals the owner approves through
+   * approve-run / reject-run / revise-run) and the advisor metric against
+   * the objective. Counts come from rows, never stored.
+   */
+  async function readSquadOverview(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const spaceId = checkSpaceId(record.spaceId);
+    const sourceKey = typeof record.squadSourceKey === 'string' && record.squadSourceKey.trim() !== ''
+      ? record.squadSourceKey
+      : (() => { throw new AppError('squadSourceKey is required', { code: 'SQUAD_KEY_REQUIRED', status: 400 }); })();
+    const row = (await squads().listWhere({ spaceId, sourceKey }))[0] ?? null;
+    if (!row) {
+      throw new AppError('Unknown squad in this space', { code: 'SQUAD_UNKNOWN', status: 404 });
+    }
+    const squad = decodeSquadRow(row);
+    const memberKeys = squad.members.map((member) => member?.agentSourceKey).filter((key) => typeof key === 'string');
+    const spaceAgents = await agents().listWhere({ spaceId });
+    const memberAgents = spaceAgents.filter((agent) => memberKeys.includes(agent?.sourceKey));
+    const memberAssignments = memberKeys.length === 0
+      ? []
+      : await assignments().listWhere({ spaceId, agentSourceKey: memberKeys });
+    const memberRuns = memberKeys.length === 0
+      ? []
+      : await runs().listWhere({ spaceId, agentSourceKey: memberKeys });
+    return buildSquadOverview({
+      squad,
+      agents: memberAgents,
+      assignments: memberAssignments,
+      runs: memberRuns,
+      now: now(),
+    });
+  }
+
+  return { createAgent, createAssignment, createSquad, readSquadOverview, runDue, approveRun, rejectRun, reviseRun, updateAgent, setAgentStatus };
 }

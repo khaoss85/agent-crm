@@ -1680,25 +1680,30 @@ function readDirSafe(directory) {
   }
 }
 
-export function findChromium() {
-  const candidates = [
-    process.env.CHROMIUM_BIN,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ].filter(Boolean);
+/**
+ * The Chromium binary to render with, or null. Injectable environment, home
+ * and system paths so the lookup itself is testable.
+ * backlog:d30d17880f63: the Linux CI runner carries Playwright's
+ * `chromium_headless_shell-<rev>/chrome-headless-shell-linux64/chrome-headless-shell`
+ * layout (the one scripts/site-shots.js already scans): without it every
+ * browser proof on that runner skipped as «no runnable Chromium».
+ * @param {{ env?: Record<string, string|undefined>, home?: string, system?: Array<string> }} [options]
+ */
+export function findChromium({ env = process.env, home = homedir(), system = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'] } = {}) {
+  const candidates = [env.CHROMIUM_BIN, ...system].filter(Boolean);
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;
   }
   const bases = [
-    join(homedir(), '.cache', 'ms-playwright'),
-    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
+    join(home, '.cache', 'ms-playwright'),
+    join(home, 'Library', 'Caches', 'ms-playwright'),
   ];
   for (const base of bases) {
     for (const entry of readDirSafe(base)) {
       for (const suffix of [
         ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
         ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
         ['chrome-linux', 'headless_shell'],
       ]) {
         const path = join(base, entry, ...suffix);
@@ -1758,6 +1763,20 @@ export function chromiumFlags(binary) {
   if (probe([])) return [];
   if (probe(['--no-sandbox'])) return ['--no-sandbox'];
   return null;
+}
+
+/**
+ * The one way browser proofs find and launch Chromium (backlog:d30d17880f63):
+ * the binary findChromium picks and the flags chromiumFlags proved it paints
+ * with — `--no-sandbox` included on sandbox-less Linux runners, where a plain
+ * probe (chromiumRuns) fails on a binary that renders fine. Null when nothing
+ * runs here.
+ * @returns {{ binary: string, flags: Array<string> } | null}
+ */
+export function runnableChromium() {
+  const binary = findChromium();
+  const flags = chromiumFlags(binary);
+  return binary !== null && flags !== null ? { binary, flags } : null;
 }
 
 /**

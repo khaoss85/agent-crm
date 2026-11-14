@@ -155,3 +155,60 @@ export function createMountGate(mount) {
     },
   };
 }
+
+/**
+ * backlog:fe9be5f0af4a — the breadcrumb of a customer card keeps the
+ * customer's name. Production 13/11, one reload in three: the card read
+ * named the customer («Clienti / <nome>»), then the shell's schema read
+ * landed and re-synced the screen to plain «Clienti»; the card emits its
+ * name once per customer, so the crumb stayed without it. The shell now
+ * remembers the name the card gave for the routed customer, and every
+ * re-sync of that same card paints it again.
+ *
+ * @param {{ view?: string, resource?: string, subjectId?: string } | null | undefined} target the routed screen
+ * @param {string} label the screen's own label («Clienti»)
+ * @param {{ resource: string, id: string, name: string | null } | null} remembered the card's last name, for the card it named
+ * @returns {string}
+ */
+export function customerCrumbLabel(target, label, remembered) {
+  if (!target || target.view !== 'customer-card' || !remembered) return label;
+  if (remembered.resource !== target.resource || remembered.id !== target.subjectId) return label;
+  return typeof remembered.name === 'string' && remembered.name !== '' ? `${label} / ${remembered.name}` : label;
+}
+
+/**
+ * backlog:f2d39e473e3a — the offer page's crumb («Offerta / <cliente> /
+ * <nome>»), kept by the shell so a re-sync (the schema landing after the
+ * offer) never brings back the bare «Offerta». Review Muse #881: the crumb
+ * belongs to one offer in one space and is forgotten when the person leaves
+ * the offer page, so a later visit never shows a stale one before its own
+ * read. The shell's three writers go through it: the page naming itself
+ * (`named`), every re-sync (`label`) and every navigation (`routed`).
+ *
+ * @param {{ space: () => string | null }} options the active space, read late
+ */
+export function createOfferCrumbs({ space }) {
+  /** @type {{ offerId: string, label: string, space: string | null } | null} */
+  let kept = null;
+  return {
+    /**
+     * The page read its offer: remember its crumb for the routed offer.
+     * @param {any} target the routed target @param {string} label
+     * @returns {boolean} whether the crumb belongs to the routed offer
+     */
+    named(target, label) {
+      if (target?.view !== 'offer-detail' || typeof label !== 'string' || label === '') return false;
+      kept = { offerId: target.offerId, label, space: space() };
+      return true;
+    },
+    /** The crumb a re-sync paints for `target`, or null for the plain label. @param {any} target */
+    label(target) {
+      return target?.view === 'offer-detail' && kept !== null && kept.offerId === target.offerId && kept.space === space()
+        ? kept.label : null;
+    },
+    /** A navigation: anything but the same offer forgets the crumb. @param {any} target */
+    routed(target) {
+      if (kept !== null && (target?.view !== 'offer-detail' || target.offerId !== kept.offerId)) kept = null;
+    },
+  };
+}

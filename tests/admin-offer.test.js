@@ -942,7 +942,7 @@ test('a3d3b99c738e: the price book menu names each book once, the currency once'
 // of the page leaves at once, the offer first — the quotes, the history,
 // the team and the price books never wait for the offer — and each quote's
 // lines and versions leave the moment the quotes land.
-test('94eabbd4762f: the offer page reads at once — offer first, quotes, history and team beside it, then lines, versions and price books', async () => {
+test('94eabbd4762f f2d39e473e3a: the offer page reads at once — offer first, quotes, history, team and price books beside it, then lines and versions', async () => {
   const base = pageClient();
   const quotes = [{ ...QUOTE, id: 'q1' }, { ...QUOTE, id: 'q2' }];
   const pending = [];
@@ -973,12 +973,14 @@ test('94eabbd4762f: the offer page reads at once — offer first, quotes, histor
   };
   const first = await round();
   assert.equal(first[0], '/api/opportunities/off1', 'the offer is asked first');
-  assert.deepEqual([...first].sort(), ['/api/audit', '/api/modules/quote/records', '/api/opportunities/off1', '/api/schema', '/api/spine/memberships'],
-    'offer, schema, quotes, history and team together');
+  // backlog:f2d39e473e3a (pilota 13/11): the price books left only after
+  // the schema (+1,3-4,4 s); they leave with the others.
+  assert.deepEqual([...first].sort(), ['/api/audit', '/api/modules/price-book/records', '/api/modules/quote/records', '/api/opportunities/off1', '/api/schema', '/api/spine/memberships'],
+    'offer, schema, quotes, history, team and price books together');
   const second = await round();
   assert.equal(second.filter((path) => path === '/api/modules/quote-line/records').length, 2, 'both quotes read their lines at once');
   assert.equal(second.filter((path) => path === '/api/modules/quote-version/records').length, 2, 'and their versions, in the same round');
-  assert.ok(second.includes('/api/modules/price-book/records'), 'the price books with them, never after the paint');
+  assert.ok(!second.includes('/api/modules/price-book/records'), 'the price books never wait for the schema');
   while (pending.length > 0) await round();
   await done;
   const cards = mount.findAll('div').filter((node) => node.getAttribute('data-quote'));
@@ -1179,4 +1181,127 @@ test('94eabbd4762f: a slow price book or quote line never holds the offer — ti
 test('96c7b56001ba: unreadable price books say so in one honest line', async () => {
   const { mount } = await openPage({ books: Object.assign(new Error('boom'), { status: 500, code: 'BOOM' }) });
   assert.match(mount.textContent, /Listini non leggibili: crea il preventivo più tardi\./);
+});
+
+// backlog:f2d39e473e3a: the price books never wait for the schema, even
+// when the schema is not cached (a direct link) and answers last.
+test('f2d39e473e3a: the price books leave before the schema answers; without a commercial block their answer is unused', async () => {
+  const base = pageClient();
+  let releaseSchema = () => {};
+  const schemaHeld = new Promise((resolve) => { releaseSchema = resolve; });
+  const asked = [];
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      asked.push(path.split('?')[0]);
+      if (path === '/api/schema') return schemaHeld.then(() => base.request(path, options));
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll();
+  assert.ok(asked.includes('/api/modules/price-book/records'), 'asked while the schema still reads');
+  releaseSchema();
+  await done;
+  assert.ok(button(mount, 'offer-create-quote'));
+
+  const plain = await openPage({ schema: SCHEMA });
+  assert.equal(button(plain.mount, 'offer-create-quote'), undefined, 'no commercial block, no action');
+  assert.ok(!plain.mount.textContent.includes('listino'), 'and no word about price books');
+});
+
+// backlog:f2d39e473e3a: the crumb read «<spazio> / OFFERTA» with neither the
+// customer nor the offer.
+test('f2d39e473e3a: the crumb names the customer and the offer', async () => {
+  const { offerCrumb } = await import('../apps/admin/public/admin-offer.js');
+  assert.equal(offerCrumb(offerRecord({ contactId: 'c1' })), 'Offerta / Giulia Verdi / Cucina per Giulia');
+  assert.equal(offerCrumb(offerRecord({ contactName: null, companyName: null })), 'Offerta / Cucina per Giulia', 'no customer, no empty part');
+  assert.equal(offerCrumb({ name: '  ' }), 'Offerta');
+  const titles = [];
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: pageClient(), onTitle: (label) => titles.push(label) });
+  await view.renderOfferDetail('off1');
+  assert.deepEqual(titles, ['Offerta / Giulia Verdi / Cucina per Giulia']);
+});
+
+// Review Muse #881 giro 1: the shell keeps the crumb through a re-sync, and
+// forgets it when the person leaves the offer page or the space changes.
+// The shell's three writers, as app.js wires them — the router (`routed`),
+// every re-sync (`label`, through customerCrumbLabel) and the page naming
+// itself (`named`) — driven against the real offer page.
+test('f2d39e473e3a: the crumb survives the shell re-sync and never outlives its offer or its space', async () => {
+  const { createOfferCrumbs, customerCrumbLabel } = await import('../apps/admin/public/admin-navigation.js');
+  const { parseModuleRoute } = await import('../apps/admin/public/admin-core.js');
+  let space = 's1';
+  let hash = '#/';
+  let crumb = null;
+  let routed = null;
+  const crumbs = createOfferCrumbs({ space: () => space });
+  const plain = (target) => (target.view === 'offer-detail' ? 'Offerta' : target.view === 'pipeline' ? 'Pipeline' : 'Vista');
+  const syncShell = (target) => { crumb = customerCrumbLabel(target, crumbs.label(target) ?? plain(target), null); };
+  const records = {
+    offA: offerRecord({ id: 'offA', name: 'Cucina per Giulia', contactId: 'c1' }),
+    offB: offerRecord({ id: 'offB', name: 'Bagno per Marco', contactName: 'Marco Neri', contactId: 'c2' }),
+  };
+  const client = {
+    request(path, options = {}) {
+      const id = /^\/api\/opportunities\/([^/?]+)$/.exec(path)?.[1];
+      if (id && records[id]) return Promise.resolve({ ...records[id] });
+      return pageClient().request(path, options);
+    },
+  };
+  const view = createOfferDetail({
+    doc: createFakeDocument(), mount: createMount(), client,
+    onTitle: (label) => {
+      if (routed?.view !== 'offer-detail') return;
+      if (crumbs.named(parseModuleRoute(hash), label)) crumb = label;
+    },
+  });
+  const go = async (next) => {
+    hash = next;
+    routed = parseModuleRoute(hash);
+    crumbs.routed(routed);
+    syncShell(routed);
+    if (routed.view === 'offer-detail') await view.renderOfferDetail(routed.offerId, { from: null });
+  };
+  await go('#/offerte/offA');
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia', 'the page names the customer and the offer');
+  syncShell(routed); // populateNav: the schema lands after the offer
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia', 'a re-sync keeps the crumb');
+  await go('#/pipelines/b2b-sales');
+  assert.equal(crumb, 'Pipeline');
+  // Back to A after leaving it (renamed meanwhile, say): plain until A's
+  // own read lands again, never the crumb of the previous visit.
+  hash = '#/offerte/offA';
+  routed = parseModuleRoute(hash);
+  crumbs.routed(routed);
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'a crumb left behind is forgotten');
+  await view.renderOfferDetail('offA', { from: null });
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia');
+  await go('#/pipelines/b2b-sales');
+  // Offer B, before its own read lands: never A's crumb.
+  hash = '#/offerte/offB';
+  routed = parseModuleRoute(hash);
+  crumbs.routed(routed);
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'another offer never borrows the crumb');
+  await view.renderOfferDetail('offB', { from: null });
+  assert.equal(crumb, 'Offerta / Marco Neri / Bagno per Marco');
+  // Another space: the crumb is not this space's.
+  space = 's2';
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'the crumb belongs to its space');
+});
+
+test('f2d39e473e3a: app.js hands every crumb writer to the same keeper', async () => {
+  const { readFileSync } = await import('node:fs');
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const wiring = /const offerDetail = createOfferDetail\(\{([\s\S]*?)\n\}\);/.exec(app);
+  assert.ok(wiring && /offerCrumbs\.named\(targetForHash\(/.test(wiring[1]) && /mountGate\.isActive\('offer-detail'\)/.test(wiring[1]));
+  assert.match(app, /screenLabel: customerCrumbLabel\(target, offerCrumbs\.label\(target\) \?\? /);
+  const route = app.slice(app.indexOf('async function route()'), app.indexOf("if (targetForHash(hash).view === 'settings')"));
+  assert.match(route, /offerCrumbs\.routed\(targetForHash\(hash\)\);/, 'every navigation, settings included');
 });
