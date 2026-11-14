@@ -297,6 +297,13 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // the fast gate stayed green while the nightly full suite failed on
   // «no literal colour outside :root» (main run 41956161675, cure in #593).
   'tests/admin-authority-tokens.test.js',
+  // Scans every apps/admin/public/*.js write button with readFileSync for
+  // the missing wait state (uiBusy/uiHold), never importing the screens: a
+  // PR touching one screen selects that screen's own tests through the
+  // import mapping and not this scan, so the fast stayed green while main
+  // went red three times in two days (#836 Agenti 13/11, #849 Profilo
+  // 13/11, #879 Agenti retire/confirm 14/11).
+  'tests/admin-cta-busy.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
