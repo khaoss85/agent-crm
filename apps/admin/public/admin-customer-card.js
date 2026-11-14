@@ -3504,7 +3504,7 @@ export function createCustomerCardView(deps) {
     // window is already gone from the screen.
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
-      && pendingWithdrawals.has(`${timelineKey}#${item.id}`);
+      && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
@@ -4943,6 +4943,15 @@ export function createCustomerCardView(deps) {
    */
   const pendingWithdrawals = new Map();
   /**
+   * The key of a withdrawal in the view: space, customer and note (review
+   * Muse #883, P2) — the same record id in another space is another key.
+   * @param {string | null} spaceId @param {string} resource @param {string} id @param {string} noteId
+   */
+  const withdrawalKey = (spaceId, resource, id, noteId) => `${spaceId ?? ''}|${resource}/${id}#${noteId}`;
+  /** A withdrawal of this customer in the space on screen. @param {any} pending @param {string} resource @param {string} id */
+  const withdrawalHere = (pending, resource, id) => pending.spaceId === activeSpaceId()
+    && pending.resource === resource && pending.id === id;
+  /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
    * this id. The id belongs to a space — on the pilot it is the space
@@ -5117,7 +5126,7 @@ export function createCustomerCardView(deps) {
     const spaceId = activeSpaceId();
     for (const entry of readStoredWithdrawals(sessionStore, nowMs())) {
       if (entry.spaceId !== spaceId || entry.resource !== resource || entry.id !== id) continue;
-      const pendingKey = `${resource}/${id}#${entry.noteId}`;
+      const pendingKey = withdrawalKey(entry.spaceId, resource, id, entry.noteId);
       if (pendingWithdrawals.has(pendingKey)) continue;
       pendingWithdrawals.set(pendingKey, {
         resource, id, noteId: entry.noteId, idempotencyKey: entry.idempotencyKey, restored: true, spaceId: entry.spaceId,
@@ -5137,21 +5146,25 @@ export function createCustomerCardView(deps) {
       // Review Muse #883 (P2): an unreadable cronologia cannot say the
       // withdrawal is done — it is sent again (same key), never left hidden.
       for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
-        if (pending.state !== 'restored' || pending.resource !== resource || pending.id !== id) continue;
+        if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
         pending.state = 'waiting';
         void commitWithdrawal(pendingKey);
       }
       return;
     }
     const listed = new Set(items.filter((item) => item?.entry === 'note').map((item) => item.id));
+    // Review Muse #883 (P1): a cut cronologia (only its newest page) cannot
+    // say an older note is gone — a note it does not list may sit further
+    // back, so the withdrawal is sent again (same key), never dropped.
+    const complete = timeline?.entries?.truncated !== true;
     const spaceId = activeSpaceId();
     const stored = readStoredWithdrawals(sessionStore, nowMs());
-    const kept = stored.filter((entry) => !(entry.spaceId === spaceId && entry.resource === resource
+    const kept = stored.filter((entry) => !(complete && entry.spaceId === spaceId && entry.resource === resource
       && entry.id === id && !listed.has(entry.noteId)));
     if (kept.length !== stored.length) writeStoredWithdrawals(sessionStore, kept);
     for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
-      if (pending.state !== 'restored' || pending.resource !== resource || pending.id !== id) continue;
-      if (!listed.has(pending.noteId)) {
+      if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
+      if (complete && !listed.has(pending.noteId)) {
         pendingWithdrawals.delete(pendingKey);
         continue;
       }
@@ -5165,7 +5178,7 @@ export function createCustomerCardView(deps) {
    * @param {string} resource @param {string} id @param {string} noteId
    */
   function withdrawNote(resource, id, noteId) {
-    const pendingKey = `${resource}/${id}#${noteId}`;
+    const pendingKey = withdrawalKey(activeSpaceId(), resource, id, noteId);
     if (pendingWithdrawals.has(pendingKey)) return;
     const pending = {
       resource, id, noteId,

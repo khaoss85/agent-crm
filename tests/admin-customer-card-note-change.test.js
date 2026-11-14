@@ -793,3 +793,67 @@ test('4eceae80a5ca (review Muse #883, P3): settling one withdrawal leaves the sa
   const left = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).map((entry) => `${entry.spaceId}/${entry.id}/${entry.noteId}`);
   assert.deepEqual(left, ['altro-spazio/c1/n-mia', 'spazio-prova/c9/n-mia']);
 });
+
+// ---- review Muse #883, round 2 --------------------------------------------------
+
+test('4eceae80a5ca (review Muse #883, P1): a cut cronologia that does not list the note sends the withdrawal again, never drops it', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry({ noteId: 'n-vecchia', idempotencyKey: 'v1.20261114.000000000000000000000000000000ee' })]));
+  // Only the newest page: the old note sits further back.
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    const answer = await original(path, options);
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/')) {
+      return { ...answer, entries: { ...answer.entries, truncated: true, count: 120 } };
+    }
+    return answer;
+  };
+  let held = () => {};
+  const gate = new Promise((resolve) => { held = resolve; });
+  const write = client.request;
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path, body: JSON.parse(String(options.body)), key: options.headers?.['Idempotency-Key'] ?? null });
+      await gate;
+      return { id: 'n-ritiro', withdrawn: true };
+    }
+    return write(path, options);
+  };
+  await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((entry) => [entry.body.noteId, entry.key]), [['n-vecchia', 'v1.20261114.000000000000000000000000000000ee']],
+    'sent again with its own key');
+  assert.equal(JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).length, 1, 'kept until the server answers');
+  held();
+  await flush();
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'forgotten once the server confirmed it');
+});
+
+test('4eceae80a5ca (review Muse #883, P2): a withdrawal restored in one space never hides or sends the same note id in another space', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry({ spaceId: 'spazio-a' })]));
+  let space = 'spazio-a';
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  let firstTimeline = true;
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/') && firstTimeline) {
+      firstTimeline = false;
+      return new Promise(() => {}); // space A's cronologia never lands
+    }
+    return original(path, options);
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({
+    doc: createFakeDocument(), mount, client, spaceId: () => space, wait: manualWait().wait,
+    toast: () => {}, hideToast: () => {}, sessionStorage: session,
+  });
+  void view.renderCard('contact', 'c1');
+  await flush();
+  space = 'spazio-b'; // the same record id c1 in another space
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'space B shows its own note');
+  assert.equal(client.writes.length, 0, 'nothing of space A is sent in space B');
+});
