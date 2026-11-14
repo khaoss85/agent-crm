@@ -187,7 +187,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -237,6 +237,13 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (teamError) throw teamError;
         return { items: team };
       }
+      // backlog:0d68c387: the bookable list naming the services. Unstubbed
+      // it reads as not composed, like an older server without the route.
+      if (path === '/api/appointments/services') {
+        if (services === null) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return { services };
+      }
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -489,6 +496,9 @@ test('with no upcoming booking the scheda says none is booked', async () => {
 // stays in the scheda's cronologia as one readable row, with its reason.
 test('a cancelled appointment reads in the cronologia as «Appuntamento annullato», with the reason', async () => {
   const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
     timeline: {
       ...TIMELINE,
       appointments: {
@@ -512,9 +522,9 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
   }));
   const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
   assert.equal(rows.length, 2, 'one cronologia row per cancelled appointment');
-  const first = rows.find((node) => node.textContent.includes('Lezione prova'));
-  assert.ok(first, 'the service reads as words');
-  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione prova · 10 nov 10:00'), first.textContent);
+  const first = rows.find((node) => node.textContent.includes('Lezione di prova'));
+  assert.ok(first, 'the service reads as the listino names it');
+  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00'), first.textContent);
   assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
   const second = rows.find((node) => node.textContent.includes('Pt single'));
   assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
@@ -529,6 +539,76 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
     0,
     'a channel filter hides the cancellation row',
   );
+});
+
+// backlog:0d68c387: a confirmed booking reads in the cronologia as its own
+// row («Appuntamento fissato · servizio · data»), with the listino name,
+// and the cancellation follows it.
+test('a confirmed booking reads in the cronologia as «Appuntamento fissato», before its cancellation', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+          {
+            id: 'b1', status: 'cancelled', startsAt: '2026-11-10T09:00:00.000Z', endsAt: '2026-11-10T09:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-11T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'one cronologia row per confirmed booking');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov'), booked[0].textContent);
+  const text = mount.textContent;
+  assert.ok(!text.includes('appointment-booked'), 'never the row key');
+  assert.ok(!text.includes('Lezione prova ·'), 'never the slug words when the listino names the service');
+  const fixedAt = text.indexOf('Appuntamento fissato');
+  const cancelledAt = text.indexOf('Appuntamento annullato');
+  assert.ok(fixedAt !== -1 && cancelledAt !== -1 && fixedAt < cancelledAt, 'the cancellation follows the booking');
+  // A channel filter shows that channel only: the booking has no channel.
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+  assert.equal(
+    mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked')).length,
+    0,
+    'a channel filter hides the booking row',
+  );
+});
+
+// backlog:0d68c387: without the bookable list (an older server, a failed
+// read) the service still reads as slug words, like before — never blank.
+test('without the listino the booked service still reads as slug words', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione prova ·'), booked[0].textContent);
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {
@@ -1158,6 +1238,8 @@ test('59def6cb805d: passages of today carry the OGGI prefix (C16)', async () => 
           teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null, occurredAt,
         }],
       },
+      // backlog:0d68c387: the day under test is the passage's, not a booking's.
+      appointments: { available: true, count: 0, truncated: false, items: [] },
     },
   }));
   const days = mount.findAll('h5').map((node) => node.textContent);
@@ -1168,7 +1250,12 @@ test('59def6cb805d: passages of today carry the OGGI prefix (C16)', async () => 
 
 test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27)', async () => {
   const mount = await renderCard(stubClient({
-    timeline: { ...TIMELINE, entries: { available: true, count: 0, truncated: false, items: [] } },
+    timeline: {
+      ...TIMELINE,
+      entries: { available: true, count: 0, truncated: false, items: [] },
+      // backlog:0d68c387: empty means no passages and no bookings either.
+      appointments: { available: true, count: 0, truncated: false, items: [] },
+    },
   }));
   const text = mount.textContent;
   // backlog:82235e46e3e9: the field below writes a note, not a message —
@@ -3373,7 +3460,8 @@ test('the timeline shows the newest 20 first and opens older ones on demand', as
     body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
     occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
   }));
-  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items } } }));
+  // backlog:0d68c387: the page under test is the passages' — no booking rows.
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items }, appointments: { available: true, count: 0, truncated: false, items: [] } } }));
   const shown = () => mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-entry')).map((node) => node.getAttribute('data-entry'));
   assert.equal(shown().length, 20, 'one page');
   assert.equal(shown()[0], 'm44', 'newest first');
