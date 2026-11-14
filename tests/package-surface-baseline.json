@@ -5,15 +5,15 @@
       "name": "agents",
       "dir": "agents",
       "graph": "contract1",
-      "version": 3,
-      "fingerprint": "7fc0942b7eecae6bbf43349cbc90370f1e11a44f3098f32d9435bdcb75e60d87"
+      "version": 4,
+      "fingerprint": "57f9ed61b09283039b3ee0a7ca424b9c3ddb7f753e6d9c989bf80b589ab6bb14"
     },
     {
       "name": "agents",
       "dir": "agents",
       "graph": "contract2",
-      "version": 3,
-      "fingerprint": "7fc0942b7eecae6bbf43349cbc90370f1e11a44f3098f32d9435bdcb75e60d87"
+      "version": 4,
+      "fingerprint": "57f9ed61b09283039b3ee0a7ca424b9c3ddb7f753e6d9c989bf80b589ab6bb14"
     },
     {
       "name": "appointments",
