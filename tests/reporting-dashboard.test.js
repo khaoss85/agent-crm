@@ -108,14 +108,15 @@ const QUERY_OCT = Object.freeze({ period: '2026-10', owner: null, currency: 'EUR
 
 test('pipeline_close_schedule is declared with exact groups and compiles closed', () => {
   const definition = METRIC_DEFINITIONS.pipeline_close_schedule;
-  assert.equal(definition.version, 1);
-  assert.deepEqual([...definition.groupBy], ['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate']);
+  // backlog:48993bed7294: version 2 groups by the close date too.
+  assert.equal(definition.version, 2);
+  assert.deepEqual([...definition.groupBy], ['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate', 'opportunity.closedAt']);
   assert.deepEqual([...definition.partitionBy], ['opportunity.currency']);
   const compiled = dashboardCompilations(QUERY_OCT).schedule;
   assert.equal(compiled.metric, 'pipeline_close_schedule');
   assert.deepEqual(
     [...compiled.descriptor.columns].sort(),
-    ['currency', 'expected_close_date', 'owner', 'stage', 'value_cents'],
+    ['closed_at', 'currency', 'expected_close_date', 'owner', 'stage', 'value_cents'],
   );
   assert.deepEqual(compiled.descriptor.where, []);
 });
@@ -222,11 +223,14 @@ test('funnel, monthly chart and team table match hand-computed rows', (t) => {
   assert.equal(model.monthly.length, 6);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   const alice = model.team.find((entry) => entry.owner === 'alice');
-  assert.deepEqual([alice.openCount, alice.openMinor], [2, 14000]);
+  // backlog:48993bed7294: the open value follows the referente like the
+  // Pipeline board — every open offer alice holds (a1, a2, a8, a9) — while
+  // won and lost count in the month they closed.
+  assert.deepEqual([alice.openCount, alice.openMinor], [4, 22000]);
   assert.deepEqual([alice.wonCount, alice.wonMinor], [1, 9000]);
   assert.equal(alice.winRateDisplay, '50%');
   const bob = model.team.find((entry) => entry.owner === 'bob');
-  assert.deepEqual([bob.openCount, bob.openMinor], [0, 0]);
+  assert.deepEqual([bob.openCount, bob.openMinor], [2, 4000], 'a3 and the undated a7 (a6 is USD)');
   assert.deepEqual([bob.wonCount, bob.wonMinor], [1, 5000]);
   assert.equal(bob.winRateDisplay, '100%');
 });
@@ -247,7 +251,10 @@ test('expected closures run from the selected period onward, never the past (bac
   assert.deepEqual([october.wonCount, october.wonMinor], [2, 14000]);
 });
 
-test('team table recalculates with periodo: September differs from October', (t) => {
+test('team table: the open value follows the referente in every period; won and lost follow the month they closed', (t) => {
+  // backlog:48993bed7294 (verifica 13/11: «0 · 0,00 €» for everyone while
+  // the Pipeline showed a referente with three open offers, none dated): the
+  // open column no longer depends on the expected date.
   const database = fixtureDatabase(t);
   const october = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   const september = buildDashboardModel(
@@ -258,14 +265,14 @@ test('team table recalculates with periodo: September differs from October', (t)
   );
   const octoberAlice = october.team.find((entry) => entry.owner === 'alice');
   const septemberAlice = september.team.find((entry) => entry.owner === 'alice');
-  assert.deepEqual([octoberAlice.openCount, octoberAlice.openMinor], [2, 14000]);
-  // In September alice holds no expected row: zeros, but her stale backlog
-  // (one past-dated open row) still names her as its holder.
-  assert.deepEqual([septemberAlice.openCount, septemberAlice.openMinor], [0, 0]);
+  assert.deepEqual([octoberAlice.openCount, octoberAlice.openMinor], [4, 22000]);
+  assert.deepEqual([septemberAlice.openCount, septemberAlice.openMinor], [4, 22000], 'the same open offers in every period');
+  assert.deepEqual([octoberAlice.wonCount, octoberAlice.lostCount], [1, 1]);
+  assert.deepEqual([septemberAlice.wonCount, septemberAlice.lostCount], [0, 0], 'nothing closed in September');
   assert.equal(septemberAlice.staleCount, 1);
   const septemberBob = september.team.find((entry) => entry.owner === 'bob');
-  assert.deepEqual([septemberBob.openCount, septemberBob.openMinor], [1, 2500]);
-  assert.deepEqual(september.team.map((entry) => entry.owner), ['bob', 'alice']);
+  assert.deepEqual([septemberBob.openCount, septemberBob.openMinor], [2, 4000]);
+  assert.deepEqual(september.team.map((entry) => entry.owner), ['alice', 'bob']);
 });
 
 test('forecast is labelled stima with history-weighted probabili', (t) => {
@@ -273,11 +280,16 @@ test('forecast is labelled stima with history-weighted probabili', (t) => {
   const model = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.equal(model.forecast.heuristic, true);
   assert.equal(model.forecast.label, 'Stima');
-  assert.match(model.forecast.method, /non è una promessa/);
+  assert.match(model.forecast.method, /Non è una promessa/);
+  // Review lead #896: 3 decided offers are fewer than 5 — the declared 60%
+  // fallback, said, never a «67%» that looks precise.
+  assert.match(model.forecast.method, /60% \(stima: poche offerte chiuse, 3 su almeno 5\)/, 'the rate it used, said');
   assert.equal(model.forecast.closedMinor, 14000);
-  // 14000 open-in-period × 2/3 historical win rate, rounded.
-  assert.equal(model.forecast.probableMinor, 9333);
-  assert.equal(model.forecast.bestMinor, 14000);
+  // backlog:48993bed7294: the open value the month may still close is the
+  // open expected in October (14000) plus the undated a7 (1500) — the same
+  // window as the Pipeline forecast; × the 60% fallback (3 decided < 5).
+  assert.equal(model.forecast.probableMinor, 9300);
+  assert.equal(model.forecast.bestMinor, 15500);
   assert.equal(model.forecast.targetMinor, null);
   assert.match(model.forecast.note, /Obiettivo non impostato/);
 });
@@ -349,10 +361,10 @@ test('CSV bytes are pinned exactly', (t) => {
   const lines = model.csv.content.split('\n');
   assert.equal(lines[0], 'reporting;2026-10;tutti;EUR');
   assert.ok(lines.includes('persona;preventivi_aperti;valore_aperto_minor;vinte;vinte_minor;perse;tasso'));
-  assert.ok(lines.includes('alice;2;14000;1;9000;1;50%'));
-  assert.ok(lines.includes('bob;0;0;1;5000;0;100%'));
+  assert.ok(lines.includes('alice;4;22000;1;9000;1;50%'));
+  assert.ok(lines.includes('bob;2;4000;1;5000;0;100%'));
   assert.ok(lines.includes('qualification;3;14500'));
-  assert.ok(lines.includes('probabili_euristica;9333'));
+  assert.ok(lines.includes('probabili_euristica;9300'));
   assert.ok(lines.includes('obiettivo;non_impostato'));
   const hostile = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.equal(hostile.csv.content.endsWith('\n'), true);
@@ -485,7 +497,8 @@ test('proposal baseline is period-scoped: equal in-period rates propose nothing'
   const model = buildDashboardModel(results, [], { period: '2026-10', owner: null, currency: 'EUR' }, TS);
   const alice = model.team.find((entry) => entry.owner === 'alice');
   const bob = model.team.find((entry) => entry.owner === 'bob');
-  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [2, '50%', 1]);
+  // backlog:48993bed7294: open follows the referente (two in October plus the undated one).
+  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [3, '50%', 1]);
   assert.deepEqual([bob.openCount, bob.winRateDisplay], [0, '50%']);
   assert.equal(model.proposal, null, 'matching the period baseline proposes nothing');
   assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
@@ -554,7 +567,7 @@ test('GET /api/reporting/dashboard serves the registry model and writes nothing'
   assert.equal(model.kpis[0].display, formatMinor(26000, 'EUR'));
   assert.equal(model.forecast.heuristic, true);
   assert.equal(model.forecast.label, 'Stima');
-  assert.equal(model.forecast.probableMinor, 9333);
+  assert.equal(model.forecast.probableMinor, 9300);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   assert.ok(Array.isArray(model.insights) && model.insights.length > 0);
   assert.equal(model.csv.filename, 'reporting-2026-10.csv');
@@ -710,7 +723,7 @@ test('pipeline specs group by placement, scoped to the pipeline key', () => {
   assert.equal(specs.schedule.metric, 'pipeline_close_schedule_by_pipeline');
   assert.deepEqual(
     [...specs.schedule.dimensions],
-    ['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate'],
+    ['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate', 'opportunity.closedAt'],
   );
   const compiled = dashboardCompilations(QUERY_PIPELINE_OCT);
   assert.equal(compiled.byStage.metric, 'pipeline_value_by_pipeline_stage');
@@ -720,7 +733,7 @@ test('pipeline specs group by placement, scoped to the pipeline key', () => {
   );
   assert.deepEqual(
     [...compiled.schedule.descriptor.columns].sort(),
-    ['currency', 'expected_close_date', 'owner', 'pipeline_stage', 'value_cents'],
+    ['closed_at', 'currency', 'expected_close_date', 'owner', 'pipeline_stage', 'value_cents'],
   );
   assert.deepEqual(compiled.schedule.descriptor.where, [
     { column: 'pipeline_key', op: 'eq', value: 'accordo-sales' },
@@ -807,4 +820,103 @@ test('dashboard query refuses a hostile pipeline name with a 400', () => {
   for (const bad of ['Accordo-Sales', '../x', 'a b', 'x'.repeat(201)]) {
     assert.throws(() => parseDashboardQuery({ period: '2026-10', pipeline: bad }), ValidationError);
   }
+});
+
+// backlog:48993bed7294 (verifica 13/11 16:47Z e 20:49Z, spazio di test,
+// novembre 2026): the pilot's offers carry no expected date; the paid one
+// and the lost one closed on 7 nov. Reporting read «Vinte in novembre
+// 0,00 €», «Chiuse 0,00 €», «0 · 0,00 €» for every person and «1
+// preventivi persi»: every number was windowed on the expected date. The
+// rows below are the pilot's, in the registry's shape.
+test('48993bed7294: the pilot month — won by close date, open by referente, one rule with the Pipeline forecast', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+  const row = (owner, stage, totalMinor, closedAt = null) => ({
+    'opportunity.owner': owner, 'opportunity.pipelineStage': stage, 'opportunity.expectedCloseDate': null,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const schedule = [
+    row('daniele', 'proposta', 100), row('daniele', 'prova', 1500), row('daniele', 'richiesta-info', 1500),
+    row('daniele', 'richiesta-info', 1500), row('marco', 'proposta', 1500), row('marco', 'proposta', 35000),
+    row('marco', 'richiesta-info', 1500),
+    row('marco', 'perso', 35000, '2026-11-07T10:00:00.000Z'), row('marco', 'pagato', 35000, '2026-11-07T11:00:00.000Z'),
+    row('', 'prova', 2500),
+  ];
+  const byStage = [];
+  for (const entry of schedule) {
+    const found = byStage.find((item) => item['opportunity.pipelineStage'] === entry['opportunity.pipelineStage']);
+    if (found) { found.totalMinor += entry.totalMinor; found.count += 1; } else {
+      byStage.push({ 'opportunity.pipelineStage': entry['opportunity.pipelineStage'], 'opportunity.currency': 'EUR', totalMinor: entry.totalMinor, count: 1 });
+    }
+  }
+  const model = buildDashboardModel(
+    { byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS, [], [accordoSalesPipeline],
+  );
+  const kpi = (id) => model.kpis.find((entry) => entry.id === id);
+  assert.equal(kpi('won-period').display, formatMinor(35000, 'EUR'), '«Vinte in novembre» counts the offer paid on 7 nov');
+  assert.equal(model.forecast.closedMinor, 35000, '«Chiuse» too');
+  // Open, undated: 100 + 1500×4 + 35000 + 1500 + 2500 (no referente) = 45100; rate 1 won / 2 decided.
+  assert.equal(model.forecast.bestMinor, 45100);
+  // Review lead #896: 2 decided offers are too few for a rate — the 60%
+  // fallback, said, the same the Pipeline prints (350 + 60% × 426 on the board).
+  assert.equal(model.forecast.probableMinor, 27060, '60% of the open expected this month or undated');
+  assert.match(model.forecast.method, /più il 60% \(stima: poche offerte chiuse, 2 su almeno 5\)/);
+  const marco = model.team.find((entry) => entry.owner === 'marco');
+  assert.deepEqual([marco.openCount, marco.openMinor, marco.wonCount, marco.wonMinor, marco.lostCount], [3, 38000, 1, 35000, 1],
+    'the referente holds his three open offers (15+350+15 €), like the Pipeline');
+  const nobody = model.team.at(-1);
+  assert.deepEqual([nobody.owner, nobody.openCount, nobody.openMinor], ['', 1, 2500], 'offers without a referente close the table');
+  assert.deepEqual(model.owners, ['marco', 'daniele'], '«senza referente» is no persona to filter by');
+  const lostRate = model.insights.find((entry) => entry.id === 'lost-rate');
+  assert.match(lostRate.text, /^1 preventivo perso su 2 chiusi \(50%\)/, '«1 preventivo perso», never «1 preventivi persi»');
+  const monthly = model.monthly.find((entry) => entry.month === '2026-11');
+  assert.deepEqual([monthly.wonCount, monthly.wonMinor], [1, 35000], 'the month chart counts the paid offer in November');
+});
+
+test('48993bed7294 (review lead #896): from five decided offers the historical rate drives the forecast', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+  const row = (stage, totalMinor, closedAt = null) => ({
+    'opportunity.owner': 'marco', 'opportunity.pipelineStage': stage, 'opportunity.expectedCloseDate': null,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const at = '2026-10-02T10:00:00.000Z';
+  const schedule = [row('proposta', 10000), row('pagato', 1, at), row('pagato', 1, at), row('pagato', 1, at), row('pagato', 1, at), row('perso', 1, at)];
+  const byStage = [
+    { 'opportunity.pipelineStage': 'proposta', 'opportunity.currency': 'EUR', totalMinor: 10000, count: 1 },
+    { 'opportunity.pipelineStage': 'pagato', 'opportunity.currency': 'EUR', totalMinor: 4, count: 4 },
+    { 'opportunity.pipelineStage': 'perso', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(model.forecast.rateSource, 'history');
+  assert.equal(model.forecast.probableMinor, 8000, '4 won of 5 decided: 80% of 100 €');
+  assert.match(model.forecast.method, /più il 80% \(tasso di chiusura storico\)/);
+  const four = buildDashboardModel({ byStage: { rows: byStage.slice(0, 2) }, schedule: { rows: schedule.slice(0, 5) } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(four.forecast.rateSource, 'fallback', 'four decided are still too few');
+  assert.equal(four.forecast.probableMinor, 6000);
+});
+
+// Review Muse #896 giro 1: «senza referente» is nobody to redistribute from
+// or to; undated open offers are in the forecast, so only past-dated ones
+// are called stale.
+test('48993bed7294: no proposal from or to «senza referente»; only past-dated offers are stale', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+  const row = (owner, stage, totalMinor, { closedAt = null, expected = null } = {}) => ({
+    'opportunity.owner': owner, 'opportunity.pipelineStage': stage, 'opportunity.expectedCloseDate': expected,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const at = '2026-11-03T10:00:00.000Z';
+  const schedule = [
+    row('', 'proposta', 1000), row('', 'proposta', 1000), row('', 'perso', 1, { closedAt: at }),
+    row('marco', 'proposta', 1000, { expected: '2026-09-10' }), row('marco', 'pagato', 1, { closedAt: at }),
+  ];
+  const byStage = [
+    { 'opportunity.pipelineStage': 'proposta', 'opportunity.currency': 'EUR', totalMinor: 3000, count: 3 },
+    { 'opportunity.pipelineStage': 'perso', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+    { 'opportunity.pipelineStage': 'pagato', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(model.proposal, null, 'never a move from or to nobody');
+  assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
+  const stale = model.insights.find((entry) => entry.id === 'stale');
+  assert.match(stale.text, /^1 preventivo aperto con la data di chiusura attesa già passata/, 'the two undated offers are in the forecast, not stale');
+  assert.equal(model.forecast.bestMinor, 2000, 'the undated ones are the forecast window');
 });

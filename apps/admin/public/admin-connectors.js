@@ -310,7 +310,7 @@ export function flowBack(flow) {
   return Object.freeze({ ...flow, step: 0, error: null });
 }
 
-import { el, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiChannelState, uiConnect, uiMarkBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -671,23 +671,20 @@ export function createConnectorsView(deps) {
     const side = el(doc, 'div', 'bo-profilo-conn-side');
     // One label per state, the same words on every screen (backlog:e381c48581fa).
     const pill = CHANNEL_STATE_LABELS[mapped.status];
-    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${pill.tone}`, pill.text));
+    side.appendChild(uiChannelState(doc, { text: pill.text, tone: pill.tone }));
     if (mapped.status === 'da-collegare' && mapped.shared.managedHere !== true
       && typeof mapped.shared.connectRoute === 'string') {
       // Nothing here connects it, but Profilo does (a Meta channel with no
       // adapter): Collega leads there, never into a wizard with no adapter.
       const route = mapped.shared.connectRoute;
-      const go = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
-      go.setAttribute('href', route);
-      go.setAttribute('data-action', 'connect-elsewhere');
+      const go = uiConnect(doc, { href: route, action: 'connect-elsewhere' });
       go.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         navigate(route);
       });
       side.appendChild(go);
     } else if (mapped.status === 'da-collegare' || mapped.status === 'da-completare') {
-      const go = el(doc, 'button', 'ui-btn ui-btn-cta ui-btn-small', 'Collega');
-      go.setAttribute('data-action', 'connect-open');
+      const go = uiConnect(doc, { action: 'connect-open' });
       state.busyControls.push(go);
       go.addEventListener('click', async () => {
         // Completing an incomplete row re-authorizes with that row's own

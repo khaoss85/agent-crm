@@ -13,7 +13,7 @@
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
-import { auditActorLabel, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -45,7 +45,8 @@ function auditActionLabel(action) {
  * and states read capitalised («Proposta»).
  */
 function historyLine(entry, schema, record, people = []) {
-  const when = italianDay(entry?.createdAt) ?? '—';
+  // backlog:a060a4aa65b6: the day and the hour, like «Storia stati».
+  const when = italianDateTime(entry?.createdAt) ?? '—';
   const who = actorLabel(entry, record, people);
   const move = stageMoveOf(entry);
   const words = move === null ? null : stageMoveLabels(schema?.pipelines, move);
@@ -99,7 +100,7 @@ const LIST_LIMIT = 200;
  * Backlog 8dc6d4a456e1: the audit trail is read through this cap; a page
  * that fills it is truncated, and nothing is derived from a partial page.
  */
-const AUDIT_LIMIT = 100;
+const AUDIT_LIMIT = OFFER_AUDIT_LIMIT;
 
 /**
  * Display name of an audit actor: the shared vocabulary in admin-labels.js
@@ -107,12 +108,8 @@ const AUDIT_LIMIT = 100;
  * referente, the contact or the company the deal stores).
  */
 function actorLabel(entry, record, people = []) {
-  // A team member reads their profile name (famiglia F5): the roster first,
-  // then the deal's own display values — never a slug like «coach-guido».
-  const owner = personLabel(record?.owner, people);
-  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
-  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+  // One rule with the scheda cronologia (backlog:6c40dcfaeb3f).
+  return offerActorLabel(entry, record, people);
 }
 
 /**
@@ -196,6 +193,7 @@ export function createOfferDetail(deps) {
       return;
     }
     knownNames.remember(parts[1], id, customer?.name);
+    if (typeof knownNames.rememberOffer === 'function') knownNames.rememberOffer(parts[1], id, String(record?.id ?? ''));
   }
   let renderToken = 0;
   /** Record id with the edit form open. */
@@ -290,7 +288,7 @@ export function createOfferDetail(deps) {
    * history card) with grey bars where values arrive. Busy for assistive
    * tech, with one spoken line; the real paint replaces it whole.
    */
-  function offerSkeleton() {
+  function offerSkeleton(record = null) {
     const page = el('div', 'bo-offer bo-offer-skeleton');
     page.setAttribute('aria-busy', 'true');
     page.setAttribute('data-offer-skeleton', 'true');
@@ -301,18 +299,44 @@ export function createOfferDetail(deps) {
     const hero = el('header', 'bo-offer-hero');
     const words = el('div', 'bo-offer-hero-words');
     words.appendChild(el('p', 'kicker', 'Offerta'));
-    words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
-    words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    // backlog:a060a4aa65b6 (pilota 14/11: the title waited for the slowest
+    // read, 2,9-5,8 s from a direct link): with the offer read, the title,
+    // who it is for, the amount and the dates show at once; the stage, the
+    // team and the history keep their grey bars until they land.
+    const customer = record !== null ? offerCustomer(record) : null;
+    const close = record !== null ? italianDay(record.expectedCloseDate) : null;
+    if (record !== null) {
+      words.appendChild(el('h2', 'bo-offer-title', String(record.name ?? 'Offerta')));
+      const meta = el('p', 'bo-offer-meta');
+      if (customer !== null) meta.appendChild(el('span', 'bo-offer-for', `Per ${customer.name}`));
+      meta.appendChild(uiSkeleton(doc, { width: '6em' }));
+      words.appendChild(meta);
+    } else {
+      words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+      words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    }
     hero.appendChild(words);
     const value = el('div', 'bo-offer-value');
-    value.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    if (record !== null) {
+      value.appendChild(el('span', 'bo-offer-amount', money(record.valueCents, record.currency)));
+      value.appendChild(el('span', 'bo-offer-amount-note', close !== null ? `chiusura prevista ${close}` : 'valore dell’offerta'));
+    } else {
+      value.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    }
     hero.appendChild(value);
     sheet.appendChild(hero);
     const facts = el('div', 'offer-facts');
+    /** @type {Record<string, string | null>} */
+    const known = record === null ? {} : {
+      'Chiusura prevista': close ?? '—',
+      'Creata il': italianDay(record.createdAt) ?? '—',
+      'Ultima modifica': italianDay(record.updatedAt) ?? '—',
+    };
     for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
-      cell.appendChild(uiSkeleton(doc, { width: '70%', block: true }));
+      if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
+      else cell.appendChild(uiSkeleton(doc, { width: '70%', block: true }));
       facts.appendChild(cell);
     }
     sheet.appendChild(facts);
@@ -448,7 +472,16 @@ export function createOfferDetail(deps) {
         },
       );
       const booksRead = readBooks(schemaRead);
-      [schema, record] = await Promise.all([schemaRead, offerRead]);
+      // backlog:a060a4aa65b6: the offer paints its headline the moment it
+      // is read, before the schema and the rest.
+      record = await offerRead;
+      if (token === renderToken && record && typeof record === 'object') {
+        clear();
+        mount.appendChild(offerSkeleton(record));
+        onTitle(offerCrumb(record));
+        rememberCustomer(record);
+      }
+      schema = await schemaRead;
       const sameId = String(record?.id ?? '') === offerId;
       // Review Muse #871 (P1): the page paints with the offer, its quotes
       // list, the history and the team; the price books and each quote's
@@ -473,8 +506,6 @@ export function createOfferDetail(deps) {
     }
     if (token !== renderToken || !record || typeof record !== 'object') return;
     clear();
-    onTitle(offerCrumb(record));
-    rememberCustomer(record);
 
     const customer = offerCustomer(record);
 
@@ -521,15 +552,15 @@ export function createOfferDetail(deps) {
     // Who created the deal: the actor of its creation event, read through the
     // same rule as the history (never a technical id); no event — or a
     // truncated page that may hide it — a dash.
-    const createdEvent = !auditTruncated
-      ? (auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null)
-      : null;
+    // One rule with the scheda cronologia (backlog:6c40dcfaeb3f): a full
+    // page may hide the creation, so it names nobody.
+    const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Stato', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
-      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record, people) : '—'],
+      ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {
@@ -594,12 +625,21 @@ export function createOfferDetail(deps) {
     historyPanel.appendChild(el('h3', undefined, 'Cronologia'));
     if (auditUnreadable) {
       historyPanel.appendChild(el('p', 'field-error', 'Cronologia non leggibile. Riprova più tardi.'));
-    } else if (auditItems.length === 0) {
-      historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
-    } else if (auditTruncated) {
-      historyPanel.appendChild(el('p', 'muted', `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     }
-    for (const entry of auditItems) {
+    // backlog:a060a4aa65b6: one row per state move — the card's order on
+    // the board, written beside a drag move, is no event of the offer.
+    const events = auditItems.filter((entry) => !isBoardPlacement(entry));
+    // Review Muse #887: the server answers the last AUDIT_LIMIT rows, board
+    // placements included. A full page says it is cut first — even when
+    // the placements leave no row to show — never «nessun evento».
+    if (!auditUnreadable && auditTruncated) {
+      historyPanel.appendChild(el('p', 'muted', events.length === 0
+        ? `Gli ultimi ${AUDIT_LIMIT} eventi sono solo spostamenti sulla board: quelli precedenti non sono mostrati.`
+        : `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
+    } else if (!auditUnreadable && events.length === 0) {
+      historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
+    }
+    for (const entry of events) {
       const line = historyLine(entry, schema, record, people);
       const row = el('p', 'history-event');
       row.appendChild(el('span', 'history-when', line.when));

@@ -192,7 +192,7 @@ test('d3910a25dbc0: a second meeting is said in plain words and the card goes ba
   drop();
   await tick(10);
   assert.equal(client.posts.length, 2, 'retried once, not more');
-  assert.equal(toasts[toasts.length - 1].message, 'Un altro spostamento è arrivato nello stesso momento: riprova.');
+  assert.equal(toasts[toasts.length - 1].message, 'Questa offerta è stata spostata nel frattempo: la pipeline si aggiorna.');
   assert.deepEqual(order(mount, 'discovery'), ['a'], 'the card is back');
 });
 
@@ -205,7 +205,7 @@ test('67a3116f4f65: a column that changed under the drop (STALE_POSITION) says s
   const { drop } = drag(mount, 'a', 'demo', 150);
   drop();
   await tick(10);
-  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.');
+  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.');
   assert.ok(client.reads.length > readsBefore, 'the board reads again');
 });
 
@@ -281,7 +281,7 @@ test('review #852: STALE_POSITION never puts the card back by guess — the fres
   await tick(10);
   assert.deepEqual(order(mount, 'demo'), ['a', 'b'], 'the card shows where the server has it (Prova)');
   assert.deepEqual(order(mount, 'discovery'), []);
-  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.');
+  assert.equal(toasts[toasts.length - 1].message, 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.');
 });
 
 // ---- 67a3116f4f65 with pilot #562: a stage saved without its place ----------

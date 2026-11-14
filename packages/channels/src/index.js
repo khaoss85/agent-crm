@@ -704,6 +704,7 @@ export {
   GMAIL_ADAPTER_VERSION,
   GMAIL_HISTORY_WINDOW_MS,
   GMAIL_MAX_TEXT,
+  GMAIL_MAX_TEXT_BYTES,
   GMAIL_SUBJECT_PREFIX,
   buildGmailSendRequest,
   canonicalGmailAddress,

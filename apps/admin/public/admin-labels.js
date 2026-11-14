@@ -482,6 +482,16 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
+    // backlog:a060a4aa65b6: a placed offer whose pipelines are not readable
+    // here (the schema read failed or timed out) still reads its column,
+    // from the stage key — never the core stage, which the board does not
+    // show for it.
+    // Review Muse #887: only when no pipeline is readable here — with the
+    // pipelines read, a stage they do not define reads the core stage.
+    if (ordered.length === 0 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
+      const words = placed.replace(/-/g, ' ');
+      return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
+    }
   }
   return offerStateLabel(offer.stage);
 }
@@ -561,6 +571,29 @@ function orderedPipelines(pipelines, name) {
  * @param {any} entry one `/api/audit` item
  * @returns {{ kind: 'pipeline' | 'core', from: string, to: string } | null}
  */
+/**
+ * Whether an audit row only records where the card sits on the board — an
+ * order inside its column, written beside a drag move — and so is no event
+ * of the offer's history (backlog:a060a4aa65b6).
+ * @param {any} entry one `/api/audit` item
+ * @returns {boolean}
+ */
+export function isBoardPlacement(entry) {
+  if (!entry || typeof entry !== 'object' || entry.action !== 'opportunity.updated') return false;
+  const data = entry.data;
+  if (!data || typeof data !== 'object') return false;
+  const keys = Object.keys(data);
+  return keys.length > 0 && keys.every((key) => BOARD_PLACEMENT_KEYS.has(key));
+}
+
+/**
+ * backlog:a060a4aa65b6 (pilota 14/11: «Offerta aggiornata · da …» beside
+ * every state move, 4 rows out of 11): the keys of the audit row a board
+ * placement writes (positionOnBoard in the opportunity service) — the card's
+ * order in its column, never a change of the offer.
+ */
+const BOARD_PLACEMENT_KEYS = new Set(['boardPosition', 'afterId', 'first', 'renumbered']);
+
 export function stageMoveOf(entry) {
   if (!entry || typeof entry !== 'object') return null;
   if (entry.action === 'opportunity.stage_changed') {
@@ -637,6 +670,40 @@ export function auditActorLabel(entry, known = [], roster = []) {
   // stays «utente»); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
   return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
+}
+
+/**
+ * Who an offer's audit entry names (its creation, a stage move): the
+ * offer's owner reads their profile name when they are the actor, anyone
+ * else through auditActorLabel. One rule for the offer page («Creata da»)
+ * and the scheda cronologia («Offerta creata · da …», backlog:6c40dcfaeb3f).
+ * @param {any} entry the audit entry @param {any} record the offer @param {unknown} [people] the roster
+ */
+export function offerActorLabel(entry, record, people = []) {
+  // A team member reads their profile name (famiglia F5): the roster first,
+  // then the deal's own display values — never a slug like «coach-guido».
+  const owner = personLabel(record?.owner, people);
+  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
+  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+}
+
+/** How many audit entries an offer's trail reads (the offer page and the scheda). */
+export const OFFER_AUDIT_LIMIT = 100;
+
+/**
+ * Who created an offer, read from its audit trail — the offer page's
+ * «Creata da» and the scheda's «Offerta creata · da …» (backlog:6c40dcfaeb3f).
+ * A full page may hide the creation entry past its end (review Muse #894):
+ * then, like a trail that could not be read, nobody is named — null.
+ * @param {unknown} items the trail's entries @param {any} record the offer
+ * @param {unknown} [people] the roster @param {number} [limit] the page size read
+ * @returns {string | null}
+ */
+export function offerCreatorLabel(items, record, people = [], limit = OFFER_AUDIT_LIMIT) {
+  if (!Array.isArray(items) || items.length >= limit) return null;
+  const created = items.find((entry) => entry?.action === 'opportunity.created') ?? null;
+  return created === null ? null : offerActorLabel(created, record, people);
 }
 
 // ---------------------------------------------------------------------------

@@ -347,7 +347,11 @@ test('scheda: Nuovo appuntamento opens the window with the customer, and the boo
     doc, mount, client, spaceId: 'presti', navigate: (hash) => navs.push(hash), toast: (text) => toasts.push(text),
   });
   await view.renderCard('contact', 'c1');
-  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'));
+  // Voce 2c1c0e149cf9: the prototype shows no empty «Prossimo appuntamento» —
+  // with nothing booked the card hides instead of reading «nessun
+  // appuntamento prenotato».
+  assert.ok(!mount.textContent.includes('nessun appuntamento prenotato'), 'the empty appointment card hides');
+  assert.equal(mount.findAll('section').filter((node) => String(node.getAttribute('class')).includes('bo-scheda-card-appt')).length, 0, 'no empty «Prossimo appuntamento» card');
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-appointment').dispatch('click');
   await flush();
   assert.deepEqual(navs, [], 'no jump to the Calendario');

@@ -187,7 +187,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -220,6 +220,13 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         return profile;
       }
       if (path.startsWith('/api/customer-data/enriched/')) {
+        // Backlog e5e3e886: «Aggiorna» starts an extraction run with a POST
+        // on .../enriched/:resource/:id/extract — a write, never another
+        // GET. The run answer defaults to no proposals.
+        if ((options?.method ?? 'GET') !== 'GET') {
+          if (onExtract) return onExtract(path, body, options);
+          return { status: 'done', proposals: [] };
+        }
         if (enrichedError) throw enrichedError;
         if (!enriched) throw Object.assign(new Error('Not Found'), { status: 404 });
         return enriched;
@@ -237,6 +244,14 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         if (teamError) throw teamError;
         return { items: team };
       }
+      // backlog:0d68c387: the bookable list naming the services. Unstubbed
+      // it reads as not composed, like an older server without the route.
+      if (path === '/api/appointments/services') {
+        if (servicesError) throw servicesError;
+        if (services === null) throw Object.assign(new Error('Not Found'), { status: 404 });
+        return { services };
+      }
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
       throw new Error(`unexpected request ${path}`);
     },
   };
@@ -465,7 +480,7 @@ test('the next appointment skips cancelled, past and done bookings', async () =>
   assert.ok(!text.includes('coach-guido'), 'the slot never prints the internal member id');
 });
 
-test('with no upcoming booking the scheda says none is booked', async () => {
+test('2c1c0e149cf9: with no upcoming booking the appointment card hides, the recap vista still says so', async () => {
   const mount = await renderCard(stubClient({
     timeline: {
       ...TIMELINE,
@@ -482,13 +497,57 @@ test('with no upcoming booking the scheda says none is booked', async () => {
       },
     },
   }));
-  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
+  // Voce 2c1c0e149cf9: the prototype shows no empty «Prossimo appuntamento».
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Prossimo appuntamento'), 'a terminal-only schedule hides the empty card');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'the vista still reads as none booked');
+});
+
+// Voce 2c1c0e149cf9, review Codex #854 (P2): the timeline arrives
+// oldest-first, but the Messaggi preview keeps the five newest — never the
+// five oldest labelled as if the newer ones were «precedenti».
+test('2c1c0e149cf9: the recap Messaggi vista previews the five newest messages, not the five oldest', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      entries: {
+        available: true,
+        count: 7,
+        truncated: false,
+        items: [1, 2, 3, 4, 5, 6, 7].map((index) => ({
+          entry: 'message', id: `mx-${index}`, conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: `Messaggio numero ${index}`, teamAuthorId: null,
+          remoteHandle: '+39 333 1234567', errorCode: null,
+          occurredAt: `2026-10-20T0${index}:00:00.000Z`,
+        })),
+      },
+    },
+  }));
+  const messaggi = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'messaggi');
+  assert.ok(messaggi, 'the recap keeps its Messaggi vista');
+  messaggi.dispatch('click');
+  // The cronologia lists every message; the preview scope is the recap body.
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  const text = recap.textContent;
+  for (const index of [7, 6, 5, 4, 3]) {
+    assert.ok(text.includes(`Messaggio numero ${index}`), `the newest message ${index} is previewed`);
+  }
+  assert.ok(!text.includes('Messaggio numero 1'), 'the oldest message falls outside the preview');
+  assert.ok(!text.includes('Messaggio numero 2'), 'the second oldest message falls outside the preview');
+  assert.ok(text.includes('+ 2 messaggi precedenti'), 'the hidden two read as precedenti');
 });
 
 // backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
 // stays in the scheda's cronologia as one readable row, with its reason.
 test('a cancelled appointment reads in the cronologia as «Appuntamento annullato», with the reason', async () => {
   const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
     timeline: {
       ...TIMELINE,
       appointments: {
@@ -512,9 +571,9 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
   }));
   const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
   assert.equal(rows.length, 2, 'one cronologia row per cancelled appointment');
-  const first = rows.find((node) => node.textContent.includes('Lezione prova'));
-  assert.ok(first, 'the service reads as words');
-  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione prova · 10 nov 10:00'), first.textContent);
+  const first = rows.find((node) => node.textContent.includes('Lezione di prova'));
+  assert.ok(first, 'the service reads as the listino names it');
+  assert.ok(first.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00'), first.textContent);
   assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
   const second = rows.find((node) => node.textContent.includes('Pt single'));
   assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
@@ -529,6 +588,113 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
     0,
     'a channel filter hides the cancellation row',
   );
+});
+
+// backlog:0d68c387: a confirmed booking reads in the cronologia as its own
+// row («Appuntamento fissato · servizio · data»), with the listino name,
+// and the cancellation follows it.
+test('a confirmed booking reads in the cronologia as «Appuntamento fissato», before its cancellation', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 2,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+          {
+            id: 'b1', status: 'cancelled', startsAt: '2026-11-10T09:00:00.000Z', endsAt: '2026-11-10T09:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-11T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'one cronologia row per confirmed booking');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov'), booked[0].textContent);
+  const text = mount.textContent;
+  assert.ok(!text.includes('appointment-booked'), 'never the row key');
+  assert.ok(!text.includes('Lezione prova ·'), 'never the slug words when the listino names the service');
+  const fixedAt = text.indexOf('Appuntamento fissato');
+  const cancelledAt = text.indexOf('Appuntamento annullato');
+  assert.ok(fixedAt !== -1 && cancelledAt !== -1 && fixedAt < cancelledAt, 'the cancellation follows the booking');
+  // A channel filter shows that channel only: the booking has no channel.
+  mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'instagram').dispatch('click');
+  assert.equal(
+    mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked')).length,
+    0,
+    'a channel filter hides the booking row',
+  );
+});
+
+// backlog:0d68c387: without the bookable list (an older server, a failed
+// read) the service still reads as slug words, like before — never blank.
+test('without the listino the booked service still reads as slug words', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione prova ·'), booked[0].textContent);
+});
+
+// backlog:0d68c387, review rev-agent-crm-889-4db30273 (P2): a failed
+// listino read (500/timeout) still reads as slug words, but leaves one
+// diagnosable warn line with the cause — never a silent fallback.
+test('a failed listino read still reads slug words and warns with the cause', async () => {
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => { warned.push(args); };
+  let mount;
+  try {
+    mount = await renderCard(stubClient({
+      servicesError: Object.assign(new Error('Service Unavailable'), { status: 503 }),
+      timeline: {
+        ...TIMELINE,
+        appointments: {
+          available: true,
+          count: 1,
+          truncated: false,
+          items: [
+            {
+              id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+              serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            },
+          ],
+        },
+      },
+    }));
+  } finally {
+    console.warn = realWarn;
+  }
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione prova ·'), booked[0].textContent);
+  const lines = warned.filter((args) => args[0] === 'bo-scheda services unreadable:');
+  assert.equal(lines.length, 1, 'one warn line names the failed listino read');
+  assert.ok(String(lines[0].join(' ')).includes('503'), 'the warn carries the status');
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {
@@ -570,8 +736,8 @@ test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeli
   assert.ok(text.includes('Le identità non si sono potute leggere. Riprova più tardi.'), 'the identities name the failure');
   assert.ok(text.includes('Offerta'), 'the offer section stays');
   assert.ok(text.includes("L'offerta non si è potuta leggere. Riprova più tardi."), 'the offer names the failure instead of hiding as none');
-  assert.ok(text.includes('Prossimi passi'), 'the next-steps section stays');
-  assert.ok(text.includes('I prossimi passi non si sono potuti leggere. Riprova più tardi.'), 'the next steps name the failure instead of hiding as none');
+  assert.ok(text.includes('Prossime azioni'), 'the recap azioni block stays');
+  assert.ok(text.includes('Le prossime azioni non si sono potute leggere. Riprova più tardi.'), 'the next actions name the failure instead of hiding as none');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 
@@ -591,9 +757,16 @@ test('voce 908f2eb9bbfb, review round 2: with the calls in error the Chiamate ca
   const mount = await renderCard(stubClient({ callsError: failure }), 'call-x');
   const text = mount.textContent;
   assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
-  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
-  assert.ok(text.includes('Chiamate'), 'the calls section stays');
-  assert.ok(text.includes('Le chiamate non si sono potute leggere. Riprova più tardi.'), 'the calls name the failure instead of dropping the card');
+  // Voce 2c1c0e149cf9: the standalone «✦ Riepilogo AI» and «Chiamate» cards
+  // are the recap's default Chiamate vista — the failure names itself there.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel stays');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista stays');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the failure shows on the default vista');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the vista names the failure instead of dropping the panel');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Chiamate'), 'no standalone Chiamate card: the prototype has none');
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card: the recap replaces it');
 });
 
 test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-composed, never a retry error', async () => {
@@ -722,9 +895,12 @@ test('BO-F1-08: the scheda shows the AI summary, the signals and the openable tr
   assert.ok(callsPath, 'the card reads the calls for this customer');
   assert.ok(callsPath.includes('spaceId=call-a'), 'the space stays explicit in the read');
 
-  assert.ok(text.includes('Riepilogo AI'), 'the summary section exists');
+  // Voce 2c1c0e149cf9: the summary lives in the recap's default Chiamate vista.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel holds the summary');
   assert.ok(text.includes('Cliente con budget 800 euro'), 'the AI summary is shown');
-  assert.ok(text.includes('Chiamate'), 'the calls section exists');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista exists');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the summary vista is the default');
   assert.ok(text.includes('Budget'), 'the budget signal label is shown');
   assert.ok(text.includes('Tempi'), 'the timing signal label is shown');
   assert.ok(text.includes('il budget massimo è 800 euro'), 'the signal excerpt quotes the transcript');
@@ -797,9 +973,14 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
     'without a space no calls read is attempted');
 
   const uncomposed = await renderCard(stubClient({ failCalls: true }), 'call-a');
-  assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
-  assert.ok(uncomposed.textContent.includes('Nessun riepilogo registrato'),
-    'without intelligence composed no summary is shown');
+  // Voce 2c1c0e149cf9: the recap renders with the calls half unavailable.
+  // backlog:619b477c0464: the cronologia call is still named there, even
+  // with the intelligence uncomposed — one source for the calls.
+  assert.ok(uncomposed.textContent.includes('✦ Recap per'), 'the recap still renders');
+  assert.ok(uncomposed.textContent.includes('ultima chiamata'),
+    'without intelligence composed the cronologia call is still named');
+  assert.ok(uncomposed.textContent.includes('nessuna registrazione per questa chiamata'),
+    'with its missing transcript said');
 });
 
 test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
@@ -1034,7 +1215,7 @@ test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di 
   const text = mount.textContent;
   assertCustomerItalian(text, 'full card');
   assert.ok(!text.includes(UUID_B), 'an offer without a name never falls back to its id');
-  assert.ok(text.includes('approvata'), 'the offer status reads in Italian');
+  assert.ok(text.includes('Approvata'), 'the offer status reads in Italian');
   assert.ok(text.includes('attivo'), 'the package status reads in Italian');
 });
 
@@ -1158,6 +1339,8 @@ test('59def6cb805d: passages of today carry the OGGI prefix (C16)', async () => 
           teamAuthorId: null, remoteHandle: '+39 333 1234567', errorCode: null, occurredAt,
         }],
       },
+      // backlog:0d68c387: the day under test is the passage's, not a booking's.
+      appointments: { available: true, count: 0, truncated: false, items: [] },
     },
   }));
   const days = mount.findAll('h5').map((node) => node.textContent);
@@ -1168,7 +1351,12 @@ test('59def6cb805d: passages of today carry the OGGI prefix (C16)', async () => 
 
 test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27)', async () => {
   const mount = await renderCard(stubClient({
-    timeline: { ...TIMELINE, entries: { available: true, count: 0, truncated: false, items: [] } },
+    timeline: {
+      ...TIMELINE,
+      entries: { available: true, count: 0, truncated: false, items: [] },
+      // backlog:0d68c387: empty means no passages and no bookings either.
+      appointments: { available: true, count: 0, truncated: false, items: [] },
+    },
   }));
   const text = mount.textContent;
   // backlog:82235e46e3e9: the field below writes a note, not a message —
@@ -1211,12 +1399,16 @@ test('59def6cb805d: every channel badge reads its Italian label (C15, C17)', asy
   }
 });
 
-// Voce 59def6cb805d (C13): `Arricchito dall'AI` carries the ghost `Aggiorna`
-// button; the click re-reads the enrichment and reports through the toast.
-test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13)', async () => {
+// Voce 59def6cb805d (C13), superseded by backlog e5e3e886: `Arricchito
+// dall'AI` carries the ghost `Aggiorna` button; the click starts one
+// extraction run — a POST on .../enriched/:resource/:id/extract — and
+// reports through the toast. «Nessun dato nuovo» now means the run happened
+// and found nothing, never a re-read.
+test('59def6cb805d: Aggiorna starts one extraction run and toasts the outcome (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  const mount = await renderCard(stubClient(), undefined, toast);
+  const client = stubClient();
+  const mount = await renderCard(client, undefined, toast);
   const refresh = mount.findAll('button').find((node) => node.textContent === 'Aggiorna');
   assert.ok(refresh, 'the Aggiorna button is in the enriched section');
   assert.ok(
@@ -1225,39 +1417,35 @@ test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13
   );
   refresh.dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(client.writes.map((write) => write.path),
+    ['/api/customer-data/enriched/contact/c1/extract'],
+    'one POST leaves: the extraction run, not another GET');
   assert.deepEqual(seen, [{ message: 'Nessun dato nuovo', error: false }],
-    'an unchanged re-read toasts Nessun dato nuovo');
+    'a run that found nothing toasts Nessun dato nuovo');
 });
 
-test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', async () => {
+test('59def6cb805d: Aggiorna lists the proposed fields with their source (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  let current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null, items: [],
-  };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) return current;
-      return stubClient().request(path, options);
-    },
-  };
+  const client = stubClient({
+    onExtract: () => ({
+      status: 'done',
+      proposals: [{
+        id: 'p1', field: 'firstName', value: 'Guido', source: 'google-contacts',
+        sourceDetail: 'people/c1', observedAt: '2026-10-20T10:00:00.000Z',
+      }],
+    }),
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
   assert.ok(mount.textContent.includes('Nessun dato arricchito ancora'), 'the section starts empty');
-  current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null,
-    items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
-  };
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(mount.textContent.includes('Nome: Guido (fonte: Contatti Google'),
-    'the re-read rows render with source and date');
-  assert.deepEqual(seen, [{ message: 'Dati aggiornati', error: false }],
-    'a changed re-read toasts Dati aggiornati');
+  assert.ok(mount.textContent.includes('L\u2019AI propone: Nome: Guido (fonte: Contatti Google'),
+    'the proposed field renders with its source');
+  assert.deepEqual(seen, [{ message: 'L\u2019AI propone 1 campo da decidere qui sotto.', error: false }],
+    'a run that proposes toasts the count');
 });
 
 test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)', async () => {
@@ -1269,16 +1457,13 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
     linked: false, optedOut: null,
     items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
   };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) {
-        if (fail) throw Object.assign(new Error('boom'), { status: 500 });
-        return enriched;
-      }
-      return stubClient().request(path, options);
+  const client = stubClient({
+    enriched,
+    onExtract: (path) => {
+      if (fail) throw Object.assign(new Error('boom'), { status: 500 });
+      return { status: 'done', proposals: [] };
     },
-  };
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
@@ -1286,7 +1471,7 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(mount.textContent.includes('Nome: Guido'), 'the previous rows stay on screen');
-  assert.equal(seen.length, 1, 'one toast for the failed re-read');
+  assert.equal(seen.length, 1, 'one toast for the failed run');
   assert.equal(seen[0].error, true, 'the failure toasts as an error');
   assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });
@@ -1310,7 +1495,7 @@ test('the offer panel names the quote after its opportunity, with the opportunit
   const text = mount.textContent;
   // Backlog a551982c06eb: the line reads the sale's stage, never the quote's
   // approval («approvata») as if it were the offer's state.
-  assert.ok(text.includes('Pacchetto 10 ingressi · proposta'),
+  assert.ok(text.includes('Pacchetto 10 ingressi · Proposta'),
     'the offer reads with its opportunity name and the Italian stage');
   assert.ok(!text.includes('approvata'), 'the quote approval is not the offer state');
   assert.ok(!text.includes('8d8f1d4d-25c1-4641-8836-267581100b32'),
@@ -1338,7 +1523,7 @@ test('a2ea75f705fd: the quote offer line opens the offer page, not the quote', a
   const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.ok(link, 'the quote offer line is a link');
   assert.equal(link.getAttribute('href'), '#/offerte/o1/cliente/contact/c1', 'the line opens its offer page (backlog:a2ea75f705fd), naming the scheda to go back to (backlog:96c7b56001ba)');
-  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · proposta'),
+  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · Proposta'),
     'the link keeps the opportunity name and the Italian stage');
 });
 
@@ -1408,7 +1593,7 @@ test('a2ea75f705fd: the opportunity-fallback offer line opens the offer page', a
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
     },
   }));
-  assert.ok(mount.textContent.includes('Pacchetto sede · proposta'), 'the fallback offer line still reads');
+  assert.ok(mount.textContent.includes('Pacchetto sede · Proposta'), 'the fallback offer line still reads');
   const links = mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/o1/cliente/contact/c1'], 'the offer opens its page');
 });
@@ -1428,7 +1613,7 @@ test('the opportunity-fallback offer line reads the name with its Italian stage,
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Pacchetto sede · proposta'),
+  assert.ok(text.includes('Pacchetto sede · Proposta'),
     'the fallback offer line reads with its Italian stage');
   assert.ok(!text.includes('proposal'), 'the raw English stage is never shown');
 });
@@ -2125,7 +2310,7 @@ test('714433c2: Cambia stato lists the legal moves in Italian and moves the oppo
     doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
 
-  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · qualificazione'),
+  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · Qualificazione'),
     'the offer line shows the opportunity with its Italian stage');
   const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
   assert.ok(change, 'the Cambia stato menu button exists');
@@ -2215,9 +2400,18 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   }).renderCard('contact', 'c1');
 
   const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
-  // Dan 06/11: Nuova offerta opens its window over the scheda (see
-  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  // Voce 2c1c0e149cf9: Offerta opens the «Crea con l'AI / Compila
+  // manualmente» menu like the other creation points, never a direct window.
   byAction('new-offer').dispatch('click');
+  assert.equal(byAction('new-offer').getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const byVoice = (voice) => mount.findAll('button').find((node) => node.getAttribute('data-voice') === voice);
+  assert.ok(byVoice('ai'), 'the Crea con l\u2019AI voice exists');
+  assert.ok(byVoice('ai').textContent.includes("Crea con l'AI"), 'the AI voice reads as in the other menus');
+  const manual = byVoice('manual');
+  assert.ok(manual, 'the Compila manualmente voice exists');
+  // Dan 06/11: Compila manualmente opens its window over the scheda (see
+  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  manual.dispatch('click');
   assert.deepEqual(navs, [], 'Nuova offerta stays on the scheda');
   assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'), 'the offer window opens');
   assert.equal(storage.getItem('accordo.bo.customer-pick.offer'), null, 'no page handoff is needed');
@@ -2234,6 +2428,78 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
     'the offer window steps aside');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
+});
+
+test('2c1c0e149cf9: the scheda matches the prototype — action order, violet AI, offer menu, recap, suggeriti', async () => {
+  const profile = {
+    ...PROFILE,
+    workTasks: {
+      available: true, count: 2, countIsComplete: true, truncated: false,
+      items: [
+        { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
+        { id: 'w2', status: 'done', name: 'Inviare il listino' },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({ profile, calls: CALLS }));
+  // Prototype order: Chiama, WhatsApp, Email, Appuntamento, Offerta, ✦ Chiedi all'AI.
+  const actions = mount.findAll('button')
+    .filter((node) => ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai']
+      .includes(node.getAttribute('data-action')))
+    .map((node) => node.getAttribute('data-action'));
+  assert.deepEqual(actions,
+    ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai'],
+    'Appuntamento before Offerta, the AI tile last');
+  // The AI tile wears the assistant violet, never the plain tile style.
+  const ask = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'quick-ask-ai');
+  assert.ok(String(ask.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile-ai'),
+    'the AI tile carries the violet class');
+  // Offerta is a menu like the other creation points, never a direct window.
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'ai'),
+    'the Crea con l\u2019AI voice exists');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'manual'),
+    'the Compila manualmente voice exists');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'no offer window before a voice is chosen');
+  // The violet recap panel replaces the standalone summary and calls cards.
+  assert.ok(mount.textContent.includes('✦ Recap per Guido Presti'), 'the recap names the customer');
+  assert.ok(mount.textContent.includes('Vista per'), 'the Vista per tabs exist');
+  assert.deepEqual(
+    mount.findAll('button').filter((node) => node.getAttribute('data-vista') !== null)
+      .map((node) => node.getAttribute('data-vista')),
+    ['chiamate', 'messaggi', 'appuntamenti'], 'the three viste in prototype order');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'Chiamate is the default vista');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card');
+  assert.ok(!heads.includes('Chiamate'), 'no standalone calls card');
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap's PROSSIME AZIONI
+  // is the only copy of the open tasks — no «Prossimi passi» card repeats
+  // it below. The agent-opened step carries the prototype «✦ suggeriti» mark.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(!mount.textContent.includes('Prossimi passi'), 'no duplicate Prossimi passi card under the recap');
+  assert.ok(mount.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
+test('voce 2c1c0e149cf9 (design check 14/11): the «Vista per» tabs are history-chip pills on their own row, never big stacked buttons', async () => {
+  // bo:shots at 1440: the ui-btn base painted the vista tabs big and
+  // stacked in the 300px right column. The guard reads the override rule in
+  // styles.css, the same metrics as the cronologia pills.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const labelRules = [...css.matchAll(/\.bo-scheda-viste-label\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(labelRules.length > 0, 'the viste label rule exists in styles.css');
+  assert.ok(labelRules.some((body) => /flex\s*:\s*1\s+1\s+100%/.test(body)),
+    'the label takes its own row above the pills');
+  const tabRules = [...css.matchAll(/\.bo-scheda-viste\s+\.bo-scheda-vista\.ui-btn\s*\{([^}]*)\}/g)]
+    .map((match) => match[1]);
+  assert.ok(tabRules.length > 0, 'the vista pill override exists in styles.css');
+  const tabs = tabRules[tabRules.length - 1];
+  assert.ok(/height\s*:\s*30px/.test(tabs), 'the tabs are chip-high (30px)');
+  assert.ok(/border-radius\s*:\s*99px/.test(tabs), 'the tabs are pills');
+  assert.ok(/font-size\s*:\s*12\.5px/.test(tabs), 'the tabs read at chip size');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -2256,6 +2522,8 @@ test('review #654: a contact without Azienda picks its own placeholder id under 
     await createCustomerCardView({ doc, mount, client, navigate: () => {}, spaceId: 'presti', toast: () => {} })
       .renderCard('contact', 'c1');
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
+    // Voce 2c1c0e149cf9: Offerta is a menu — the manual voice opens the window.
+    mount.findAll('button').find((node) => node.getAttribute('data-voice') === 'manual').dispatch('click');
     const panel = mount.findAll('div').find((node) => node.getAttribute('data-offer-panel') === 'open');
     assert.ok(panel, 'the offer window opens');
     assert.ok(!panel.textContent.includes('deve avere un’azienda'), 'the placeholder company is a company: no block');
@@ -3010,7 +3278,10 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   const tileRules = [...css.matchAll(/\.bo-scheda-tile\s*\{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(tileRules.length > 0, 'the tile rule exists in styles.css');
-  const tileRule = tileRules[tileRules.length - 1];
+  // Voce 2c1c0e149cf9: narrower tile rules (the Offerta menu wrap) share the
+  // selector — the guard reads the base rule that sets word-break, not the
+  // last match.
+  const tileRule = tileRules.find((body) => /word-break/.test(body)) ?? tileRules[tileRules.length - 1];
   // 31/10 (bo:shots su 79efbf01): break-word spezza ancora una parola più
   // larga della tessera; la regola giusta non spezza mai dentro una parola.
   assert.ok(/word-break\s*:\s*keep-all/.test(tileRule) && !/overflow-wrap\s*:\s*break-word/.test(tileRule),
@@ -3373,7 +3644,8 @@ test('the timeline shows the newest 20 first and opens older ones on demand', as
     body: `Messaggio ${index}`, remoteHandle: 'a@b.it',
     occurredAt: new Date(Date.UTC(2026, 10, 5, 8, index)).toISOString(),
   }));
-  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items } } }));
+  // backlog:0d68c387: the page under test is the passages' — no booking rows.
+  const mount = await renderCard(stubClient({ timeline: { ...TIMELINE, entries: { available: true, count: 45, truncated: false, items }, appointments: { available: true, count: 0, truncated: false, items: [] } } }));
   const shown = () => mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-entry')).map((node) => node.getAttribute('data-entry'));
   assert.equal(shown().length, 20, 'one page');
   assert.equal(shown()[0], 'm44', 'newest first');
@@ -4839,13 +5111,19 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   const check = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step');
   assert.ok(check, 'the open step carries the circular check');
   assert.equal(check.getAttribute('aria-label'), 'Segna come fatto: Richiamare per la prova');
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap PROSSIME AZIONI is
+  // the only copy — the open step carries its check once.
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 1,
-    'a done task carries no check');
+    'a done task carries no check, the open one once in the recap');
   check.dispatch('click');
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  assert.ok(mount.textContent.includes('nessun passo aperto'), 'the card re-reads: the server list, never an optimistic copy');
+  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
+  // copy — with no open step left the empty azioni block hides like the prototype.
+  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
+  assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
+    'no check without an open step');
 });
 
 test('59def6cb805d: a refused step completion keeps the step and says so in Italian (C24)', async () => {
@@ -5540,7 +5818,7 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', 'Prossimi passi', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
@@ -5575,13 +5853,14 @@ test('backlog:1a96094db71d: each section fills as its own read lands, the slow o
   await land('/api/customer-hub/timeline/');
   assert.ok(mount.textContent.includes(CARD.name), 'the header shows the customer');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia paints with the name, without the profile');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'the profile sections keep their skeleton');
+  assert.ok(isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap keeps its skeleton while calls and profile are out');
   assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the profile');
   assert.equal(mount.firstChild.getAttribute('aria-busy'), 'true', 'still busy while reads are out');
 
-  // The profile lands: its sections fill.
+  // The profile and the calls land: their sections fill.
   await land('/api/customer-data/profile/');
-  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile');
+  await land('/api/call-intelligence/calls/');
+  assert.ok(!isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap fills once calls, timeline and profile land');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
 
   await drain();
@@ -6002,4 +6281,24 @@ test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda ava
   const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
   assert.equal(avatar.textContent, 'SS');
   assert.ok(!avatar.textContent.includes('?'));
+});
+
+// backlog:a060a4aa65b6 (verifica 14/11 01:52Z, «Prova verifica 07/11 B1
+// modificato»): the offer is outside any board, so its state is the core
+// stage — read with a capital, as the Pipeline lists it («Qualificazione»).
+test('a060a4aa65b6: an offer outside any board reads its core stage like the Pipeline, with a capital', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'qualification', stage: 'qualification', name: 'Prova offerta', pipelineKey: null, pipelineStage: null }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const state = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-state');
+  assert.equal(state?.textContent, 'Qualificazione');
+  const { upperFirst, offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
+  assert.equal(state.textContent, upperFirst(offerStageLabel([], { stage: 'qualification' })), 'the same words as the Pipeline off-board list');
 });

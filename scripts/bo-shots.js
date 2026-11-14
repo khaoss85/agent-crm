@@ -327,7 +327,7 @@ const DEMO_PROFILE = {
   workTasks: {
     available: true, count: 2, countIsComplete: true,
     items: [
-      { id: 'w1', status: 'open', name: 'Richiamare per la prova' },
+      { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
       { id: 'w2', status: 'done', name: 'Inviare il listino' },
     ],
     truncated: false,
@@ -756,10 +756,10 @@ export const SHELL_SCREENS = Object.freeze({
   reporting: { id: 'reporting', label: 'Reporting' },
   'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
-  catalogo: { id: '', label: 'Catalogo prodotti' },
+  catalogo: { id: 'impostazioni', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
-  profilo: { id: '', label: 'Profilo' },
+  profilo: { id: 'impostazioni', label: 'Profilo' },
   // The connectors screen (BO-F6-02): the same sidebar voice and path the
   // app crumbs for it, exactly like shellScreenFor in app.js.
   connettori: { id: 'impostazioni', label: 'Connettori' },
@@ -1383,7 +1383,9 @@ const client = {
   async request(path, options) {
     const opts = options || {};
     if (path === '/api/spine/context') {
-      return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+      // The production shape: the verified session subject (Elena's Google
+      // login), so «Rimuovi» shows on the other rows (backlog:9d06eb1e174b).
+      return { identity: { subject: 'google|1001', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|1001' }, roles: { owner: [], operator: [], observer: [] } };
     }
     if (path === '/api/spine/memberships' && String(opts.method || 'GET').toUpperCase() !== 'POST') {
       return { items: MEMBERS };
@@ -1457,7 +1459,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   badges: document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-tile').length,
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
-  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
+  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .ui-channel-state')]
     .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
@@ -2009,13 +2011,14 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 linked channels,
-      // 2 rendered members, exact total 3). A card that cannot count paints
-      // no row, so the gate requires both rows here.
+      // C7: the open space's card paints the real statistic (2 linked
+      // channels, 2 rendered members, exact total 3). backlog:9d06eb1e174b:
+      // another space is never read (its connectors answer 403 to this
+      // session), so exactly one card carries the row.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
       const expectedStat = '2 canali · 2 persone · 3 clienti';
-      if (stats.length !== 2 || stats.some((stat) => stat !== expectedStat)) {
-        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected two ${JSON.stringify(expectedStat)}`);
+      if (stats.length !== 1 || stats.some((stat) => stat !== expectedStat)) {
+        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected one ${JSON.stringify(expectedStat)}`);
       }
       // The non-active card paints «Apri» (the wired production path passes
       // onPickSpace); the active card marks «Stai lavorando qui» instead.

@@ -421,16 +421,161 @@ export function validateAppointmentRequest(request) {
 }
 
 /**
+ * Owner busy blocks (backlog:af190faf): a commitment with no guest holds its
+ * member like a booking, without becoming a booking — no customer, no
+ * appointment row. Shape `{ teamMemberId, startsAt, endsAt, title? }`, the
+ * same shape the Google sync writes.
+ *
+ * One source of truth, server-side only: blocks enter this package ONLY
+ * through the composed `calendarSync` handle (`listOwnerBlocks`), never
+ * through caller/request input. A request `busyBlocks` key is never read —
+ * omitting it changes nothing and forging it changes nothing — so the write
+ * paths cannot be bypassed by dropping the field and the GET routes carry
+ * no private titles in the URL. The deployment that wires the handle (its
+ * own calendar-sync store) gets enforcement; a composition without the
+ * handle keeps main behaviour (no blocks). A wired store that cannot be
+ * read fails the call closed (503 `APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE`,
+ * cause kept): never an empty block list over unknown state.
+ *
+ * Every block is proven up front, on every path (week read, suggestion,
+ * proposal, booking): exactly `{ teamMemberId, startsAt, endsAt, title? }` —
+ * any other key (`status`, `id`, `kind`, ...) is refused, so a crafted entry
+ * can never flip the owner/appointment discriminator. The member identity
+ * is trimmed exactly like the member filter, so a padded store identity
+ * holds its member instead of silently holding nobody. An unattributed or
+ * unprovable entry fails closed 400 (field `busyBlocks`) on every path
+ * alike: grid and booking never disagree. No wildcard — a block holds
+ * exactly the member it names.
+ *
+ * @param {any} calendarSync the composed calendar-sync handle, or null
+ * @param {string} teamMemberId the member the caller checks (already normalized)
+ * @param {string} fromIso window start, ISO instant
+ * @param {string} toIso window end, ISO instant
+ * @returns {Promise<Array<object>>} the proven blocks holding that member, tagged
+ */
+async function ownerBlocksFor(calendarSync, teamMemberId, fromIso, toIso) {
+  if (!calendarSync || typeof calendarSync.listOwnerBlocks !== 'function') return [];
+  let found;
+  try {
+    found = await calendarSync.listOwnerBlocks({ teamMemberId, from: fromIso, to: toIso });
+  } catch (error) {
+    throw new AppError(
+      'The owner-hold store did not answer: the slot is refused instead of booked over unknown state.',
+      { code: 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE', status: 503, cause: error },
+    );
+  }
+  if (found === undefined || found === null) {
+    throw new AppError(
+      'The owner-hold store answered nothing: the slot is refused instead of booked over unknown state.',
+      { code: 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE', status: 503 },
+    );
+  }
+  return proveOwnerBlocks(found).filter((block) => block.teamMemberId === teamMemberId);
+}
+
+/**
+ * Refuse a held slot before the space switch (backlog:af190faf, review giro
+ * 5): propose, confirm and link read the owner-hold store up front, so a
+ * confirm or link over a held slot refuses 409 instead of opening a
+ * proposal for an impossible slot. A retry behind the same source key
+ * skips this read: the booking below replays the winner (or refuses a
+ * divergent claim), it never 409s its own row.
+ *
+ * @param {any} context the flow context (modules, actor, calendarSync)
+ * @param {{teamMemberId: string, startsAt: string, endsAt: string, startMs: number, endMs: number, sourceKey: string}} input the validated request
+ */
+async function refuseHeldSlot(context, input) {
+  const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
+  const appointments = flowAppointments(context, names);
+  const same = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0] ?? null;
+  if (same) return;
+  const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
+  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+    [...held, ...blocks]);
+  if (conflict) {
+    throw overlapRefusal(input.teamMemberId, conflict);
+  }
+}
+
+/** The tag an owner block carries from construction: the only discriminator. */
+const OWNER_BLOCK_KIND = 'owner-block';
+
+/** The only keys a server-provided owner block may carry. */
+const OWNER_BLOCK_KEYS = Object.freeze(['teamMemberId', 'startsAt', 'endsAt', 'title']);
+
+/**
+ * Prove server-provided owner blocks: closed shape, trimmed identity,
+ * provable slot, tagged at construction. A store bug surfaces as a 400 the
+ * deployment fixes, never as storage corruption and never as a free slot.
+ *
+ * @param {unknown} value the store answer
+ * @returns {Array<object>} the proven blocks, in store order
+ */
+function proveOwnerBlocks(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ValidationError('owner blocks must be an array of owner blocks: one member holds one slot at a time', {
+      field: 'busyBlocks',
+    });
+  }
+  return value.map((block, index) => {
+    const where = `busyBlocks[${index}]`;
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      throw new ValidationError(`${where} must be an object { teamMemberId, startsAt, endsAt, title? }: a hold nobody described holds nobody`, {
+        field: 'busyBlocks',
+      });
+    }
+    for (const key of Object.keys(block)) {
+      if (!OWNER_BLOCK_KEYS.includes(key)) {
+        throw new ValidationError(`${where} carries no "${key}": an owner block is exactly { teamMemberId, startsAt, endsAt, title? }`, {
+          field: 'busyBlocks',
+        });
+      }
+    }
+    let member;
+    try {
+      member = safeText(block.teamMemberId, 'teamMemberId', MAX_ID);
+    } catch {
+      throw new ValidationError(`${where}.teamMemberId must be a non-empty member identity: an unattributed hold is refused, never widened to the whole team`, {
+        field: 'busyBlocks',
+      });
+    }
+    const startMs = Date.parse(block.startsAt);
+    const endMs = Date.parse(block.endsAt);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      throw new ValidationError(`${where} must name a provable slot (startsAt before endsAt): an unprovable hold fails closed, never reads as free`, {
+        field: 'busyBlocks',
+      });
+    }
+    if (block.title !== undefined && block.title !== null && typeof block.title !== 'string') {
+      throw new ValidationError(`${where}.title must be a string when named`, {
+        field: 'busyBlocks',
+      });
+    }
+    return {
+      teamMemberId: member, startsAt: block.startsAt, endsAt: block.endsAt, title: block.title, kind: OWNER_BLOCK_KIND,
+    };
+  });
+}
+
+/**
  * The no-double-booking invariant: one team member holds one slot at a time.
  * Two half-open slots `[startsAt, endsAt)` overlap when each starts before the
  * other ends; back-to-back slots share an endpoint and do not overlap. A
  * cancelled booking holds nothing — cancelling is how a slot is freed — but
  * every other state holds its slot even after it ends, because the slot was
- * real: the member was busy then, and the row is the evidence.
+ * real: the member was busy then, and the row is the evidence. An owner busy
+ * block (backlog:af190faf, tagged `kind: 'owner-block'` at construction by
+ * `proveOwnerBlocks`) holds its slot the same way: the member is busy then,
+ * with no guest and no appointment row. Behaviour is keyed ONLY on that tag,
+ * never on `status === undefined`: a closed shape at the boundary means a
+ * block can carry no `status` at all, so `cancelled` can never turn a hold
+ * into a free slot.
  *
  * @param {{teamMemberId: string, startMs: number, endMs: number}} candidate
- * @param {Array<any>} held the team member's existing rows
- * @returns {any|null} the conflicting row, or null
+ * @param {Array<any>} held the team member's existing rows, tagged owner blocks included
+ * @returns {any|null} the conflicting row or block, or null
  */
 export function findOverlap(candidate, held) {
   for (const row of held ?? []) {
@@ -441,8 +586,9 @@ export function findOverlap(candidate, held) {
     // free slot: ignoring it would silently switch the no-double-booking
     // invariant off, so the booking is refused instead of booked over it.
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      const kind = row.kind === OWNER_BLOCK_KIND ? 'owner block' : 'appointment';
       throw new AppError(
-        `The held appointment "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
+        `The held ${kind} "${typeof row.id === 'string' && row.id !== '' ? row.id : 'unknown'}" carries a slot this package cannot prove `
         + `(startsAt "${String(row.startsAt)}", endsAt "${String(row.endsAt)}"): a booking overlapping an unprovable slot is refused, never booked over it.`,
         {
           code: 'APPOINTMENTS_STORAGE_INVALID',
@@ -454,6 +600,36 @@ export function findOverlap(candidate, held) {
     if (startMs < candidate.endMs && candidate.startMs < endMs) return row;
   }
   return null;
+}
+
+/**
+ * The 409 a held slot answers (backlog:af190faf): a booking conflict names
+ * the held appointment; an owner-block conflict stays generic — the block
+ * title is the owner's private commitment (medical, personal) and must never
+ * leak to a booker probing slots, so the refusal names only the held range.
+ * The title stays in the authorized backoffice week read (`busy[].title`),
+ * where the operator already sees the member's commitments. Same code, same
+ * status, same details shape either way.
+ *
+ * @param {string} teamMemberId
+ * @param {any} conflict the row or block `findOverlap` returned
+ * @returns {AppError}
+ */
+function overlapRefusal(teamMemberId, conflict) {
+  if (conflict && conflict.kind === OWNER_BLOCK_KIND) {
+    return new AppError(
+      `The team member "${teamMemberId}" holds an owner commitment overlapping this slot `
+        + `(${conflict.startsAt} to ${conflict.endsAt}): one member holds one slot at a time. `
+        + 'Book another slot, or book another member.',
+      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: null, status: null } },
+    );
+  }
+  return new AppError(
+    `The team member "${teamMemberId}" already holds an appointment overlapping this slot `
+      + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
+      + 'Cancel the held booking to free the slot, or book another member.',
+    { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+  );
 }
 
 /**
@@ -621,6 +797,24 @@ function seriesOccurrenceLabel(startsAt) {
  * is refused — cancelling «tutti» of one booking must never silently cancel
  * one. Sorted soonest first, so messages and writes read in grid order.
  */
+/**
+ * The head instant owns the series: propose and book expand from it, so the
+ * first expanded slot must be that same instant. A rule that starts on
+ * another day (weekdays booked from a Saturday, a weekly custom without the
+ * start weekday) would store a head the grid never expands and skip the head
+ * conflict check — refused naming `recurrence`, comparing instants in
+ * milliseconds, never strings.
+ */
+function assertSeriesHeadSlot(input, slots) {
+  if (!Array.isArray(slots) || slots.length === 0) return;
+  const headMs = Date.parse(slots[0].startsAt);
+  if (Number.isFinite(headMs) && headMs !== input.startMs) {
+    throw new ValidationError('il giorno di inizio non è tra i giorni della regola: la serie deve partire dalla data scelta', {
+      field: 'recurrence',
+    });
+  }
+}
+
 export async function seriesScopeRows(appointments, row, scope) {
   if (scope === 'single' || !row?.seriesKey) return Object.freeze([row]);
   if (typeof appointments?.listWhere !== 'function') {
@@ -927,6 +1121,7 @@ async function bookSeries(context, input) {
       code: 'APPOINTMENTS_SERIES_EMPTY', status: 500,
     });
   }
+  assertSeriesHeadSlot(input, slots);
   const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
   const ruleJson = JSON.stringify(input.recurrence);
   const headReminderKey = input.remindAt === null ? null : reminderSourceKey(keys[0]);
@@ -1101,14 +1296,14 @@ export async function bookAppointment(context, request) {
     }
 
     const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+    // Owner holds come only from the composed calendar-sync handle — a
+    // request `busyBlocks` key is never read, so omitting or forging it
+    // changes nothing on the write path.
+    const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
+    const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+      [...held, ...blocks]);
     if (conflict) {
-      throw new AppError(
-        `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
-          + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): one member holds one slot at a time. `
-          + 'Cancel the held booking to free the slot, or book another member.',
-        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-      );
+      throw overlapRefusal(input.teamMemberId, conflict);
     }
 
     // The send target is proven before the first write: a fresh booking that
@@ -1432,6 +1627,17 @@ export async function rescheduleAppointment(context, request) {
       field: 'scope',
     });
   }
+  // A series linked to Google moves as one event: «solo questo» and «questo
+  // e i successivi» would move the grid while Google keeps the old rule (the
+  // push through the head is a noop), so they are refused before any write.
+  // «Tutti» stays as it is. Per-occurrence Google exceptions (EXDATE/UNTIL)
+  // are not covered here.
+  if (calendarPush !== null && first.seriesKey && scope !== 'all') {
+    throw new AppError(
+      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
+      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
+    );
+  }
   const runInTransaction = bookingTransaction(appointments);
   const checkReminderSurvives = (row, nextStartMs, nextStartIso) => {
     const dueAt = row.reminderDueAt ?? null;
@@ -1453,6 +1659,24 @@ export async function rescheduleAppointment(context, request) {
       const where = occurrence
         ? `L'occorrenza ${occurrence.index + 1} di ${occurrence.total} (${seriesOccurrenceLabel(occurrence.startsAt)}) è occupata: `
         : '';
+      if (conflict.kind === OWNER_BLOCK_KIND) {
+        throw new AppError(
+          `${where}Il membro "${memberIdFor}" ha un impegno del titolare in questa fascia oraria `
+          + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
+          + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+          {
+            code: 'APPOINTMENTS_OVERLAP',
+            status: 409,
+            details: {
+              conflictingId: null,
+              status: null,
+              ...(occurrence
+                ? { occurrenceIndex: occurrence.index, occurrenceStartsAt: occurrence.startsAt, occurrenceCount: occurrence.total }
+                : {}),
+            },
+          },
+        );
+      }
       throw new AppError(
         `${where}Il membro "${memberIdFor}" ha già un altro appuntamento in questa fascia oraria `
         + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
@@ -1489,7 +1713,8 @@ export async function rescheduleAppointment(context, request) {
       // reminder written between the two reads is seen too.
       checkReminderSurvives(current, startsAt.ms, startsAt.iso);
       const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
-      checkSlotFree(held, current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
+      const singleBlocks = await ownerBlocksFor(context.calendarSync, current.teamMemberId, startsAt.iso, endsAt.iso);
+      checkSlotFree([...held, ...singleBlocks], current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
       return {
         appointment: await appointments.applyManaged(
           current.id,
@@ -1517,6 +1742,15 @@ export async function rescheduleAppointment(context, request) {
       };
       return next;
     });
+    const envelopeFromMs = Math.min(...plans.map((plan) => plan.nextStartMs));
+    const envelopeToMs = Math.max(...plans.map((plan) => plan.nextEndMs));
+    const scopeBlocks = await ownerBlocksFor(
+      context.calendarSync,
+      current.teamMemberId,
+      new Date(envelopeFromMs).toISOString(),
+      new Date(envelopeToMs).toISOString(),
+    );
+    const heldWithBlocks = [...held, ...scopeBlocks];
     for (const plan of plans) {
       if (APPOINTMENT_TERMINAL.includes(plan.row.status)) {
         throw new AppError(
@@ -1525,7 +1759,7 @@ export async function rescheduleAppointment(context, request) {
         );
       }
       checkReminderSurvives(plan.row, plan.nextStartMs, plan.nextStartsAt);
-      checkSlotFree(held, current.teamMemberId, plan.nextStartMs, plan.nextEndMs, inScopeIds, {
+      checkSlotFree(heldWithBlocks, current.teamMemberId, plan.nextStartMs, plan.nextEndMs, inScopeIds, {
         index: plan.row.occurrenceIndex ?? plan.position,
         total: targets.length,
         startsAt: plan.nextStartsAt,
@@ -1689,7 +1923,18 @@ export async function cancelAppointment(context, request) {
       field: 'scope',
     });
   }
-  const targets = await seriesScopeRows(appointments, first, scope);
+  // A series linked to Google cancels as one event: «solo questo» and «questo
+  // e i successivi» would cancel the grid while Google keeps the old rule
+  // (the push through the head is a noop), so they are refused before any
+  // write. «Tutti» stays as it is. Per-occurrence Google exceptions
+  // (EXDATE/UNTIL) are not covered here.
+  if (calendarPush !== null && first.seriesKey && scope !== 'all') {
+    throw new AppError(
+      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
+      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
+    );
+  }
+  const runInTransaction = bookingTransaction(appointments);
   const advanceOne = async (row) => {
     if (row.status === CANCELLED_STATE) return { row, cancelled: false };
     try {
@@ -1713,42 +1958,59 @@ export async function cancelAppointment(context, request) {
       return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: false };
     }
   };
-  // A scoped cancellation proves every in-scope row cancellable before the
-  // first write — exactly like the reschedule path: a terminal row in scope
-  // refuses the whole scope with 409 instead of leaving a half-cancelled
-  // series behind. The race handler inside advanceOne stays for rows that
-  // turn terminal between this read and their write.
-  for (const target of targets) {
-    if (target.status === CANCELLED_STATE) continue;
-    if (APPOINTMENT_TERMINAL.includes(target.status)) {
-      throw new AppError(
-        `An appointment in state "${target.status}" cannot be cancelled; it is terminal and keeps its history`,
-        {
-          code: 'APPOINTMENTS_INVALID_STATE',
-          status: 409,
-          details: { from: target.status, to: CANCELLED_STATE, occurrenceStartsAt: target.startsAt },
-        },
-      );
+  const critical = async () => {
+    // Re-read inside the member chain, so a cancel racing a move or another
+    // cancel sees the winner's committed rows instead of a stale first read.
+    const current = await lookup();
+    const scoped = await seriesScopeRows(appointments, current, scope);
+    // A scoped cancellation proves every in-scope row cancellable before the
+    // first write — exactly like the reschedule path: a terminal row in scope
+    // refuses the whole scope with 409 instead of leaving a half-cancelled
+    // series behind. The race handler inside advanceOne stays for rows that
+    // turn terminal between this read and their write.
+    for (const target of scoped) {
+      if (target.status === CANCELLED_STATE) continue;
+      if (APPOINTMENT_TERMINAL.includes(target.status)) {
+        throw new AppError(
+          `An appointment in state "${target.status}" cannot be cancelled; it is terminal and keeps its history`,
+          {
+            code: 'APPOINTMENTS_INVALID_STATE',
+            status: 409,
+            details: { from: target.status, to: CANCELLED_STATE, occurrenceStartsAt: target.startsAt },
+          },
+        );
+      }
     }
-  }
-  const settled = [];
-  for (const target of targets) settled.push(await advanceOne(target));
-  const namedEntry = settled.find((entry) => entry.row.id === first.id) ?? settled[0];
-  const appointment = namedEntry.row;
-  const cancelled = namedEntry.cancelled;
-  const occurrences = Object.freeze(settled.map((entry) => Object.freeze({
-    id: entry.row.id,
-    sourceKey: entry.row.sourceKey,
-    startsAt: entry.row.startsAt,
-    cancelled: entry.cancelled,
-  })));
-  // The push rides the idempotent path on a replay too: a first attempt
-  // whose push failed converges Google on the retry. A scoped cancellation
-  // also converges the series head — it carries the Google RRULE, so Google
-  // sees the series change even when the named row is a later occurrence.
-  const pushKeys = [appointment.sourceKey];
-  const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
-  if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
+    const settled = [];
+    for (const target of scoped) settled.push(await advanceOne(target));
+    const namedEntry = settled.find((entry) => entry.row.id === current.id) ?? settled[0];
+    const appointment = namedEntry.row;
+    const cancelled = namedEntry.cancelled;
+    const occurrences = Object.freeze(settled.map((entry) => Object.freeze({
+      id: entry.row.id,
+      sourceKey: entry.row.sourceKey,
+      startsAt: entry.row.startsAt,
+      cancelled: entry.cancelled,
+    })));
+    // The push rides the idempotent path on a replay too: a first attempt
+    // whose push failed converges Google on the retry. A scoped cancellation
+    // also converges the series head — it carries the Google RRULE, so Google
+    // sees the series change even when the named row is a later occurrence.
+    const pushKeys = [appointment.sourceKey];
+    const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
+    if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
+    return { appointment, cancelled, occurrences, pushKeys };
+  };
+  // The lookup, the scope read, the terminal pre-check and the advance loop
+  // run serialized on the member and inside one storage transaction when the
+  // service carries one — the same order as the reschedule path — so a crash
+  // or a race between the pre-check and the writes can no longer leave a
+  // half-cancelled series behind. The calendar push stays outside: it runs
+  // after the commit and answers as data, never as a throw.
+  const { appointment, cancelled, occurrences, pushKeys } = await withMemberBooking(
+    first.teamMemberId,
+    runInTransaction ? () => runInTransaction(critical) : critical,
+  );
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
@@ -1845,6 +2107,31 @@ const MAX_TEAM_WEEK_MS = 31 * 24 * 60 * 60 * 1000;
  * with their status, like the scheda read: a cancelled slot is still
  * evidence the member once held it.
  */
+/**
+ * One frozen owner-block row for the BO-F3-01 team view (backlog:af190faf):
+ * `{ startsAt, endsAt, title }`, null for a misshapen entry the strict
+ * validation above already refused — a second net, never the first. The
+ * title defaults to «Occupato»: a commitment with no guest has no customer
+ * to name. Titles live only here, in the authorized backoffice read: booking
+ * refusals stay generic so a booker can never probe private commitments.
+ *
+ * @param {any} block
+ * @returns {object|null}
+ */
+function projectBusyWeekRow(block) {
+  if (!block || typeof block !== 'object') return null;
+  const startMs = Date.parse(block.startsAt);
+  const endMs = Date.parse(block.endsAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  const title = typeof block.title === 'string' && block.title.trim() !== ''
+    ? block.title.trim().slice(0, 120) : 'Occupato';
+  return Object.freeze({
+    startsAt: new Date(startMs).toISOString(),
+    endsAt: new Date(endMs).toISOString(),
+    title,
+  });
+}
+
 function projectTeamWeekRow(row) {
   return Object.freeze({
     id: row.id,
@@ -1889,10 +2176,19 @@ function projectTeamWeekRow(row) {
  * because there is no roster to scan — the same opaque identities bookings
  * already store.
  *
- * @param {{appointments: any}} storage
+ * Owner commitments with no guest (backlog:af190faf) arrive only through the
+ * composed `calendarSync` handle (`listOwnerBlocks`) — never through the
+ * filter — and read as «Occupato» beside the bookings, so the grid paints
+ * what the booking path refuses. The blocks are proven up front like on
+ * every other path: a malformed store entry fails the read closed (400),
+ * exactly like the booking and suggestion paths, so grid and booking agree.
+ * The `busy` list is required on every member group (version 5): an empty
+ * week reads `busy: []`, never an absent key.
+ *
+ * @param {{appointments: any, calendarSync?: any}} storage
  * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter
  */
-export async function readTeamWeek({ appointments }, filter) {
+export async function readTeamWeek({ appointments, calendarSync }, filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
   if (!Array.isArray(value.teamMemberIds) || value.teamMemberIds.length === 0) {
     throw new ValidationError('teamMemberIds names at least one team member: a week for nobody books nothing to show', { field: 'teamMemberIds' });
@@ -1933,9 +2229,17 @@ export async function readTeamWeek({ appointments }, filter) {
       || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
+    const busy = (await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
+      .map((block) => projectBusyWeekRow(block))
+      .filter((projected) => projected !== null)
+      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso)
+      .sort((a, b) => (
+        a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt)
+      ));
     groups.push(Object.freeze({
       teamMemberId,
       appointments: Object.freeze(overlapping.map(projectTeamWeekRow)),
+      busy: Object.freeze(busy),
     }));
   }
   return Object.freeze({ from: from.iso, to: to.iso, members: Object.freeze(groups) });
@@ -2121,9 +2425,9 @@ export function alignedSlotStart(fromMs, slotMinutes) {
  * too: a proposal must be bookable, so the past is never offered
  * (backlog:d1e4d90e).
  *
- * @param {{modules: any, moduleNames?: Record<string, string>}} storage
+ * @param {{modules: any, moduleNames?: Record<string, string>, calendarSync?: any}} storage
  */
-export async function suggestSlots({ modules, moduleNames }, filter) {
+export async function suggestSlots({ modules, moduleNames, calendarSync }, filter) {
   const names = { appointment: moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments({ modules }, names);
   const checked = validateSuggestFilter(filter);
@@ -2137,6 +2441,11 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
   const groups = [];
   for (const teamMemberId of checked.members) {
     const held = await appointments.listWhere({ teamMemberId });
+    // Owner commitments with no guest (backlog:af190faf) hold like bookings:
+    // the same store rows the booking path overlap-checks, so a suggestion
+    // never offers a slot the booking would refuse. Server handle only —
+    // a filter `busyBlocks` key is never read.
+    const heldWithBlocks = [...held, ...(await ownerBlocksFor(calendarSync, teamMemberId, checked.fromIso, checked.toIso))];
     const slots = [];
     for (let start = firstStart; start + slotMs <= checked.toMs; start += slotMs) {
       // A proposal must be fully ahead: a step already begun cannot be
@@ -2146,7 +2455,7 @@ export async function suggestSlots({ modules, moduleNames }, filter) {
       const candidate = { teamMemberId, startMs: start, endMs: start + slotMs };
       // findOverlap throws on a held row whose slot cannot be proven: a
       // corrupt witness fails the suggestion closed, never a silent free slot.
-      if (findOverlap(candidate, held) === null) {
+      if (findOverlap(candidate, heldWithBlocks) === null) {
         slots.push(Object.freeze({
           startsAt: new Date(start).toISOString(),
           endsAt: new Date(start + slotMs).toISOString(),
@@ -2252,19 +2561,18 @@ export async function proposeBooking(context, request) {
   const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments(context, names);
   const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
-  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs }, held);
+  const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
+  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+    [...held, ...blocks]);
   if (conflict) {
-    throw new AppError(
-      `The team member "${input.teamMemberId}" already holds an appointment overlapping this slot `
-      + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): propose a free slot instead.`,
-      { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-    );
+    throw overlapRefusal(input.teamMemberId, conflict);
   }
   // A series proposal checks every occurrence, not just the head: Conferma
   // books the whole series or nothing, so a busy later slot must stop the
   // proposal with the same message the booking would answer.
   if (input.recurrence !== null) {
     const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+    assertSeriesHeadSlot(input, slots);
     const hit = seriesConflict(held, input.teamMemberId, slots, slots.length);
     if (hit) throw seriesOverlapError(input.teamMemberId, hit, slots.length);
   }
@@ -2329,6 +2637,10 @@ export async function confirmBooking(context, request) {
   }
   const spaceId = record.spaceId;
   const input = validateAppointmentRequest(request);
+  // Review giro 5 (backlog:af190faf): holds close the slot before the
+  // switch, like proposeBooking — a confirm over a held slot refuses 409
+  // instead of opening a proposal for an impossible slot.
+  await refuseHeldSlot(context, input);
   // A named calendar is validated before any row exists: a statically
   // preventable miscomposition fails here, never after a committed
   // confirmed booking the caller received an error for.
@@ -2496,6 +2808,10 @@ export async function bookFromLink(context, request) {
     startsAt,
     sourceKey: LINK_SOURCE_PREFIX + linkToken + ':' + startsAt,
   });
+  // Review giro 5 (backlog:af190faf): holds close the slot before the
+  // switch, like proposeBooking — a link over a held slot refuses 409
+  // instead of opening a proposal for an impossible slot.
+  await refuseHeldSlot(context, input);
   // The switch is read before any row exists: with the switch off the
   // link stays a proposal a human approves, like the confirm path — the
   // proposal action key binds the whole derived claim, so a resubmitted
@@ -2799,7 +3115,7 @@ function extractPhraseDraft(text, nowMs) {
  *
  * @param {Record<string, string>} [moduleNames]
  */
-export function createAppointmentScheduleCapability({ moduleNames } = {}) {
+export function createAppointmentScheduleCapability({ moduleNames, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
   return {
     name: 'appointment-schedule',
@@ -2807,8 +3123,9 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
     description:
       'Read one subject\'s appointments — every booking naming it, soonest slot first, cancelled rows included '
       + 'with their status — and the team week: every booking overlapping a window for each named member, '
-      + 'grouped per person. Read-only: frozen rows, no storage handle, no write path.',
-    /** @param {{modules: any}} context */
+      + 'grouped per person. Owner commitments with no guest read as «Occupato» from the composed calendar-sync '
+      + 'handle. Read-only: frozen rows, no storage handle, no write path.',
+    /** @param {{modules: any, calendarSync?: any}} context */
     create(context = {}) {
       const modules = context?.modules;
       if (!modules || typeof modules.get !== 'function') {
@@ -2817,12 +3134,16 @@ export function createAppointmentScheduleCapability({ moduleNames } = {}) {
         });
       }
       const service = resolveModule(modules, names.appointment)?.service;
+      // The owner-block feed is deployment-injected server state: the
+      // factory handle wins, a per-opener handle fills the gap, like the
+      // book capability below. The filter never carries blocks.
+      const blocks = calendarSync ?? context?.calendarSync ?? null;
       return Object.freeze({
         capabilityContract: 1,
         /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
         scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter */
-        teamWeekFor: (filter) => readTeamWeek({ appointments: service }, filter),
+        teamWeekFor: (filter) => readTeamWeek({ appointments: service, calendarSync: blocks }, filter),
       });
     },
   };
@@ -2934,7 +3255,8 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
- * @param {any} [calendarSync] a calendar-sync push handle `{pushAppointment}` (per opener; optional)
+ * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?}` (per opener; optional):
+ *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path
  */
 export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);
@@ -3030,7 +3352,9 @@ export function createAppointmentBookCapability({ moduleNames, provider, followU
         /** @param {unknown} request */
         bookAppointment: (request) => bookAppointment(scope, request),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, slotMinutes?: unknown}} filter */
-        suggestSlots: (filter) => suggestSlots({ modules: scope.modules, moduleNames: scope.moduleNames }, filter),
+        suggestSlots: (filter) => suggestSlots({
+          modules: scope.modules, moduleNames: scope.moduleNames, calendarSync: scope.calendarSync,
+        }, filter),
         /** @param {unknown} request */
         proposeBooking: (request) => proposeBooking(scope, request),
         /** @param {unknown} request */

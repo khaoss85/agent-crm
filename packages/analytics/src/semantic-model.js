@@ -89,6 +89,15 @@ export const PIPELINE_SEMANTIC_MODEL = Object.freeze({
       kind: 'iso_date',
       description: 'Expected close date, ISO string or null.',
     }),
+    // backlog:48993bed7294 (verifica 13/11: «Vinte in novembre 0,00 €» with
+    // an offer paid on 7 nov): when an offer was actually won, paid or lost.
+    // A sale closes on this day, not on the expected one — none of the
+    // pilot's offers carries an expected date at all.
+    'opportunity.closedAt': Object.freeze({
+      column: 'closed_at',
+      kind: 'iso_date',
+      description: 'When the offer closed (won, paid or lost), ISO timestamp or null while open.',
+    }),
   }),
 });
 

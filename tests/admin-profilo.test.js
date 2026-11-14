@@ -470,3 +470,35 @@ test('backlog:f7d2f7f362cf Modifica sits beside the name at its own measure, nev
   const emailAt = order.findIndex((cls) => cls.split(/\s+/).includes('bo-profilo-meta'));
   assert.ok(rowAt >= 0 && emailAt >= 0 && rowAt < emailAt, 'the name row stays above the email line');
 });
+
+// backlog:8618ad3f72db (verifica 13-14/11): Profilo opened only from the
+// name at the foot of the sidebar — it is one of the Impostazioni tabs, with
+// the same tab row as its siblings, Profilo underlined.
+test('8618ad3f72db: Profilo sits under the Impostazioni tab row, its own tab underlined', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const navigated = [];
+  const view = createProfiloView({
+    doc, mount, member: () => ({ name: 'Elena Rinaldi', role: 'owner' }),
+    navigate: (hash) => navigated.push(hash), fixCount: () => 2,
+    client: { request: async () => ({ member: { name: 'Elena Rinaldi', role: 'owner' }, connections: { available: true, reason: null, items: [] } }) },
+  });
+  await view.render();
+  const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab') !== null);
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi', 'profilo']);
+  assert.equal(tabs.find((tab) => tab.getAttribute('data-tab') === 'profilo').getAttribute('aria-selected'), 'true');
+  tabs.find((tab) => tab.getAttribute('data-tab') === 'spazi-accessi').dispatch('click');
+  assert.deepEqual(navigated, ['#/spazi-accessi']);
+});
+
+// backlog:8618ad3f72db: the channel state and «Collega» are ONE component on
+// Profilo, Stato sync and Connettori (uiChannelState / uiConnect).
+test('8618ad3f72db: Profilo reads its channel state and Collega through the shared components', async () => {
+  const mount = await render({ member: { name: 'Elena Rinaldi', role: 'owner' },
+    connections: { available: true, reason: null, items: [{ connector: 'gmail', status: 'not_connected' }] } });
+  const states = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-channel-state'));
+  assert.ok(states.length > 0, 'the state pill is the shared one');
+  const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
+  assert.ok(collega.length > 0);
+  for (const link of collega) assert.match(link.getAttribute('class') ?? '', /\bui-connect\b/);
+});
