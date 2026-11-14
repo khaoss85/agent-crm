@@ -8,6 +8,7 @@ import {
   GMAIL_ADAPTER_NAME,
   GMAIL_ADAPTER_VERSION,
   GMAIL_MAX_TEXT,
+  GMAIL_MAX_TEXT_BYTES,
   buildGmailSendRequest,
   canonicalGmailAddress,
   createGmailChannelAdapter,
@@ -295,14 +296,65 @@ test('the REST mapping sends replies in-thread and opens new threads without one
   assert.match(mime, new RegExp(`To: ${CUSTOMER}`));
   assert.match(mime, /Subject: Re: Preventivo/);
   assert.match(mime, /Certo!/);
+  assert.match(mime, /In-Reply-To: <thread-AAA@example\.com>/);
+  assert.match(mime, /References: <thread-AAA@example\.com>/);
   const fresh = buildGmailSendRequest({
     message: { to: CUSTOMER, text: 'Benvenuto!' }, config, secret: SECRET,
   });
   assert.ok(!('threadId' in fresh.body), 'a first message opens a new thread: no thread id is sent');
+  const freshMime = Buffer.from(fresh.body.raw, 'base64url').toString('utf8');
+  assert.ok(!freshMime.includes('In-Reply-To:'), 'a first message carries no threading hint');
+  assert.ok(!freshMime.includes('References:'), 'a first message carries no threading hint');
   assert.throws(
     () => buildGmailSendRequest({ message: { to: CUSTOMER, text: 'x' }, config, secret: '' }),
     (error) => error.code === 'CHANNEL_SECRET_UNAVAILABLE',
   );
+});
+
+test('a reply at the text limit stays under the 32 KiB outbox bound in bytes (backlog:1500e788)', () => {
+  const definition = gmailDefinition();
+  assert.equal(GMAIL_MAX_TEXT_BYTES, 30000);
+  const atLimit = definition.normalizeOutbound({ to: CUSTOMER, text: 'x'.repeat(GMAIL_MAX_TEXT) });
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(atLimit), 'utf8') < 32 * 1024,
+    'a 30000-char ASCII reply fits the outbox envelope in bytes',
+  );
+  const atLimitThread = definition.normalizeOutbound({
+    to: CUSTOMER, text: 'x'.repeat(GMAIL_MAX_TEXT), threadId: 'thread-AAA', subject: 'Re: Preventivo',
+  });
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(atLimitThread), 'utf8') < 32 * 1024,
+    'a 30000-char ASCII reply with thread and subject fits the outbox envelope in bytes',
+  );
+  for (const text of ['è'.repeat(GMAIL_MAX_TEXT), `x${'y'.repeat(GMAIL_MAX_TEXT)}`]) {
+    assert.throws(
+      () => definition.normalizeOutbound({ to: CUSTOMER, text }),
+      (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
+      'over-byte and over-char texts refuse at normalize time',
+    );
+    assert.throws(
+      () => buildGmailSendRequest({
+        message: { to: CUSTOMER, text },
+        config: { mailbox: MAILBOX, baseUrl: 'https://gmail.test' },
+        secret: SECRET,
+      }),
+      (error) => error.code === 'CHANNEL_MESSAGE_MALFORMED',
+      'over-byte and over-char texts refuse at send time',
+    );
+  }
+});
+
+test('the threading hint survives thread ids outside the Message-ID alphabet (backlog:1500e788)', () => {
+  const config = { mailbox: MAILBOX, baseUrl: 'https://gmail.test' };
+  const reply = buildGmailSendRequest({
+    message: { to: CUSTOMER, text: 'Certo!', threadId: 'a<b>c@d' },
+    config,
+    secret: SECRET,
+  });
+  const mime = Buffer.from(reply.body.raw, 'base64url').toString('utf8');
+  assert.match(mime, /In-Reply-To: <abcd@example\.com>/);
+  assert.match(mime, /References: <abcd@example\.com>/);
+  assert.ok(!mime.includes('<b>'), 'no raw thread-id character breaks the header syntax');
 });
 
 test('sends are idempotent and refusals carry the provider code', async (t) => {

@@ -180,10 +180,10 @@ test('every screen photographs with its shell identity from the /bo router', () 
     reporting: { id: 'reporting', label: 'Reporting' },
     'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
     personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
-    catalogo: { id: '', label: 'Catalogo prodotti' },
+    catalogo: { id: 'impostazioni', label: 'Catalogo prodotti' },
     'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
     'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
-    profilo: { id: '', label: 'Profilo' },
+    profilo: { id: 'impostazioni', label: 'Profilo' },
     connettori: { id: 'impostazioni', label: 'Connettori' },
     componenti: { id: '', label: 'Componenti' },
   });
@@ -512,7 +512,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     switches: 6,
     master: 1,
     masterAbove: true,
-    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
+    stats: ['2 canali · 2 persone · 3 clienti'],
     apri: 1,
   }));
   assert.throws(() => assertProbe('spazi-accessi', {
@@ -524,7 +524,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     switches: 6,
     master: 1,
     masterAbove: true,
-    stats: ['2 canali · 2 persone · 3 clienti'],
+    stats: [],
     apri: 1,
   }), /stats/);
   assert.throws(() => assertProbe('spazi-accessi', {
@@ -536,7 +536,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
     switches: 6,
     master: 1,
     masterAbove: true,
-    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'],
+    stats: ['2 canali · 2 persone · 3 clienti'],
     apri: 0,
   }), /Apri/);
   // backlog:2c3156a4: five switches without the master, or a master not
@@ -544,8 +544,11 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   const spazi = {
     spaces: 3, here: 'Stai lavorando qui', members: 2, avatars: 2, pills: 2,
     switches: 6, master: 1, masterAbove: true,
-    stats: ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], apri: 1,
+    stats: ['2 canali · 2 persone · 3 clienti'], apri: 1,
   };
+  // backlog:9d06eb1e174b: a statistic on the card of a space that is not
+  // open means its connectors were read — never.
+  assert.throws(() => assertProbe('spazi-accessi', { ...spazi, stats: [...spazi.stats, ...spazi.stats] }), /expected one/);
   assert.throws(() => assertProbe('spazi-accessi', { ...spazi, switches: 5 }), /expected 6/);
   assert.throws(() => assertProbe('spazi-accessi', { ...spazi, master: 0 }), /master AI switches/);
   assert.throws(() => assertProbe('spazi-accessi', { ...spazi, masterAbove: false }), /not above the five/);

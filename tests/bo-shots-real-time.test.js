@@ -42,10 +42,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { SCREENS, chromiumFlags, findChromium, harnessHtml, harnessStage, startServer } from '../scripts/bo-shots.js';
+import {
+  SCREENS, VIRTUAL_BUDGET_MS, chromiumFlags, findChromium, harnessHtml, harnessStage, runChromium as runSharedChromium, startServer,
+} from '../scripts/bo-shots.js';
 
 const CHROMIUM = findChromium();
 const FLAGS = chromiumFlags(CHROMIUM);
@@ -58,19 +59,10 @@ const PUBLIC = fileURLToPath(new URL('../apps/admin/public', import.meta.url));
 /** Every Blob read hangs: the file bytes never arrive through Blob I/O. */
 const HANGING_BLOB_READS = '<script>Blob.prototype.arrayBuffer = function hangingRead() { return new Promise(() => {}); };</script>';
 
-function runChromium(args) {
-  return new Promise((resolve) => {
-    const child = spawn(/** @type {string} */ (CHROMIUM), [...(FLAGS ?? []), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGKILL'), 120_000);
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('close', (status) => {
-      clearTimeout(timer);
-      resolve({ status, stdout, stderr });
-    });
-  });
+// backlog:c7e97de6cf1f (review Muse #900): the shared runner — stopped on
+// no sign of life, with a safety cap; never on a fixed total time.
+function runChromium(args, server) {
+  return runSharedChromium(/** @type {string} */ (CHROMIUM), [...(FLAGS ?? []), ...args], { activityAt: () => server.boActivityAt() });
 }
 
 /** Every webfont load first reads 1 GB of throwaway bytes: real time, no fetch. */
@@ -78,7 +70,7 @@ const SLOW_FONTS = '<script>{ const own = document.fonts.load.bind(document.font
 
 /**
  * Serve one harness through the real shot server with a prelude, and read
- * the DOM after the 8000 ms virtual budget.
+ * the DOM at its ready title (or when it stops making progress).
  * @param {string} name @param {string} prelude
  */
 async function dumpWith(name, prelude) {
@@ -87,7 +79,7 @@ async function dumpWith(name, prelude) {
 
 /**
  * Serve one harness, rewritten by `rewrite`, through the real shot server,
- * and read the DOM after the 8000 ms virtual budget.
+ * and read the DOM at its ready title (or when it stops making progress).
  * @param {string} name @param {(html: string) => string} rewrite
  */
 async function dumpPage(name, rewrite) {
@@ -99,10 +91,12 @@ async function dumpPage(name, rewrite) {
     const dom = await runChromium([
       '--headless', '--disable-gpu', '--dump-dom',
       '--window-size=390,1600',
-      '--virtual-time-budget=8000',
+      // The same budget as bo:shots: no deadline — the run ends at the
+      // ready title or on no progress (backlog:c7e97de6cf1f).
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
       '--disable-background-networking',
       `http://127.0.0.1:${address.port}/shot-${name}.html`,
-    ]);
+    ], server);
     assert.equal(dom.status, 0, `the probe run exits 0 (stderr: ${dom.stderr.slice(-300)})`);
     return { dom: dom.stdout, ms: Date.now() - started };
   } finally {

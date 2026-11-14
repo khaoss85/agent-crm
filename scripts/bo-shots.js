@@ -327,7 +327,7 @@ const DEMO_PROFILE = {
   workTasks: {
     available: true, count: 2, countIsComplete: true,
     items: [
-      { id: 'w1', status: 'open', name: 'Richiamare per la prova' },
+      { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
       { id: 'w2', status: 'done', name: 'Inviare il listino' },
     ],
     truncated: false,
@@ -756,10 +756,10 @@ export const SHELL_SCREENS = Object.freeze({
   reporting: { id: 'reporting', label: 'Reporting' },
   'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
-  catalogo: { id: '', label: 'Catalogo prodotti' },
+  catalogo: { id: 'impostazioni', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
-  profilo: { id: '', label: 'Profilo' },
+  profilo: { id: 'impostazioni', label: 'Profilo' },
   // The connectors screen (BO-F6-02): the same sidebar voice and path the
   // app crumbs for it, exactly like shellScreenFor in app.js.
   connettori: { id: 'impostazioni', label: 'Connettori' },
@@ -1383,7 +1383,9 @@ const client = {
   async request(path, options) {
     const opts = options || {};
     if (path === '/api/spine/context') {
-      return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+      // The production shape: the verified session subject (Elena's Google
+      // login), so «Rimuovi» shows on the other rows (backlog:9d06eb1e174b).
+      return { identity: { subject: 'google|1001', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|1001' }, roles: { owner: [], operator: [], observer: [] } };
     }
     if (path === '/api/spine/memberships' && String(opts.method || 'GET').toUpperCase() !== 'POST') {
       return { items: MEMBERS };
@@ -1457,7 +1459,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   badges: document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-tile').length,
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
-  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
+  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .ui-channel-state')]
     .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
@@ -1574,7 +1576,20 @@ export function harnessHtml(name, publicDir, options = {}) {
  * the whole budget, and timers, frames and webfonts keep moving. At the
  * ready title the beat stops and the budget runs out at once, as before.
  */
-export const VIRTUAL_BUDGET_MS = 8000;
+export const VIRTUAL_BUDGET_MS = 600_000;
+/**
+ * backlog:c7e97de6cf1f — the budget above is no deadline. In CI under load
+ * a harness did not reach its ready title (or the PNG came out almost
+ * blank, 11631 bytes) because 8 s of virtual time is ~16 s of real time at
+ * the pacer's rate: a module graph that took longer to compile on a busy
+ * runner simply ran out of clock. Now the run ends on the page's own
+ * signals: at the ready title the beat stops and the clock jumps to the end
+ * at once (a large budget costs nothing then), and a harness that stops
+ * making progress — no asset fetched, no DOM change, no new resource for
+ * STALL_MS of real time — is stopped by the shot server, which tells the
+ * page to stop its beat. A slow machine that keeps working keeps going.
+ */
+export const STALL_MS = 30_000;
 /** Real time of one beat. */
 export const PACE_MS = 20;
 /** Virtual time one beat may let pass. */
@@ -1584,13 +1599,50 @@ export const PACE_PRELUDE = `<script>
 (() => {
   const later = window.setTimeout.bind(window);
   let done = false;
+  // backlog:c7e97de6cf1f: each beat carries how far the page got (DOM
+  // changes, resources loaded, ready state); the shot server answers 205
+  // once nothing moved for STALL_MS of real time, and the beat stops.
+  // Structure and text only: a blinking or pulsing attribute is no progress.
+  let changes = 0;
+  new MutationObserver(() => { changes += 1; })
+    .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  // Resources seen by an observer (the timing buffer fills with beats), the
+  // beats themselves left out.
+  let loaded = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) if (!entry.name.includes('/__bo-pace')) loaded += 1;
+    }).observe({ type: 'resource', buffered: true });
+  } catch {}
+  const progress = () => \`\${changes}.\${loaded}.\${document.readyState}\`;
   const beat = () => {
     if (done) return;
-    fetch('/__bo-pace').catch(() => {}).then(() => {
+    fetch('/__bo-pace?p=' + encodeURIComponent(progress())).then((answer) => {
+      if (answer.status === 205) {
+        document.documentElement.setAttribute('data-bo-stalled', answer.headers.get('x-bo-stall-ms') || 'true');
+        finish();
+      }
+    }, () => {}).then(() => {
       if (!done) later(beat, ${PACE_STEP_MS});
     });
   };
-  const finish = () => { done = true; };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    // backlog:c7e97de6cf1f: the harness is done (or stopped). With a budget
+    // that is no deadline, a page timer still ticking (an interval, a frame
+    // loop) would walk the clock through the rest of the budget — minutes
+    // of virtual time a loaded runner pays in real time, with no request a
+    // guard could see. So the page's timers stop here and the clock jumps
+    // to the end: what was painted at the ready title is what is shot.
+    const top = later(() => {}, 0);
+    for (let id = 0; id <= top; id += 1) { clearTimeout(id); clearInterval(id); }
+    const frame = requestAnimationFrame(() => {});
+    for (let id = 0; id <= frame; id += 1) cancelAnimationFrame(id);
+    window.setTimeout = () => 0;
+    window.setInterval = () => 0;
+    window.requestAnimationFrame = () => 0;
+  };
   new MutationObserver(() => {
     if (/-ready$/.test(document.title)) finish();
   }).observe(document.head, { childList: true, subtree: true, characterData: true });
@@ -1611,18 +1663,31 @@ export const PACE_PRELUDE = `<script>
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-export function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor, { stallMs = STALL_MS, now = () => Date.now() } = {}) {
   /** Beats not answered yet: closing the server answers them. */
   const beats = new Set();
+  // backlog:c7e97de6cf1f: the last real moment a page moved (an asset
+  // fetched, a new progress signature on a beat) and the last request of
+  // any kind — the browser run's idle guard reads it.
+  let progressAt = now();
+  let activityAt = now();
+  let lastSignature = null;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    activityAt = now();
     // backlog:30dc70e6b076: one beat of the page pacer (see PACE_PRELUDE).
     if (url.pathname === '/__bo-pace') {
+      const signature = url.searchParams.get('p');
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        progressAt = now();
+      }
+      const stalled = now() - progressAt > stallMs;
       const answer = () => {
         clearTimeout(timer);
         beats.delete(answer);
         if (res.writableEnded) return;
-        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.writeHead(stalled ? 205 : 204, { 'cache-control': 'no-store', ...(stalled ? { 'x-bo-stall-ms': String(stallMs) } : {}) });
         res.end();
       };
       const timer = setTimeout(answer, PACE_MS);
@@ -1630,6 +1695,9 @@ export function startServer(publicDir, pageFor) {
       res.on('close', answer);
       return;
     }
+    // Anything else the page asks for is progress (a module, a font).
+    progressAt = now();
+    lastSignature = null;
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1666,6 +1734,8 @@ export function startServer(publicDir, pageFor) {
   server.on('close', () => {
     for (const answer of [...beats]) answer();
   });
+  /** The last real moment the server heard from a page (the browser run's idle guard). */
+  server.boActivityAt = () => activityAt;
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => resolve(server));
@@ -1792,7 +1862,11 @@ export function harnessStage(dom) {
   const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
   const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
   const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
-  return `title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
+  // The window the server applied, as the page recorded it (review Muse #900).
+  const stalledMs = out.match(/<html[^>]*data-bo-stalled="(\d+|true)"/)?.[1] ?? null;
+  const stalled = stalledMs === null ? ''
+    : `stalled (no progress for ${stalledMs === 'true' ? STALL_MS : Number(stalledMs)} ms), `;
+  return `${stalled}title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
     + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
     + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
 }
@@ -1803,26 +1877,52 @@ export function harnessStage(dom) {
  * the page could never load. Async spawn keeps the loop free to serve.
  * @param {string} binary
  * @param {Array<string>} args
- * @param {number} timeoutMs
+ * @param {{ activityAt?: () => number, idleMs?: number }} [options]
  */
-function runChromium(binary, args, timeoutMs) {
+export function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BROWSER_IDLE_MS, maxMs = BROWSER_MAX_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const timer = setTimeout(() => {
+    const startedAt = Date.now();
+    // backlog:c7e97de6cf1f: no total deadline — a browser is stopped only
+    // when neither it nor its page made any sign of life (output, a request
+    // to the shot server) for idleMs. A slow run that keeps working goes on.
+    let lifeAt = startedAt;
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); lifeAt = Date.now(); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); lifeAt = Date.now(); });
+    const guard = setInterval(() => {
+      const last = Math.max(lifeAt, activityAt());
+      // Review Muse #900 (P1): progress decides the normal case; this
+      // safety cap stops the pathological one — a page always busy and
+      // never ready. It is never reached by a normal run.
+      if (Date.now() - startedAt > maxMs) {
+        clearInterval(guard);
+        child.kill('SIGKILL');
+        reject(new Error(`chromium still running after ${maxMs}ms: safety cap (a page always busy and never ready; never reached in a normal run)`));
+        return;
+      }
+      if (Date.now() - last <= idleMs) return;
+      clearInterval(guard);
       child.kill('SIGKILL');
-      reject(new Error(`chromium timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+      reject(new Error(`chromium showed no sign of life for ${idleMs}ms`));
+    }, Math.min(1000, Math.max(50, Math.floor(Math.min(idleMs, maxMs) / 4))));
+    child.on('error', (error) => { clearInterval(guard); reject(error); });
     child.on('close', (status) => {
-      clearTimeout(timer);
+      clearInterval(guard);
       resolve({ status, stdout, stderr });
     });
   });
 }
+
+/** How long a browser run may show no sign of life before it is stopped. */
+export const BROWSER_IDLE_MS = 2 * STALL_MS;
+/**
+ * The safety cap of one browser run: 5 minutes, never reached in a normal
+ * run (a full screen takes seconds, ~60 s on a heavily loaded machine). It
+ * only stops a page that keeps changing and never signals ready.
+ */
+export const BROWSER_MAX_MS = 5 * 60_000;
 
 /**
  * Reads the #probe JSON out of a `--dump-dom` stdout. The probe is the only
@@ -2009,13 +2109,14 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 linked channels,
-      // 2 rendered members, exact total 3). A card that cannot count paints
-      // no row, so the gate requires both rows here.
+      // C7: the open space's card paints the real statistic (2 linked
+      // channels, 2 rendered members, exact total 3). backlog:9d06eb1e174b:
+      // another space is never read (its connectors answer 403 to this
+      // session), so exactly one card carries the row.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
       const expectedStat = '2 canali · 2 persone · 3 clienti';
-      if (stats.length !== 2 || stats.some((stat) => stat !== expectedStat)) {
-        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected two ${JSON.stringify(expectedStat)}`);
+      if (stats.length !== 1 || stats.some((stat) => stat !== expectedStat)) {
+        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected one ${JSON.stringify(expectedStat)}`);
       }
       // The non-active card paints «Apri» (the wired production path passes
       // onPickSpace); the active card marks «Stai lavorando qui» instead.
@@ -2073,7 +2174,7 @@ export function assertProbe(name, probe) {
  * (backlog:418b90704674).
  * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string, theme?: string, tag?: string }} options
  */
-async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '' }) {
+async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '', activityAt = () => Date.now() }) {
   // backlog:c0726d0f6d13: dark renders with Chromium --force-dark-mode.
   const themeFlags = theme === 'dark' ? ['--force-dark-mode'] : [];
   const page = screen.name === 'login'
@@ -2098,7 +2199,7 @@ async function renderScreen({ binary, flags, port, screen, outDir, theme = 'ligh
       '--force-prefers-reduced-motion',
       '--disable-background-networking',
       page,
-    ], 120000);
+    ], { activityAt });
     if (dom.status !== 0) {
       throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status} (stderr: ${(dom.stderr ?? '').slice(-500)})`);
     }
@@ -2150,7 +2251,7 @@ async function renderScreen({ binary, flags, port, screen, outDir, theme = 'ligh
       '--hide-scrollbars',
       '--disable-background-networking',
       page,
-    ], 120000);
+    ], { activityAt });
     const floor = shotFloor(kind);
     let shot = null;
     for (let attempt = 1; attempt <= SHOT_MAX_ATTEMPTS; attempt += 1) {
@@ -2218,7 +2319,10 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir, theme: args.theme, tag });
+      const shots = await renderScreen({
+        binary, flags, port: address.port, screen, outDir, theme: args.theme, tag,
+        activityAt: () => server.boActivityAt(),
+      });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

@@ -794,6 +794,32 @@ button.bo-scheda-step-check { flex: 0 0 18px; width: 18px; height: 18px; min-wid
 button.bo-scheda-tile { font-size: 12px; padding: 12px 4px 10px; overflow-wrap: normal; word-break: keep-all; }
 button.bo-scheda-ask-ai { width: 100%; margin-top: 8px; border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
 button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
+/* Voce 2c1c0e149cf9: the quick-action AI tile wears the same violet, as an
+ * equal grid tile (no full-width Dettagli rule here). The Offerta tile keeps
+ * the grid cell through its menu wrap, like the pipeline add wrap. */
+.bo-scheda-actions .bo-scheda-tile-ai { border-color: var(--agent-line); background: var(--agent-card); color: var(--agent-ink); }
+.bo-scheda-actions .bo-scheda-tile-ai:hover { border-color: var(--agent-ink); }
+.bo-scheda-offerwrap { position: relative; display: flex; }
+.bo-scheda-offerwrap > .bo-scheda-tile { flex: 1 1 auto; width: 100%; }
+/* Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — the same
+ * agent tokens as the summary card, with the «Vista per» tabs and the
+ * PROSSIME AZIONI rows. */
+.bo-scheda-viste { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; }
+.bo-scheda-viste-label { font-size: 12px; color: var(--muted); }
+.bo-scheda-vista { min-height: 0; padding: 5px 12px; border-radius: 99px; border: 1px solid var(--agent-line); background: var(--surface); color: var(--agent-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.bo-scheda-vista[data-active="true"] { background: var(--agent-ink); border-color: var(--agent-ink); color: var(--surface); }
+/* Voce 2c1c0e149cf9 (design check 14/11): the ui-btn base painted the vista
+ * tabs big and stacked in the 300px right column — they are history-chip
+ * pills on their own row under the label instead. The triple class beats the
+ * later .ui-btn rule; the active rule above already beats .ui-btn-secondary. */
+.bo-scheda-viste-label { flex: 1 1 100%; }
+.bo-scheda-viste .bo-scheda-vista.ui-btn { min-height: 0; height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; }
+.bo-scheda-recap-actions-title { margin: 6px 0 0; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-scheda-recap-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bo-scheda-recap-msg-head { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.bo-scheda-recap-msg { margin: 0; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
+.bo-scheda-step-note { display: block; font-size: 12px; color: var(--muted); }
+.bo-scheda-suggested { font-size: 12px; font-weight: 600; color: var(--agent-ink); }
 /* Il link dell'offerta resta nel testo della card: niente blu e sottolineato del browser. */
 .bo-scheda-offer-link { color: inherit; text-decoration: none; }
 .bo-scheda-offer-link:hover .bo-scheda-offer-name { text-decoration: underline; text-underline-offset: 3px; }
@@ -1206,6 +1232,8 @@ select.bo-spazi-input { flex: none; }
   border: none; cursor: pointer; background: var(--line);
 }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
+/* backlog:8618ad3f72db: a child switch paused by the space AI is off, not busy: not-allowed, never the wait cursor. */
+.bo-spazi-toggle[data-paused="true"]:disabled { cursor: not-allowed; }
 /* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
 .bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
@@ -1781,14 +1809,9 @@ select.bo-spazi-input { flex: none; }
 /* Voce 3a3e6eaf: the Canali card like prototype 03 — count beside the
  * title, coloured state pills, unlinked rows dimmed with a solid Collega. */
 .bo-sync-cardhead .bo-sync-count { margin: 0; padding: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); white-space: nowrap; }
-.bo-sync-pill { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--surface-soft); color: var(--ink); }
-.bo-sync-pill[data-pill="attivo"] { background: var(--accent-soft); color: var(--accent); }
-.bo-sync-pill[data-pill="permesso"] { background: var(--pending-soft); color: var(--pending-ink); }
-.bo-sync-pill[data-pill="importazione"] { background: var(--data-soft); color: var(--data-ink); }
-/* Voce 1a3a0ba236c0 (C18): waiting for the first event is informational
- * like an import in corso — the same pair, no new colour. */
-.bo-sync-pill[data-pill="attesa"] { background: var(--data-soft); color: var(--data-ink); }
-.bo-sync-pill[data-pill="altro"] { background: var(--human-soft); color: var(--human-ink); }
+/* backlog:8618ad3f72db: Stato sync's pills are the shared ui-channel-state
+ * (attivo → ok, permesso → warn, importazione and attesa → data — voce
+ * 1a3a0ba236c0: waiting is informational like an import —, altro → human). */
 .bo-sync-row-off .bo-sync-namewrap, .bo-sync-row-off td:nth-child(2), .bo-sync-row-off td:nth-child(3) { opacity: .6; }
 .bo-sync-channels .bo-sync-table .bo-sync-fix-action { background: var(--muted); border-color: var(--muted); color: var(--paper); padding: 5px 12px; font-size: 12px; }
 .bo-sync-hero-connect { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
@@ -2480,14 +2503,18 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-profilo-name-row .bo-profilo-name { flex: 1 1 auto; min-width: 0; }
 button.bo-profilo-edit-open { flex: none; align-self: center; }
 .bo-profilo-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
-.bo-profilo-pill {
+.bo-profilo-pill, .ui-channel-state {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px;
   font-size: 12px; font-weight: 700; white-space: nowrap;
 }
 .bo-profilo-pill-role { background: var(--ink); color: var(--paper); }
-.bo-profilo-pill-ok { background: var(--accent-soft); color: var(--accent); }
-.bo-profilo-pill-muted { background: var(--surface-soft); color: var(--muted); }
-.bo-profilo-pill-warn { background: var(--pending-soft); color: var(--pending-ink); }
+/* backlog:8618ad3f72db: one channel state and one «Collega» on Profilo, Stato sync and Connettori. */
+.ui-channel-state-ok { background: var(--accent-soft); color: var(--accent); }
+.ui-channel-state-muted { background: var(--surface-soft); color: var(--muted); }
+.ui-channel-state-warn { background: var(--pending-soft); color: var(--pending-ink); }
+.ui-channel-state-data { background: var(--data-soft); color: var(--data-ink); }
+.ui-channel-state-human { background: var(--human-soft); color: var(--human-ink); }
+a.ui-connect, a.ui-connect:hover { text-decoration: none; }
 .bo-profilo-card { border-radius: 20px; padding: 24px; display: flex; flex-direction: column; gap: 6px; }
 /* Connettori: la card Canali sotto i Collegamenti Google, con lo stesso respiro tra le card delle altre schermate. */
 .bo-canali-card { margin-top: 16px; }

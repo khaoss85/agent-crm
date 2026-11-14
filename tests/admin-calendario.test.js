@@ -571,7 +571,9 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — the booked panel closes instead of reading «Prenotato».
+  assert.ok(!mount.textContent.includes('Prenotato:'), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the form closes');
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
@@ -759,7 +761,11 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).confirmed, true);
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — like Google Calendar the booked panel closes instead
+  // of reading «Prenotato», and the proposals go with it.
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Prenotato:')), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
+  assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
 test('late-evening wall times book the same Rome day, never tomorrow', async () => {
@@ -848,7 +854,11 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — like Google Calendar the booked panel closes instead
+  // of reading «Prenotato», and the proposals go with it.
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Prenotato:')), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
+  assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
 // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or says
@@ -3779,7 +3789,7 @@ const manualButton = (mount, label) => mount.querySelector('.cal-manual').findAl
 
 // e) After «booked» the form read «Bozza pronta: premi Conferma…» and the
 // phrase card kept its draft: a booking is a done state.
-test('a booked Conferma clears every draft and shows «Prenotato» with the week reloaded', async () => {
+test('a booked Conferma clears every draft, closes the panel and reloads the week', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -3806,11 +3816,11 @@ test('a booked Conferma clears every draft and shows «Prenotato» with the week
   await flushMany();
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1);
   assert.ok(!mount.textContent.includes('Bozza'), 'no draft line survives the booking');
-  const booked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'booked');
-  assert.ok(booked, 'the done state paints');
-  assert.equal(booked.textContent, 'Prenotato: Marco · 22 ott 18:00.');
+  // backlog:134f3ed7 — the booked panel closes instead of painting
+  // «Prenotato: …»: no done line covers the day column.
+  assert.ok(!mount.textContent.includes('Prenotato:'), 'no done line survives the booking');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
   assert.equal(mount.querySelector('.cal-slots'), null, 'the proposals are gone');
-  assert.equal(byName().serviceKey.value, '', 'the form is cleared for the next booking');
   assert.ok(
     client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length > weekReads,
     'the week reloads so the new event paints',

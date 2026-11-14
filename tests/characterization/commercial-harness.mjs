@@ -45,6 +45,7 @@ export const COMMERCIAL_MODULES = Object.freeze([
   'quote-version-component.module.json',
   'quote-version-total.module.json',
   'quote-approval.module.json',
+  'quote-share.module.json',
   // Package credits ledger (prepaid entries consumed by appointments): a
   // record module like the others above, digest-owned through the spread
   // into BEHAVIOUR_BEARING_SOURCE below.
@@ -167,6 +168,10 @@ export const BEHAVIOUR_BEARING_SOURCE = Object.freeze([
   // which wait for the owner and which stay a draft, so the module is
   // behaviour-bearing by definition.
   'packages/commercial/src/price-rules.js',
+  // Public quote links (A5 offerta via link, backlog:a3b394dd): they decide
+  // which token reads which frozen version and when an accept lands, so the
+  // module is behaviour-bearing by definition.
+  'packages/commercial/src/quote-share.js',
   // The manual catalog operations (BO-F2-05): they decide how manually
   // managed products, prices and active flags are written and read, so they
   // are behaviour-bearing by definition.

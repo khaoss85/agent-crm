@@ -318,6 +318,33 @@ function nameInitials(name) {
 }
 
 /**
+ * The verified session subject from a settled `/api/spine/context` read
+ * (`identity.subject`, else `membership.subject`), or null.
+ * @param {{ok: boolean, value: any}} settled
+ */
+function selfSubjectOf(settled) {
+  if (!settled || settled.ok !== true) return null;
+  // Review Muse #897 P2: an empty identity subject never hides the
+  // membership one — each candidate is checked for a non-empty value.
+  for (const value of [settled.value?.identity?.subject, settled.value?.membership?.subject]) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return null;
+}
+
+/** The sign-in kind of a person's subjects, or null (never a technical id). */
+const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso aggiunto dal pilota']]);
+/** @param {Array<string>} subjects */
+function accessLabel(subjects) {
+  const kinds = [];
+  for (const subject of subjects) {
+    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
+    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
+  }
+  return kinds.length > 0 ? kinds.join(' · ') : null;
+}
+
+/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
  * carry, beside each opaque subject, the control-plane displayName, email
  * and `operatorAccountId` the pilot enriches it with — the same fields the
@@ -344,17 +371,24 @@ function nameInitials(name) {
  * list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
-export function buildTeamRows(members = []) {
+export function buildTeamRows(members = [], { selfSubject = null } = {}) {
   // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
   // teamPeople (admin-labels.js), the same rows the Calendario team reads.
   const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
     subjects: row.subjects,
+    keys: row.keys,
     live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
     displayName: row.name,
     email: row.email,
     roles: row.members.map((member) => member.role),
     statuses: row.members.map((member) => member.status),
+    self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
   }));
+  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
+  // identity — not even the session's own name. Without a person key or a
+  // server link a same-named subject stays a row of its own, with its own
+  // «Rimuovi», told apart by its access kind (accessLabel below): one row
+  // too many beats a person hidden.
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
@@ -384,6 +418,11 @@ export function buildTeamRows(members = []) {
           ? nameInitials(person.displayName)
           : (readable !== null ? memberInitials(readable) : '·'),
         role: spaceRoleLabel(role),
+        // The session's own person: never offered «Rimuovi» on themself.
+        self: person.self,
+        // How this person signs in, when no real mailbox names them: two
+        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
+        access: accessLabel(person.subjects),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
       };
     })
@@ -482,6 +521,10 @@ export function createSpaziAccessiView(deps) {
     newSpaceNote: null,
     /** @type {string|null} my membership role, or null when unknown */
     myRole: null,
+    // backlog:9d06eb1e174b: the verified session subject (who «Tu» is), and
+    // whether the context read that names the role is still out.
+    selfSubject: null,
+    contextPending: false,
     /** @type {Array<string>|null} roles the server advertises, or null */
     roles: null,
     /** @type {Array<any>|null} team rows, or null when unread */
@@ -534,20 +577,32 @@ export function createSpaziAccessiView(deps) {
   // Documents without addEventListener (the dependency-free fake DOM of the
   // unit tests) skip the outside closer; the toggles, the voices and Escape
   // still work there.
+  // Toggling a menu repaints the whole view, so the node that had keyboard
+  // focus is gone after render(): closing with Escape returns focus to the
+  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
+  // click leaves focus where the user put it.
   /** Currently rendered menu nodes, rebuilt on every render. */
   const liveMenuWraps = [];
-  function closeMenus() {
+  function focusToggle(selector) {
+    if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
+    const target = mount.querySelector(selector);
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+  function closeMenus(refocusSelector = null) {
     if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
     state.newSpaceMenuOpen = false;
     state.inviteMenuOpen = false;
     render();
+    focusToggle(refocusSelector);
   }
-  function trackMenuWrap(node) {
+  function trackMenuWrap(node, toggleSelector = null) {
     liveMenuWraps.push(node);
     node.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
     });
   }
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   if (doc && typeof doc.addEventListener === 'function') {
     doc.addEventListener('click', (event) => {
       let node = event?.target ?? null;
@@ -562,7 +617,9 @@ export function createSpaziAccessiView(deps) {
     // menu/toggle keydown handlers. Listen at document level, where Escape
     // always lands however the menu was opened.
     doc.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        closeMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : inviteToggleSelector);
+      }
     });
   }
 
@@ -675,8 +732,9 @@ export function createSpaziAccessiView(deps) {
       const status = typeof /** @type {{status?: unknown}} */ (record).status === 'number'
         ? /** @type {{status?: unknown}} */ (record).status
         : null;
-      if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[bo] lettura fallita', { code, status, spaceId });
+      // A missing statistic is a handled state: a warn, never console.error.
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('[bo] lettura fallita', { code, status, spaceId });
       }
       // backlog:67e14a50efb6: the team rows read this too — a 404 (the
       // connectors are not composed here) is honest scope, anything else a
@@ -697,6 +755,7 @@ export function createSpaziAccessiView(deps) {
   async function load() {
     const space = readActiveSpace().trim();
     state.myRole = null;
+    state.contextPending = true;
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
@@ -712,7 +771,10 @@ export function createSpaziAccessiView(deps) {
     state.inviteMenuOpen = false;
     state.newSpaceMenuOpen = false;
     state.newSpaceNote = null;
-    if (space === '') return;
+    if (space === '') {
+      state.contextPending = false;
+      return;
+    }
     // backlog:1a96094db71d: every read starts at once. They used to run one
     // after the other (context, team, agents, permissions, profile, then
     // the space cards): eight round trips of 2,5–4 s each in production.
@@ -736,15 +798,21 @@ export function createSpaziAccessiView(deps) {
     const profileRead = ids.length > 0 ? readProfile(client) : Promise.resolve(null);
     // The statistic counts what the team list shows: rendered rows only, so a
     // malformed membership never leaks into the card number.
-    const memberCountRead = membersRead.then((answer) => (answer.ok
-      ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : []).length
+    const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
+      ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
       : null));
     const current = space;
-    const statsRead = Promise.all(ids.map(async (id) => {
+    // backlog:9d06eb1e174b: only the open space's connectors and customers
+    // are read. Another space's GET /api/connectors?spaceId=… answers 403
+    // to this session (verifica 13-14/11): its card shows no statistic
+    // instead of a refused read.
+    const statsRead = Promise.all(ids.filter((id) => id === current).map(async (id) => {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
       if (stat !== null) state.stats.set(id, stat);
     }));
     const context = await contextRead;
+    state.contextPending = false;
+    state.selfSubject = selfSubjectOf(context);
     if (context.ok) {
       state.myRole = typeof context.value?.membership?.role === 'string' ? context.value.membership.role : null;
       state.roles = context.value?.roles && typeof context.value.roles === 'object'
@@ -845,7 +913,13 @@ export function createSpaziAccessiView(deps) {
       // the small dark \u00abApri\u00bb on the right.
       const foot = el(doc, 'div', { cls: 'bo-spazi-foot' });
       const you = el(doc, 'span', { text: 'Tu: ', cls: 'bo-muted bo-spazi-you' });
-      you.appendChild(el(doc, 'strong', { text: card.roleKnown ? card.role : 'ruolo non riconosciuto' }));
+      // backlog:9d06eb1e174b: while the context read is out the role is a
+      // skeleton, never «ruolo non riconosciuto» for the 2-7 s of the read.
+      if (card.roleKnown) you.appendChild(el(doc, 'strong', { text: card.role }));
+      else if (state.contextPending) {
+        you.setAttribute('aria-busy', 'true');
+        you.appendChild(uiSkeleton(doc, { width: '64px' }));
+      } else you.appendChild(el(doc, 'strong', { text: 'ruolo non riconosciuto' }));
       foot.appendChild(you);
       if (card.active) {
         foot.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
@@ -874,6 +948,7 @@ export function createSpaziAccessiView(deps) {
       cls: 'bo-spazi-quiet',
       attrs: {
         type: 'button',
+        'data-menu': 'nuovo-spazio',
         'aria-haspopup': 'true',
         'aria-expanded': state.newSpaceMenuOpen ? 'true' : 'false',
       },
@@ -888,9 +963,12 @@ export function createSpaziAccessiView(deps) {
       if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
+      // Closing from the toggle replaces the toggle itself: keep keyboard
+      // focus on it, so Tab continues from the button that closed the menu.
+      if (!willOpen) focusToggle(newSpaceToggleSelector);
     });
     adderToggle.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
@@ -908,16 +986,18 @@ export function createSpaziAccessiView(deps) {
         state.newSpaceNote = null;
         say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       menu.appendChild(aiVoice);
       menu.appendChild(manualVoice);
-      trackMenuWrap(menu);
+      trackMenuWrap(menu, newSpaceToggleSelector);
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
@@ -969,9 +1049,10 @@ export function createSpaziAccessiView(deps) {
     // relative wrap), like every other add menu: opening it never pushes
     // the team list or the invite form below.
     const inviteWrap = el(doc, 'div', { cls: 'bo-spazi-invite-wrap', attrs: { style: 'position: relative; margin-left: auto;' } });
-    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'data-menu': 'invita-persona', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
     inviteToggle.addEventListener('click', (event) => {
       event?.stopPropagation?.();
+      const wasMenuOpen = state.inviteMenuOpen;
       if (state.inviteMenuOpen) {
         state.inviteMenuOpen = false;
       } else if (state.inviteOpen) {
@@ -981,9 +1062,12 @@ export function createSpaziAccessiView(deps) {
         state.newSpaceMenuOpen = false;
       }
       render();
+      // Same promise as the new-space toggle: closing from the toggle keeps
+      // keyboard focus on it.
+      if (wasMenuOpen) focusToggle(inviteToggleSelector);
     });
     inviteToggle.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(inviteToggleSelector);
     });
     inviteWrap.appendChild(inviteToggle);
     teamHead.appendChild(inviteWrap);
@@ -1002,16 +1086,18 @@ export function createSpaziAccessiView(deps) {
         state.inviteMenuOpen = false;
         say('Gli inviti con l\u2019AI non sono ancora disponibili: usa Compila manualmente.');
         render();
+        focusToggle(inviteToggleSelector);
       });
       const inviteManual = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Email e ruolo' });
       inviteManual.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         state.inviteOpen = true;
         render();
+        focusToggle(inviteToggleSelector);
       });
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);
-      trackMenuWrap(inviteMenu);
+      trackMenuWrap(inviteMenu, inviteToggleSelector);
       inviteWrap.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
@@ -1023,7 +1109,7 @@ export function createSpaziAccessiView(deps) {
       box.appendChild(section);
       return;
     }
-    const rows = buildTeamRows(state.members);
+    const rows = buildTeamRows(state.members, { selfSubject: state.selfSubject });
     // backlog:67e14a50efb6 (specs/account.md C13/C14): every team row paints
     // this space's shared calendar state and channel tiles from the same
     // connectors answer the cards counted — the team is one per organization
@@ -1031,6 +1117,12 @@ export function createSpaziAccessiView(deps) {
     // the titles say whose it is.
     const conns = state.spaceConns.get(readActiveSpace()) ?? { entries: null, unreadable: 'failed' };
     const list = el(doc, 'div', { cls: 'bo-spazi-team' });
+    if (state.selfSubject === null && rows.length > 0) {
+      list.appendChild(el(doc, 'p', {
+        text: 'Rimuovi non \u00E8 disponibile: non sono riuscito a verificare il tuo account. Ricarica la pagina per riprovare.',
+        cls: 'bo-muted bo-spazi-remove-off',
+      }));
+    }
     if (rows.length === 0) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
@@ -1047,7 +1139,10 @@ export function createSpaziAccessiView(deps) {
         const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
         names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
       } else {
-        names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+        // backlog:9d06eb1e174b: no real mailbox — the access kind tells
+        // same-named rows apart, beside the status.
+        const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
+        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
       }
       names.appendChild(renderTeamConns(conns));
       identity.appendChild(names);
@@ -1132,7 +1227,11 @@ export function createSpaziAccessiView(deps) {
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
-      } else {
+      } else if (state.selfSubject !== null && !row.self) {
+        // backlog:9d06eb1e174b: never «Rimuovi» on one's own account — and
+        // fail closed (review Muse #897 giro 2): while who «Tu» is stays
+        // unknown (context unread, failed or without a subject) no row
+        // offers it; the note above the list says why.
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
         remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; render(); });

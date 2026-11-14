@@ -463,6 +463,10 @@ export function buildRouter(app) {
     if (typeof app.readAppointmentTeamWeek !== 'function') {
       throw new NotFoundError('Operation', 'team week');
     }
+    // Owner holds arrive server-side only, through the composed
+    // calendar-sync handle inside the appointments operations — never
+    // through the query, so no private commitment title lands in URLs,
+    // logs or browser history (backlog:af190faf).
     return await app.readAppointmentTeamWeek({
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
@@ -484,6 +488,7 @@ export function buildRouter(app) {
       ...(slotMinutes === undefined ? {} : { slotMinutes }),
       // A proposal must be bookable (backlog:d1e4d90e): the server names its
       // own now, so steps already begun are cut, never offered as free.
+      // Owner holds arrive server-side only (see the team-week route above).
       nowIso: new Date().toISOString(),
     });
   });
@@ -791,6 +796,33 @@ export function buildRouter(app) {
       throw new NotFoundError('Operation', 'customer enrichment');
     }
     return await app.readCustomerEnrichment({ resource: params.resource, id: params.id });
+  });
+
+  // Customer enrichment extraction (backlog:e5e3e886): the scheda's
+  // «Aggiorna» button starts one AI extraction over the customer's linked
+  // sources and shows the stored proposals beside the facts. The same
+  // enumerated-adapter shape as the read above, but on the WRITE boundary:
+  // a run stores proposed enriched-field rows, so it gates
+  // `records.write`, like the import apply. Without the package composed
+  // the method is absent and the route answers an honest 404. The AI
+  // adapter is deployment-provided (`app.enrichmentExtractionAdapter`,
+  // the pilot worker's OpenAI wiring): the framework never holds a key,
+  // so without one the operation refuses ENRICHMENT_AI_UNAVAILABLE and
+  // the button says the AI is off instead of «Nessun dato nuovo». The
+  // browser never supplies the adapter: a JSON body carries no function,
+  // and the route reads only `sources` from it (validated by the
+  // operation, which refuses an empty or malformed list fail-closed).
+  router.add('POST', '/api/customer-data/enriched/:resource/:id/extract', async ({ params, body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.extractCustomerEnrichment !== 'function') {
+      throw new NotFoundError('Operation', 'customer enrichment extraction');
+    }
+    const input = stripServerControlledKeys(body);
+    const sources = Array.isArray(input.sources) ? input.sources : [];
+    const adapter = /** @type {any} */ (app).enrichmentExtractionAdapter;
+    return await app.extractCustomerEnrichment({
+      resource: params.resource, id: params.id, sources, adapter, actor,
+    });
   });
 
   // Customer list (BO-F1-05): one server page over the host records with
@@ -1684,7 +1716,15 @@ export function buildRouter(app) {
   });
   router.add('POST', '/api/companies', async ({ body, actor, identity, organizationId, headers }) => {
     await gate(app, identity, organizationId, 'records.write');
-    return respond(201, await app.services.companies.create(body ?? {}, writeContext(app, { actor, identity, organizationId, headers })));
+    const input = recordInput(body);
+    // The «no company» flag (backlog:ac65e448fcb4, review giro 2 P1): only
+    // the trusted internal placeholder path may set it — a records.write
+    // caller sending it is refused, never silently stripped, so a hidden
+    // company can never be created over HTTP.
+    if (input.placeholder !== undefined) {
+      throw new ValidationError('placeholder is set only by the customer-data placeholder path', { field: 'placeholder' });
+    }
+    return respond(201, await app.services.companies.create(input, writeContext(app, { actor, identity, organizationId, headers })));
   });
 
   router.add('GET', '/api/contacts', async ({ query, identity, organizationId }) => {
