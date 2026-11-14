@@ -146,6 +146,12 @@ test('ricorrenza: il form ha «Si ripete» con Non si ripete predefinito e le et
   assert.equal(select.value, 'none', '«Non si ripete» è il predefinito');
   const labels = select.findAll('option').map((node) => node.textContent);
   assert.deepEqual(labels, [
+    'Non si ripete', 'Ogni giorno', 'Ogni settimana di martedì', 'Ogni mese il 3° martedì',
+    'Ogni anno il 17 novembre', 'Tutti i giorni feriali (lun-ven)', 'Personalizza…',
+  ], 'la data proposta (domani) dà etichette calcolate');
+  byName(mount, 'date').value = '';
+  byName(mount, 'date').dispatch('input');
+  assert.deepEqual(select.findAll('option').map((node) => node.textContent), [
     'Non si ripete', 'Ogni giorno', 'Ogni settimana', 'Ogni mese', 'Ogni anno',
     'Tutti i giorni feriali (lun-ven)', 'Personalizza…',
   ], 'senza data, etichette neutre');
