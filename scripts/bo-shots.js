@@ -1617,7 +1617,7 @@ export const PACE_PRELUDE = `<script>
     if (done) return;
     fetch('/__bo-pace?p=' + encodeURIComponent(progress())).then((answer) => {
       if (answer.status === 205) {
-        document.documentElement.setAttribute('data-bo-stalled', 'true');
+        document.documentElement.setAttribute('data-bo-stalled', answer.headers.get('x-bo-stall-ms') || 'true');
         finish();
       }
     }, () => {}).then(() => {
@@ -1685,7 +1685,7 @@ export function startServer(publicDir, pageFor, { stallMs = STALL_MS, now = () =
         clearTimeout(timer);
         beats.delete(answer);
         if (res.writableEnded) return;
-        res.writeHead(stalled ? 205 : 204, { 'cache-control': 'no-store' });
+        res.writeHead(stalled ? 205 : 204, { 'cache-control': 'no-store', ...(stalled ? { 'x-bo-stall-ms': String(stallMs) } : {}) });
         res.end();
       };
       const timer = setTimeout(answer, PACE_MS);
@@ -1860,7 +1860,10 @@ export function harnessStage(dom) {
   const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
   const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
   const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
-  const stalled = /<html[^>]*data-bo-stalled="true"/.test(out) ? `stalled (no progress for ${STALL_MS / 1000}s), ` : '';
+  // The window the server applied, as the page recorded it (review Muse #900).
+  const stalledMs = out.match(/<html[^>]*data-bo-stalled="(\d+|true)"/)?.[1] ?? null;
+  const stalled = stalledMs === null ? ''
+    : `stalled (no progress for ${stalledMs === 'true' ? STALL_MS : Number(stalledMs)} ms), `;
   return `${stalled}title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
     + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
     + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
@@ -1874,7 +1877,7 @@ export function harnessStage(dom) {
  * @param {Array<string>} args
  * @param {{ activityAt?: () => number, idleMs?: number }} [options]
  */
-function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BROWSER_IDLE_MS } = {}) {
+export function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BROWSER_IDLE_MS, maxMs = BROWSER_MAX_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -1888,11 +1891,20 @@ function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BRO
     child.stderr.on('data', (chunk) => { stderr += String(chunk); lifeAt = Date.now(); });
     const guard = setInterval(() => {
       const last = Math.max(lifeAt, activityAt());
+      // Review Muse #900 (P1): progress decides the normal case; this
+      // safety cap stops the pathological one — a page always busy and
+      // never ready. It is never reached by a normal run.
+      if (Date.now() - startedAt > maxMs) {
+        clearInterval(guard);
+        child.kill('SIGKILL');
+        reject(new Error(`chromium still running after ${maxMs}ms: safety cap (a page always busy and never ready; never reached in a normal run)`));
+        return;
+      }
       if (Date.now() - last <= idleMs) return;
       clearInterval(guard);
       child.kill('SIGKILL');
       reject(new Error(`chromium showed no sign of life for ${idleMs}ms`));
-    }, 1000);
+    }, Math.min(1000, Math.max(50, Math.floor(Math.min(idleMs, maxMs) / 4))));
     child.on('error', (error) => { clearInterval(guard); reject(error); });
     child.on('close', (status) => {
       clearInterval(guard);
@@ -1903,6 +1915,12 @@ function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BRO
 
 /** How long a browser run may show no sign of life before it is stopped. */
 export const BROWSER_IDLE_MS = 2 * STALL_MS;
+/**
+ * The safety cap of one browser run: 5 minutes, never reached in a normal
+ * run (a full screen takes seconds, ~60 s on a heavily loaded machine). It
+ * only stops a page that keeps changing and never signals ready.
+ */
+export const BROWSER_MAX_MS = 5 * 60_000;
 
 /**
  * Reads the #probe JSON out of a `--dump-dom` stdout. The probe is the only
