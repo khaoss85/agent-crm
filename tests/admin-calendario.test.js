@@ -2100,6 +2100,17 @@ test('personRows grouping table: merge, homonyms, ordinals', () => {
       want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
     },
     {
+      // backlog:f4a1f25048c8: two distinct people on one shared mailbox
+      // (info@) stay two calendar rows — a mailbox alone never merges.
+      name: 'a shared mailbox with different names stays two rows',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Sara Neri', email: 'info@example.com' },
+        { subject: 'a2', role: 'member', displayName: 'Luca Blu', email: 'INFO@example.com' },
+      ],
+      want: [{ ids: ['a1'], label: 'Sara Neri' }, { ids: ['a2'], label: 'Luca Blu' }],
+    },
+    {
       name: 'email-less homonyms stay separate with ordinals',
       named: ['a1', 'a2'],
       members: [

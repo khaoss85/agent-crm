@@ -32,7 +32,7 @@ import {
   AGENT_CAP_USE_CARD_NOTE, PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
-import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
+import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
 import { messagePreview } from './admin-message-preview.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
@@ -592,7 +592,7 @@ async function answerChiamate(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [outcome, count] of [...byOutcome.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${outcome}: ${count}`);
   }
@@ -997,7 +997,7 @@ async function answerSlot(client) {
   // status enum). Done is history, not a slot to propose; cancelled and
   // no-show are out; a missing status is never counted as booked.
   const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === 'confirmed');
-  answer.lines.push(`${booked.length} appuntamenti fissati letti. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
+  answer.lines.push(`${plural(booked.length, 'appuntamento fissato letto', 'appuntamenti fissati letti')}. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
   // Backlog 5a1e6d8dc42e: the slot reads «7 nov, 14:30», never the ISO
   // stamp; a bare day keeps its day and never invents a time.
   const whenOf = (row) => italianDateTime(row?.startsAt) || italianDay(row?.date) || shortText(row?.date, 24) || 'appuntamento';
@@ -1028,7 +1028,7 @@ async function answerLeadSito(client) {
     answer.lines.push('Nessun messaggio dal form del sito tra gli ultimi letti.');
     return answer;
   }
-  answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
+  answer.lines.push(`${plural(inboundAll.length, 'messaggio', 'messaggi')} dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
   // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
   const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
   const distinctSite = uniqueLabels(listedSite.map((row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
@@ -1087,7 +1087,7 @@ async function answerCallReport(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [member, entry] of [...byMember.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} riuscite)`);
   }
@@ -1556,6 +1556,23 @@ export async function runSuggestion(client, suggestionId, customer = null) {
 }
 
 /**
+ * The gate code an /api/assistant/status answer (or its rejection) carries,
+ * or null. One reader for every surface that asks «is the AI off here?»
+ * (the Assistente panel, the composer «Scrivi al cliente»), over both
+ * shapes in use: `{ freeQuestions, code | reason }` and the pilot bridge's
+ * `{ spaceId, enabled, reason }` (accordo-arvo-pilot
+ * src/shared/bo-assistant.js, mapGateObserved). Reads `code`, `reason`
+ * and `errorCode`, mirroring packages/llm error codes.
+ * @param {unknown} status
+ * @returns {string|null}
+ */
+export function assistantStatusCode(status) {
+  if (status === null || typeof status !== 'object') return null;
+  const code = /** @type {any} */ (status).code ?? /** @type {any} */ (status).reason ?? /** @type {any} */ (status).errorCode;
+  return typeof code === 'string' && code !== '' ? code : null;
+}
+
+/**
  * Which dry-run notice tells the truth about a non-live status: the key
  * sentence only for a really missing key, the off-in-this-space sentence
  * for a disabled space, the suggest-only line for anything else (absent
@@ -1564,9 +1581,7 @@ export async function runSuggestion(client, suggestionId, customer = null) {
  * @param {unknown} status
  */
 export function assistantDisabledNotice(status) {
-  const code = status !== null && typeof status === 'object'
-    ? status.code ?? status.reason ?? status.errorCode
-    : null;
+  const code = assistantStatusCode(status);
   if (code === 'LLM_SECRET_UNAVAILABLE') return FREE_QUESTION_DISABLED_NOTICE;
   if (code === 'LLM_SPACE_DISABLED') return ASSISTANT_SPACE_DISABLED_NOTICE;
   return ASSISTANT_SUGGEST_ONLY_NOTICE;

@@ -733,6 +733,27 @@ test('bd5e84545021: Oggi’s badges read the one initials rule of Clienti and th
   assert.equal(server.rows[0].mono, 'UB', 'the server view row');
 });
 
+// backlog:0f78353438c5 (verifica 12/11: NON PASSA): sulle righe Da
+// rispondere il badge mostrava la mattonella del canale («@» per
+// l'email, «WA», «IG»…) invece delle iniziali del cliente come Clienti
+// e la scheda. Rosso prima della cura, verde dopo.
+test('0f78353438c5: ogni riga Da rispondere mostra le iniziali del cliente su ogni canale noto («UX Esplorativo 1111 B» → «UB», mai «@»/«WA»/«IG»)', async () => {
+  const name = 'UX Esplorativo 1111 B';
+  for (const channel of ['email', 'whatsapp', 'instagram', 'phone']) {
+    const inbox = buildInbox({
+      messages: [{ ...PERSON_MSG, channel, subjectLabel: name, remoteHandle: 'maria.bianchi@gmail.com' }],
+      now: NOW,
+    });
+    assert.equal(inbox.rows.length, 1, `${channel} waits`);
+    assert.equal(inbox.rows[0].mono, 'UB', `the local Da rispondere row on ${channel}`);
+    const server = buildServerReplies({
+      items: [{ subject: { resource: 'contact', id: `u-${channel}` }, name, awaitingChannel: channel, awaitingText: 'Ciao', lastAwaitingAt: '2026-10-19T06:00:00.000Z' }],
+      total: 1,
+    }, NOW);
+    assert.equal(server.rows[0].mono, 'UB', `the server view row on ${channel}`);
+  }
+});
+
 // Review Muse #795 (giro 2, testa 68fb9ec): an unreadable inbox is unknown, never zero.
 test('review #795 P1: an inbox that could not be read never reads as «Niente in sospeso», «Hai finito» or «0 in attesa»', async () => {
   const client = {
