@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers, statoTooltip } from '../apps/admin/public/admin-clienti.js';
 import { CLIENTI_NUOVO_ROUTE } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -1219,4 +1219,41 @@ test('a762c28a646c: the Clienti list remembers the names it shows', async () => 
   await render(stubClient(), { knownNames: names });
   assert.equal(names.get('contact', 'c1'), 'Marco Rossi');
   assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
+});
+
+// backlog:7471d0bd718f: the Stato pill never shows the server's raw
+// technical-English reason («no signed business found in the composed
+// packages (orders: not readable here; …)»). The tooltip says in plain
+// Italian why the customer is in that state, with no package names or
+// diagnostics.
+test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw server reason', async () => {
+  const technical = {
+    ...ROW_ANNA,
+    status: {
+      value: 'contatto',
+      reason: 'no signed business found in the composed packages (orders: not readable here; contracts: none on record; subscriptions: partially readable) — the evidence packages are not all readable here, so this is not a claim none exist',
+    },
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [technical, ROW_MARCO], total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const pills = mount.findAll('span').filter((node) =>
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-pill'));
+  assert.equal(pills.length, 2, 'both rows render their Stato pill');
+  const byText = (text) => pills.find((node) => node.textContent === text);
+  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(byText('Cliente')?.getAttribute('title'), 'È un cliente perché ha almeno un acquisto confermato.');
+  for (const pill of pills) {
+    const title = String(pill.getAttribute('title') ?? '');
+    for (const leaked of ['package', 'orders', 'contracts', 'subscriptions', 'signed business', 'readable']) {
+      assert.ok(!title.toLowerCase().includes(leaked), `no package name or diagnostic leaks into «${title}»`);
+    }
+  }
+  assert.ok(!mount.textContent.includes('no signed business found'), 'the raw server reason never renders as text');
+  assert.equal(statoTooltip('contatto'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
+  assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
 });

@@ -45,6 +45,24 @@ const CHANNEL_LABELS = Object.freeze({
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 
+/**
+ * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
+ * `status.reason` (technical English diagnostics naming packages, e.g.
+ * «no signed business found in the composed packages (orders: not readable
+ * here; …)»). The tooltip says in plain Italian why the customer is in
+ * that state; an unknown state carries no tooltip rather than a raw
+ * diagnostic.
+ */
+const STATO_TOOLTIPS = Object.freeze({
+  cliente: 'È un cliente perché ha almeno un acquisto confermato.',
+  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+});
+
+/** Plain-Italian tooltip for a customer state, or null when unknown. */
+export function statoTooltip(value) {
+  return STATO_TOOLTIPS[String(value ?? '').toLowerCase()] ?? null;
+}
+
 /** localStorage key for the visible columns (operator-local, like the shell). */
 export const CLIENTI_COLUMNS_KEY = 'accordo.clienti.columns';
 
@@ -905,7 +923,8 @@ export function createCustomerListView(deps) {
       case 'stato': {
         const value = String(row.status?.value ?? '');
         const node = el('span', `bo-clienti-pill bo-pill-${value || 'none'}`, STATO_LABELS[value] ?? (value || '—'));
-        if (row.status?.reason) node.setAttribute('title', row.status.reason);
+        const hint = statoTooltip(value);
+        if (hint) node.setAttribute('title', hint);
         return node;
       }
       case 'ultimo': {
