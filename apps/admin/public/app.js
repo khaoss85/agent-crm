@@ -505,6 +505,7 @@ import {
   renderUnknownRoute,
   rerendersOnSpaceSwitch,
   resolveBadgeSpaceId,
+  shellScreenFor,
 } from './admin-shell.js';
 import { buildOggiLinks, createOggiView, isSpaceMount } from './admin-oggi.js';
 import { DEV_USER, readSessionProfile, resolveLogoutTarget, spaceMountFor } from './admin-session.js';
@@ -536,7 +537,6 @@ import { createSpaziAccessiView } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
-import { moduleScreenLabel } from './admin-labels.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
@@ -948,6 +948,9 @@ const profiloView = createProfiloView({
   mount: mountGate.owned('profilo'),
   client: moduleClient,
   member: () => shellUser,
+  // backlog:8618ad3f72db: the Impostazioni tab row above the profile.
+  navigate: (hash) => { window.location.hash = hash; },
+  fixCount: () => shellFixCount,
 });
 // BO-F6-03: the session profile the host injected (a real session under a
 // mount: space, role, name, email and the space logout URL), or null locally
@@ -1149,56 +1152,6 @@ let bootScreen = null;
 function currentSpaceName() {
   const active = shellSpaces.find((space) => space.id === shellActiveSpace) ?? shellSpaces[0];
   return typeof active?.name === 'string' ? active.name : '';
-}
-
-function shellScreenFor(target) {
-  switch (target.view) {
-    case 'dashboard': return { id: 'oggi', label: 'Oggi' };
-    case 'customer-data':
-    case 'customer-card': return { id: 'clienti', label: 'Clienti' };
-    case 'customer-import': return { id: 'clienti', label: 'Importa clienti' };
-    case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
-    case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
-    case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
-    case 'agenti': return { id: 'agenti', label: 'Agenti' };
-    case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
-    case 'list':
-    case 'new':
-    case 'detail':
-      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
-      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
-      // Italian, never the raw module key.
-      return target.moduleName
-        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
-        : { id: null, label: 'Modulo' };
-    // Admin views outside the backoffice prototype: an honest crumb with no
-    // sidebar highlight, never the previous screen left stale.
-    case 'spine': return { id: null, label: 'Identità e accessi' };
-    case 'work': return { id: null, label: 'Lavoro' };
-    case 'work-task': return { id: null, label: 'Attività' };
-    case 'marketing': return { id: null, label: 'Proposte' };
-    case 'marketing-proposal': return { id: null, label: 'Proposta' };
-    case 'quotes': return { id: null, label: 'Preventivi' };
-    case 'catalog': return { id: null, label: 'Catalogo prodotti' };
-    case 'quote-detail': return { id: null, label: 'Preventivo' };
-    // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
-    case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
-    case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
-    case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
-    // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
-    // asks about sync (its own placeholder), not the generic settings one.
-    case 'sync': return { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' };
-    case 'reporting': return { id: 'reporting', label: 'Reporting' };
-    case 'calendario': return { id: 'calendario', label: 'Calendario' };
-    case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
-    case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
-    case 'skill-detail': return { id: 'impostazioni', label: 'Dettaglio skill' };
-    case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
-    case 'profilo': return { id: '', label: 'Profilo' };
-    case 'componenti': return { id: null, label: 'Componenti' };
-    case 'invalid': return { id: null, label: 'Percorso non valido' };
-    default: return { id: null, label: 'Vista' };
-  }
 }
 
 function syncShell(target) {

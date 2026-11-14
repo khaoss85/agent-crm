@@ -27,9 +27,10 @@
  */
 
 import { CHANNEL_STATE_LABELS } from './admin-channels-count.js';
-import { el, uiBusy, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy, uiButton, uiChannelState, uiConnect } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { sessionRoleLabel } from './admin-session.js';
 import { bindAdminMutations } from './admin-submission.js';
+import { settingsTabs } from './admin-shell.js';
 
 export const PROFILO_ROUTE = '#/profilo';
 
@@ -103,15 +104,15 @@ function connectionRow(doc, list, entry, item, readable, active = true) {
   row.appendChild(words);
   const side = el(doc, 'div', 'bo-profilo-conn-side');
   if (!readable) {
-    side.appendChild(el(doc, 'span', 'bo-profilo-pill bo-profilo-pill-muted', 'Non disponibile'));
+    side.appendChild(uiChannelState(doc, { text: 'Non disponibile', tone: 'muted' }));
   } else if (!active) {
-    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${NOT_ACTIVE.tone}`, NOT_ACTIVE.text));
+    side.appendChild(uiChannelState(doc, { text: NOT_ACTIVE.text, tone: NOT_ACTIVE.tone }));
   } else {
     // Own keys only: a prototype name (toString, __proto__) is an unknown
     // status, read as «Da collegare» like any other (Muse P2 on #453).
     const key = typeof item?.status === 'string' && Object.hasOwn(STATUS_LABELS, item.status) ? item.status : 'disconnected';
     const status = STATUS_LABELS[key];
-    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${status.tone}`, status.text));
+    side.appendChild(uiChannelState(doc, { text: status.text, tone: status.tone }));
     if (item?.status === 'connected') {
       // Scollega revokes at the provider (Google or Meta): the pilot's
       // same-origin POST, which checks the origin and comes back here.
@@ -129,9 +130,7 @@ function connectionRow(doc, list, entry, item, readable, active = true) {
     } else {
       // Collega is a link, not a fetch: the pilot turns the click into the
       // signed Google or Meta consent and the browser follows it.
-      const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-profilo-collega', 'Collega');
-      link.setAttribute('href', `../profile/collega?connector=${entry.connector}`);
-      link.setAttribute('data-action', `collega-${entry.connector}`);
+      const link = uiConnect(doc, { href: `../profile/collega?connector=${entry.connector}`, action: `collega-${entry.connector}`, extra: 'bo-profilo-collega' });
       side.appendChild(link);
     }
   }
@@ -284,7 +283,7 @@ export function cleanProfileName(value) {
   return next;
 }
 
-export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions } = {}) {
+export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions, navigate = null, fixCount = () => null } = {}) {
   let token = 0;
   // backlog:1cfc68175ab7: the name edit is local view state, never stored.
   // `draft` keeps what the user typed across saving, validation errors and
@@ -453,6 +452,11 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     lastAnswer = answer;
     lastAnswerSet = true;
     clear();
+    // backlog:8618ad3f72db: Profilo is one of the Impostazioni tabs, with
+    // the same row as its siblings (the shell's count, no read of its own).
+    if (typeof navigate === 'function') {
+      mount.appendChild(settingsTabs(doc, { activeId: 'profilo', fixCount: fixCount(), navigate }));
+    }
     const page = el(doc, 'div', 'bo-profilo');
     mount.appendChild(page);
     const fromServer = answer?.member && typeof answer.member === 'object'

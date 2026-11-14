@@ -15,6 +15,7 @@
 import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   SPAZI_AI_DEFAULTS,
   SPAZI_AI_MASTER,
@@ -833,7 +834,47 @@ test('e381c48581fa: the active space card counts the profile links, another spac
   await flush();
   const rendered = text(mount);
   assert.match(rendered, /2 canali · 1 persona · 3 clienti/, 'the active space counts Calendar and Gmail');
-  assert.match(rendered, /0 canali · 1 persona · 3 clienti/, 'another space never borrows the profile links');
+  // backlog:9d06eb1e174b: another space is never read, so its card has no
+  // statistic at all — never one borrowed from the profile.
+  assert.equal((rendered.match(/canali ·/g) ?? []).length, 1, 'only the open space carries a statistic');
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11): opening Spazi e accessi read
+// GET /bo/api/connectors?spaceId=<another space> — 403 for this session —
+// and logged console.error «[bo] lettura fallita». The page reads only the
+// open space's connectors and customers; nothing refused, nothing in red.
+test('9d06eb1e174b: the page never reads another space\'s connectors or customers, and logs no console.error', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const forbidden = Object.assign(new Error('forbidden'), { code: 'BO_SPACE_FORBIDDEN', status: 403 });
+  const base = stubClient({
+    members,
+    connectorsBySpace: { [SPACE]: [] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const asked = [];
+  const client = {
+    async request(path, options = {}) {
+      asked.push(path);
+      if (path.includes('spaceId=altro')) throw forbidden;
+      return base.request(path, options);
+    },
+  };
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => { errors.push(args); };
+  try {
+    const { view: v } = view({
+      client,
+      spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }, { id: 'altro', name: 'Altro', initials: 'AL' }],
+    });
+    await v.render();
+    await flush();
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(asked.filter((path) => path.includes('altro')), [], 'no read for a space that is not open');
+  assert.ok(asked.some((path) => path.startsWith(`/api/connectors?spaceId=${SPACE}`)), 'the open space is still read');
+  assert.deepEqual(errors.filter((args) => String(args[0]).includes('[bo]')), [], 'no console.error');
 });
 
 test('an unreadable count omits the statistic, never an invented row', async () => {
@@ -849,9 +890,10 @@ test('an unreadable count omits the statistic, never an invented row', async () 
 });
 
 test('a failed statistic read logs its cause with the space before omitting the row', async () => {
+  // backlog:9d06eb1e174b: a missing statistic is a handled state — a warn.
   const logged = [];
-  const originalError = console.error;
-  console.error = (...args) => { logged.push(args); };
+  const originalError = console.warn;
+  console.warn = (...args) => { logged.push(args); };
   try {
     const down = Object.assign(new Error('down'), { code: 'CHANNELS_DOWN', status: 500 });
     const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
@@ -865,7 +907,7 @@ test('a failed statistic read logs its cause with the space before omitting the 
     assert.equal(entry[1]?.code, 'CHANNELS_DOWN', 'the log keeps the error code');
     assert.equal(entry[1]?.spaceId, SPACE, 'the log names the space');
   } finally {
-    console.error = originalError;
+    console.warn = originalError;
   }
 });
 
@@ -1768,4 +1810,86 @@ test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team cale
   assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
   assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
   assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11): the space cards read «Tu: ruolo
+// non riconosciuto» for the 2-7 s of the context read, then «Tu: Titolare».
+// While the role is not known the card shows a skeleton.
+test('9d06eb1e174b: the card role is a skeleton while the context read is out, then the role', async () => {
+  let release;
+  const contextGate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ members: [{ subject: 'marco', role: 'operator', status: 'active' }] });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/context') {
+        await contextGate;
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'never «non riconosciuto» while the read is out');
+  const you = mount.findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-spazi-you'));
+  assert.equal(you?.getAttribute('aria-busy'), 'true', 'the role reads as loading');
+  release();
+  await done;
+  await flush();
+  assert.match(text(mount), /Tu: Titolare/);
+});
+
+test('9d06eb1e174b: a failed context read still says the role is not recognized', async () => {
+  const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
+  const { mount, view: v } = view({ client: stubClient({ fail: { context: failed } }) });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /ruolo non riconosciuto/);
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11, roster di produzione): one owner
+// listed three times — the verified Google login (real mailbox, person
+// key), the pilot's adopted broker member (same name, internal mailbox
+// only) and the GitHub login — all with «Rimuovi», on their own account too.
+const ROSTER_SELF = [
+  { subject: 'broker+adopted-aa11@accordo.invalid', role: 'owner', status: 'active', displayName: 'Dario Esempio', email: 'broker+adopted-aa11@accordo.invalid' },
+  { subject: 'github|1001', role: 'owner', status: 'active', displayName: 'dario-gh', email: 'broker+github-1001@accordo.invalid' },
+  { subject: 'google|2002', role: 'owner', status: 'active', displayName: 'dario esempio', email: 'dario@esempio.invalid', operatorAccountId: 'acc-1' },
+  { subject: 'google|3003', role: 'operator', status: 'active', displayName: 'Marta Esempio', email: 'marta@esempio.invalid', operatorAccountId: 'acc-2' },
+];
+
+test('9d06eb1e174b: the session\'s own adopted member folds into its row; nobody else merges on a name', () => {
+  const rows = buildTeamRows(ROSTER_SELF, { selfSubject: 'google|2002' });
+  const self = rows.find((row) => row.subjects.includes('google|2002'));
+  assert.deepEqual(self.subjects, ['broker+adopted-aa11@accordo.invalid', 'google|2002'], 'the adopted broker member is the same person');
+  assert.equal(self.self, true);
+  assert.equal(rows.length, 3, 'the GitHub login without a person key or a name in common stays apart');
+  // Without the verified self, the #644 rule alone: no name-only merge.
+  assert.equal(buildTeamRows(ROSTER_SELF).length, 4);
+  // A homonym of someone else never folds into them.
+  const others = buildTeamRows([
+    ...ROSTER_SELF,
+    { subject: 'broker+adopted-bb22@accordo.invalid', role: 'operator', status: 'active', displayName: 'Marta Esempio', email: 'broker+adopted-bb22@accordo.invalid' },
+  ], { selfSubject: 'google|2002' });
+  assert.equal(others.filter((row) => row.name === 'Marta Esempio').length, 2, 'only the verified self merges on its name');
+});
+
+test('9d06eb1e174b: no «Rimuovi» on one\'s own row; the others keep it', async () => {
+  const context = { identity: { subject: 'google|2002', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [], operator: [], observer: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  const items = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member'));
+  const rowOf = (name) => items.find((node) => node.textContent.includes(name));
+  const removeIn = (node) => node.findAll('button').filter((button) => button.textContent === 'Rimuovi');
+  assert.equal(items.length, 3, 'three people: self (Google + adopted member), the GitHub login, Marta');
+  assert.equal(removeIn(rowOf('Marta Esempio')).length, 1, 'another person keeps «Rimuovi»');
+  const selfRows = items.filter((node) => /dario esempio/i.test(node.textContent) && !node.textContent.includes('Marta'));
+  assert.ok(selfRows.length >= 1);
+  for (const node of selfRows) assert.equal(removeIn(node).length, 0, 'never «Rimuovi» on one\'s own account');
+});
+
+test('8618ad3f72db: a child switch paused by the space AI shows not-allowed, never the wait cursor', () => {
+  const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
 });

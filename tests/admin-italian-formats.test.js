@@ -103,7 +103,7 @@ test('famiglia F8: plural() takes the singular only for exactly one', () => {
   assert.equal(pluralize(1, 'voce', 'voci'), '1 voce', 'Personalizzazione reads the shared rule');
 });
 
-test('1d99c8207f90: the breadcrumb of Nuova offerta names the screen in Italian, never «OPPORTUNITY»', () => {
+test('1d99c8207f90: the breadcrumb of Nuova offerta names the screen in Italian, never «OPPORTUNITY»', async () => {
   assert.equal(moduleScreenLabel('new', 'opportunity'), 'Nuova offerta');
   assert.equal(moduleScreenLabel('detail', 'opportunity'), 'Offerta');
   assert.equal(moduleScreenLabel('list', 'opportunity'), 'Offerte');
@@ -113,9 +113,11 @@ test('1d99c8207f90: the breadcrumb of Nuova offerta names the screen in Italian,
   for (const names of Object.values(MODULE_NAMES)) {
     for (const word of Object.values(names)) assert.ok(!ENGLISH.test(word), `Italian module name: ${word}`);
   }
-  const app = source('app.js');
-  assert.ok(app.includes('label: moduleScreenLabel(target.view, target.moduleName)'), 'the shell crumb reads moduleScreenLabel');
-  assert.ok(!/label:\s*target\.moduleName\b/.test(app), 'never the raw module key as the crumb');
+  // The shell crumb (shellScreenFor, moved from app.js to admin-shell.js
+  // in backlog:8618ad3f72db) reads moduleScreenLabel, never the raw key.
+  const { shellScreenFor } = await import('../apps/admin/public/admin-shell.js');
+  assert.equal(shellScreenFor({ view: 'new', moduleName: 'opportunity' }).label, 'Nuova offerta', 'the shell crumb reads moduleScreenLabel');
+  assert.notEqual(shellScreenFor({ view: 'list', moduleName: 'opportunity' }).label, 'opportunity', 'never the raw module key as the crumb');
 });
 
 /** English words a screen showed in capitals (kicker, eyebrow, crumb). */
