@@ -72,9 +72,9 @@ test('channelState: not linked reads da-completare, da-collegare or non-disponib
   const meta = (configured) => ({ connections: { available: true, items: [{ connector: 'whatsapp', status: 'disconnected' }], meta: { configured } } });
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(true) }).connectRoute, '#/profilo');
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(false) }).state, 'non-disponibile');
-  // A profile link merges like the shared count.
-  const profile = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
-  assert.equal(channelState('email', { rows: [], adapters: [], profile }).state, 'collegato');
+  // A profile link merges like the shared count (Calendar still votes).
+  const calendarProfile = { connections: { available: true, items: [{ connector: 'calendar', status: 'connected', account: 'dan@presti.it' }] } };
+  assert.equal(channelState('calendar', { rows: [], adapters: [], profile: calendarProfile }).state, 'collegato');
   for (const label of Object.values(CHANNEL_STATE_LABELS)) {
     assert.doesNotMatch(label.text, /qui$/, 'no «Non disponibile qui»');
   }
@@ -117,6 +117,21 @@ test('e381c48581fa: from the raw rows plus the profile, every screen counts the 
     const linked = channelState(id, { rows: RAW_ROWS, profile: PROFILE }).state === 'collegato';
     assert.equal(linked, shared.connectedChannels.includes(id), `${id}: one answer`);
   }
+});
+
+test('803d127c4458 giro 5 P1: the Gmail stand-in never reads collegato Email', () => {
+  const gmail = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
+  const alone = channelState('email', { rows: [], adapters: [], profile: gmail });
+  assert.notEqual(alone.state, 'collegato', 'Oggi, Stato sync and the composer invite Email here');
+  assert.equal(alone.state, 'da-collegare');
+  assert.equal(alone.connectRoute, '#/profilo', 'the Collega link survives');
+  const real = channelState('email', {
+    rows: [{ connectionKey: 'ck-mail', channel: 'email', status: 'active', account: 'posta@presti.it' }],
+    adapters: [],
+    profile: gmail,
+  });
+  assert.equal(real.state, 'collegato', 'a real active Email row still links Email');
+  assert.equal(real.account, 'posta@presti.it');
 });
 
 test('review #782 P3: a composed adapter never routes Calendar or Stripe into the guided flow', () => {

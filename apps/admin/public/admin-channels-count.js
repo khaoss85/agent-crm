@@ -325,7 +325,13 @@ function profileConnects(profile, channel) {
  */
 export function channelState(channel, { rows = [], profile = null, adapters = null, guided = [] } = {}) {
   const id = countedChannel(channel);
+  // Backlog:803d127c4458 (review Muse giro 5 P1): the profile Gmail
+  // stand-in never votes Email here either — Oggi, Stato sync and the
+  // composer already exclude it (shared `isProfileEmailStandin`), and the
+  // send fails with 409 without a real channel connection. Filtering it at
+  // this shared gate keeps one connected predicate for every screen.
   const matching = mergeProfileConnections(rows, profile)
+    .filter((row) => !isProfileEmailStandin(row))
     .filter((row) => countedChannel(row.channel) === id);
   const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
   const active = matching.find((row) => row.status === 'active') ?? null;

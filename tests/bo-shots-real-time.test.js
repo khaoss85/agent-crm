@@ -17,13 +17,27 @@
  * races Chromium's virtual clock — the Import Blob read, and on every
  * screen the webfont load the shell awaits before the fixtures run.
  *
+ * Third red, 13/11 on #836 and #839: «cliente desktop: the harness module
+ * did not run to completion (no cliente-ready)». #841 held the two waits
+ * known then (webfonts, the Import Blob) one by one; any other wait off
+ * the main thread still let the virtual clock jump to the end of the
+ * budget. And a hold freezes the clock outright: a webfont load started
+ * after one task boundary never settles inside a hold (until its 30 s cap).
+ *
+ * The cure is one pacer in the harness generator (PACE_PRELUDE): until the
+ * ready title, the virtual clock moves at most PACE_STEP_MS per PACE_MS of
+ * real time, so a real-time wait costs its real length, never the budget.
+ *
  * What it proves, on the real shot server and the real harnesses:
+ * - every harness reaches its ready title when a step of it — at the start
+ *   of the module and right before the ready title — takes real time with
+ *   no fetch open (on the harness before the pacer none does: the run ends
+ *   at once with no title, the CI symptom);
  * - Import reaches import-ready with every Blob read hanging forever;
  * - nuovo-modulo reaches nuovo-modulo-ready with every webfont load taking
- *   real time (a 1 GB Blob read first) — the shell's font wait is held;
- * - the hold never stalls virtual timers: calendario, which steps its view
- *   with setTimeout, still finishes well inside the hold cap.
- * On the harness before the cure the first two never reach ready.
+ *   real time (a 1 GB Blob read first);
+ * - the pacer keeps virtual timers moving: calendario, which steps its view
+ *   with setTimeout, finishes in a few seconds.
  */
 
 import test from 'node:test';
@@ -31,7 +45,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { HOLD_CAP_MS, chromiumFlags, findChromium, harnessHtml, startServer } from '../scripts/bo-shots.js';
+import { SCREENS, chromiumFlags, findChromium, harnessHtml, harnessStage, startServer } from '../scripts/bo-shots.js';
 
 const CHROMIUM = findChromium();
 const FLAGS = chromiumFlags(CHROMIUM);
@@ -68,7 +82,16 @@ const SLOW_FONTS = '<script>{ const own = document.fonts.load.bind(document.font
  * @param {string} name @param {string} prelude
  */
 async function dumpWith(name, prelude) {
-  const server = await startServer(PUBLIC, (screen) => harnessHtml(screen, PUBLIC).replace('<body>', `<body>${prelude}`));
+  return dumpPage(name, (html) => html.replace('<body>', `<body>${prelude}`));
+}
+
+/**
+ * Serve one harness, rewritten by `rewrite`, through the real shot server,
+ * and read the DOM after the 8000 ms virtual budget.
+ * @param {string} name @param {(html: string) => string} rewrite
+ */
+async function dumpPage(name, rewrite) {
+  const server = await startServer(PUBLIC, (screen) => rewrite(harnessHtml(screen, PUBLIC)));
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const started = Date.now();
@@ -95,12 +118,50 @@ test('bo:shots import reaches import-ready even when the Blob read never lands',
 
 test('bo:shots nuovo-modulo reaches nuovo-modulo-ready while the webfonts take real time', { skip: BROWSER_SKIP }, async () => {
   const { dom } = await dumpWith('nuovo-modulo', SLOW_FONTS);
-  assert.ok(dom.includes('<title>nuovo-modulo-ready</title>'), 'the shell font wait is held: the harness completes');
+  assert.ok(dom.includes('<title>nuovo-modulo-ready</title>'), 'the shell font wait is paced: the harness completes');
   assert.ok(dom.includes('Genera il modulo'), 'the screen is painted');
 });
 
-test('bo:shots: the hold never stalls virtual timers (calendario steps its view with setTimeout)', { skip: BROWSER_SKIP }, async () => {
+test('bo:shots: the pacer keeps virtual timers moving (calendario steps its view with setTimeout)', { skip: BROWSER_SKIP }, async () => {
   const { dom, ms } = await dumpWith('calendario', '');
   assert.ok(dom.includes('<title>calendario-ready</title>'), 'the timer-driven harness completes');
-  assert.ok(ms < HOLD_CAP_MS, `it never waits for the hold cap (${ms} ms < ${HOLD_CAP_MS} ms)`);
+  assert.ok(ms < 20_000, `its timers are never frozen (${ms} ms < 20000 ms)`);
+});
+
+/**
+ * One step that takes real time with no fetch open: Chromium reads a Blob
+ * off the main thread, the page has nothing else to do, and an unpaced
+ * virtual clock jumps to the end of the budget.
+ */
+const REAL_TIME_STEP = 'await new Blob([new Uint8Array(64 * 1024 * 1024)]).arrayBuffer();';
+
+/** The harness with a real-time step at its start and before its ready title. */
+function withRealTimeSteps(html) {
+  const ready = /document\.title = '([a-z-]+-ready)';/;
+  assert.ok(html.includes('<script type="module">') && ready.test(html), 'the harness has a module and a ready title');
+  return html
+    .replace('<script type="module">', `<script type="module">${REAL_TIME_STEP}`)
+    .replace(ready, `${REAL_TIME_STEP}document.title = '$1';`);
+}
+
+test('bo:shots: every harness reaches its ready title when its steps take real time with no fetch (backlog:30dc70e6b076)', { skip: BROWSER_SKIP }, async () => {
+  const screens = SCREENS.filter((screen) => screen.module !== null);
+  assert.ok(screens.some((screen) => screen.name === 'cliente'), 'the scheda cliente is one of them');
+  const missed = [];
+  for (let start = 0; start < screens.length; start += 4) {
+    await Promise.all(screens.slice(start, start + 4).map(async (screen) => {
+      const { dom } = await dumpPage(screen.name, withRealTimeSteps);
+      if (!dom.includes(`<title>${screen.ready}</title>`)) missed.push(`${screen.name}: no ${screen.ready}`);
+    }));
+  }
+  assert.deepEqual(missed, [], 'every harness completes');
+});
+
+test('bo:shots: a run that ends before the ready title says where it stopped', () => {
+  const page = harnessHtml('cliente', PUBLIC);
+  assert.equal(
+    harnessStage({ stdout: page, stderr: 'line one\nrenderer gone\n' }),
+    `title null, dom ${page.length} chars, shell empty, view 0 chars, stderr "renderer gone"`,
+  );
+  assert.match(harnessStage({ stdout: '', stderr: '' }), /^title null, dom 0 chars, shell empty, view 0 chars$/);
 });

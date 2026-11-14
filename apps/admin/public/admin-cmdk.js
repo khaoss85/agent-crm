@@ -22,6 +22,8 @@ export const COMMAND_GROUP_LIMIT = 5;
 export const COMMAND_DEBOUNCE_MS = 180;
 /** The offers read is reused while the menu stays in use. */
 export const COMMAND_OFFERS_TTL_MS = 60_000;
+/** The agents read is reused while the menu stays in use. */
+export const COMMAND_AGENTS_TTL_MS = 60_000;
 
 const RECORD_RE = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
@@ -88,17 +90,59 @@ export function offerCommand(item) {
 }
 
 /**
+ * An agent of the space as a palette row: «@Nome», with the mention text
+ * choosing it writes back into the bar. Rows without a name or without a
+ * source key never suggest (admin-agenti.js findMentionedAgent reads the
+ * same two fields), a cap never hides one — the assistant names it.
+ * @param {any} item
+ */
+export function agentCommand(item) {
+  if (!item || typeof item !== 'object') return null;
+  const name = cleanLabel(item.name);
+  const sourceKey = typeof item.sourceKey === 'string' ? item.sourceKey.trim() : '';
+  if (name === '' || sourceKey === '') return null;
+  return {
+    kind: 'agent',
+    label: `@${name}`,
+    sub: cleanLabel(item.role),
+    href: '',
+    text: `@${name} `,
+  };
+}
+
+/**
  * The palette rows for one query, in display order: Pagine, Clienti,
  * Offerte, then the explicit ask row. A query starting with «@» talks to an
- * agent (admin-assistant.js): only the ask row, nothing is searched.
- * @param {{ query: unknown, pages?: Array<{ label: string, href: string, sub?: string }>, customers?: Array<any> | null, offers?: Array<any> | null }} input
+ * agent (admin-assistant.js): the space's matching agents first (backlog
+ * 1f7cb20d3c30 — the hand-written agent suggests like the catalogue ones),
+ * then the ask row, which hands the whole line to the assistant.
+ * @param {{ query: unknown, pages?: Array<{ label: string, href: string, sub?: string }>, customers?: Array<any> | null, offers?: Array<any> | null, agents?: Array<any> | null }} input
  * @returns {Array<{ kind: string, group: string, label: string, sub: string, href: string, text?: string }>}
  */
-export function buildCommandRows({ query, pages = [], customers = null, offers = null }) {
+export function buildCommandRows({ query, pages = [], customers = null, offers = null, agents = null }) {
   const text = typeof query === 'string' ? query.trim() : '';
   if (text === '') return [];
   const ask = { kind: 'ask', group: '', label: `Chiedi all’assistente: «${text}»`, sub: '', href: '', text };
-  if (text.startsWith('@')) return [ask];
+  if (text.startsWith('@')) {
+    const folded = foldText(text.slice(1));
+    const ranked = [];
+    const seen = new Set();
+    for (const item of Array.isArray(agents) ? agents : []) {
+      const row = agentCommand(item);
+      if (row === null || seen.has(row.label)) continue;
+      seen.add(row.label);
+      // A bare «@» lists the team; longer words filter by name.
+      const rank = folded === '' ? 3 : matchRank(row.label.slice(1), folded);
+      if (rank > 0) ranked.push({ row, rank });
+    }
+    ranked.sort((a, b) => b.rank - a.rank);
+    const rows = [];
+    for (const { row } of ranked.slice(0, COMMAND_GROUP_LIMIT)) {
+      rows.push({ ...row, group: 'Agenti' });
+    }
+    rows.push(ask);
+    return rows;
+  }
   const folded = foldText(text);
   /** @type {Array<{ kind: string, group: string, label: string, sub: string, href: string }>} */
   const rows = [];
@@ -148,7 +192,7 @@ export function buildCommandRows({ query, pages = [], customers = null, offers =
  * @param {{
  *   doc: any,
  *   pages: () => Array<{ label: string, href: string, sub?: string }>,
- *   search?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null> } | null,
+ *   search?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null>, agents?: () => Promise<Array<any> | null> } | null,
  *   navigate: (href: string) => void,
  *   ask: (text: string) => void,
  *   schedule?: (fn: () => void, ms: number) => any,
@@ -179,6 +223,13 @@ export function createCommandMenu({
     // Review #779: a read that failed is not «no match» — the list says so.
     customersFailed: false,
     offersFailed: false,
+    // backlog:1f7cb20d3c30: the @ rows read the space's agents, same rules.
+    /** @type {Array<any> | null} */
+    agents: null,
+    agentsAt: 0,
+    agentsLoading: false,
+    agentsStartedAt: 0,
+    agentsFailed: false,
     // Review #779 P1: the Enter that already chose a row also ends the
     // form submit that may follow it — one action per Enter.
     consumed: false,
@@ -191,11 +242,12 @@ export function createCommandMenu({
   let timer = null;
   let token = 0;
   let offersToken = 0;
+  let agentsToken = 0;
 
   /**
    * Review #779 P2: a failed read is logged (which read, status and code —
    * never the typed words or a record) and shown as its own state.
-   * @param {'clienti' | 'offerte'} read
+   * @param {string} read
    * @param {unknown} error
    */
   function logFailure(read, error) {
@@ -211,7 +263,7 @@ export function createCommandMenu({
 
   function rows() {
     const fresh = state.customersFor === state.query.trim() ? state.customers : null;
-    return buildCommandRows({ query: state.query, pages: pages(), customers: fresh, offers: state.offers });
+    return buildCommandRows({ query: state.query, pages: pages(), customers: fresh, offers: state.offers, agents: state.agents });
   }
 
   function setExpanded(open) {
@@ -235,7 +287,12 @@ export function createCommandMenu({
     current.forEach((row, index) => {
       if (row.kind === 'ask') {
         const remote = state.query.trim().length >= COMMAND_MIN_CHARS && !state.query.trim().startsWith('@');
-        if (remote && (state.customersLoading || state.offersLoading)) {
+        const atQuery = state.query.trim().startsWith('@');
+        if (atQuery && state.agentsLoading) {
+          list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco gli agenti…'));
+        } else if (atQuery && state.agentsFailed) {
+          list.appendChild(el(doc, 'p', 'bo-cmdk-status bo-cmdk-failed', 'Non riesco a leggere gli agenti adesso: premi Invio per chiedere comunque all’assistente.'));
+        } else if (remote && (state.customersLoading || state.offersLoading)) {
           list.appendChild(el(doc, 'p', 'bo-cmdk-status', 'Cerco tra clienti e offerte…'));
         } else if (remote && (state.customersFailed || state.offersFailed)) {
           const what = state.customersFailed && state.offersFailed
@@ -251,7 +308,9 @@ export function createCommandMenu({
       }
       const node = row.kind === 'ask'
         ? el(doc, 'button', 'bo-cmdk-row bo-cmdk-ask')
-        : el(doc, 'a', 'bo-cmdk-row');
+        : row.kind === 'agent'
+          ? el(doc, 'button', 'bo-cmdk-row bo-cmdk-agent')
+          : el(doc, 'a', 'bo-cmdk-row');
       node.setAttribute('role', 'option');
       node.setAttribute('id', `bo-cmdk-opt-${index}`);
       node.setAttribute('data-kind', row.kind);
@@ -260,6 +319,9 @@ export function createCommandMenu({
         node.setAttribute('type', 'button');
         node.setAttribute('tabindex', '-1');
         node.appendChild(el(doc, 'span', 'bo-cmdk-spark', '✦'));
+      } else if (row.kind === 'agent') {
+        node.setAttribute('type', 'button');
+        node.setAttribute('tabindex', '-1');
       } else {
         node.setAttribute('href', row.href);
       }
@@ -291,8 +353,29 @@ export function createCommandMenu({
     // locked: its answer is dropped and the next query reads again.
     offersToken += 1;
     state.offersLoading = false;
+    // backlog:1f7cb20d3c30: same for the agents read — a late answer never
+    // lands in the next menu use.
+    agentsToken += 1;
+    state.agentsLoading = false;
     state.enterWaited = false;
     if (input !== null) input.value = '';
+    render();
+  }
+
+  /**
+   * An agent row completes the @mention in the bar and keeps the list open:
+   * the operator adds the instruction, then Enter hands the whole line to
+   * the assistant (backlog:1f7cb20d3c30). The selection parks on the ask
+   * row, so the next Enter asks instead of completing again.
+   * @param {{ kind: string, href: string, text?: string }} row
+   */
+  function fillMention(row) {
+    const mention = typeof row.text === 'string' && row.text !== '' ? row.text : `${String(row.label ?? '').trim()} `;
+    if (input !== null) input.value = mention;
+    state.query = mention;
+    state.open = mention.trim() !== '';
+    state.customersFailed = false;
+    state.active = Math.max(rows().length - 1, 0);
     render();
   }
 
@@ -302,6 +385,10 @@ export function createCommandMenu({
       const text = String(row.text ?? '');
       reset();
       ask(text);
+      return;
+    }
+    if (row.kind === 'agent') {
+      fillMention(row);
       return;
     }
     reset();
@@ -335,6 +422,34 @@ export function createCommandMenu({
     render();
   }
 
+  /**
+   * The space's agents for a «@» query (backlog:1f7cb20d3c30): read once
+   * per menu use like the offers read, dropped on a newer menu generation.
+   */
+  async function loadAgents() {
+    if (typeof search?.agents !== 'function') return;
+    if (state.agentsLoading && now() - state.agentsStartedAt < COMMAND_AGENTS_TTL_MS) return;
+    if (!state.agentsLoading && state.agents !== null && now() - state.agentsAt < COMMAND_AGENTS_TTL_MS) return;
+    const mine = (agentsToken += 1);
+    state.agentsLoading = true;
+    state.agentsStartedAt = now();
+    render();
+    let items = null;
+    let failed = false;
+    try {
+      items = await search.agents();
+    } catch (error) {
+      failed = true;
+      logFailure('agenti', error);
+    }
+    if (mine !== agentsToken) return;
+    state.agentsLoading = false;
+    state.agentsFailed = failed;
+    state.agents = Array.isArray(items) ? items : null;
+    state.agentsAt = failed ? 0 : now();
+    render();
+  }
+
   async function loadCustomers(query) {
     const mine = (token += 1);
     let items = null;
@@ -365,6 +480,7 @@ export function createCommandMenu({
     timer = null;
     const query = state.query.trim();
     const remote = query.length >= COMMAND_MIN_CHARS && !query.startsWith('@');
+    const atQuery = query.startsWith('@');
     if (remote && typeof search?.customers === 'function') {
       state.customersLoading = true;
       token += 1;
@@ -377,6 +493,9 @@ export function createCommandMenu({
       state.customersLoading = false;
     }
     if (remote) void loadOffers();
+    // backlog:1f7cb20d3c30: «@» never searches customers or offers — it
+    // reads the space's agents, so the new agent suggests like the catalogue.
+    if (atQuery) void loadAgents();
     render();
   }
 
@@ -398,8 +517,11 @@ export function createCommandMenu({
     // Still reading customers and offers (2-4 s in production): Enter
     // waits for them instead of sending a name to the AI. The list stays
     // open on «Cerco…» and the first result arrives selected. A second
-    // Enter asks: a read that hangs never locks the AI row away.
-    if (!state.enterWaited && (state.customersLoading || state.offersLoading)
+    // Enter asks: a read that hangs never locks the AI row away. A «@»
+    // query waits only for the agents read, never for customers/offers.
+    const atQuery = state.query.trim().startsWith('@');
+    const waiting = atQuery ? state.agentsLoading : (state.customersLoading || state.offersLoading);
+    if (!state.enterWaited && waiting
       && current.every((row) => row.kind === 'ask')) {
       state.enterWaited = true;
       state.open = true;
@@ -483,6 +605,12 @@ export function createCommandMenu({
       state.offers = null;
       state.offersAt = 0;
       state.offersFailed = false;
+      // backlog:1f7cb20d3c30: the agents belong to the space left behind —
+      // drop them and their generation so a late answer never lands here.
+      state.agents = null;
+      state.agentsAt = 0;
+      state.agentsFailed = false;
+      agentsToken += 1;
       reset();
     },
     /** ⌘K: back to the bar, with the list of what was typed. */

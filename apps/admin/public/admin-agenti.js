@@ -12,10 +12,16 @@
 //   modules of packages/agents, scoped with `filter.spaceId`, plus the
 //   checked-in catalogue at `GET /api/agents/catalog` (whose 404 means
 //   «the agents package is not composed here»);
-// - writes: `POST /api/agents/create` (create-agent, catalogue slugs only)
-//   and `POST /api/agents/assign` (create-assignment), posted through the
-//   bound submission client so the Admin mutation gate sees an
-//   Idempotency-Key. Nothing else writes from here.
+// - writes: `POST /api/agents/create` (create-agent: a catalogue slug, or —
+//   backlog:1f7cb20d3c30 — a hand-written agent from «Nuovo agente»),
+//   `POST /api/agents/assign` (create-assignment),
+//   `POST /api/agents/update` (update-agent: a hand-written agent's own
+//   Modifica — name, role, instructions, cap) and
+//   `POST /api/agents/set-status` (set-agent-status: its Ritira/Riattiva —
+//   paused/resumed), all posted through the bound submission client so the
+//   Admin mutation gate sees an Idempotency-Key. Nothing else writes from
+//   here. The generic modules PATCH is never used for agents: teammate-agent
+//   exposes no update capability, so it would answer 404 (review #879).
 //
 // Honest gaps, said on screen and never faked:
 // - backlog:31a76b6f19a3: Approva, Rifiuta and Modifica post
@@ -40,8 +46,8 @@
 // phrases or proposals stay inert text.
 
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
-import { formatAmount, humanWriteError } from './admin-core.js';
-import { el, uiBadge, uiButton, uiEmpty } from './admin-ui.js';
+import { formatAmount, humanWriteError, parseEuroToCents } from './admin-core.js';
+import { el, uiBadge, uiButton, uiEmpty, uiHold, uiMarkBusy } from './admin-ui.js';
 
 /** How many rows each module read takes: one page, said out loud. */
 export const AGENTI_READ_LIMIT = 200;
@@ -56,6 +62,55 @@ export const AGENTI_POLL_MS = 20_000;
 export const AGENTI_FOLLOWUP_MS = Object.freeze([10_000, 30_000]);
 
 export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In pausa' });
+
+/**
+ * backlog:1f7cb20d3c30 — an agent written by hand has no engine in this
+ * space: the deployment runs only the catalogue agents it wired an
+ * executor for (the catalogue read names their keys). The card says so and
+ * never reads «Attivo» for an agent nothing runs. When a deployment gets a
+ * generic engine, the catalogue read (or a field on the row) must carry
+ * that signal; until then the catalogue is the whole truth.
+ */
+export const AGENT_NO_ENGINE_LABEL = 'Pronto, in attesa del motore';
+export const AGENT_NO_ENGINE_NOTE = 'Non viene dal catalogo: in questo spazio lavorano solo gli agenti del catalogo. '
+  + 'Resta nel tuo team e aspetta il motore, oppure scegli un agente dal catalogo qui sotto.';
+
+/** A hand-written agent waits for the engine after Affida: the outcome says so. */
+export const AGENT_WAIT_ENGINE_DONE = 'Per ora aspetta il motore: parte da solo appena arriva.';
+/** A paused agent is off: Affida on its card says the incarico stays put. */
+export const AGENT_PAUSED_DONE = 'è in pausa: l’incarico resta fermo finché non lo riattivi.';
+
+/** Hand-written agents live under this source-key prefix (create-agent). @param {unknown} key */
+export function isHandAgentKey(key) {
+  return typeof key === 'string' && key.startsWith('custom-agent:');
+}
+
+/** First named agent of a space, trimmed, or '' when the team has none. @param {Array<any>} agents */
+export function firstTeamAgent(agents = []) {
+  const named = (Array.isArray(agents) ? agents : []).find((row) => text(row?.name) !== null);
+  return named ? String(named.name).trim() : '';
+}
+
+/**
+ * The AI-bar placeholder for the Agenti screen names an agent of this team,
+ * so «@Nome» always reaches somebody. Falls back to the catalog example
+ * when the team has no named agent yet.
+ * @param {Array<any>} agents
+ */
+export function agentMentionPlaceholder(agents = []) {
+  const name = firstTeamAgent(agents);
+  if (name === '') return 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»';
+  return `Scrivi: «@${name} …»`;
+}
+
+/** An incarico of an agent with no engine: kept, never «Non riuscito», it waits (run-due `runnable`). */
+export const ASSIGNMENT_NO_ENGINE_LABEL = 'In attesa del motore';
+
+/** A capped agent needs the cost of one run on every incarico (package rule requireCostEstimate). */
+export const AGENT_COST_NEEDED_NOTE = 'Questo agente ha un tetto di spesa: scrivi quanto costa più o meno un giro, in euro.';
+
+/** The ⌘K bar cannot ask for the cost of a run: a capped agent is instructed from its card. */
+export const AGENT_CAP_USE_CARD_NOTE = 'Questo agente ha un tetto di spesa: dagli l’incarico dalla sua scheda in Agenti, dove scrivi anche quanto costa un giro.';
 
 /** The one autonomy the package supports: proposals always wait. */
 export const AGENT_AUTONOMY_LABEL = 'Chiede sempre il tuo ok';
@@ -176,13 +231,21 @@ export function agentInitials(name) {
  * (newest first), its spend this month and how many proposals wait.
  * @param {{ agents?: Array<any>, assignments?: Array<any>, runs?: Array<any>, nowIso: string }} input
  */
-export function buildAgentCards({ agents = [], assignments = [], runs = [], nowIso }) {
+export function buildAgentCards({ agents = [], assignments = [], runs = [], nowIso, catalog = null }) {
+  // backlog:1f7cb20d3c30: the agents this space can run are the catalogue
+  // agents (their keys come with the catalogue read). Without a catalogue
+  // read the screen knows nothing either way and keeps «Attivo».
+  const engines = Array.isArray(catalog)
+    ? new Set(catalog.map((entry) => entry?.agentSourceKey).filter((key) => typeof key === 'string'))
+    : null;
   const cards = [];
   for (const agent of agents) {
     const key = text(agent?.sourceKey);
     const name = text(agent?.name);
     if (key === null || name === null) continue;
-    const status = agent.status === 'paused' ? 'paused' : 'active';
+    const engine = engines === null || engines.has(key);
+    const status = agent.status === 'paused' ? 'paused' : engine ? 'active' : 'waiting';
+    const capCents = Number.isInteger(agent.spendingCapCents) && agent.spendingCapCents >= 0 ? agent.spendingCapCents : null;
     const own = assignments
       .filter((row) => row && row.agentSourceKey === key && text(row.phrase) !== null)
       .slice()
@@ -191,19 +254,31 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         sourceKey: String(row.sourceKey ?? ''),
         phrase: String(row.phrase).trim(),
         schedule: describeSchedule(row),
-        status: assignmentStatusLabel(row, runs),
+        // backlog:1f7cb20d3c30: an active incarico of an agent nothing runs
+        // waits for the engine; paused or done still say so.
+        status: !engine && row.status === 'active' ? ASSIGNMENT_NO_ENGINE_LABEL : assignmentStatusLabel(row, runs),
         lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
         lastOutcome: lastRunOf(runs, String(row.sourceKey ?? ''))?.outcome ?? null,
         lastStamp: lastRunStamp(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
+      // The module row id keeps the card keyed to its row; Modifica/Ritira
+      // write through the agents package routes by sourceKey, never by id.
+      // `custom` gates them to hand-written agents (the catalogue owns its
+      // own rows).
+      id: agent?.id == null || String(agent.id).trim() === '' ? null : String(agent.id).trim(),
+      custom: isHandAgentKey(key),
       sourceKey: key,
       name,
       role: text(agent.role) ?? '',
+      instructions: text(agent.instructions) ?? '',
       initials: agentInitials(name),
       status,
-      statusLabel: AGENT_STATUS_LABEL[status],
+      statusLabel: status === 'waiting' ? AGENT_NO_ENGINE_LABEL : AGENT_STATUS_LABEL[status],
+      engine,
+      capCents,
+      capLabel: capCents === null ? null : formatAmount(capCents, 'EUR'),
       autonomy: AGENT_AUTONOMY_LABEL,
       spentCents,
       spentLabel: formatAmount(spentCents, 'EUR'),
@@ -344,13 +419,20 @@ function editableField(proposal) {
 export function isDecisionUnavailable(error) {
   const record = error && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
+  const message = typeof record.message === 'string' ? record.message : '';
   const missing = code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE';
   // Review #688 giro 2: a 405 is a missing route only with a routing code,
   // never with a domain refusal.
   if (record.status === 405) return missing || code === 'ADMIN_METHOD_NOT_ALLOWED' || code === 'NOT_FOUND';
   if (record.status !== 404) return false;
   if (missing) return true;
-  return code === 'NOT_FOUND' && record.message === 'Route not found';
+  if (code === 'NOT_FOUND' && message === 'Route not found') return true;
+  // Review #879 giro 2: a deployment whose framework has no agents writes
+  // yet answers the update/set-status POST with NotFoundError('Operation',
+  // 'teammate agents'). That reads neutral, like any other unserved route —
+  // while AGENT_UNKNOWN (the agent is gone) stays a real answer, never
+  // hidden: its code is not NOT_FOUND-shaped like this one.
+  return code === 'NOT_FOUND' && message.startsWith('Operation not found');
 }
 
 /**
@@ -525,15 +607,18 @@ export async function loadAgentiData(client, spaceId) {
  * a double submit, therefore never creates a second incarico. A different
  * phrase, agent or space is a new intent with new identities.
  * @param {any} previous the attempt kept from the last try, or null
- * @param {{ spaceId: string, agentSourceKey: string, phrase: string }} intent
+ * @param {{ spaceId: string, agentSourceKey: string, phrase: string, costPerRunCents?: number }} intent
  */
 export function assignAttempt(previous, intent) {
+  const cost = Number.isInteger(intent.costPerRunCents) && intent.costPerRunCents > 0 ? intent.costPerRunCents : 0;
   if (previous && previous.spaceId === intent.spaceId && previous.agentSourceKey === intent.agentSourceKey
-    && previous.phrase === intent.phrase) return previous;
+    && previous.phrase === intent.phrase && previous.costPerRunCents === cost) return previous;
   return {
     spaceId: intent.spaceId,
     agentSourceKey: intent.agentSourceKey,
     phrase: intent.phrase,
+    // backlog:1f7cb20d3c30: the cost of one run, for an agent with a cap.
+    costPerRunCents: cost,
     sourceKey: `bo-agent-assign:${issueAdminKey()}`,
     runAt: null,
     keys: { plain: null, once: null },
@@ -557,6 +642,7 @@ export async function assignToAgent(bound, attempt, options = {}) {
     sourceKey: attempt.sourceKey,
     agentSourceKey: attempt.agentSourceKey,
     phrase: attempt.phrase,
+    ...(attempt.costPerRunCents > 0 ? { costPerRunCents: attempt.costPerRunCents } : {}),
     ...(options.once ? { plan: { cadence: 'once', runAt: attempt.runAt } } : {}),
   };
   const answer = await bound.request('/api/agents/assign', {
@@ -579,8 +665,72 @@ export const PHRASE_UNCLEAR_NOTE = 'Non ho capito ogni quanto farlo. Puoi scrive
 
 /** Italian message for a refused instruction. @param {unknown} error */
 export function assignErrorText(error) {
+  if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_COST_ESTIMATE_REQUIRED') return AGENT_COST_NEEDED_NOTE;
   return humanWriteError(error, {
     failed: 'Non riesco a dare l’incarico adesso: riprova tra poco.',
+    notComposed: 'Gli agenti non sono attivi in questo spazio.',
+  });
+}
+
+/** The bounds create-agent applies (packages/agents checkAgentInput). */
+export const NEW_AGENT_LIMITS = Object.freeze({ name: 120, role: 120, instructions: 4000 });
+
+/** The example under «Come lavora»: what an instruction looks like. */
+export const NEW_AGENT_EXAMPLE = 'Es. Ogni mattina guarda chi compie gli anni tra i clienti e prepara un messaggio di auguri. '
+  + 'Ogni messaggio aspetta il mio ok.';
+
+/** The locked panel after a lost answer (review #836 P2). */
+export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Riprova: se c’è già, lo ritrovo senza crearne un altro.';
+
+/** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
+export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
+
+/** @param {unknown} error */
+function isNameTaken(error) {
+  return Boolean(error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_NAME_TAKEN');
+}
+
+/**
+ * backlog:1f7cb20d3c30 — check the «Nuovo agente» panel before it posts:
+ * every refusal in Italian, the body only when it is complete. The name
+ * loses a leading «@» (it is how the operator will type it) and may not
+ * fold to the name of an agent already in the space.
+ * @param {{ name?: unknown, role?: unknown, instructions?: unknown, cap?: unknown }} form
+ * @param {Array<any>} [agents]
+ * @returns {{ error: string, field: 'name' | 'role' | 'instructions' | 'cap' } | { error?: undefined, field?: undefined, body: { name: string, role: string, instructions: string, spendingCapCents?: number } }}
+ */
+export function checkNewAgent(form, agents = []) {
+  const line = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+  const name = line(form?.name).replace(/^@+\s*/, '');
+  const role = line(form?.role);
+  // create-agent keeps instructions on one line: the lines of the textarea
+  // join with a space, never a 400 for an Enter the operator typed.
+  const instructions = line(form?.instructions);
+  if (name === '') return { error: 'Dagli un nome: è quello che scrivi dopo la @.', field: 'name' };
+  if (name.length > NEW_AGENT_LIMITS.name) return { error: `Il nome è troppo lungo: al massimo ${NEW_AGENT_LIMITS.name} caratteri.`, field: 'name' };
+  if (role === '') return { error: 'Scrivi in poche parole di cosa si occupa.', field: 'role' };
+  if (role.length > NEW_AGENT_LIMITS.role) return { error: `«Di cosa si occupa» è troppo lungo: al massimo ${NEW_AGENT_LIMITS.role} caratteri.`, field: 'role' };
+  if (instructions === '') return { error: 'Scrivi come lavora: cosa guarda e cosa ti propone.', field: 'instructions' };
+  if (instructions.length > NEW_AGENT_LIMITS.instructions) return { error: `Le istruzioni sono troppo lunghe: al massimo ${NEW_AGENT_LIMITS.instructions} caratteri.`, field: 'instructions' };
+  const wanted = foldName(name);
+  if ((Array.isArray(agents) ? agents : []).some((row) => typeof row?.name === 'string' && foldName(row.name) === wanted)) {
+    return { error: AGENT_NAME_TAKEN_NOTE, field: 'name' };
+  }
+  const rawCap = line(form?.cap).replace(/\s*€$/, '');
+  if (rawCap === '') return { body: { name, role, instructions } };
+  const cents = parseEuroToCents(rawCap);
+  if (cents === null) return { error: 'Il tetto di spesa va scritto in euro, per esempio 10 o 7,50. Oppure lascialo vuoto.', field: 'cap' };
+  if (cents <= 0) return { error: 'Il tetto di spesa deve essere più di 0 €. Oppure lascialo vuoto.', field: 'cap' };
+  return { body: { name, role, instructions, spendingCapCents: cents } };
+}
+
+/** Italian text for a refused «Nuovo agente». @param {unknown} error */
+export function newAgentErrorText(error) {
+  if (isNameTaken(error)) return AGENT_NAME_TAKEN_NOTE;
+  const status = error && typeof error === 'object' ? /** @type {any} */ (error).status : null;
+  if (status === 403) return 'Non hai il permesso di creare agenti in questo spazio: chiedilo a chi gestisce il team.';
+  return humanWriteError(error, {
+    failed: 'Non riesco a creare l’agente adesso: riprova tra poco. Quello che hai scritto resta qui.',
     notComposed: 'Gli agenti non sono attivi in questo spazio.',
   });
 }
@@ -635,10 +785,21 @@ function romeStamp(iso) {
  * The Agenti screen.
  * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
  */
-export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer }) {
+/**
+ * The last good read per space, module-wide: coming back to Agenti paints
+ * this instantly (under a second) and then reads again, so a stale card
+ * never outlives one reload. Only a finished `reload` writes it — a failed
+ * part never becomes the painted truth.
+ * @type {Map<string, { available: boolean, catalog: Array<any>, agents: Array<any>, assignments: Array<any>, runs: Array<any>, capped: boolean, unavailable: Array<string> }>}
+ */
+const AGENTI_CACHE = new Map();
+const AGENTI_CACHE_SPACES = 20;
+
+export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer, onTeamAgent }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  const tellTeam = typeof onTeamAgent === 'function' ? onTeamAgent : () => {};
   const later = typeof setTimer === 'function' ? setTimer : (fn, ms) => setTimeout(fn, ms);
   const forget = typeof clearTimer === 'function' ? clearTimer : (id) => clearTimeout(id);
   let renderToken = 0;
@@ -732,6 +893,32 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /**
+     * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
+     * `pending` is the body of a create whose answer was lost: the panel
+     * is locked and «Riprova» sends exactly that body under its key
+     * (review #836 P2), never the fields as they are now. `field` names
+     * the control its `error` belongs to, for the inline error, the
+     * aria-invalid mark and the focus that follows the repaint.
+     * @type {{ key: string, name: string, role: string, instructions: string, cap: string, error: string, field: string | null, busy: boolean, pending: any } | null}
+     */
+    newAgent: null,
+    /**
+     * backlog:7d169a3b1dd2: the open «Modifica» panel of one hand-written
+     * agent, by source key. Same shape as the creation panel, minus the
+     * key/pending pair: a retry re-sends the same checked body under the
+     * same key while the panel stays open.
+     * @type {Map<string, { key: string, name: string, role: string, instructions: string, cap: string, error: string, field: string | null, busy: boolean }>}
+     */
+    editing: new Map(),
+    /**
+     * backlog:7d169a3b1dd2: the «Ritira» two-step of one hand-written
+     * agent, by source key — an inline Conferma/Annulla, never a native
+     * confirm(). `busy` flies the PATCH; `unavailable` is a deployment
+     * that does not serve it yet.
+     * @type {Map<string, { busy: boolean, error: string, unavailable: boolean, confirm: boolean, key: string | null }>}
+     */
+    retiring: new Map(),
     /** Agents whose card lists every incarico («Mostra tutti»). @type {Set<string>} */
     expandedRuns: new Set(),
     /** Incarichi whose phrase is shown whole. @type {Set<string>} */
@@ -768,14 +955,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   function draftOf(key) {
-    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', busy: false, error: '', unclear: false, done: '', attempt: null });
+    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', cost: '', busy: false, error: '', unclear: false, done: '', attempt: null });
     return /** @type {any} */ (state.drafts.get(key));
   }
 
-  async function reload() {
-    const token = ++renderToken;
-    const data = await loadAgentiData(client, state.space);
-    if (token !== renderToken) return false;
+  /** Paint a finished read into state; both the live reload and the cache use it. @param {any} data */
+  function applyData(data) {
     state.available = data.available;
     state.catalog = data.catalog;
     state.agents = data.agents;
@@ -785,6 +970,28 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.unavailable = data.unavailable;
     state.loaded = true;
     forgetSettledQueue();
+    tellTeam(firstTeamAgent(state.agents));
+  }
+
+  async function reload() {
+    const token = ++renderToken;
+    const data = await loadAgentiData(client, state.space);
+    if (token !== renderToken) return false;
+    applyData(data);
+    // Only a finished read becomes the instant paint of the next return:
+    // a failed part never overwrites the last good one.
+    if (state.space) {
+      AGENTI_CACHE.set(state.space, {
+        available: data.available,
+        catalog: data.catalog,
+        agents: data.agents,
+        assignments: data.assignments,
+        runs: data.runs,
+        capped: data.capped,
+        unavailable: data.unavailable,
+      });
+      if (AGENTI_CACHE.size > AGENTI_CACHE_SPACES) AGENTI_CACHE.delete(AGENTI_CACHE.keys().next().value);
+    }
     return true;
   }
 
@@ -814,7 +1021,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (await reload()) paint();
     } catch (error) {
       state.adding = null;
-      state.addError = humanWriteError(error, {
+      state.addError = isNameTaken(error) ? AGENT_NAME_TAKEN_NOTE : humanWriteError(error, {
         failed: 'Non riesco ad aggiungere l’agente adesso: riprova tra poco.',
         notComposed: 'Gli agenti non sono attivi in questo spazio.',
       });
@@ -962,18 +1169,36 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const draft = draftOf(agent.sourceKey);
     const phrase = draft.text.trim();
     if (draft.busy || phrase === '' || !state.space) return;
+    // backlog:1f7cb20d3c30: a capped agent needs the cost of one run.
+    let costPerRunCents = 0;
+    if (agent.capCents !== null && agent.capCents !== undefined) {
+      const cents = parseEuroToCents(String(draft.cost ?? ''));
+      if (cents === null || cents <= 0) {
+        draft.error = AGENT_COST_NEEDED_NOTE;
+        draft.done = '';
+        paint();
+        return;
+      }
+      costPerRunCents = cents;
+    }
     draft.busy = true;
     draft.error = '';
     draft.done = '';
     paint();
-    draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase });
+    draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase, costPerRunCents });
     try {
       const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now() });
       draft.busy = false;
       draft.unclear = false;
       draft.text = '';
+      draft.cost = '';
       draft.attempt = null;
-      draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`;
+      // Backlog 7d169a3b1dd2: Affida says what the incarico does next — a
+      // hand-written agent with no engine waits for it, a paused one stays
+      // off until Riattiva.
+      draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`
+        + (agent.engine === false ? ` ${AGENT_WAIT_ENGINE_DONE}` : '')
+        + (agent.status === 'paused' ? ` ${agent.name} ${AGENT_PAUSED_DONE}` : '');
       if (await reload()) paint();
       // Backlog 2df6a513cc4d: the run lands after this answer, so read
       // again twice: the card leaves «In attesa di partire» on its own.
@@ -1014,13 +1239,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     box.appendChild(head);
 
     const facts = el(documentNode, 'dl', 'bo-agent-facts');
-    for (const [term, value] of [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]]) {
+    const factRows = [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]];
+    if (card.capLabel !== null) factRows.push(['Tetto al mese', card.capLabel]);
+    for (const [term, value] of factRows) {
       const row = el(documentNode, 'div', 'bo-agent-fact');
       row.appendChild(el(documentNode, 'dt', null, term));
       row.appendChild(el(documentNode, 'dd', null, value));
       facts.appendChild(row);
     }
     box.appendChild(facts);
+    if (!card.engine) box.appendChild(el(documentNode, 'p', 'bo-agent-noengine', AGENT_NO_ENGINE_NOTE));
 
     if (card.assignments.length > 0) {
       // Backlog «Agenti: layout delle card»: the newest two incarichi as
@@ -1058,13 +1286,32 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     input.value = draft.text;
     input.addEventListener('input', () => { draft.text = String(input.value ?? ''); });
     form.appendChild(input);
+    if (card.capCents !== null) {
+      // backlog:1f7cb20d3c30: the package refuses an incarico to a capped
+      // agent without the cost of one run, so the card asks for it here.
+      const cost = el(documentNode, 'input', 'ui-field bo-agent-cost');
+      cost.setAttribute('type', 'text');
+      cost.setAttribute('inputmode', 'decimal');
+      cost.setAttribute('name', `cost-${card.sourceKey}`);
+      cost.setAttribute('aria-label', `Quanto costa un giro di ${card.name}, in euro`);
+      cost.setAttribute('placeholder', '€ a giro');
+      cost.value = draft.cost;
+      cost.addEventListener('input', () => { draft.cost = String(cost.value ?? ''); });
+      form.appendChild(cost);
+    }
     const send = uiButton(documentNode, { variant: 'primary', label: draft.busy ? 'Invio…' : 'Affida', attrs: { type: 'submit', 'data-action': 'talk' } });
     send.disabled = draft.busy;
     form.appendChild(send);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       draft.text = String(input.value ?? draft.text);
-      void sendInstruction(card, false);
+      const cost = form.querySelector(`input[name="cost-${card.sourceKey}"]`);
+      if (cost) draft.cost = String(cost.value ?? draft.cost);
+      // The shared wait (admin-cta-busy guard): Affida reads «Invio…» from
+      // the press; the repaint keeps it from draft.busy, and a press that
+      // writes nothing (empty line) gets the button back.
+      const release = uiHold(send, 'Invio…');
+      void sendInstruction(card, false).finally(() => release());
     });
     box.appendChild(form);
     if (draft.unclear) {
@@ -1078,7 +1325,171 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
     if (draft.error !== '') box.appendChild(el(documentNode, 'p', 'bo-seq-error', draft.error));
     if (draft.done !== '') box.appendChild(el(documentNode, 'p', 'bo-agent-done', draft.done));
+    // Backlog 7d169a3b1dd2: a hand-written agent is edited and retired
+    // from its own card — the catalogue owns its rows, so its tiles keep
+    // only Aggiungi. No native confirm() anywhere: Ritira asks inline.
+    if (card.custom && card.id !== null) box.appendChild(renderManage(card));
     return box;
+  }
+
+  /**
+   * Modifica/Ritira of one hand-written agent: the edit panel with the
+   * same checks as «Nuovo agente» (errors next to their field), and the
+   * two-step inline retire.
+   * @param {any} card
+   */
+  function renderManage(card) {
+    const manage = el(documentNode, 'div', 'bo-agent-manage');
+    const paused = card.status === 'paused';
+    const row = el(documentNode, 'div', 'bo-seq-btns');
+    const editOpen = state.editing.has(card.sourceKey);
+    const edit = uiButton(documentNode, {
+      variant: 'secondary', small: true,
+      label: editOpen ? 'Chiudi modifica' : 'Modifica',
+      attrs: { type: 'button', 'data-action': 'edit-agent', 'aria-expanded': editOpen ? 'true' : 'false' },
+    });
+    edit.addEventListener('click', () => {
+      if (state.editing.has(card.sourceKey)) state.editing.delete(card.sourceKey);
+      else editOf(card);
+      paint();
+      if (state.editing.has(card.sourceKey)) {
+        const panel = mount.querySelector(`div[data-edit="${card.sourceKey}"]`);
+        focusFieldError(panel, 'agent-edit-name');
+      }
+    });
+    row.appendChild(edit);
+    const retireEntry = state.retiring.get(card.sourceKey) ?? null;
+    const retire = uiButton(documentNode, {
+      variant: 'secondary', small: true,
+      label: paused ? 'Riattiva' : 'Ritira',
+      attrs: { type: 'button', 'data-action': 'retire-agent' },
+    });
+    retire.disabled = (retireEntry?.busy ?? false);
+    retire.addEventListener('click', () => {
+      // The shared wait (admin-cta-busy guard, main rossa after #879): the
+      // press shows it is working; the repaint keeps «Ritiro…» from
+      // entry.busy, and a press that only opens Conferma gets the button back.
+      const release = uiHold(retire, paused ? 'Riattivo…' : 'Ritiro…');
+      void retireAgent(card, !paused).finally(() => release());
+    });
+    row.appendChild(retire);
+    manage.appendChild(row);
+    if (editOpen) manage.appendChild(renderEditPanel(card));
+    if (retireEntry && (retireEntry.confirm || retireEntry.error !== '' || retireEntry.unavailable)) {
+      manage.appendChild(renderRetireBox(card, paused, retireEntry));
+    }
+    return manage;
+  }
+
+  /** Inline Modifica panel of one hand-written agent. @param {any} card */
+  function renderEditPanel(card) {
+    const form = editOf(card);
+    const panel = el(documentNode, 'div', 'bo-agent-edit');
+    panel.setAttribute('data-edit', card.sourceKey);
+    panel.appendChild(el(documentNode, 'h4', undefined, `Modifica ${card.name}`));
+    // A refusal the server answered carries no field: like «Nuovo agente»,
+    // it stays on top of the panel — only the checked field errors move
+    // next to their control (review #879 giro 2 P2).
+    if (form.error !== '' && form.field === null && !form.unavailable) {
+      const top = el(documentNode, 'p', 'bo-seq-create-error', form.error);
+      top.setAttribute('role', 'alert');
+      panel.appendChild(top);
+    }
+    const fieldRow = (fieldKey, labelText, id, control) => {
+      const rowEl = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', labelText);
+      label.setAttribute('for', id);
+      control.setAttribute('id', id);
+      rowEl.appendChild(label);
+      rowEl.appendChild(control);
+      if (form.error !== '' && form.field === fieldKey) {
+        control.setAttribute('aria-invalid', 'true');
+        const error = el(documentNode, 'p', 'bo-seq-create-error bo-agent-field-error', form.error);
+        error.setAttribute('role', 'alert');
+        rowEl.appendChild(error);
+      }
+      return rowEl;
+    };
+    const control = (tag, name, value, max, placeholder) => {
+      const node = el(documentNode, tag, 'ui-field', undefined);
+      if (tag === 'input') node.setAttribute('type', 'text');
+      node.setAttribute('name', name);
+      node.setAttribute('maxlength', String(max));
+      if (placeholder) node.setAttribute('placeholder', placeholder);
+      node.value = value;
+      return node;
+    };
+    const name = control('input', 'agent-edit-name', form.name, NEW_AGENT_LIMITS.name, '');
+    name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
+    panel.appendChild(fieldRow('name', 'Nome', `bo-agent-edit-name-${card.sourceKey}`, name));
+    const role = control('input', 'agent-edit-role', form.role, NEW_AGENT_LIMITS.role, '');
+    role.addEventListener('input', () => { form.role = String(role.value ?? ''); });
+    panel.appendChild(fieldRow('role', 'Di cosa si occupa', `bo-agent-edit-role-${card.sourceKey}`, role));
+    const instructions = control('textarea', 'agent-edit-instructions', form.instructions, NEW_AGENT_LIMITS.instructions, '');
+    instructions.setAttribute('rows', '3');
+    instructions.addEventListener('input', () => { form.instructions = String(instructions.value ?? ''); });
+    panel.appendChild(fieldRow('instructions', 'Come lavora', `bo-agent-edit-instructions-${card.sourceKey}`, instructions));
+    const cap = control('input', 'agent-edit-cap', form.cap, 12, 'Es. 10');
+    cap.setAttribute('inputmode', 'decimal');
+    cap.addEventListener('input', () => { form.cap = String(cap.value ?? ''); });
+    panel.appendChild(fieldRow('cap', 'Tetto di spesa al mese, in euro (vuoto: nessun tetto)', `bo-agent-edit-cap-${card.sourceKey}`, cap));
+    if (form.unavailable) {
+      const note = el(documentNode, 'p', 'bo-muted bo-agent-edit-unavailable', DA_FARE_UNAVAILABLE_NOTE);
+      note.setAttribute('role', 'status');
+      panel.appendChild(note);
+    }
+    const saveRow = el(documentNode, 'div', 'bo-seq-btns');
+    const save = uiButton(documentNode, { variant: 'cta', small: true, label: form.busy ? 'Salvo…' : 'Salva', attrs: { type: 'button', 'data-action': 'save-agent-edit' } });
+    save.disabled = form.busy;
+    save.addEventListener('click', () => {
+      const release = uiHold(save, 'Salvo…');
+      void saveAgentEdit(card).finally(() => release());
+    });
+    saveRow.appendChild(save);
+    const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent-edit' } });
+    cancel.disabled = form.busy;
+    cancel.addEventListener('click', () => {
+      state.editing.delete(card.sourceKey);
+      paint();
+    });
+    saveRow.appendChild(cancel);
+    panel.appendChild(saveRow);
+    return panel;
+  }
+
+  /** Inline Ritira/Riattiva two-step: confirm on the card, never a native dialog. @param {any} card */
+  function renderRetireBox(card, paused, entry) {
+    const boxEl = el(documentNode, 'div', 'bo-agent-retire');
+    if (entry.confirm && !entry.busy) {
+      boxEl.appendChild(el(documentNode, 'p', null, paused
+        ? `${card.name} torna attivo e riceve di nuovo incarichi. Continuo?`
+        : `Ritiro ${card.name}? Resta nel team ma non riceve più incarichi; quelli dati restano.`));
+      const confirmBtn = uiButton(documentNode, {
+        variant: 'primary', small: true, label: 'Conferma',
+        attrs: { type: 'button', 'data-action': 'confirm-retire-agent' },
+      });
+      confirmBtn.addEventListener('click', () => {
+        // The shared wait (admin-cta-busy guard): «Ritiro…»/«Riattivo…» from
+        // the press, the same line the box paints from entry.busy.
+        const release = uiHold(confirmBtn, paused ? 'Riattivo…' : 'Ritiro…');
+        void retireAgent(card, !paused).finally(() => release());
+      });
+      boxEl.appendChild(confirmBtn);
+      const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-retire-agent' } });
+      cancel.addEventListener('click', () => {
+        state.retiring.delete(card.sourceKey);
+        paint();
+      });
+      boxEl.appendChild(cancel);
+    }
+    if (entry.busy) boxEl.appendChild(el(documentNode, 'p', 'bo-muted', paused ? 'Riattivo…' : 'Ritiro…'));
+    if (entry.unavailable) {
+      const note = el(documentNode, 'p', 'bo-muted bo-agent-retire-unavailable', DA_FARE_UNAVAILABLE_NOTE);
+      note.setAttribute('role', 'status');
+      boxEl.appendChild(note);
+    }
+    if (entry.error !== '') boxEl.appendChild(el(documentNode, 'p', 'bo-seq-error', entry.error));
+    return boxEl;
   }
 
   /**
@@ -1120,13 +1531,397 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     return item;
   }
 
+  /** Focus the first match of `selector` in the mount, when the DOM can. @param {string} selector */
+  function focusIn(selector) {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const node = mount.querySelector(selector);
+    if (node && typeof node.focus === 'function') node.focus();
+  }
+
+  /**
+   * Backlog 7d169a3b1dd2: after a refused panel, the error sits next to
+   * its field — scroll it into view and focus the control, so a keyboard
+   * or screen-reader operator lands where the fix belongs. `scope` roots
+   * the search (`null` is the whole mount); no-ops when the DOM cannot.
+   * @param {any} scope @param {string | null} name the control's full `name`
+   */
+  function focusFieldError(scope, name) {
+    if (!name || typeof mount?.querySelector !== 'function') return;
+    const root = scope && typeof scope.querySelector === 'function' ? scope : mount;
+    const node = root.querySelector(`[name="${name}"]`);
+    if (!node) return;
+    try {
+      node.scrollIntoView?.({ block: 'nearest' });
+    } catch {
+      // A control that cannot scroll still takes focus below.
+    }
+    if (typeof node.focus === 'function') node.focus();
+  }
+
+  function openNewAgent() {
+    // One caller key per open panel: a retry or a double click replays it.
+    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', field: null, busy: false, pending: null };
+    paint();
+    focusIn('input[name="agent-name"]');
+  }
+
+  function closeNewAgent() {
+    if (state.newAgent?.busy) return;
+    state.newAgent = null;
+    paint();
+    focusIn('button[data-action="new-agent"]');
+  }
+
+  /**
+   * «Nuovo agente»: name, role, instructions with an example, optional
+   * monthly cap — the same inline creation panel as «Nuova sequenza».
+   * Fields write into `state.newAgent` on input, so a repaint (the
+   * periodic read) never eats what the operator typed.
+   */
+  function renderNewAgentPanel() {
+    const form = /** @type {any} */ (state.newAgent);
+    const panel = el(documentNode, 'section', 'bo-seq-panel bo-agent-new');
+    panel.setAttribute('aria-label', 'Nuovo agente');
+    panel.addEventListener('keydown', (event) => {
+      if (event?.key !== 'Escape') return;
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      closeNewAgent();
+    });
+    panel.appendChild(el(documentNode, 'h3', undefined, 'Nuovo agente'));
+    // A refusal the server answered carries no field: it stays on top of
+    // the panel, as before — only the checked field errors move next to
+    // their control.
+    if (form.error !== '' && form.field === null) {
+      const error = el(documentNode, 'p', 'bo-seq-create-error', form.error);
+      error.setAttribute('role', 'alert');
+      panel.appendChild(error);
+    }
+    const fieldRow = (fieldKey, text, id, control, hint = null) => {
+      const row = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', text);
+      label.setAttribute('for', id);
+      control.setAttribute('id', id);
+      row.appendChild(label);
+      row.appendChild(control);
+      // Backlog 7d169a3b1dd2: the refusal sits next to its field —
+      // role="alert" for the screen reader — and the control carries
+      // aria-invalid while it is the refused one.
+      if (form.error !== '' && form.field === fieldKey) {
+        control.setAttribute('aria-invalid', 'true');
+        const error = el(documentNode, 'p', 'bo-seq-create-error bo-agent-field-error', form.error);
+        error.setAttribute('role', 'alert');
+        row.appendChild(error);
+      } else {
+        control.removeAttribute?.('aria-invalid');
+      }
+      if (hint !== null) row.appendChild(el(documentNode, 'p', 'bo-agent-new-hint', hint));
+      return row;
+    };
+    const locked = form.pending !== null;
+    if (locked) panel.appendChild(el(documentNode, 'p', 'bo-agent-new-hint bo-agent-new-pending', NEW_AGENT_PENDING_NOTE));
+    const field = (tag, name, value, max, placeholder) => {
+      const node = el(documentNode, tag, 'ui-field', undefined);
+      if (tag === 'input') node.setAttribute('type', 'text');
+      if (locked) node.disabled = true;
+      node.setAttribute('name', name);
+      node.setAttribute('maxlength', String(max));
+      if (placeholder) node.setAttribute('placeholder', placeholder);
+      node.value = value;
+      return node;
+    };
+    const name = field('input', 'agent-name', form.name, NEW_AGENT_LIMITS.name, 'Es. Auguri');
+    name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
+    panel.appendChild(fieldRow('name', 'Nome', 'bo-agent-new-name', name, 'È il nome che scrivi dopo la @ per dargli un incarico.'));
+    const role = field('input', 'agent-role', form.role, NEW_AGENT_LIMITS.role, 'Es. Fa gli auguri ai clienti');
+    role.addEventListener('input', () => { form.role = String(role.value ?? ''); });
+    panel.appendChild(fieldRow('role', 'Di cosa si occupa', 'bo-agent-new-role', role));
+    const instructions = field('textarea', 'agent-instructions', form.instructions, NEW_AGENT_LIMITS.instructions, NEW_AGENT_EXAMPLE);
+    instructions.setAttribute('rows', '4');
+    instructions.addEventListener('input', () => { form.instructions = String(instructions.value ?? ''); });
+    panel.appendChild(fieldRow('instructions', 'Come lavora', 'bo-agent-new-instructions', instructions,
+      'Scrivi cosa guarda e cosa ti propone. Prima di fare qualcosa ti chiede sempre l’ok.'));
+    const cap = field('input', 'agent-cap', form.cap, 12, 'Es. 10');
+    cap.setAttribute('inputmode', 'decimal');
+    cap.addEventListener('input', () => { form.cap = String(cap.value ?? ''); });
+    panel.appendChild(fieldRow('cap', 'Tetto di spesa al mese, in euro (facoltativo)', 'bo-agent-new-cap', cap,
+      'Con un tetto, a ogni incarico scrivi anche quanto costa più o meno un giro.'));
+    const row = el(documentNode, 'div', 'bo-seq-btns');
+    const submit = uiButton(documentNode, { variant: 'cta', label: locked ? 'Riprova' : 'Crea l’agente', attrs: { type: 'button', 'data-action': 'create-agent' } });
+    if (form.busy) uiMarkBusy(submit, 'Creo…');
+    submit.addEventListener('click', () => {
+      // The shared wait (admin-cta-busy guard): «Creo…» from the press; the
+      // repaint keeps it from form.busy while the create runs.
+      const release = uiHold(submit, 'Creo…');
+      void submitNewAgent().finally(() => release());
+    });
+    row.appendChild(submit);
+    const cancel = uiButton(documentNode, { variant: 'secondary', label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent' } });
+    cancel.disabled = form.busy;
+    cancel.addEventListener('click', () => closeNewAgent());
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    return panel;
+  }
+
+  /** Create the hand-written agent: check, POST once under the panel key, show it in the team. */
+  async function submitNewAgent() {
+    const form = state.newAgent;
+    if (!form || form.busy) return;
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    // A create whose answer was lost is retried as it was sent: same body,
+    // same key. Only a new, checked intent reads the fields.
+    let body = form.pending;
+    if (body === null) {
+      const checked = checkNewAgent(form, state.agents);
+      if (checked.error) {
+        form.error = checked.error;
+        form.field = checked.field ?? null;
+        paint();
+        focusFieldError(null, form.field === null ? null : `agent-${form.field}`);
+        return;
+      }
+      body = { spaceId: state.space, key: form.key, ...checked.body };
+    }
+    form.busy = true;
+    form.error = '';
+    form.field = null;
+    paint();
+    try {
+      const answer = await bound.request('/api/agents/create', {
+        method: 'POST',
+        body,
+        idempotencyKey: body.key,
+      });
+      const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : body.name;
+      state.newAgent = null;
+      state.notice = `${name} è entrato nel tuo team.`;
+      if (await reload()) paint();
+      else paint();
+      focusIn('button[data-action="new-agent"]');
+    } catch (error) {
+      form.busy = false;
+      form.error = newAgentErrorText(error);
+      // A refusal the server answered wrote nothing: the corrected panel is
+      // a new intent with a new key. A lost answer keeps its key, so the
+      // retry replays instead of creating a second agent.
+      const status = /** @type {any} */ (error)?.status;
+      if (Number.isInteger(status) && status >= 400 && status < 500) {
+        form.key = issueAdminKey();
+        form.pending = null;
+      } else {
+        // No answer, or one that cannot say whether the agent was written:
+        // lock the panel on what was sent until a retry settles it.
+        form.pending = body;
+      }
+      paint();
+    }
+  }
+
+  /**
+   * Italian text for a refused hand-agent write (Modifica/Ritira).
+   * Review #879 giro 2: no `notComposed` — an unserved route reads
+   * neutral through isDecisionUnavailable, so a 404 here is a real
+   * answer (the agent is gone), never «non sono attivi».
+   * @param {unknown} error
+   */
+  function agentPatchErrorText(error, what) {
+    return humanWriteError(error, {
+      failed: `Non riesco a ${what} adesso: riprova tra poco. Quello che hai scritto resta qui.`,
+    });
+  }
+
+  /**
+   * Backlog 7d169a3b1dd2: a hand-written agent's own Modifica — name,
+   * role, instructions, cap — through update-agent, under one
+   * Idempotency-Key from the bound client. A deployment that does not
+   * serve it yet (404/405) reads neutral, never an error.
+   * @param {any} card @param {Record<string, unknown>} patch @param {string} key
+   */
+  async function updateHandAgent(card, patch, key) {
+    return bound.request('/api/agents/update', {
+      method: 'POST',
+      body: { spaceId: state.space, agentSourceKey: card.sourceKey, ...patch },
+      idempotencyKey: key,
+    });
+  }
+
+  /**
+   * Backlog 7d169a3b1dd2: a hand-written agent's own Ritira/Riattiva —
+   * paused/resumed — through set-agent-status, under one Idempotency-Key
+   * from the bound client. Writing the status it already carries replays.
+   * @param {any} card @param {string} status @param {string} key
+   */
+  async function setHandAgentStatus(card, status, key) {
+    return bound.request('/api/agents/set-status', {
+      method: 'POST',
+      body: { spaceId: state.space, agentSourceKey: card.sourceKey, status },
+      idempotencyKey: key,
+    });
+  }
+
+  function editOf(card) {
+    if (!state.editing.has(card.sourceKey)) {
+      state.editing.set(card.sourceKey, {
+        key: issueAdminKey(),
+        name: card.name,
+        role: card.role ?? '',
+        instructions: card.instructions ?? '',
+        cap: card.capCents === null || card.capCents === undefined ? '' : String(card.capCents / 100),
+        error: '',
+        field: null,
+        unavailable: false,
+        busy: false,
+      });
+    }
+    return /** @type {any} */ (state.editing.get(card.sourceKey));
+  }
+
+  function retireOf(card) {
+    if (!state.retiring.has(card.sourceKey)) {
+      state.retiring.set(card.sourceKey, { busy: false, error: '', unavailable: false, confirm: false, key: null });
+    }
+    return /** @type {any} */ (state.retiring.get(card.sourceKey));
+  }
+
+  /** Save the open Modifica panel of one hand-written agent. @param {any} card */
+  async function saveAgentEdit(card) {
+    const form = editOf(card);
+    if (!form || form.busy) return;
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    if (card.id === null) {
+      form.error = 'Non riesco a modificare questo agente adesso: ricarica e riprova.';
+      form.field = null;
+      paint();
+      return;
+    }
+    const others = state.agents.filter((row) => row?.sourceKey !== card.sourceKey);
+    const checked = checkNewAgent({ name: form.name, role: form.role, instructions: form.instructions, cap: form.cap }, others);
+    if (checked.error) {
+      form.error = checked.error;
+      form.field = checked.field ?? null;
+      form.unavailable = false;
+      paint();
+      // Review #879 giro 2 P2: paint() detaches the pre-paint panel, so
+      // the focus runs from the live mount — like the «Nuovo agente» path.
+      focusFieldError(null, form.field === null ? null : `agent-edit-${form.field}`);
+      return;
+    }
+    form.busy = true;
+    form.error = '';
+    // Review #879 giro 2 P2: a server refusal carries no field — it stays
+    // on top of the panel, never next to a stale field marker.
+    form.field = null;
+    form.unavailable = false;
+    paint();
+    const body = { ...checked.body };
+    // An emptied cap clears the ceiling; a kept value stays untouched —
+    // the panel always opens with the current one written in.
+    if (form.cap.trim() === '') body.spendingCapCents = null;
+    try {
+      await updateHandAgent(card, body, form.key);
+      state.editing.delete(card.sourceKey);
+      state.notice = `${checked.body.name} aggiornato.`;
+      if (await reload()) paint();
+      else paint();
+    } catch (error) {
+      form.busy = false;
+      if (isDecisionUnavailable(error)) {
+        form.unavailable = true;
+      } else {
+        // A refused Modifica names no field: like «Nuovo agente», a taken
+        // name stays on top of the panel, and any other refusal reads as
+        // a failure — never «non sono attivi» (an unknown agent is gone,
+        // not uncomposed).
+        form.error = isNameTaken(error)
+          ? AGENT_NAME_TAKEN_NOTE
+          : humanWriteError(error, {
+            failed: 'Non riesco a salvare la modifica adesso: riprova tra poco. Quello che hai scritto resta qui.',
+          });
+        form.field = null;
+        const status = /** @type {any} */ (error)?.status;
+        if (Number.isInteger(status) && status >= 400 && status < 500) form.key = issueAdminKey();
+      }
+      paint();
+    }
+  }
+
+  /**
+   * Backlog 7d169a3b1dd2: Ritira (or Riattiva) a hand-written agent — an
+   * inline Conferma/Annulla two-step, never a native confirm(). A refused
+   * write rotates the key; an unserved route reads neutral.
+   * @param {any} card @param {boolean} pause
+   */
+  async function retireAgent(card, pause) {
+    const entry = retireOf(card);
+    if (entry.busy) return;
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    if (!entry.confirm) {
+      entry.confirm = true;
+      entry.error = '';
+      entry.unavailable = false;
+      paint();
+      return;
+    }
+    if (card.id === null) {
+      entry.error = 'Non riesco a ritirare questo agente adesso: ricarica e riprova.';
+      paint();
+      return;
+    }
+    entry.busy = true;
+    entry.error = '';
+    paint();
+    try {
+      if (entry.key === null) entry.key = issueAdminKey();
+      await setHandAgentStatus(card, pause ? 'paused' : 'active', entry.key);
+      state.retiring.delete(card.sourceKey);
+      state.notice = pause
+        ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
+        : `${card.name} di nuovo attivo.`;
+      if (await reload()) paint();
+      else paint();
+    } catch (error) {
+      entry.busy = false;
+      if (isDecisionUnavailable(error)) {
+        entry.unavailable = true;
+      } else {
+        entry.error = agentPatchErrorText(error, pause ? 'ritirare l’agente' : 'riattivare l’agente');
+        const status = /** @type {any} */ (error)?.status;
+        if (Number.isInteger(status) && status >= 400 && status < 500) entry.key = issueAdminKey();
+      }
+      paint();
+    }
+  }
+
   function renderMine(page, cards) {
     const section = el(documentNode, 'section', 'bo-agenti-section');
-    section.appendChild(el(documentNode, 'h3', null, 'I tuoi agenti'));
+    const head = el(documentNode, 'div', 'bo-agenti-sectionhead');
+    head.appendChild(el(documentNode, 'h3', null, 'I tuoi agenti'));
+    // backlog:1f7cb20d3c30: an agent written by hand, beside the catalogue.
+    const create = uiButton(documentNode, {
+      variant: 'cta',
+      label: 'Nuovo agente',
+      attrs: { type: 'button', 'data-action': 'new-agent', 'aria-expanded': state.newAgent !== null ? 'true' : 'false' },
+    });
+    create.addEventListener('click', () => {
+      if (state.newAgent !== null) closeNewAgent();
+      else openNewAgent();
+    });
+    head.appendChild(create);
+    section.appendChild(head);
+    if (state.newAgent !== null) section.appendChild(renderNewAgentPanel());
     if (cards.length === 0) {
       section.appendChild(uiEmpty(documentNode, {
         title: 'Nessun agente nel team',
-        text: 'Scegline uno dal catalogo qui sotto: entra nel team e puoi dargli il primo incarico.',
+        text: 'Scegline uno dal catalogo qui sotto, oppure creane uno nuovo: entra nel team e puoi dargli il primo incarico.',
       }));
     } else {
       const grid = el(documentNode, 'div', 'bo-agent-grid');
@@ -1341,7 +2136,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       page.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${AGENTI_READ_LIMIT} elementi per elenco.`));
     }
     const nowIso = now();
-    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso });
+    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso, catalog: state.catalog });
     renderMine(page, cards);
     renderDaFare(page, buildDaFare({ runs: state.runs, agents: state.agents, assignments: state.assignments }));
     renderCatalog(page, buildCatalogItems({ catalog: state.catalog, agents: state.agents }));
@@ -1367,6 +2162,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.drafts = new Map();
       state.expandedRuns = new Set();
       state.openPhrases = new Set();
+      state.newAgent = null;
+      state.editing.clear();
+      state.retiring.clear();
       state.notice = '';
       state.addError = '';
     }
@@ -1375,7 +2173,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // `proposed`.
     state.decisions = new Map();
     state.loaded = false;
-    paint();
+    // Backlog 7d169a3b1dd2: coming back paints the last good read at once
+    // (instant, under a second) and then reads again — the reload below
+    // still replaces it, so stale cards never outlive one read.
+    const hit = space === null ? null : AGENTI_CACHE.get(space) ?? null;
+    if (hit !== null && space === state.space) {
+      applyData(hit);
+      paint();
+    } else {
+      paint();
+    }
     if (await reload()) paint();
     // Backlog 2df6a513cc4d: keep reading while the screen is shown, so a
     // run that lands after Affida paints without a manual reload.

@@ -1475,6 +1475,73 @@ test('backlog:76ded4e3: the two menus never stay open together, Escape and a cli
   assert.equal(newSpaceMenu(), null, 'a click outside closes the new-space menu');
   assert.equal(inviteMenu(), null, 'a click outside leaves no menu open');
 });
+
+test('the two menus open as popovers without moving the content below', async () => {
+  // Like the clienti and personalizzazione add menus: each menu is absolute
+  // on a relative anchor, so opening one paints over the page instead of
+  // pushing the grid, the team list or the panels below. The flow shape —
+  // every node but the popover itself, in order — is the same closed and
+  // open: the same position before and after.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const v = createSpaziAccessiView({
+    doc,
+    mount,
+    client: stubClient({ members: [{ subject: 'owner-1', role: 'owner', status: 'active' }] }),
+    navigate: () => {},
+    spaces: () => spaces,
+    activeSpaceId: () => SPACE,
+    onPickSpace: () => {},
+    toast: () => {},
+  });
+  await v.render();
+  await flush();
+  const shapeOf = () => {
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        const isMenu = child.getAttribute?.('role') === 'menu'
+          && (child.getAttribute?.('aria-label') === 'Nuovo spazio di lavoro'
+            || child.getAttribute?.('aria-label') === 'Invita persona');
+        if (isMenu) continue;
+        out.push(`${child.tagName}.${child.getAttribute?.('class') ?? ''}`);
+        walk(child);
+      }
+    };
+    walk(mount);
+    return out;
+  };
+  const anchorOf = (menu) => {
+    let node = menu.parentNode ?? null;
+    while (node) {
+      if (/position:\s*relative/.test(node.getAttribute?.('style') ?? '')) return node;
+      node = node.parentNode ?? null;
+    }
+    return null;
+  };
+  const newSpaceToggle = () => mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  const inviteToggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const newSpaceMenu = () => mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  const inviteMenu = () => mount.querySelector('div[aria-label="Invita persona"]');
+
+  const closed = shapeOf();
+  await newSpaceToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens');
+  assert.match(newSpaceMenu().getAttribute('style') ?? '', /position:\s*absolute/, 'the new-space menu is out of flow');
+  assert.ok(anchorOf(newSpaceMenu()), 'the new-space menu hangs off a relative anchor');
+  assert.deepEqual(shapeOf(), closed, 'opening + Nuovo spazio leaves every content node where it was');
+
+  await newSpaceToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  await inviteToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens');
+  assert.match(inviteMenu().getAttribute('style') ?? '', /position:\s*absolute/, 'the invite menu is out of flow');
+  assert.ok(anchorOf(inviteMenu()), 'the invite menu hangs off a relative anchor');
+  assert.deepEqual(shapeOf(), closed, 'opening Invita persona leaves every content node where it was');
+});
 // backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
 // C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
 // dei canali. Prima il rosso: sul codice di prima le righe non portano né

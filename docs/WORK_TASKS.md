@@ -70,6 +70,7 @@ sense**: no action in this package updates or deletes one.
 
 ```text
 sourceKey            deterministic for a lifecycle entry; null for a note
+                     (`note-withdrawal:<noteId>` for a withdrawal)
 kind                 task_created | task_completed | task_cancelled | note
 subjectResource/Id   the subject this entry is on
 taskId               the task it describes
@@ -77,7 +78,23 @@ body                 the note text, or null
 occurredAt           the business instant
 actorType/actorId    who
 sourcePackage/Action which action wrote it
+seq                  the position in its task's append sequence
+revisesId            the original note a correction or a withdrawal acts on
+withdrawn            true on a withdrawal
 ```
+
+A subject note is corrected or withdrawn the same way: by a later row,
+never in place (operations `revise-subject-note` and
+`withdraw-subject-note`, backlog:82235e46e3e9). A correction is a `note`
+row whose `revisesId` names the original note; a withdrawal is one with
+`withdrawn: true` and no body, one per note. The scheda cronologia shows
+the latest wording at the original note's place, signed by who wrote it,
+and stops showing a withdrawn note; every version stays on record.
+Only the note's writer, or the space owner, may correct or withdraw it
+(owner decision 11/11): any other member who may write records is refused
+`WORK_NOTE_NOT_AUTHOR` (403). The role is the one the server resolved —
+the HTTP route passes its authorization decision's role, never a request
+field.
 
 ## Audit versus Activity
 

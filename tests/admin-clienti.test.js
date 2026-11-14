@@ -480,7 +480,7 @@ test('Ultimo contatto of today reads «oggi HH:MM», a call names no excerpt', a
     'no excerpt is invented for a call');
 });
 
-test('a hostile excerpt stays text, and no contact still reads «mai»', async () => {
+test('a hostile excerpt stays text, and no contact reads «nessun messaggio»', async () => {
   // backlog:22d4dd0f, C16+C23: hostile server text never becomes markup.
   const hostileRow = {
     ...ROW_MARCO,
@@ -496,7 +496,12 @@ test('a hostile excerpt stays text, and no contact still reads «mai»', async (
   const cards = mount.findAll('article');
   assert.equal(cards[0].findAll('img').length, 0, 'the excerpt never becomes an element');
   assert.ok(cards[0].textContent.includes('<img src=x onerror=alert(1)>'), 'the hostile text still reads as text');
-  assert.ok(cards[1].textContent.includes('mai'), 'no contact still reads «mai»');
+  // backlog:fe9be5f0af4a: no message or call reads «nessun messaggio» and
+  // says what counts, never a bare «mai» beside a customer with notes.
+  const none = cards[1].findAll('span').find((node) => node.textContent === 'nessun messaggio');
+  assert.ok(none, 'the empty-contact cell reads exactly «nessun messaggio»');
+  assert.equal(none.getAttribute('title'), 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
+  assert.equal(cards[1].findAll('span').filter((node) => node.textContent === 'mai').length, 0, 'never a bare «mai» cell');
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {
@@ -1204,4 +1209,14 @@ test('4968615de0a4: «Importa da file» has its own file mark, not the pencil of
   assert.notEqual(tilePath('add-import'), tilePath('add-manual'));
   const { UI_ICONS } = await import('../apps/admin/public/admin-ui.js');
   assert.ok(UI_ICONS.includes('importa'));
+});
+
+// backlog:a762c28a646c: every name the list shows is remembered for the
+// scheda it opens.
+test('a762c28a646c: the Clienti list remembers the names it shows', async () => {
+  const { createKnownNames } = await import('../apps/admin/public/admin-known-names.js');
+  const names = createKnownNames({ space: () => 's1' });
+  await render(stubClient(), { knownNames: names });
+  assert.equal(names.get('contact', 'c1'), 'Marco Rossi');
+  assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
 });

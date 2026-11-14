@@ -34,8 +34,8 @@ import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, isProfileEmailStandin, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, nameFromProfile, readableName } from './admin-labels.js';
-import { labelFromEmail, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
+import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
+import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
@@ -244,6 +244,21 @@ export function isTodayInRome(value, now = new Date()) {
   return day === romeDayKey(now);
 }
 
+/**
+ * Whether an appointment start still lies ahead (backlog:57e3d1685e58):
+ * a slot already behind us today is done showing up in «Ti resta» and
+ * never offers «Prepara». Same mark rule as nextAppointment: without a
+ * real `now` nothing is filtered.
+ * @param {unknown} startsAt
+ * @param {Date} [now]
+ */
+function startsAtOrAfterNow(startsAt, now) {
+  const start = toInstant(startsAt);
+  if (start === null) return false;
+  const mark = now instanceof Date ? now.getTime() : NaN;
+  return Number.isNaN(mark) || start.getTime() >= mark;
+}
+
 // ---------------------------------------------------------------------------
 // Advisor actions. Every action cites the record that motivates it — the
 // `record` triple (module, id, href) is mandatory, never optional, so an
@@ -325,7 +340,7 @@ export function calendarEventOf(appointment) {
 
 /**
  * Label shown for the cited record: the stored snapshot label when present,
- * otherwise a generic Italian name — never a technical `resource · id`
+ * otherwise the one fallback of Oggi — never a technical `resource · id`
  * (the screen must never print labels like "lead · lead-1").
  * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
  */
@@ -333,20 +348,34 @@ function subjectDisplayLabel(row, names = {}) {
   // The customer's readable name first (backlog:5083e7a77c26, production
   // 08/11: the brief read «il cliente · 10 nov alle 11:00» for Fio Neri —
   // the channel syncs store no subject label on the appointment): the
-  // profile name read for that subject, else the stored label, and «il
-  // cliente» only when no name exists at all.
-  const key = inboxSubjectKey(row);
-  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
-    ? readableName(nonEmptyText(names[key])) : null;
-  return fromProfile ?? readableName(nonEmptyText(row?.subjectLabel)) ?? 'il cliente';
+  // profile name read for that subject, else the stored label, and the one
+  // fallback (backlog:1f846205b9a3) only when no name exists at all.
+  return subjectName(row, names) ?? APPOINTMENT_GUEST_LABEL;
 }
 
 /**
- * The next call's guest name, or null when no name exists yet — never a
- * stand-in noun. The next-call card (verification 09/11, backlog
- * 1a3a0ba236c0) must not print «il cliente» before the name: with no
- * stored or profile name it waits for the name with a neutral
- * placeholder, never a presumed customer.
+ * The one name rule of Oggi (backlog:8763c6f1a9b0): the profile name read
+ * for the subject, else the stored label, null when neither is a name. The
+ * agenda, the advisor card and «Prima della prossima call» all read it, so
+ * the same appointment never says Fio Neri in one place and «un ospite da
+ * confermare» in another.
+ * @param {{ subjectLabel?: unknown, subjectResource?: unknown, subjectId?: unknown }} row
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ * @returns {string | null}
+ */
+function subjectName(row, names = {}) {
+  const key = inboxSubjectKey(row);
+  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null;
+  return fromProfile ?? readableName(nonEmptyText(row?.subjectLabel));
+}
+
+/**
+ * The one fallback of Oggi (backlog:1f846205b9a3): with no stored or
+ * profile name the screen waits with this neutral placeholder — never a
+ * presumed customer. The next-call card (verification 09/11, backlog
+ * 1a3a0ba236c0) must not print «il cliente» before the name, and since
+ * this item the agenda and the advisor read the same words.
  */
 const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
 
@@ -355,10 +384,7 @@ const APPOINTMENT_GUEST_LABEL = 'un ospite da confermare';
  * @param {Record<string, string|null>} [names] profile names by `resource:id`
  */
 function appointmentGuestName(appointment, names = {}) {
-  const key = inboxSubjectKey(appointment);
-  const fromProfile = key && names !== null && typeof names === 'object' && Object.hasOwn(names, key)
-    ? readableName(nonEmptyText(names[key])) : null;
-  return fromProfile ?? readableName(nonEmptyText(appointment?.subjectLabel));
+  return subjectName(appointment, names);
 }
 
 /**
@@ -507,13 +533,11 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
     const action = followupAction(task, now);
     if (action) actions.push(action);
   }
-  const today = (Array.isArray(appointments) ? appointments : [])
-    .filter((row) => row != null
-      && (row.status === 'booked' || row.status === 'confirmed')
-      && isTodayInRome(row.startsAt, now));
-  today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
-  if (today.length > 0) {
-    const prep = appointmentPrepAction(today[0], names, pendingNames === true);
+  // backlog:57e3d1685e58: the prep reads the next call still ahead, never an
+  // appointment already behind us today — a past slot must not offer «Prepara».
+  const next = nextAppointment(appointments, now);
+  if (next !== null) {
+    const prep = appointmentPrepAction(next, names, pendingNames === true);
     if (prep) actions.push(prep);
   }
   const capped = actions.length > ADVISOR_ACTION_LIMIT;
@@ -660,14 +684,6 @@ export async function executeAdvisorAction(client, action, run) {
 // a gap renders as its own honest line.
 // ---------------------------------------------------------------------------
 
-/**
- * @param {number} count
- * @param {string} singular
- * @param {string} plural
- */
-function countNoun(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
 
 /**
  * One-sentence recap of the day, verbatim from the prototype: open chores
@@ -683,10 +699,13 @@ function countNoun(count, singular, plural) {
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
+  // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
+  // a past slot stays in the agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
-      && isTodayInRome(row.startsAt, now));
+      && isTodayInRome(row.startsAt, now)
+      && startsAtOrAfterNow(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
@@ -711,13 +730,13 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   if (tasks.length === 0) {
     if (unanswered > 0 || floor) {
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
-      return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+      return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
     if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
-    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${countNoun(today.length, 'appuntamento', 'appuntamenti')}.`;
+    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
-  const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : countNoun(today.length, 'appuntamento', 'appuntamenti');
-  const base = `Oggi hai ${countNoun(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
+  const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
+  const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
   return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
@@ -755,9 +774,17 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     // appointment is with — the team member's name from the roster, else a
     // short honest cue from the notes. Never invented when neither exists,
     // and never the member's technical id (production 10/11 read
-    // «broker+…@accordo.invalid» and «google|…» here).
+    // «broker+…@accordo.invalid» and «google|…» here). A team mailbox is
+    // never a name either (backlog:57e3d1685e58: the operator's own
+    // address read under the contact): only a real name reads, then the
+    // contact's own address from the stored label (a synced invitee keeps
+    // its email there), then the notes cue.
     const team = memberLabel(row?.teamMemberId, members);
-    const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
+    const teamName = team !== null && !team.includes('@') ? team : null;
+    const labelMail = memberText(row?.subjectLabel);
+    const cue = teamName
+      ?? (labelMail !== null && labelMail.includes('@') ? labelMail : null)
+      ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
     const card = cardHrefForSubject(row);
@@ -985,10 +1012,17 @@ export const UNREAD_VIEW = 'da-leggere';
  * limit. The «Da leggere» count comes from the same answer's view pills.
  * @param {any} answer GET /api/customer-data/customers?vista=da-rispondere
  * @param {Date} [now]
- * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null } | null}
+ * @returns {{ available: true, source: 'server', total: number, totalIsExact: boolean, rows: Array<any>, unread: number | null, correspondents: { conversations: Set<string>, addresses: Set<string> } | null } | null}
  */
 export function buildServerReplies(answer, now = new Date()) {
   if (!answer || typeof answer !== 'object' || !Array.isArray(answer.items)) return null;
+  // La base «mai scritto» della scansione (seguito P2 review Muse #821 giro
+  // 4, backlog:095fb37de6bb): gli stessi corrispondenti da cui la vista
+  // decide — l’inbox locale li riusa per le notifiche. Assente sulle risposte
+  // di prima della cura: allora vale la base della pagina, come prima.
+  const correspondents = answer.teamCorrespondents == null
+    ? null
+    : reviveCorrespondents(answer.teamCorrespondents);
   const rows = [];
   for (const item of answer.items.slice(0, INBOX_LIMIT)) {
     const resource = nonEmptyText(item?.subject?.resource ?? item?.resource);
@@ -1003,7 +1037,10 @@ export function buildServerReplies(answer, now = new Date()) {
       channel,
       subjectKey: `${resource}:${id}`,
       namePending: false,
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: il badge è il cliente (iniziali come
+      // Clienti e la scheda), mai la mattonella del canale. Il canale
+      // resta in `channel` e nella riga «da … · Email».
+      mono: badgeInitials(name),
       name,
       preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
       when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
@@ -1019,6 +1056,7 @@ export function buildServerReplies(answer, now = new Date()) {
     totalIsExact: answer.totalIsExact !== false,
     rows,
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
+    correspondents,
   };
 }
 
@@ -1074,9 +1112,15 @@ function realLabel(value) {
  * `notifications`, apart, and never counts as waiting. `ownAddresses` are
  * the space's own mailboxes (`ownMailboxes`). `pendingNames` marks the rows
  * whose name a profile read still has to bring (backlog:bd5e84545021).
- * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string> }} input
+ * @param {{ messages?: Array<any>, conversations?: Array<any>, now?: Date, limit?: number, names?: Record<string, string|null>, pendingNames?: boolean, ownAddresses?: Array<string>, correspondents?: any }} input
+ * `correspondents` is the server view's scan-wide base
+ * (buildServerReplies, backlog:095fb37de6bb): the «mai scritto» the server
+ * classified its threads from. A scanned thread (one with a customer
+ * subject) decides from that base; a thread the scan never saw (no
+ * subject) decides from the page, like before. Absent it reads the
+ * page, like before.
  */
-export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [] } = {}) {
+export function buildInbox({ messages = [], conversations = [], now = new Date(), limit = INBOX_LIMIT, names = {}, pendingNames = false, ownAddresses = [], correspondents: shared = null } = {}) {
   const byId = new Map();
   for (const conversation of conversations) {
     if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
@@ -1094,10 +1138,18 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
   }
   const waiting = [];
   const automated = [];
-  // Who the team ever wrote to, among the messages read (backlog:bab63e32acdb):
+  // Who the team ever wrote to (backlog:bab63e32acdb, backlog:095fb37de6bb):
   // mass-mail footers count only for a sender nobody answered — per sender,
-  // the server view's rule (review Muse #821).
-  const correspondents = teamCorrespondents(messages);
+  // the server view's rule (review Muse #821). With the server base a
+  // scanned thread decides from the whole scan, not the latest 100; a
+  // thread the scan never saw (no customer subject) decides from the
+  // page. Never one union base for both (review Muse #847 P1 on #821: a
+  // page-only outbound flipped a server-classified notification into
+  // local waiting, which Oggi discards when the server answers — the
+  // thread vanished from both groups). Without the server base the page
+  // reads itself, like before.
+  const pageBase = teamCorrespondents(messages);
+  const serverBase = shared == null ? null : reviveCorrespondents(shared);
   for (const [conversationId, { at, message }] of latest) {
     if (message.direction !== 'inbound') continue;
     const conversation = byId.get(conversationId) ?? null;
@@ -1109,6 +1161,11 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       subjectId: message.subjectId ?? conversation?.subjectId,
     };
     const subjectKey = inboxSubjectKey(subject);
+    // The server scan covers customer subjects: a thread with one was
+    // classified from the server base, so it decides from that base — a
+    // page-only outbound must never flip it. A thread with no subject the
+    // scan never saw decides from the page.
+    const threadBase = serverBase !== null && subjectKey !== null ? serverBase : pageBase;
     const machine = isNotificationMessage({
       ...message,
       channel,
@@ -1116,7 +1173,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     }, {
       ownAddresses,
       labels: [conversation?.subjectLabel],
-      weWrote: teamWroteTo(correspondents, { ...message, remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle) }),
+      weWrote: teamWroteTo(threadBase, { ...message, remoteHandle: nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle) }),
     });
     const handle = nonEmptyText(message.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
@@ -1137,7 +1194,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       // notification keeps its stored label, never a grey bar for good.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: le righe Da rispondere mostrano le
+      // iniziali del cliente come Clienti e la scheda; le Notifiche
+      // automatiche (gruppo a parte) tengono la mattonella del canale.
+      mono: machine ? (channelTile(channel) ?? badgeInitials(name)) : badgeInitials(name),
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
       // residue or hidden preheaders; the subject alone when the body cleans away.
@@ -1450,7 +1510,7 @@ export const APPOINTMENT_NAME_LIMIT = 10;
 /**
  * Customer names for the agenda of today and the next call
  * (backlog:5083e7a77c26): appointments synced from a calendar carry no
- * subject label, so the brief and the agenda read «il cliente». One
+ * subject label, so the brief and the agenda read the one fallback. One
  * read-only profile per subject (the same read the inbox uses), the next
  * call first, bounded, settled together; a refused or unknown profile
  * leaves the row on its stored label, never an error on Oggi.
@@ -2589,6 +2649,11 @@ export function createOggiView(deps) {
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
     const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    // backlog:095fb37de6bb: the «Notifiche automatiche» group decides from
+    // the server's scan-wide base when it answered — per thread: the server
+    // base for the threads it scanned, the page base for the rest (review
+    // Muse #847) — else from the page, like before.
+    const { correspondents: serverCorrespondents, ...serverInbox } = last.replies ?? {};
     const local = !last.inboxComposed
       ? null
       : last.inboxAvailable
@@ -2602,6 +2667,7 @@ export function createOggiView(deps) {
             now: lastMeta.now,
             pendingNames: pendingNames || last.inboxNamesPending === true,
             ownAddresses: ownMailboxes(last.profile, last.connections),
+            correspondents: serverCorrespondents ?? null,
           }),
         }
         : { available: false, total: 0, rows: [] };
@@ -2612,7 +2678,7 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...last.replies, partial: last.inboxPartial === true, notifications }
+        ? { ...serverInbox, notifications }
         : local;
     renderOggi({
       doc,

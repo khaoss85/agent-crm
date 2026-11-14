@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAccordoApp } from '../packages/app/src/index.js';
 import { createHttpServer } from '../apps/server/src/index.js';
-import { AGENT_CATALOG, catalogAgentSourceKey } from '../packages/agents/src/index.js';
+import { AGENT_CATALOG, catalogAgentSourceKey, customAgentSourceKey } from '../packages/agents/src/index.js';
 
 /**
  * The «Agenti» screen's routes (backlog:33782ba68747): the catalogue read,
@@ -151,6 +151,84 @@ test('review #661 giro 2 P3: a padded or capitalised slug finds its agent; an ov
       assert.ok(JSON.stringify(unknown.body).length < 1000, 'the refusal never echoes the raw input');
       const long = await fetch(`${base}/api/agents/catalog?spaceId=${'s'.repeat(200)}`, { headers: USER_HEADERS });
       assert.equal(long.status, 400);
+    });
+  } finally {
+    app.close();
+  }
+});
+
+/**
+ * backlog:1f7cb20d3c30 — «Nuovo agente»: an agent written by hand, not taken
+ * from the catalogue, through the same create-agent operation.
+ */
+const CUSTOM = {
+  spaceId: 'presti',
+  key: 'v1.20261112.0123456789abcdef0123456789abcdef',
+  name: 'Ricorda compleanni',
+  role: 'Fa gli auguri ai clienti',
+  instructions: 'Ogni mattina guarda chi compie gli anni e prepara un messaggio di auguri. Ogni messaggio aspetta il tuo ok.',
+  spendingCapCents: 500,
+};
+
+test('1f7cb20d3c30: a hand-written agent is created once, with a source key the server makes', async () => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    await withServer(app, async (base) => {
+      const first = await post(base, '/api/agents/create', { ...CUSTOM, sourceKey: 'agent:presti:riaggancio' });
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      assert.equal(first.body.duplicate, false);
+      const agent = first.body.agent;
+      assert.equal(agent.name, CUSTOM.name);
+      assert.equal(agent.role, CUSTOM.role);
+      assert.equal(agent.instructions, CUSTOM.instructions);
+      assert.equal(agent.spendingCapCents, 500);
+      assert.equal(agent.sourceKey, customAgentSourceKey('presti', CUSTOM.key), 'the body never picks the source key');
+      assert.ok(!agent.sourceKey.startsWith('agent:'), 'never shaped like a catalogue key');
+      assert.equal(agent.actorId, 'op-1');
+      const again = await post(base, '/api/agents/create', CUSTOM);
+      assert.equal(again.status, 201);
+      assert.equal(again.body.duplicate, true, 'the same caller key replays');
+      const read = await fetch(`${base}/api/modules/teammate-agent/records?filter.spaceId=presti`, { headers: USER_HEADERS });
+      const rows = (await read.json()).items;
+      assert.equal(rows.length, 1);
+      // Instructed like a catalogue agent: an assignment to it is created.
+      const assign = await post(base, '/api/agents/assign', {
+        spaceId: 'presti', sourceKey: 'bo-assign-c1', agentSourceKey: agent.sourceKey,
+        phrase: 'ogni lunedì fai gli auguri', costPerRunCents: 20,
+      });
+      assert.equal(assign.status, 201, JSON.stringify(assign.body));
+      assert.equal(assign.body.assignment.costPerRunCents, 20);
+      const noCost = await post(base, '/api/agents/assign', {
+        spaceId: 'presti', sourceKey: 'bo-assign-c2', agentSourceKey: agent.sourceKey, phrase: 'ogni lunedì fai gli auguri',
+      });
+      assert.equal(noCost.status, 422, 'an agent with a cap needs the cost of a run');
+      assert.equal(noCost.body.error.code, 'AGENT_COST_ESTIMATE_REQUIRED');
+    });
+  } finally {
+    app.close();
+  }
+});
+
+test('1f7cb20d3c30: two agents of one space never answer to the same @name; bad bodies refuse', async () => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  try {
+    await withServer(app, async (base) => {
+      await post(base, '/api/agents/create', { spaceId: 'presti', slug: 'riaggancio' });
+      const clash = await post(base, '/api/agents/create', { ...CUSTOM, name: 'riaggàncio ' });
+      assert.equal(clash.status, 409);
+      assert.equal(clash.body.error.code, 'AGENT_NAME_TAKEN');
+      const otherSpace = await post(base, '/api/agents/create', { ...CUSTOM, spaceId: 'altro', name: 'Riaggancio' });
+      assert.equal(otherSpace.status, 201, 'another space may use the name');
+      const noKey = await post(base, '/api/agents/create', { ...CUSTOM, key: undefined });
+      assert.equal(noKey.status, 400, 'no caller key, no agent');
+      const badKey = await post(base, '/api/agents/create', { ...CUSTOM, key: '../agent:presti:riaggancio' });
+      assert.equal(badKey.status, 400);
+      const noName = await post(base, '/api/agents/create', { ...CUSTOM, key: 'v1.20261112.ffffffffffffffffffffffffffffffff', name: '' });
+      assert.equal(noName.status, 400);
+      const noSpace = await post(base, '/api/agents/create', { ...CUSTOM, spaceId: '' });
+      assert.equal(noSpace.status, 400);
+      const badCap = await post(base, '/api/agents/create', { ...CUSTOM, key: 'v1.20261112.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', name: 'Altro', spendingCapCents: -1 });
+      assert.equal(badCap.status, 400);
     });
   } finally {
     app.close();
