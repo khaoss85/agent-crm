@@ -317,3 +317,56 @@ test('67a3116f4f65: a receipt without a place code (the core, or a saved place) 
   assert.equal(pipelineModule.placementNotSaved({ saved: { placement: 'refused' } }), 'refused');
   assert.equal(pipelineModule.placementNotSaved({ id: 'a', placement: 'unavailable' }), 'unavailable', 'the row the write client unwraps');
 });
+
+// ---- backlog:4eceae80a5ca: a move another write beat -------------------------
+
+for (const code of ['STALE_STAGE', 'CONFLICT']) {
+  test(`4eceae80a5ca: after a 409 ${code} the board is read again and the card shows where the winner put it`, async () => {
+    const refused = Object.assign(new Error('another write won'), { status: 409, code });
+    let api = null;
+    const { mount, client, toasts } = await board([record('a', 'discovery'), record('b', 'demo')], {
+      // Another operator moved «a» to Vinta first: the server holds that move.
+      onPost: () => { api.setStage('a', 'won'); throw refused; },
+    });
+    api = client;
+    const readsBefore = client.reads.length;
+    const { drop } = drag(mount, 'a', 'demo', 150);
+    drop();
+    await tick(10);
+    assert.ok(client.reads.length > readsBefore, 'the board is read again');
+    assert.deepEqual(order(mount, 'won'), ['a'], 'the card is where the server has it');
+    assert.deepEqual(order(mount, 'discovery'), [], 'never back in the column it started from');
+    assert.deepEqual(order(mount, 'demo'), ['b']);
+    assert.ok(toasts.length > 0);
+  });
+}
+
+test('4eceae80a5ca: which refusals mean another write won', () => {
+  const { lostToAnotherWrite } = pipelineModule;
+  assert.equal(lostToAnotherWrite({ status: 409, code: 'STALE_STAGE' }), true);
+  assert.equal(lostToAnotherWrite({ status: 409, code: 'CONFLICT' }), true);
+  assert.equal(lostToAnotherWrite({ status: 409, code: 'STALE_POSITION' }), true);
+  // Review Muse #883 (P2): only those three, and only as a 409.
+  assert.equal(lostToAnotherWrite({ status: 409, code: 'SAME_STAGE' }), false);
+  assert.equal(lostToAnotherWrite({ status: 409, code: 'TERMINAL_STAGE' }), false);
+  assert.equal(lostToAnotherWrite({ status: 409 }), false);
+  assert.equal(lostToAnotherWrite({ code: 'CONFLICT' }), false, 'a code without its 409 is not enough');
+  assert.equal(lostToAnotherWrite({ status: 500, code: 'STALE_STAGE' }), false);
+  assert.equal(lostToAnotherWrite({ status: 400, code: 'VALIDATION_ERROR' }), false);
+  assert.equal(lostToAnotherWrite({ status: 503 }), false);
+});
+
+for (const code of ['SAME_STAGE', 'TERMINAL_STAGE']) {
+  test(`4eceae80a5ca (review Muse #883): a 409 ${code} puts the card back at once and reads no board`, async () => {
+    const refused = Object.assign(new Error('refused'), { status: 409, code });
+    const { mount, client } = await board([record('a', 'discovery'), record('b', 'demo')], {
+      onPost: () => { throw refused; },
+    });
+    const readsBefore = client.reads.length;
+    const { drop } = drag(mount, 'a', 'demo', 150);
+    drop();
+    await tick(10);
+    assert.equal(client.reads.length, readsBefore, 'no board re-read');
+    assert.deepEqual(order(mount, 'discovery'), ['a'], 'the card is back where it was');
+  });
+}
