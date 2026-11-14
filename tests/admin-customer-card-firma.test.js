@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
-import { offerActorLabel } from '../apps/admin/public/admin-labels.js';
+import { offerActorLabel, offerCreatorLabel } from '../apps/admin/public/admin-labels.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -42,7 +42,7 @@ const PROFILE = {
 const ROSTER = { items: [{ subject: ME, displayName: 'Operatrice Uno', email: 'uno@esempio.invalid' }] };
 
 /** The roster read waits for `release()` (a cold load on the pilot: 8-15 s). */
-function client({ items = [NOTE, SENT], roster = ROSTER, rosterFails = false, profile = PROFILE, audit = [] } = {}) {
+function client({ items = [NOTE, SENT], roster = ROSTER, rosterFails = false, profile = PROFILE, audit = [], auditFails = false } = {}) {
   let open = () => {};
   const gate = new Promise((resolve) => { open = resolve; });
   return {
@@ -57,7 +57,10 @@ function client({ items = [NOTE, SENT], roster = ROSTER, rosterFails = false, pr
         if (rosterFails) throw Object.assign(new Error('slow'), { status: 503 });
         return roster;
       }
-      if (path.startsWith('/api/audit')) return { items: audit };
+      if (path.startsWith('/api/audit')) {
+        if (auditFails) throw Object.assign(new Error('audit'), { status: 503 });
+        return { items: audit };
+      }
       if (path === '/api/schema') return { pipelines: [] };
       throw Object.assign(new Error('Not Found'), { status: 404 });
     },
@@ -134,4 +137,61 @@ test('6c40dcfaeb3f: «Offerta creata» names its creator like the offer page «C
   assert.ok(text.includes('Offerta creata · da Operatrice Uno'), text);
   // The same rule as the offer page.
   assert.equal(offerActorLabel(audit[0], offer, [{ subjects: [ME], keys: [], name: 'Operatrice Uno', label: 'Operatrice Uno', known: true }]), 'Operatrice Uno');
+});
+
+// ---- review Muse #894 ------------------------------------------------------------
+
+test('6c40dcfaeb3f (review Muse #894): a writer named without the roster (a human handle) never waits', async () => {
+  const byHandle = { ...NOTE, id: 'n4', body: 'Nota con handle', teamAuthorId: 'elena' };
+  const { mount } = await open(client({ items: [byHandle] }));
+  const text = timelineText(mount);
+  assert.ok(text.includes('Nota · da Elena'), text);
+  assert.equal(pending(mount).length, 0, 'no bar: the name is already known');
+});
+
+test('6c40dcfaeb3f (review Muse #894): the author chips that can be named show at once, the others after the roster', async () => {
+  const byHandle = { ...NOTE, id: 'n4', body: 'Nota con handle', teamAuthorId: 'elena', occurredAt: '2026-11-13T10:00:00.000Z' };
+  const fake = client({ items: [NOTE, byHandle] });
+  const { mount } = await open(fake);
+  const notesChip = mount.findAll('button').find((node) => node.getAttribute('data-channel') === 'note');
+  notesChip.dispatch('click');
+  const chips = () => mount.findAll('button').map((node) => node.getAttribute('data-author')).filter(Boolean);
+  assert.deepEqual(chips(), ['elena'], 'the handle chip shows at once; the bucket the roster may still split waits');
+  fake.release();
+  await flush();
+  assert.deepEqual(chips().sort(), [ME, 'elena'].sort(), 'after the roster every writer has its chip');
+});
+
+const OFFER = { id: 'o1', name: 'Pacchetto prova', stage: 'proposal', status: 'proposal', createdAt: '2026-11-12T08:00:00.000Z' };
+const offerProfile = { ...PROFILE, opportunities: { available: true, count: 1, countIsComplete: true, truncated: false, items: [OFFER] } };
+const CREATED = { id: 'a0', action: 'opportunity.created', actorType: 'user', actorId: ME, createdAt: '2026-11-12T08:00:00.000Z' };
+
+test('6c40dcfaeb3f (review Muse #894): a full page of the trail names nobody, like the offer page', async () => {
+  // 100 entries: the creation may sit past the page, as the offer page guards.
+  const moves = Array.from({ length: 99 }, (_, index) => ({
+    id: `m${index}`, action: 'opportunity.updated', actorType: 'user', actorId: ME, createdAt: '2026-11-12T09:00:00.000Z',
+  }));
+  const fake = client({ items: [], profile: offerProfile, audit: [CREATED, ...moves] });
+  const { mount } = await open(fake);
+  fake.release();
+  await flush();
+  const text = timelineText(mount);
+  assert.ok(text.includes('Offerta creata'), text);
+  assert.ok(!text.includes('Offerta creata · da'), 'no author from a page that may be cut');
+});
+
+test('6c40dcfaeb3f (review Muse #894): an unreadable trail names nobody', async () => {
+  const fake = client({ items: [], profile: offerProfile, audit: [CREATED], auditFails: true });
+  const { mount } = await open(fake);
+  fake.release();
+  await flush();
+  assert.ok(!timelineText(mount).includes('Offerta creata · da'), timelineText(mount));
+});
+
+test('6c40dcfaeb3f (review Muse #894): offerCreatorLabel is the one rule — creation found, full page, unreadable', async () => {
+  const people = [{ subjects: [ME], keys: [], name: 'Operatrice Uno', label: 'Operatrice Uno', known: true }];
+  assert.equal(offerCreatorLabel([CREATED], OFFER, people), 'Operatrice Uno');
+  assert.equal(offerCreatorLabel(Array.from({ length: 100 }, () => CREATED), OFFER, people), null);
+  assert.equal(offerCreatorLabel(undefined, OFFER, people), null);
+  assert.equal(offerCreatorLabel([], OFFER, people), null);
 });

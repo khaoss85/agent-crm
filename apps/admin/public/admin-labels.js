@@ -688,6 +688,24 @@ export function offerActorLabel(entry, record, people = []) {
   return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
 }
 
+/** How many audit entries an offer's trail reads (the offer page and the scheda). */
+export const OFFER_AUDIT_LIMIT = 100;
+
+/**
+ * Who created an offer, read from its audit trail — the offer page's
+ * «Creata da» and the scheda's «Offerta creata · da …» (backlog:6c40dcfaeb3f).
+ * A full page may hide the creation entry past its end (review Muse #894):
+ * then, like a trail that could not be read, nobody is named — null.
+ * @param {unknown} items the trail's entries @param {any} record the offer
+ * @param {unknown} [people] the roster @param {number} [limit] the page size read
+ * @returns {string | null}
+ */
+export function offerCreatorLabel(items, record, people = [], limit = OFFER_AUDIT_LIMIT) {
+  if (!Array.isArray(items) || items.length >= limit) return null;
+  const created = items.find((entry) => entry?.action === 'opportunity.created') ?? null;
+  return created === null ? null : offerActorLabel(created, record, people);
+}
+
 // ---------------------------------------------------------------------------
 // Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
 // screen names in Italian, from one place. Every view that writes money, a

@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, offerActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -3579,11 +3579,18 @@ export function createCustomerCardView(deps) {
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
-      // backlog:6c40dcfaeb3f: the writer chips wait for the roster, so no
-      // «dal team» chip splits into names a moment later.
-      if (channelFilter === 'note' && authors.length > 1 && rosterSettled) {
+      // backlog:6c40dcfaeb3f: no «dal team» chip that splits into names a
+      // moment later. Review Muse #894 (P2): the chips that can already be named show at
+      // once (a human handle, an API-named writer); a provider id the
+      // roster alone can name, and the «dal team» bucket, wait for it.
+      const chipAuthors = rosterSettled ? authors : authors.filter((author) => {
+        if (author === '') return false;
+        const first = notes.find((note) => noteAuthor(note) === author) ?? null;
+        return first !== null && noteWriterName(first) !== null;
+      });
+      if (channelFilter === 'note' && authors.length > 1 && chipAuthors.length > 0) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
-        for (const author of authors) {
+        for (const author of chipAuthors) {
           // backlog:2883ef12f233: like the signature, a chip prefers the
           // API-named author of one of its notes over the roster lookup.
           const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
@@ -3684,12 +3691,10 @@ export function createCustomerCardView(deps) {
      */
     const applyHistory = (answer) => {
       stageEvents = stageRowsOf(answer);
-      const created = Array.isArray(answer?.items)
-        ? (answer.items.find((entry) => entry?.action === 'opportunity.created') ?? null)
-        : null;
-      if (created === null) return;
       const record = offers.find((row) => row?.id === historyId) ?? null;
-      const who = record === null ? null : offerActorLabel(created, record, answer.people ?? []);
+      // The offer page's own rule and guard (review Muse #894): a full page
+      // of the trail may hide the creation, and then nobody is named.
+      const who = record === null ? null : offerCreatorLabel(answer?.items, record, answer?.people ?? []);
       if (who === null || who === '—') return;
       offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
     };
@@ -4938,7 +4943,7 @@ export function createCustomerCardView(deps) {
   function readHistory(targetId) {
     let read = historyReads.get(targetId);
     if (read === undefined) {
-      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
+      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=${OFFER_AUDIT_LIMIT}`;
       // backlog:947260f9f036: the roster and the trail leave together — in
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
@@ -5337,7 +5342,11 @@ export function createCustomerCardView(deps) {
   function signatureWaits(authorId, apiName = null) {
     if (rosterSettled) return false;
     if (typeof apiName === 'string' && apiName.trim() !== '') return false;
-    return typeof authorId === 'string' && authorId.trim() !== '';
+    if (typeof authorId !== 'string' || authorId.trim() === '') return false;
+    // Review Muse #894 (P2): a writer whose name reads without the roster
+    // (a human handle, «elena» → «Elena») is named at once; only an id the
+    // roster alone can name waits.
+    return writerName(authorId) === null;
   }
   /** The neutral place of a name still being read: a short grey bar, no words. */
   function signaturePlaceholder() {
