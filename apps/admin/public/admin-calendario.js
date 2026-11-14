@@ -936,16 +936,13 @@ export function customerHint(item, others = []) {
   const sibs = Array.isArray(others)
     ? others.filter((other) => other !== item && customerHintName(other) === key)
     : [];
-  const parts = [];
-  const mail = customerHintEmail(item, sibs);
-  if (mail !== null) parts.push(mail);
-  const tel = customerHintPhone(item, sibs);
-  if (tel !== null) parts.push(tel);
-  const firm = customerHintCompany(item, sibs);
-  if (firm !== null) parts.push(firm);
-  if (parts.length === 0) return null;
-  if (sibs.length === 0) return parts[0];
-  return parts.join(' · ');
+  // backlog:3582d91635cb — one hint only, in fallback order: a partial
+  // email, else the held phone, else the company. Homonyms never join every
+  // signal: the extra tails and names would publish PII nobody needs.
+  return customerHintEmail(item, sibs)
+    ?? customerHintPhone(item, sibs)
+    ?? customerHintCompany(item, sibs)
+    ?? null;
 }
 
 /** The homonym group key: the display name, lowercased. @param {any} item */
@@ -974,9 +971,13 @@ function customerHintEmail(item, sibs) {
   const sibMails = sibs.map((sib) => (typeof sib?.email === 'string' ? sib.email.trim().toLowerCase() : ''));
   if (sibMails.some((mail) => mail === mine)) return null;
   const low = split.local.toLowerCase();
+  const myDomain = split.domain.toLowerCase();
+  // backlog:3582d91635cb — only homonyms on the same domain can force a
+  // longer local prefix: a different domain already reads apart, so the
+  // short 2-char hint stays minimal.
   const sibLocals = sibs
     .map((sib) => customerHintSplitEmail(sib))
-    .filter((part) => part !== null)
+    .filter((part) => part !== null && part.domain.toLowerCase() === myDomain)
     .map((part) => part.local.toLowerCase());
   let len = Math.min(2, split.local.length);
   while (len < split.local.length && sibLocals.some((local) => local.slice(0, len) === low.slice(0, len))) len += 1;

@@ -306,3 +306,29 @@ test('form: customerHint stretches the prefix only past what a sibling homonym s
   const same = { name: 'Prova Doppione 09/11', email: 'prova.doppione.a@example.com', phone: '+39 333 999 8888' };
   assert.equal(customerHint(twin, [twin, same]), 'tel. …2222', 'the very same address falls back to the phone');
 });
+
+// backlog:3582d91635cb (review P2 giro-3, 2026-11-13): homonyms show one
+// distinguishing hint, not every signal joined.
+test('form: customerHint returns one fallback hint for homonyms, never joined parts', () => {
+  const first = {
+    name: 'Mario Rossi', email: 'mario.rossi1@example.com',
+    phone: '+39 333 111 2222', company: { name: 'Acme' },
+  };
+  const second = {
+    name: 'Mario Rossi', email: 'mario.rossi2@example.com',
+    phone: '+39 333 999 8888', company: { name: 'Beta' },
+  };
+  const hint = customerHint(first, [first, second]);
+  assert.ok(hint !== null && !hint.includes(' · '), `a single hint, got: ${hint}`);
+  assert.ok(hint.includes('@example.com'), `the email wins the fallback, got: ${hint}`);
+  assert.ok(!hint.includes('2222') && !hint.includes('Acme'), `no phone or company joined, got: ${hint}`);
+});
+
+// backlog:3582d91635cb (review P2 giro-3, 2026-11-13): same local part on a
+// different domain already reads apart through the domain.
+test('form: customerHint keeps the short prefix when only the domain tells homonyms apart', () => {
+  const first = { name: 'Mario Rossi', email: 'mario@example.com' };
+  const second = { name: 'Mario Rossi', email: 'mario@other.com' };
+  assert.equal(customerHint(first, [first, second]), 'ma…@example.com');
+  assert.equal(customerHint(second, [first, second]), 'ma…@other.com');
+});
