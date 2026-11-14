@@ -1365,7 +1365,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       attrs: { type: 'button', 'data-action': 'retire-agent' },
     });
     retire.disabled = (retireEntry?.busy ?? false);
-    retire.addEventListener('click', () => { void retireAgent(card, !paused); });
+    retire.addEventListener('click', () => {
+      // The shared wait (admin-cta-busy guard, main rossa after #879): the
+      // press shows it is working; the repaint keeps «Ritiro…» from
+      // entry.busy, and a press that only opens Conferma gets the button back.
+      const release = uiHold(retire, paused ? 'Riattivo…' : 'Ritiro…');
+      void retireAgent(card, !paused).finally(() => release());
+    });
     row.appendChild(retire);
     manage.appendChild(row);
     if (editOpen) manage.appendChild(renderEditPanel(card));
@@ -1462,7 +1468,12 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         variant: 'primary', small: true, label: 'Conferma',
         attrs: { type: 'button', 'data-action': 'confirm-retire-agent' },
       });
-      confirmBtn.addEventListener('click', () => { void retireAgent(card, !paused); });
+      confirmBtn.addEventListener('click', () => {
+        // The shared wait (admin-cta-busy guard): «Ritiro…»/«Riattivo…» from
+        // the press, the same line the box paints from entry.busy.
+        const release = uiHold(confirmBtn, paused ? 'Riattivo…' : 'Ritiro…');
+        void retireAgent(card, !paused).finally(() => release());
+      });
       boxEl.appendChild(confirmBtn);
       const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-retire-agent' } });
       cancel.addEventListener('click', () => {
