@@ -892,6 +892,21 @@ export function createSpaziAccessiView(deps) {
     await reads.statsRead;
   }
 
+  /**
+   * Reread everything after a refused write without painting: the caller
+   * reopens its confirmation on the fresh state and paints once. This is
+   * the pre-two-phase `load()` the refusal paths called: same reset, same
+   * reads, no render.
+   */
+  async function reload() {
+    const space = readActiveSpace().trim();
+    if (!resetLoadState(space)) return;
+    const reads = beginReads(space);
+    await loadCore(reads);
+    await loadStats(reads);
+    state.statsPending = false;
+  }
+
   async function mutate(path, body) {
     state.busy = true;
     busyPath = path; // cta-loading: the button that wrote reads «…» on the re-render
@@ -1260,8 +1275,8 @@ export function createSpaziAccessiView(deps) {
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
           // One message, inside the row that failed; a toast only if it cannot show.
-          await load();
-          // load() closes every confirmation: reopen this one on a subject
+          await reload();
+          // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
           state.removeRetry = { subject: refused[0].subject, reason: motive, note };
@@ -1329,7 +1344,7 @@ export function createSpaziAccessiView(deps) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
         // One message, inside the form that failed; a toast only if it cannot show.
-        await load();
+        await reload();
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
@@ -1445,7 +1460,7 @@ export function createSpaziAccessiView(deps) {
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
             // One message, under the switch that failed; a toast only if it cannot show.
-            await load();
+            await reload();
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
@@ -1601,13 +1616,20 @@ export function createSpaziAccessiView(deps) {
     // The statistic fills its tiles and the card line late. A space move
     // meanwhile belongs to the newer refresh; a repaint with nothing new
     // to show would only steal focus.
+    // backlog:2de01913d276: whether the paint above still waited for the
+    // statistic. The stat data can land between that paint and the snapshot
+    // below (set into state while the data paint is on screen): the rows
+    // then still read «Leggo canali…» and skipping the second paint would
+    // freeze that waiting line. Skip only when the first paint already
+    // showed the final state.
+    const paintedPending = state.statsPending;
     const statBefore = state.stats.get(space);
     const connsBefore = state.spaceConns.get(space);
     await loadStats(reads);
     state.statsPending = false;
     if (mine !== generation) return;
     if (space === '' || readActiveSpace().trim() !== space) return;
-    if (state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
+    if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
     if (!sameNodes(childrenOf(), lastPaint)) return;
     render();
   }
