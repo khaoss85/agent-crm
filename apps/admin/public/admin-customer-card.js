@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -4083,7 +4083,10 @@ export function createCustomerCardView(deps) {
     // status is its approval («approvata» meant the price was cleared, not
     // the sale): it reads only for a quote with no readable opportunity,
     // and in full on #/quotes/<id>, where the line links.
-    const offerStatus = shownOfferState(first, fromQuote, opportunities, pipelines);
+    // backlog:a060a4aa65b6 (verifica 14/11: «qualificazione» on an offer
+    // outside any board): the state reads as the Pipeline names it, with a
+    // capital — «Qualificazione», «Prova» — never the bare lower-case word.
+    const offerStatus = upperFirst(shownOfferState(first, fromQuote, opportunities, pipelines));
     // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
     const line = el('p', 'bo-scheda-offer');
     line.appendChild(el('span', 'bo-scheda-offer-name', name));
