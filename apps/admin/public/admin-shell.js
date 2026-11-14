@@ -1239,7 +1239,9 @@ export function shellScreenFor(target) {
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
-    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    // backlog:bfc070243427: the quote lives on the offer's board — Pipeline
+    // stays highlighted on the preventivo, like on the offer.
+    case 'quote-detail': return { id: 'pipeline', label: 'Preventivo' };
     // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
     case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };

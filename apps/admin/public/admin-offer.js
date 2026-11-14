@@ -327,8 +327,9 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
+    // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
     const known = record === null ? {} : {
-      'Chiusura prevista': close ?? '—',
+      'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
@@ -556,14 +557,19 @@ export function createOfferDetail(deps) {
     // page may hide the creation, so it names nobody.
     const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
-    for (const [label, value] of [
+    // backlog:bfc070243427: an unknown close date paints no row — never an
+    // empty «Chiusura prevista —» field.
+    const factRows = [
       ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Stato', stageLabel(schema, record)],
-      ['Chiusura prevista', close ?? '—'],
+    ];
+    if (close !== null) factRows.push(['Chiusura prevista', close]);
+    factRows.push(
       ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
-    ]) {
+    );
+    for (const [label, value] of factRows) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       cell.appendChild(el('span', 'offer-fact-value', value ?? '—'));
