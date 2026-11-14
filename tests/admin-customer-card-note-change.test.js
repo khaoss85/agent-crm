@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   NOTE_WITHDRAW_GRACE_MS,
+  NOTE_WITHDRAWALS_STORAGE_KEY,
   createCustomerCardView,
   noteChangeRefusalText,
   withRevisedNote,
@@ -136,6 +137,8 @@ async function open(client = fakeClient(), spaceId = 'spazio-prova', extra = {})
   const timer = manualWait();
   const view = createCustomerCardView({
     doc, mount, client, spaceId, wait: timer.wait, ...(extra.pageWindow ? { pageWindow: extra.pageWindow } : {}),
+    ...(extra.sessionStorage ? { sessionStorage: extra.sessionStorage } : {}),
+    ...(extra.storage ? { storage: extra.storage } : {}),
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
     hideToast: (scope) => hidden.push(scope),
   });
@@ -572,4 +575,94 @@ test('fe9be5f0af4a: right after Salva the corrected note already says «modifica
   editField(mount).dispatch('keydown', key('Enter'));
   await flush();
   assert.ok(noteRow(mount, 'Richiamare martedì').textContent.includes('modificata'));
+});
+
+// ---------------------------------------------------------------------------
+// backlog:4eceae80a5ca — production verification 14/11 after #878
+// ---------------------------------------------------------------------------
+
+/** A Storage-shaped map (sessionStorage / localStorage). */
+function memoryStore() {
+  const map = new Map();
+  return {
+    map,
+    getItem: (name) => (map.has(name) ? map.get(name) : null),
+    setItem: (name, value) => { map.set(name, String(value)); },
+    removeItem: (name) => { map.delete(name); },
+  };
+}
+
+/** The first page: its keepalive withdrawal leaves but the server has not applied it yet. */
+function slowWithdrawClient() {
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path, body: JSON.parse(String(options.body)), keepalive: options.keepalive === true, key: options.headers?.['Idempotency-Key'] ?? null });
+      return new Promise(() => {});
+    }
+    return original(path, options);
+  };
+  return client;
+}
+
+test('4eceae80a5ca: a reload right after Elimina keeps the note hidden and sends the withdrawal again with the same key', async () => {
+  const session = memoryStore();
+  const local = memoryStore();
+  const pageWindow = fakeWindow();
+  const first = await open(slowWithdrawClient(), 'spazio-prova', { pageWindow, sessionStorage: session, storage: local });
+  await byAction(noteRow(first.mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  pageWindow.fire('pagehide');
+  await flush();
+  assert.equal(first.client.writes.length, 1, 'the keepalive withdrawal left with the page');
+  const firstKey = first.client.writes[0].key;
+  const [stored] = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY));
+  assert.deepEqual({ ...stored, expiresAt: typeof stored.expiresAt },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: firstKey, expiresAt: 'number' },
+    'written down before the page went away');
+
+  // The new page reads the cronologia before the server applied the first POST.
+  const client = fakeClient();
+  const second = await open(client, 'spazio-prova', { sessionStorage: session, storage: local });
+  assert.equal(noteRow(second.mount, 'Richiamare lunedì'), undefined, 'the note never comes back');
+  assert.ok(noteRow(second.mount, 'Preventivo inviato'));
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId, write.key]),
+    [['/api/customer-hub/notes/withdraw', 'n-mia', firstKey]], 'sent again under the SAME key: the server replays, never a second write');
+  await flush();
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'the entry leaves once the cronologia no longer lists the note');
+});
+
+test('4eceae80a5ca: a withdrawal the server already applied is not sent again; another space or customer is left alone', async () => {
+  const session = memoryStore();
+  const later = Date.now() + 60_000;
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-gia-ritirata', idempotencyKey: 'v1.20261114.00000000000000000000000000000001', expiresAt: later },
+    { spaceId: 'altro-spazio', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.00000000000000000000000000000002', expiresAt: later },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c9', noteId: 'n-mia', idempotencyKey: 'v1.20261114.00000000000000000000000000000003', expiresAt: later },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-altra', idempotencyKey: 'v1.20261114.00000000000000000000000000000004', expiresAt: Date.now() - 1 },
+  ]));
+  const { mount, client } = await open(fakeClient(), 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing to send again');
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'a withdrawal stored for another space hides nothing here');
+  assert.ok(noteRow(mount, 'Preventivo inviato'), 'an expired entry hides nothing');
+  const left = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).map((entry) => `${entry.spaceId}/${entry.id}/${entry.noteId}`);
+  assert.deepEqual(left, ['altro-spazio/c1/n-mia', 'spazio-prova/c9/n-mia'], 'done and expired entries leave, the others wait for their scheda');
+});
+
+test('4eceae80a5ca: after Aggiungi nota with Invio the cursor stays in the empty field', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount, client } = await open(fakeClient(), 'spazio-prova', { doc });
+    const field = () => mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
+    field().focus();
+    field().value = 'Prima nota';
+    field().dispatch('keydown', key('Enter'));
+    await settle();
+    assert.equal(client.writes.filter((write) => write.path === '/api/customer-hub/notes').length, 1);
+    assert.equal(doc.activeElement, field(), 'the cursor is in the note field, never on the page body');
+    assert.equal(field().value, '', 'and the field is empty for the next note');
+  } finally {
+    doc.restore();
+  }
 });

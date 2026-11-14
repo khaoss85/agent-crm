@@ -17,9 +17,10 @@ const CARD = { view: 'customer-card', resource: 'contact', subjectId: 'c1' };
 test('fe9be5f0af4a: a re-sync of the same card keeps the customer name', () => {
   const remembered = { resource: 'contact', id: 'c1', name: 'Cliente Prova' };
   assert.equal(customerCrumbLabel(CARD, 'Clienti', remembered), 'Clienti / Cliente Prova');
-  assert.equal(customerCrumbLabel(CARD, 'Clienti', null), 'Clienti', 'before the card names one');
+  // backlog:4eceae80a5ca: while the card is read the name has a placeholder.
+  assert.equal(customerCrumbLabel(CARD, 'Clienti', null), 'Clienti / …', 'before the card names one');
   assert.equal(customerCrumbLabel(CARD, 'Clienti', { ...remembered, name: null }), 'Clienti', 'a failed card read');
-  assert.equal(customerCrumbLabel({ ...CARD, subjectId: 'c2' }, 'Clienti', remembered), 'Clienti', 'another customer never borrows the name');
+  assert.equal(customerCrumbLabel({ ...CARD, subjectId: 'c2' }, 'Clienti', remembered), 'Clienti / …', 'another customer never borrows the name');
   assert.equal(customerCrumbLabel({ view: 'customer-data' }, 'Clienti', remembered), 'Clienti', 'the list is plain Clienti');
   assert.equal(customerCrumbLabel({ view: 'pipeline' }, 'Pipeline', remembered), 'Pipeline');
 });
@@ -50,4 +51,15 @@ test('fe9be5f0af4a: app.js routes both crumb writers through the remembered name
   assert.match(hook, /customerTitle = target\.view === 'customer-card'/, 'the card hook remembers the name for its customer');
   assert.ok(app.indexOf('let customerTitle = null;') < app.indexOf('const customerCardView = createCustomerCardView({'),
     'declared before the card view can call the hook');
+});
+
+test('4eceae80a5ca: opening a card, the crumb shows a placeholder until the name, never a bare «Clienti»', () => {
+  let label = null;
+  let remembered = null;
+  const syncShell = (target) => { label = customerCrumbLabel(target, 'Clienti', remembered); };
+  syncShell(CARD); // route(): the card is being read
+  assert.equal(label, 'Clienti / …');
+  remembered = { resource: 'contact', id: 'c1', name: 'Cliente Prova' };
+  syncShell(CARD);
+  assert.equal(label, 'Clienti / Cliente Prova');
 });

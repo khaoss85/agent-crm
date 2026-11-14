@@ -127,11 +127,14 @@ test('a failed move restores the control and shows a friendly line, never the se
   const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
   card.__select.value = 'demo';
   await card.__move();
-  const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
+  // backlog:4eceae80a5ca: a 409 re-reads the board — the card on screen is
+  // the fresh one, and it carries the line.
+  const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  const error = fresh.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
   assert.ok(error.textContent.includes('Riprova più tardi'), `friendly retry line (${error.textContent})`);
   assert.ok(!error.textContent.includes('Stale move'), 'no raw server message in the DOM');
   assert.ok(!error.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
-  assert.equal(card.findAll('select').length, 1, 'the move control is restored');
+  assert.equal(fresh.findAll('select').length, 1, 'the move control is restored');
 });
 
 test('move toasts name the stage label and failures stay friendly (C25)', async () => {
@@ -180,7 +183,8 @@ test('move toasts name the stage label and failures stay friendly (C25)', async 
     const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
     card.__select.value = 'attesa';
     await card.__move();
-    const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
+    const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+    const error = fresh.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
     assert.ok(error.textContent.includes('già in questo stato'), `already-there line (${error.textContent})`);
     assert.ok(!error.textContent.includes('SAME_STAGE'), 'no code in the DOM');
     assert.ok(!toasts.some((message) => message.includes('SAME_STAGE')), 'no code in toasts');
