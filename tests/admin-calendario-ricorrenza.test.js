@@ -22,6 +22,32 @@ const CATALOG = {
 
 const SERIES_RULE = { kind: 'weekly', unit: 'week', interval: 1, days: null, count: 4, until: null };
 
+const CUSTOMERS = [{ resource: 'contact', id: 'c1', name: 'Ada' }];
+
+// The roster behind the manual customer search: name buttons only.
+function customersOf(items) {
+  return (path) => {
+    const query = new URL(path, 'http://stub.test').searchParams.get('q') ?? '';
+    const needle = query.toLowerCase();
+    return { items: items.filter((item) => String(item?.name ?? '').toLowerCase().includes(needle)), complete: true };
+  };
+}
+
+// The manual customer rides a name search, never a typed id.
+async function pickCustomerByName(mount, name, rounds = 7) {
+  const search = mount.querySelector('input[name="customerSearch"]');
+  assert.ok(search, 'the manual form searches the customer by name');
+  search.value = name;
+  search.dispatch('input');
+  for (let round = 0; round < rounds; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const choice = mount.findAll('button').find((node) => node.textContent === name);
+  assert.ok(choice, `the search lists ${name} by name`);
+  choice.dispatch('click');
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
 const WEEK = () => ({
   from: '2026-11-16T00:00:00.000Z',
   to: '2026-11-23T00:00:00.000Z',
@@ -35,8 +61,8 @@ const WEEK = () => ({
         subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
       },
       {
-        id: 's2', status: 'booked', startsAt: '2026-11-24T16:00:00.000Z', endsAt: '2026-11-24T17:00:00.000Z',
-        serviceKey: 'taglio', teamMemberId: 'marco', sourceKey: 'calendario:marco:2026-11-24T16:00:00.000Z:c1',
+        id: 's2', status: 'booked', startsAt: '2026-11-19T16:00:00.000Z', endsAt: '2026-11-19T17:00:00.000Z',
+        serviceKey: 'taglio', teamMemberId: 'marco', sourceKey: 'calendario:marco:2026-11-19T16:00:00.000Z:c1',
         seriesKey: 'gym:series:1', occurrenceIndex: 1, recurrenceRule: JSON.stringify(SERIES_RULE),
         subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
       },
@@ -59,6 +85,7 @@ function notFound() {
 function stubClient() {
   const calls = [];
   const week = WEEK();
+  const customers = customersOf(CUSTOMERS);
   return {
     calls,
     async request(path, options = {}) {
@@ -68,6 +95,7 @@ function stubClient() {
       if (path === '/api/spine/memberships') return { items: [{ subject: 'marco', displayName: 'Marco' }] };
       if (path === '/api/profile') return { member: null, connections: { available: false, reason: 'PROFILE_NOT_COMPOSED', items: [] } };
       if (path.startsWith('/api/catalog/products')) return CATALOG;
+      if (path.startsWith('/api/customer-data/customers')) return customers(path);
       if (path.startsWith('/api/customer-data/')) throw notFound();
       if (path === '/api/appointments/services') throw notFound();
       if (path.startsWith('/api/appointments/team-week')) return JSON.parse(JSON.stringify(week));
@@ -132,6 +160,7 @@ test('ricorrenza: il form ha «Si ripete» con Non si ripete predefinito e le et
 test('ricorrenza: «Personalizza…» apre intervallo, giorni e fine, e Conferma manda la regola', async () => {
   const { mount, client } = await openCalendar();
   openManual(mount);
+  await pickCustomerByName(mount, 'Ada');
   const fill = (name, value) => { byName(mount, name).value = value; byName(mount, name).dispatch('input'); };
   fill('date', '2026-11-17');
   fill('start', '17:00');
@@ -176,6 +205,7 @@ test('ricorrenza: «Personalizza…» apre intervallo, giorni e fine, e Conferma
 test('ricorrenza: senza scelta la claim non ha ricorrenza', async () => {
   const { mount, client } = await openCalendar();
   openManual(mount);
+  await pickCustomerByName(mount, 'Ada');
   const fill = (name, value) => { byName(mount, name).value = value; byName(mount, name).dispatch('input'); };
   fill('date', '2026-11-17');
   fill('start', '17:00');
@@ -195,10 +225,7 @@ test('ricorrenza: senza scelta la claim non ha ricorrenza', async () => {
 
 test('ricorrenza: annullare un’occorrenza chiede solo/seguiti/tutti e lo scope viaggia', async () => {
   const { mount, client } = await openCalendar();
-  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
-  filter.value = 'marco';
-  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
-  await settle();
+  // The roster names Marco: his week (with the series) loads on its own.
   mount.findAll('button').find((node) => node.getAttribute('data-event-id') === 's2').dispatch('click');
   await settle();
   const pop = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
@@ -223,10 +250,7 @@ test('ricorrenza: annullare un’occorrenza chiede solo/seguiti/tutti e lo scope
 
 test('ricorrenza: annullare una riga singola non chiede lo scope e non lo manda', async () => {
   const { mount, client } = await openCalendar();
-  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
-  filter.value = 'marco';
-  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
-  await settle();
+  // The roster names Marco: his week (with the single row) loads on its own.
   mount.findAll('button').find((node) => node.getAttribute('data-event-id') === 'p1').dispatch('click');
   await settle();
   const pop = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
@@ -242,10 +266,7 @@ test('ricorrenza: annullare una riga singola non chiede lo scope e non lo manda'
 
 test('ricorrenza: spostare un’occorrenza chiede quanto si sposta e lo scope viaggia', async () => {
   const { mount, client } = await openCalendar();
-  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
-  filter.value = 'marco';
-  mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
-  await settle();
+  // The roster names Marco: his week (with the series) loads on its own.
   mount.findAll('button').find((node) => node.getAttribute('data-event-id') === 's1').dispatch('click');
   await settle();
   mount.querySelector('button[data-action="event-edit"]').dispatch('click');
