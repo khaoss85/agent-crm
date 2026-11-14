@@ -4,7 +4,7 @@ import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -100,6 +100,9 @@ const submissions = createSubmissionController({
     method: options.method,
     body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
     idempotencyKey: options.idempotencyKey,
+    // backlog:fe9be5f0af4a (review Muse #878): the same keepalive as the
+    // views' write client, never silently dropped here.
+    ...(options.keepalive === true ? { keepalive: true } : {}),
   }),
 });
 
@@ -652,15 +655,30 @@ const marketingView = createMarketingView({
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
+/**
+ * The name the customer card last gave its breadcrumb, for the customer it
+ * named (backlog:fe9be5f0af4a). @type {{ resource: string, id: string, name: string | null } | null}
+ */
+let customerTitle = null;
+/** The remembered name, only in the space it was read in (review Muse #878). */
+function rememberedCustomerTitle() {
+  return customerTitle !== null && customerTitle.space === (shellActiveSpace ?? null) ? customerTitle : null;
+}
+
 const customerCardView = createCustomerCardView({
   doc: document,
   mount: mountGate.owned('customer-card'),
   client: moduleClient,
   toast,
+  // backlog:947260f9f036: a withdrawal sent early takes its «Annulla» away.
+  hideToast: (scope) => { if (toaster !== null) toaster.hideScope(scope); },
   navigate: (hash) => { window.location.hash = hash; },
   // The shell's active space, read late: the calls read stays
   // space-explicit and follows the space switcher (BO-F1-08).
   spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+  // backlog:f48593bb06d4: with the space AI off the composer sends the
+  // titolare to Spazi e accessi and tells the others whom to ask.
+  role: () => shellUser?.role ?? null,
   // Voce 714433c2: «Nuova offerta» and «Nuovo appuntamento» stash the shown
   // customer here; without the shell storage the buttons only navigate.
   storage: shellStorage,
@@ -679,7 +697,13 @@ const customerCardView = createCustomerCardView({
   // screen, so a title from a card that is no longer routed is dropped.
   onCustomerTitle: (name) => {
     if (!mountGate.isActive('customer-card')) return;
-    if (shellView) shellView.update({ screenLabel: name ? `Clienti / ${name}` : 'Clienti' });
+    // backlog:fe9be5f0af4a: remembered for the routed customer, so a later
+    // re-sync of the shell (the schema read landing after the card) keeps it.
+    const target = targetForHash(window.location.hash || '#/');
+    customerTitle = target.view === 'customer-card'
+      ? { resource: target.resource, id: target.subjectId, name: name ?? null, space: shellActiveSpace ?? null }
+      : null;
+    if (shellView) shellView.update({ screenLabel: customerCrumbLabel(target, 'Clienti', rememberedCustomerTitle()) });
   },
 });
 
@@ -1063,6 +1087,18 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
+      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
+      // agents from the same teammate-agent module read the Agenti screen
+      // makes — the hand-written agent suggests like the catalogue ones.
+      async agents() {
+        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
+        const params = new URLSearchParams({ limit: '201' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
+        else return null;
+        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
     },
     onPickSpace: (id) => {
       pickSpace(id);
@@ -1087,6 +1123,8 @@ const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 let agentiView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
+/** The render of the screen opened at boot (backlog:94eabbd4762f). @type {Promise<unknown> | null} */
+let bootScreen = null;
 
 function currentSpaceName() {
   const active = shellSpaces.find((space) => space.id === shellActiveSpace) ?? shellSpaces[0];
@@ -1123,7 +1161,8 @@ function shellScreenFor(target) {
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: null, label: 'Catalogo prodotti' };
     case 'quote-detail': return { id: null, label: 'Preventivo' };
-    case 'offer-detail': return { id: 'pipeline', label: 'Offerta' };
+    // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
+    case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
     case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
     // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
@@ -1151,7 +1190,7 @@ function syncShell(target) {
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
-    screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
+    screenLabel: customerCrumbLabel(target, typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista', rememberedCustomerTitle()),
   });
 }
 
@@ -1191,7 +1230,9 @@ async function populateNav() {
     // The route owns screen state: re-sync to the current hash after the
     // shell items update, so a cold deep link keeps its screen.
     syncShell(targetForHash(window.location.hash || '#/'));
-    await refreshShellCounts();
+    // backlog:94eabbd4762f: the badges read after the screen opened at boot
+    // has read what it shows — never in front of its reads.
+    void afterScreen(bootScreen).then(() => refreshShellCounts()).catch(() => {});
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.
@@ -1382,7 +1423,12 @@ async function route() {
   // Voce 2f2d22f2, review #722: a card read still in flight must die when
   // the operator leaves the card — otherwise its late response retitles the
   // screen just opened. Same shared-mount race as the list and the form.
-  if (target.view !== 'customer-card') customerCardView.invalidate();
+  if (target.view !== 'customer-card') {
+    customerCardView.invalidate();
+    // Leaving the scheda forgets its name: a later visit never paints a
+    // stale one before its own read (review Muse #878).
+    customerTitle = null;
+  }
   // backlog:607f33ee: every async view paints straight into the shared
   // mount, so a read still in flight must die when the operator leaves
   // the view — otherwise its late response repaints the screen just
@@ -1450,7 +1496,7 @@ async function route() {
     else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
     else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
-    else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId);
+    else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId, { from: target.from ?? null });
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') {
       if (!keepClienti) await clientiListView.render();
@@ -1540,7 +1586,8 @@ window.addEventListener('hashchange', () => {
   if (toaster !== null && !/^#\/pipelines?(\/|$)/.test(window.location.hash)) toaster.hideScope('pipeline');
 });
 populateNav();
-route();
+// backlog:94eabbd4762f: the screen opened at boot; the badges wait for it.
+bootScreen = route();
 // backlog:49bd3657b0f8: after a release the tab still runs the old bundle
 // in memory, so the shell polls the served bundle identity — once now, on
 // every navigation and every minute — and shows a persistent notice the

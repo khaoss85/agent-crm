@@ -12,6 +12,7 @@ import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
+import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
 import {
   addFieldForm,
   defineField,
@@ -761,6 +762,7 @@ export function withNote(loaded, saved, body) {
     sync: null,
     body: typeof saved?.body === 'string' ? saved.body : body,
     teamAuthorId: typeof saved?.actorId === 'string' ? saved.actorId : null,
+    teamAuthor: typeof saved?.teamAuthor === 'string' && saved.teamAuthor.trim() !== '' ? saved.teamAuthor.trim() : null,
     remoteHandle: null,
     errorCode: null,
     occurredAt: typeof saved?.occurredAt === 'string' ? saved.occurredAt : new Date().toISOString(),
@@ -895,6 +897,11 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
+const NOTE_TOAST_SCOPE = 'scheda-nota';
+/** The LLM gate codes that mean «the AI is off here», not an outage. */
+const COMPOSER_AI_OFF_CODES = new Set(['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']);
+
 export function createCustomerCardView(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   // Every write of the card (note, Dettagli, phone, call, message, stage)
@@ -913,11 +920,23 @@ export function createCustomerCardView(deps) {
   // The shell toast, like every sibling admin view: Aggiorna reports through
   // it, never through a bare status line. Without a shell it stays a noop.
   const toast = deps.toast ?? (() => {});
+  // backlog:947260f9f036: the shell hides a toast of one owner (its scope),
+  // so an «Annulla» that no longer works never stays on screen.
+  const hideToast = typeof deps.hideToast === 'function' ? deps.hideToast : () => {};
   // The composer's poll-back pause (BO_SEND_PENDING): injectable so tests
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
     : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+  // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
+  // load backstop never sits among the screen's pauses above. Unref'd
+  // where the host allows it, so an idle process never waits on it.
+  const firstWaveWait = typeof deps.firstWaveWait === 'function'
+    ? deps.firstWaveWait
+    : (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // Voce d525f4aa48b2: the BO-F0-04 assistant seam. Without a shell panel the
   // button toasts the ⌘K hint, like the Clienti seam in app.js.
   const onAskAi = typeof deps.onAskAi === 'function' ? deps.onAskAi : null;
@@ -943,6 +962,35 @@ export function createCustomerCardView(deps) {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
+  /**
+   * backlog:fe9be5f0af4a (production 13/11: after «Modifica» the focus was
+   * on the page body): the cursor in the field, at the end of its text —
+   * now if the field is on the page, and again once the paint that builds
+   * it has landed.
+   * @param {any} field
+   */
+  const focusAtEnd = (field) => {
+    if (!field) return;
+    const before = doc?.activeElement ?? null;
+    const place = (deferred) => {
+      if (field.isConnected === false) return;
+      // Review Muse #878: the later attempt never takes the focus back from
+      // a place the operator moved to in the meantime.
+      const now = doc?.activeElement ?? null;
+      if (deferred && now !== null && now !== field && now !== before && now !== doc?.body) return;
+      if (typeof field.focus === 'function') field.focus();
+      const end = String(field.value ?? '').length;
+      try {
+        if (typeof field.setSelectionRange === 'function') field.setSelectionRange(end, end);
+      } catch {
+        // An email input refuses a selection: the focus alone is enough.
+      }
+    };
+    place(false);
+    setTimeout(() => place(true), 0);
+  };
+  /** Whether `node` holds the focus of the page. @param {any} node */
+  const hasFocus = (node) => node !== null && node !== undefined && doc?.activeElement === node;
   const el = elFor(doc); // BO-F6-02: shared element builder.
   // backlog:e381c48581fa: the space's channel state, read once per space
   // (GET /api/connectors plus GET /api/profile, the same pair Connettori
@@ -978,6 +1026,60 @@ export function createCustomerCardView(deps) {
     spaceChannelsRead = { spaceId, at: Date.now(), promise };
     return promise;
   };
+  // backlog:f48593bb06d4: the space AI state, from the read the Assistente
+  // panel already probes (GET /api/assistant/status), decided by the same
+  // gate code the panel reads to say «AI spenta» (assistantStatusCode:
+  // `code`/`reason` of the answer or of its rejection). Off only for an
+  // LLM gate code and never with `enabled: true`; anything else (pending,
+  // failed, no code) is «unknown», Genera stays and the draft POST still
+  // meets the gate. A settled answer is kept a minute per space; a draft
+  // the gate refused updates it, so a reopen paints off at once.
+  /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null } | null} */
+  let spaceAiRead = null;
+  // `opening`: a new composer opening reuses only a settled answer — a
+  // pending (504) or failed read was «unknown» for its own opening and is
+  // asked again, never a minute of «unknown» while the worker catches up.
+  // The AI row of the same opening reuses the read in flight.
+  const readSpaceAi = (spaceId, { opening = false } = {}) => {
+    if (spaceAiRead !== null && spaceAiRead.spaceId === spaceId
+      && Date.now() - spaceAiRead.at < 60000
+      && !(opening && spaceAiRead.settled === false)) return spaceAiRead.promise;
+    /** @type {{ spaceId: string, at: number, promise: Promise<string|null>, settled: boolean|null }} */
+    const entry = { spaceId, at: Date.now(), promise: Promise.resolve(null), settled: null };
+    entry.promise = Promise.resolve()
+      .then(() => client.request(ASSISTANT_STATUS_PATH))
+      .then((status) => {
+        const code = assistantStatusCode(status);
+        // Settled: the gate said on or off. A 200 with neither (an
+        // unknown shape) is asked again at the next opening.
+        entry.settled = status?.enabled === true || status?.freeQuestions === 'enabled' || COMPOSER_AI_OFF_CODES.has(code);
+        return status?.enabled !== true && COMPOSER_AI_OFF_CODES.has(code) ? code : null;
+      }, (error) => {
+        // A gate refusal (403/503 with the LLM code) is a settled «off».
+        const code = assistantStatusCode(error);
+        if (COMPOSER_AI_OFF_CODES.has(code)) {
+          entry.settled = true;
+          return code;
+        }
+        entry.settled = false;
+        // A handled «unknown»: one info line with the safe fields, never an error.
+        if (typeof console !== 'undefined' && typeof console.info === 'function') {
+          console.info('bo-scheda ai state unreadable:', typeof error?.code === 'string' ? error.code : '',
+            Number.isFinite(error?.status) ? error.status : '', `spaceId=${spaceId}`);
+        }
+        return null;
+      });
+    spaceAiRead = entry;
+    return entry.promise;
+  };
+  const rememberSpaceAiOff = (spaceId, code) => {
+    if (typeof spaceId === 'string' && COMPOSER_AI_OFF_CODES.has(code)) {
+      spaceAiRead = { spaceId, at: Date.now(), promise: Promise.resolve(code), settled: true };
+    }
+  };
+  // The session role: only the titolare is sent to Spazi e accessi, the
+  // others are told who turns the AI on (the Assistente idiom, 1968c3320cd3).
+  const readRole = typeof deps.role === 'function' ? deps.role : () => null;
   // Azioni rapide: the prototype's stroke icon above the label, drawn as a
   // real SVG element. A CSS data: mask is blocked by the host CSP
   // (default-src 'self'), so the icons of #627 never painted in production.
@@ -1029,6 +1131,8 @@ export function createCustomerCardView(deps) {
   // definitive answer (sent, refused, failed) drops the key.
   const composerSendKeys = new Map();
   let shownKey = null;
+  /** The router left the scheda and cleared the mount (backlog:947260f9f036). */
+  let offScreen = false;
   let shownSides = [];
   // Review #612: what the person was typing in the scheda on screen (a note,
   // the open Dettagli form, a phone number) when a re-read swaps it. The new
@@ -1047,7 +1151,7 @@ export function createCustomerCardView(deps) {
     // backlog:cb348c9fcaeb: what is typed in an open «Modifica».
     const noteEdit = root.querySelector('[name="noteEditBody"]');
     if (noteEdit && typeof noteEdit.value === 'string') {
-      drafts.noteEdit = { noteId: noteEdit.getAttribute('data-note-id'), value: noteEdit.value };
+      drafts.noteEdit = { noteId: noteEdit.getAttribute('data-note-id'), value: noteEdit.value, focused: hasFocus(noteEdit) };
     }
     if (root.querySelector('button[data-action="save-details"]')) {
       // Review #612 round 3: only the fields the person changed travel to
@@ -1059,6 +1163,8 @@ export function createCustomerCardView(deps) {
         if (input && typeof input.value === 'string' && input.value !== input.getAttribute('data-initial')) {
           drafts.details[name] = input.value;
         }
+        // backlog:fe9be5f0af4a: the field the cursor was in keeps it.
+        if (hasFocus(input)) drafts.detailsFocus = name;
       }
     }
     // Review Muse #835 (P2): a custom field being edited, or a field being
@@ -1168,9 +1274,12 @@ export function createCustomerCardView(deps) {
     const FIRST_WAVE_BUDGET_MS = 3000;
     let wave2go;
     const wave2gate = new Promise((resolve) => { wave2go = resolve; });
-    // The budget is a backstop only: wait() is injectable (deps.wait), so
-    // tests run this without real time.
-    void wait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
+    // The budget is a backstop only, on its own clock (deps.firstWaveWait,
+    // injectable so tests run it without real time). Never the shared
+    // deps.wait: that one is the screen's user-facing pauses (send
+    // read-back, the note Annulla window of #867), and a load backstop
+    // parked there showed up as a pending pause on every scheda.
+    void firstWaveWait(FIRST_WAVE_BUDGET_MS).then(wave2go, wave2go);
     const firstTake = (part, settledRead, notComposedIsNull = true) => {
       take(part, settledRead, notComposedIsNull);
       wave2go();
@@ -1741,6 +1850,9 @@ export function createCustomerCardView(deps) {
     }
     const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
     panel.appendChild(wait);
+    // backlog:f48593bb06d4: the AI state starts with the channel reads, in
+    // parallel; the AI row reads the same (cached) answer when it paints.
+    void readSpaceAi(spaceId, { opening: true });
     // Voce a935af6a6d19: Email also reads the space profile's Gmail link
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
@@ -1845,44 +1957,88 @@ export function createCustomerCardView(deps) {
     // The person's own text before the first AI draft (review #599 P2): kept
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
-    const off = (sentence) => {
-      while (row.firstChild) row.removeChild(row.firstChild);
-      row.setAttribute('data-off', 'true');
-      row.appendChild(el('p', 'bo-composer-ai-off', sentence));
+    // Genera switched off with its reason beside it (backlog:f48593bb06d4).
+    // The field and the words typed in it stay — read-only, still there to
+    // copy — never a row wiped after a refusal.
+    const switchOff = () => {
+      go.setAttribute('disabled', 'disabled');
+      go.setAttribute('aria-disabled', 'true');
+      if (go.textContent === 'Scrivo…') go.textContent = baseline() === null ? 'Genera' : 'Rigenera';
     };
+    // The reason Genera is off, kept so Annulla repaints it (Annulla
+    // survives the off state: the person's text before an AI draft stays
+    // one click away even with the AI switched off).
+    /** @type {{ code: string|null, status: number|null } | null} */
+    let offState = null;
+    const paintOff = () => {
+      if (offState === null) return;
+      const { code, status } = offState;
+      say('');
+      if (code === 'LLM_SPACE_DISABLED') {
+        // Who turns it on: the titolare gets the way there, one click; the
+        // others are told whom to ask (the Assistente idiom).
+        if (readRole() === 'owner') {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto, o '));
+          line.appendChild(link('#/spazi-accessi', 'accendila da Spazi e accessi', 'composer-ai-settings'));
+        } else {
+          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto. Per accenderla chiedi al titolare.'));
+        }
+      } else if (code === 'LLM_SECRET_UNAVAILABLE') {
+        line.appendChild(el('span', undefined, 'L’AI non è ancora configurata: scrivi il messaggio qui sotto.'));
+      } else if (status === 404 || status === 405) {
+        line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
+      }
+      const kept = baseline();
+      if (kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== '')) appendUndo();
+    };
+    const off = (code, status = null) => {
+      row.setAttribute('data-off', 'true');
+      switchOff();
+      prompt.setAttribute('readonly', 'readonly');
+      prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
+      offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
+      paintOff();
+    };
+    // Annulla: back to the person's own text before the first AI draft.
+    function appendUndo() {
+      const back = el('button', 'bo-composer-ai-undo', 'Annulla');
+      back.setAttribute('type', 'button');
+      back.setAttribute('data-action', 'composer-ai-undo');
+      back.addEventListener('click', () => {
+        const kept = baseline();
+        if (kept === null) return;
+        filled = null;
+        markPicked(null);
+        text.value = kept.text;
+        // Muse P2 on #599: with no subject field mounted (channel switched
+        // to WhatsApp) the undone subject goes to the shared draft, so the
+        // AI subject never comes back when Email returns.
+        restoreSubject(kept.subject);
+        setBaseline(null);
+        changed();
+        go.textContent = 'Genera';
+        // With the AI off the reason stays on the line (backlog:f48593bb06d4).
+        if (offState !== null) paintOff();
+        else say('Testo di prima ripristinato.');
+      });
+      line.appendChild(el('span', undefined, ' · '));
+      line.appendChild(back);
+    }
     const say = (sentence, undo = false) => {
       beforeConfirm = null;
       while (line.firstChild) line.removeChild(line.firstChild);
       line.textContent = '';
       if (sentence === '') return;
       line.appendChild(el('span', undefined, sentence));
-      if (undo) {
-        const back = el('button', 'bo-composer-ai-undo', 'Annulla');
-        back.setAttribute('type', 'button');
-        back.setAttribute('data-action', 'composer-ai-undo');
-        back.addEventListener('click', () => {
-          const kept = baseline();
-          if (kept === null) return;
-          filled = null;
-          markPicked(null);
-          text.value = kept.text;
-          // Muse P2 on #599: with no subject field mounted (channel switched
-          // to WhatsApp) the undone subject goes to the shared draft, so the
-          // AI subject never comes back when Email returns.
-          restoreSubject(kept.subject);
-          setBaseline(null);
-          changed();
-          go.textContent = 'Genera';
-          say('Testo di prima ripristinato.');
-        });
-        line.appendChild(el('span', undefined, ' · '));
-        line.appendChild(back);
-      }
+      if (undo) appendUndo();
     };
-    // No channel to write on: the one way forward is Connettori.
+    // No channel to write on: the one way forward is Connettori. Genera is
+    // off with this reason beside it from the opening (backlog:f48593bb06d4):
+    // the draft is written for one channel, and Invia has none either.
     const sayConnect = () => {
       say('');
-      line.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
+      line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato · '));
+      line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     };
     // The line under an AI draft: reread it, and Annulla when there is a
     // text of the person's own to go back to.
@@ -1891,6 +2047,8 @@ export function createCustomerCardView(deps) {
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== ''));
     };
     async function generate() {
+      // AI off: Invio in the prompt asks nothing either (backlog:f48593bb06d4).
+      if (row.getAttribute('data-off') === 'true') return;
       const words = prompt.value.trim().slice(0, COMPOSER_PROMPT_MAX);
       const picked = channel();
       // Review #664: during the minute of read-back a Genera with other
@@ -1898,16 +2056,16 @@ export function createCustomerCardView(deps) {
       // Genera with those words); the same words keep the read going. While
       // the POST itself is in flight Genera stays off, as before.
       if (busy && (reading === null || reading === pendingKey(words, picked))) return;
-      if (words === '') {
-        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
-        return;
-      }
       if (picked === null) {
         // backlog:bd9ae1482194 (verifica 11/11): with nothing to pick, the
         // line says what to do. Scrivi only opens for a customer with an
         // address, so «no channel to pick» always means the customer's
         // channels are not linked (or not usable) yet: Connettori.
         sayConnect();
+        return;
+      }
+      if (words === '') {
+        say('Scrivi cosa vuoi dire al cliente, poi Genera.');
         return;
       }
       const mine = ++drafting;
@@ -2083,15 +2241,16 @@ export function createCustomerCardView(deps) {
         if (gone()) return;
         const code = error?.code ?? null;
         const status = error?.status ?? null;
-        const aiOff = code === 'LLM_SPACE_DISABLED' || code === 'LLM_SECRET_UNAVAILABLE' || status === 404 || status === 405;
-        // The operator sees why the row went quiet; never the person's prompt.
-        if (aiOff && typeof console !== 'undefined' && typeof console.error === 'function') {
-          console.error('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
-        }
-        if (code === 'LLM_SPACE_DISABLED') off('L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto.');
-        else if (code === 'LLM_SECRET_UNAVAILABLE') off('L’AI non è ancora configurata: scrivi il messaggio qui sotto.');
-        else if (status === 404 || status === 405) off('La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.');
-        else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
+        const aiOff = COMPOSER_AI_OFF_CODES.has(code) || status === 404 || status === 405;
+        if (aiOff) {
+          // A handled state, not a fault (backlog:f48593bb06d4): one warn
+          // line for the operator, never console.error, never the prompt.
+          if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+            console.warn('[bo] AI spenta nel composer', { code, status: typeof status === 'number' ? status : null, spaceId: spaceId ?? null });
+          }
+          rememberSpaceAiOff(spaceId, code);
+          off(code, status);
+        } else if (status === 400) say('Richiesta non valida: scrivila più breve e con parole tue.');
         else say(humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' }));
       } finally {
         if (mine !== drafting) return;
@@ -2109,6 +2268,19 @@ export function createCustomerCardView(deps) {
     if (kept !== null) {
       go.textContent = 'Rigenera';
       say('Bozza dell’AI: rileggila e modificala prima di inviare.', kept.text.trim() !== '' || kept.subject.trim() !== '');
+    }
+    // backlog:f48593bb06d4: the row knows at opening whether Genera can work.
+    // No usable channel: off, with Connettori beside it. AI off in the space
+    // (the cached state read): off, with the reason and who turns it on. A
+    // Genera already in flight is left to the gate's own answer.
+    if (channel() === null) {
+      switchOff();
+      sayConnect();
+    } else {
+      void readSpaceAi(spaceId).then((code) => {
+        if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
+        off(code);
+      });
     }
     prompt.addEventListener?.('keydown', (event) => {
       if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
@@ -2217,10 +2389,12 @@ export function createCustomerCardView(deps) {
       if (entry.recipient === null) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
+        chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
         // Voce 8ce25b0f445f: the address reads in the line too, not only in
         // the title — a phone has no hover.
@@ -2743,7 +2917,11 @@ export function createCustomerCardView(deps) {
         while (box.firstChild) box.removeChild(box.firstChild);
         details(box, card, profile, editCtx, profileError);
       };
-      edit.addEventListener('click', () => renderDetailsForm(box, card, contact, editCtx, restore));
+      edit.addEventListener('click', () => {
+        renderDetailsForm(box, card, contact, editCtx, restore);
+        // backlog:fe9be5f0af4a: the cursor in the first field, at the end.
+        focusAtEnd(box.querySelector('input[name="firstName"]'));
+      });
       box.appendChild(edit);
       if (pendingDrafts && pendingDrafts.details) {
         const typed = pendingDrafts.details;
@@ -2751,6 +2929,9 @@ export function createCustomerCardView(deps) {
         for (const name of Object.keys(typed)) {
           const input = box.querySelector(`input[name="${name}"]`);
           if (input) input.value = typed[name];
+        }
+        if (typeof pendingDrafts.detailsFocus === 'string') {
+          focusAtEnd(box.querySelector(`input[name="${pendingDrafts.detailsFocus}"]`));
         }
         return;
       }
@@ -3074,9 +3255,8 @@ export function createCustomerCardView(deps) {
     edit.setAttribute('data-action', 'edit-note');
     edit.setAttribute('data-note-id', item.id);
     edit.addEventListener('click', () => {
-      noteEditing = { key: `${noteCtx.resource}/${noteCtx.id}`, noteId: item.id, draft: null, error: '' };
+      noteEditing = { key: `${noteCtx.resource}/${noteCtx.id}`, noteId: item.id, draft: null, error: '', focus: true };
       repaintIfShown(noteCtx.resource, noteCtx.id);
-      mount.querySelector('[name="noteEditBody"]')?.focus?.();
     });
     const drop = el('button', 'bo-scheda-note-action', 'Elimina');
     drop.setAttribute('type', 'button');
@@ -3110,6 +3290,12 @@ export function createCustomerCardView(deps) {
     field.addEventListener('input', () => {
       if (noteEditing !== null && noteEditing.noteId === item.id) noteEditing.draft = String(field.value ?? '');
     });
+    // backlog:fe9be5f0af4a: just opened, or the cursor was in it before a
+    // repaint rebuilt it — the cursor goes (back) to the end of the text.
+    if (editing.focus === true || (pendingDrafts?.noteEdit?.noteId === item.id && pendingDrafts.noteEdit.focused === true)) {
+      editing.focus = false;
+      focusAtEnd(field);
+    }
     const row = el('div', 'bo-scheda-form-actions');
     const save = el('button', undefined, 'Salva');
     save.setAttribute('type', 'button');
@@ -3261,7 +3447,11 @@ export function createCustomerCardView(deps) {
       if (channelFilter === 'note' && authors.length > 1) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
         for (const author of authors) {
-          const label = author === '' ? 'dal team' : `da ${writerName(author) ?? 'un membro del team'}`;
+          // backlog:2883ef12f233: like the signature, a chip prefers the
+          // API-named author of one of its notes over the roster lookup.
+          const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
+          const named = first === null ? null : noteWriterName(first);
+          const label = author === '' ? 'dal team' : `da ${named ?? writerName(author) ?? 'un membro del team'}`;
           const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
@@ -3324,8 +3514,49 @@ export function createCustomerCardView(deps) {
     const shownOffer = quotes[0] ?? offers[0] ?? null;
     const historyId = historyTarget(shownOffer, quotes.length > 0);
     const historyName = offers.find((row) => row?.id === historyId)?.name ?? null;
+    /** The stage moves of the shown offer as cronologia rows. @param {{items: any, people: Array<any>}} answer */
+    const stageRowsOf = ({ items, people }) => {
+      const owner = offers.find((row) => row?.id === historyId)?.owner ?? null;
+      const rows = [];
+      for (const entry of Array.isArray(items) ? items : []) {
+        const move = stageMoveOf(entry);
+        if (move === null || !Number.isFinite(Date.parse(String(entry?.createdAt ?? '')))) continue;
+        const words = stageMoveLabels(pipelines, move);
+        const what = words === null ? 'stato cambiato' : `da ${words.from} a ${words.to}`;
+        rows.push({
+          entry: 'stage-moved', id: `stato:${String(entry?.id ?? rows.length)}`, occurredAt: entry.createdAt,
+          text: historyName ? `${historyName}: ${what}` : what,
+          who: auditActorLabel(entry, [owner, companyName], people),
+        });
+      }
+      return rows;
+    };
+    // backlog:947260f9f036: «Tutti» is shown whole or says it is still
+    // reading — never two events that become three a moment later. A history
+    // already read (a repaint) draws complete at once.
+    /** @type {'none' | 'pending' | 'done' | 'failed'} */
+    let historyState = 'none';
+    if (typeof historyId === 'string' && historyId !== '') {
+      const settled = historySettled.get(historyId);
+      if (settled !== undefined) {
+        stageEvents = stageRowsOf(settled);
+        historyState = 'done';
+      } else {
+        historyState = 'pending';
+      }
+    }
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
+      const movesPending = channelFilter === 'all' && historyState === 'pending';
+      list.setAttribute('aria-busy', movesPending ? 'true' : 'false');
+      if (movesPending) {
+        const wait = el('p', 'bo-scheda-moves-wait');
+        wait.setAttribute('data-loading', 'true');
+        wait.appendChild(uiSkeleton(doc, { width: '60%', block: true }));
+        list.appendChild(wait);
+      } else if (channelFilter === 'all' && historyState === 'failed') {
+        list.appendChild(el('p', 'bo-muted', 'Cambi di stato non leggibili: riprova più tardi.'));
+      }
       const events = channelFilter === 'all' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
@@ -3349,6 +3580,7 @@ export function createCustomerCardView(deps) {
         // backlog:82235e46e3e9: the field below writes a note, not a
         // message: the empty state names the right tool for each.
         if (channelFilter === 'all') {
+          if (movesPending) return;
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
           list.appendChild(el('p', 'bo-muted', 'Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
           return;
@@ -3413,15 +3645,21 @@ export function createCustomerCardView(deps) {
           const when = timeParts(item?.occurredAt);
           // backlog:82235e46e3e9: signed with the writer's name from the
           // team roster, never «dal team» for a known operator.
-          const writer = writerName(item?.teamAuthorId);
+          // backlog:2883ef12f233: the API-named author wins over the
+          // roster, which an admin-gated read may withhold.
+          const writer = noteWriterName(item);
           const author = writer !== null ? `da ${writer}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
           row.appendChild(mark);
           const paper = el('div', 'bo-scheda-note-paper');
+          // backlog:fe9be5f0af4a: a corrected note says so, with the hour of
+          // the correction beside the hour of the note.
+          const revisedWhen = typeof item?.revisedAt === 'string' ? timeParts(item.revisedAt) : null;
+          const revised = typeof item?.revisedAt === 'string' ? ` · modificata${revisedWhen ? ` ${revisedWhen}` : ''}` : '';
           paper.appendChild(el('p', 'bo-scheda-entry-head',
-            when ? `Nota · ${author} · ${when}` : `Nota · ${author}`));
+            `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`));
           const mine = myActorId();
           const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
             && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
@@ -3582,25 +3820,15 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (typeof historyId === 'string' && historyId !== '') {
-      void readHistory(historyId).then(({ items, people }) => {
-        const owner = offers.find((row) => row?.id === historyId)?.owner ?? null;
-        const rows = [];
-        for (const entry of Array.isArray(items) ? items : []) {
-          const move = stageMoveOf(entry);
-          if (move === null || !Number.isFinite(Date.parse(String(entry?.createdAt ?? '')))) continue;
-          const words = stageMoveLabels(pipelines, move);
-          const what = words === null ? 'stato cambiato' : `da ${words.from} a ${words.to}`;
-          rows.push({
-            entry: 'stage-moved', id: `stato:${String(entry?.id ?? rows.length)}`, occurredAt: entry.createdAt,
-            text: historyName ? `${historyName}: ${what}` : what,
-            who: auditActorLabel(entry, [owner, companyName], people),
-          });
-        }
-        if (rows.length === 0 || list.parentNode == null) return;
-        stageEvents = rows;
+    if (historyState === 'pending') {
+      void readHistory(historyId).then((answer) => {
+        historyState = 'done';
+        stageEvents = stageRowsOf(answer);
         drawList();
-      }, () => {});
+      }, () => {
+        historyState = 'failed';
+        drawList();
+      });
     }
     // Voce 714433c2: "Aggiungi nota" — the operator statement that reads
     // back in the cronologia above. Plain text only, like the work views; it
@@ -3797,8 +4025,11 @@ export function createCustomerCardView(deps) {
       ? (typeof first?.opportunityId === 'string' && first.opportunityId !== '' ? first.opportunityId : null)
       : (typeof first?.id === 'string' && first.id !== '' ? first.id : null);
     const quoteOnly = offerId === null && fromQuote && typeof first?.id === 'string' && first.id !== '' ? first.id : null;
+    // backlog:96c7b56001ba: the offer page goes back to this scheda.
+    const here = offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string'
+      ? `/cliente/${encodeURIComponent(offerCtx.resource)}/${encodeURIComponent(offerCtx.id)}` : '';
     const offerHref = offerId !== null
-      ? `#/offerte/${encodeURIComponent(offerId)}`
+      ? `#/offerte/${encodeURIComponent(offerId)}${here}`
       : (quoteOnly !== null ? `#/quotes/${encodeURIComponent(quoteOnly)}` : null);
     // Voce 59def6cb805d (C25): the prototype's big amount, read from the
     // server total the profile carries — never summed here. No figure (a
@@ -3881,6 +4112,7 @@ export function createCustomerCardView(deps) {
             // backlog:2a214b66fe12: the pill moves the moment the toast
             // says so; then only card and profile are read again.
             historyReads.delete(stageMenu.id);
+            historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               (loaded) => withOfferStage(loaded, stageMenu.id, 'pipeline', voice.key));
             toast(`Spostata in ${voice.label}.`);
@@ -3897,6 +4129,7 @@ export function createCustomerCardView(deps) {
             // for approval did not happen yet: nothing moves on screen.
             const waiting = result?.output?.outcome === 'approval_required';
             historyReads.delete(stageMenu.id);
+            historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               waiting ? null : (loaded) => withOfferStage(loaded, stageMenu.id, 'core', voice.key));
             toast(waiting
@@ -4005,7 +4238,9 @@ export function createCustomerCardView(deps) {
       && profile.identity.company.name !== '' ? profile.identity.company.name : null;
     box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
     const loading = el('p', 'bo-muted', 'Caricamento…');
-    box.appendChild(loading);
+    // backlog:947260f9f036: a history already read fills at once on a repaint.
+    const settled = historySettled.get(targetId);
+    if (settled === undefined) box.appendChild(loading);
     const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
       const rows = [];
@@ -4041,6 +4276,10 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
+    if (settled !== undefined) {
+      fill(settled.items, settled.people);
+      return;
+    }
     const historyRead = readHistory(targetId);
     void historyRead.then(
       ({ items, people }) => fill(items, people),
@@ -4306,11 +4545,18 @@ export function createCustomerCardView(deps) {
     for (const part of Object.keys(partSeq)) partSeq[part] += 1;
     const startSeq = { ...partSeq };
     historyReads.clear();
+    historySettled.clear();
     rosterRead = null;
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
     meRead = null;
-    if (key !== shownKey) {
+    // backlog:947260f9f036: back on the same customer after another screen
+    // (the router cleared the mount): the skeleton at once like a first
+    // visit, but it is still this customer — a note in its «Annulla»
+    // window stays waiting, and an open «Modifica» stays open.
+    const returning = key === shownKey && offScreen;
+    offScreen = false;
+    if (key !== shownKey || returning) {
       // Another customer: clear at once, never leave the previous one up.
       // Backlog 608aa14d554c: the clear also removed the router's loading
       // line, so a direct link stayed blank for the whole read (5.8 s on
@@ -4328,8 +4574,10 @@ export function createCustomerCardView(deps) {
       // backlog:cb348c9fcaeb: an «Elimina» still in its «Annulla» window
       // leaves now — never silently undone by opening another customer —
       // and an open «Modifica» closes with the scheda it belonged to.
-      flushWithdrawals();
-      noteEditing = null;
+      if (!returning) {
+        flushWithdrawals();
+        noteEditing = null;
+      }
       // Voce 2f2d22f2 review #722: the router repaints «Clienti» on entry,
       // so the dedup must forget the previous name — a different customer
       // with the same name re-narrows the crumb instead of staying silent.
@@ -4469,6 +4717,13 @@ export function createCustomerCardView(deps) {
   /** The «Storia stati» reads by offer id, shared by the repaints of one read. @type {Map<string, Promise<any>>} */
   const historyReads = new Map();
   /**
+   * backlog:947260f9f036: what those reads answered, so a repaint (the
+   * roster arriving, a section landing) draws the same complete history at
+   * once instead of «Caricamento…» and a cronologia without its moves.
+   * @type {Map<string, any>}
+   */
+  const historySettled = new Map();
+  /**
    * The offer's stage history with the roster that names its actors —
    * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
    * a repaint after a note or a Dettagli save reuses it; a full re-read or a
@@ -4479,7 +4734,11 @@ export function createCustomerCardView(deps) {
     let read = historyReads.get(targetId);
     if (read === undefined) {
       const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
-      read = readRoster().then((people) => client.request(auditPath).then((answer) => ({ items: answer?.items, people })));
+      // backlog:947260f9f036: the roster and the trail leave together — in
+      // a row they made «Storia stati» and the cronologia the last to land.
+      read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
+      const mine = read;
+      void read.then((answer) => { if (historyReads.get(targetId) === mine) historySettled.set(targetId, answer); }, () => {});
       historyReads.set(targetId, read);
       // A failed read is not kept: the next paint asks again (after the
       // sections of a first read have landed, backlog:1a96094db71d).
@@ -4523,7 +4782,7 @@ export function createCustomerCardView(deps) {
    * backlog:cb348c9fcaeb — «Modifica» open on one note: view state, so a
    * repaint (the roster arriving, another section's re-read) draws the
    * editor again with what was typed and its last refusal.
-   * @type {{ key: string, noteId: string, draft: string | null, error: string } | null}
+   * @type {{ key: string, noteId: string, draft: string | null, error: string, focus?: boolean } | null}
    */
   let noteEditing = null;
   /** A correction being saved, view-wide: one POST per tap. */
@@ -4594,8 +4853,8 @@ export function createCustomerCardView(deps) {
     const key = `${resource}/${id}`;
     if (lastShown !== null && lastShown.key === key && shownKey === key) paint(key, resource, id, lastShown.loaded);
   }
-  /** @param {string} pendingKey */
-  async function commitWithdrawal(pendingKey) {
+  /** @param {string} pendingKey @param {{ keepalive?: boolean }} [options] */
+  async function commitWithdrawal(pendingKey, { keepalive = false } = {}) {
     const pending = pendingWithdrawals.get(pendingKey);
     if (!pending || pending.state !== 'waiting') return;
     pending.state = 'sending';
@@ -4605,6 +4864,8 @@ export function createCustomerCardView(deps) {
       await client.request('/api/customer-hub/notes/withdraw', {
         method: 'POST',
         body: JSON.stringify({ resource, id, noteId }),
+        // Sent while the page goes away: the request outlives it.
+        ...(keepalive ? { keepalive: true } : {}),
       });
       pendingWithdrawals.delete(pendingKey);
       // The note stays out of the cronologia; then only the cronologia is
@@ -4622,9 +4883,26 @@ export function createCustomerCardView(deps) {
       }
     }
   }
-  /** Every withdrawal still waiting leaves now (the scheda opens another customer). */
-  function flushWithdrawals() {
-    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey);
+  /**
+   * Every withdrawal still waiting leaves now: the scheda opens another
+   * customer, or the page goes away (`keepalive`). Its «Annulla» would no
+   * longer work, so the toast that offers it leaves too.
+   * @param {{ keepalive?: boolean }} [options]
+   */
+  function flushWithdrawals(options = {}) {
+    if (pendingWithdrawals.size === 0) return;
+    hideToast(NOTE_TOAST_SCOPE);
+    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey, options);
+  }
+  // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
+  // window lost the withdrawal — the timer died with the page and the note
+  // came back. Leaving the page (pagehide: reload, close, navigation away)
+  // sends what is still waiting at once, through the same /bo write client,
+  // with keepalive. Hiding it (another browser tab) does nothing (review
+  // Muse #878, P2): the «Annulla» window stays whole while the page lives.
+  const pageWindow = deps.pageWindow ?? (typeof window === 'undefined' ? null : window);
+  if (pageWindow && typeof pageWindow.addEventListener === 'function') {
+    pageWindow.addEventListener('pagehide', () => flushWithdrawals({ keepalive: true }));
   }
   /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
@@ -4639,6 +4917,7 @@ export function createCustomerCardView(deps) {
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
     toast('Nota eliminata', false, {
+      scope: NOTE_TOAST_SCOPE,
       duration: NOTE_WITHDRAW_GRACE_MS,
       action: {
         label: 'Annulla',
@@ -4692,6 +4971,18 @@ export function createCustomerCardView(deps) {
   function writerName(id) {
     if (typeof id !== 'string' || id.trim() === '') return null;
     return rosterName(id.trim()) ?? teamName(id);
+  }
+  /**
+   * backlog:2883ef12f233: who wrote a note. The API names the author on
+   * the entry (`teamAuthor`); that name wins, because the roster read is
+   * admin-gated and a provider id is no name. Without it, the roster and
+   * handle lookup below, unchanged.
+   * @param {unknown} item
+   */
+  function noteWriterName(item) {
+    const named = typeof item?.teamAuthor === 'string' ? item.teamAuthor.trim() : '';
+    if (named !== '') return named;
+    return writerName(item?.teamAuthorId);
   }
 
   /**
@@ -4943,6 +5234,11 @@ export function createCustomerCardView(deps) {
    */
   function invalidate() {
     cardRenderToken += 1;
+    // backlog:947260f9f036: the router leaves the scheda and clears the
+    // mount, so nothing of it stays on screen: coming back to the same
+    // customer paints the skeleton at once, never the router's lone
+    // «Carico Clienti…» for the whole read (renderCard reads the flag).
+    offScreen = true;
     resetTitle();
   }
 

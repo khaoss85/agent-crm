@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   NOTE_WITHDRAW_GRACE_MS,
@@ -84,7 +85,7 @@ function fakeClient({ items = [MINE, THEIRS], context = { actor: { type: 'user',
       const method = String(options.method ?? 'GET').toUpperCase();
       if (method !== 'GET') {
         const body = options.body ? JSON.parse(String(options.body)) : null;
-        writes.push({ path, method, body });
+        writes.push({ path, method, body, keepalive: options.keepalive === true, key: options.headers?.['Idempotency-Key'] ?? null });
         if (Object.hasOwn(refuse, path)) throw refuse[path];
         if (path === '/api/customer-hub/notes/revise') {
           state.items = state.items.map((item) => (item.id === body.noteId ? { ...item, body: body.body } : item));
@@ -127,18 +128,20 @@ function manualWait() {
   };
 }
 
-async function open(client = fakeClient(), spaceId = 'spazio-prova') {
-  const doc = createFakeDocument();
+async function open(client = fakeClient(), spaceId = 'spazio-prova', extra = {}) {
+  const doc = extra.doc ?? createFakeDocument();
   const mount = createMount();
   const toasts = [];
+  const hidden = [];
   const timer = manualWait();
   const view = createCustomerCardView({
-    doc, mount, client, spaceId, wait: timer.wait,
+    doc, mount, client, spaceId, wait: timer.wait, ...(extra.pageWindow ? { pageWindow: extra.pageWindow } : {}),
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
+    hideToast: (scope) => hidden.push(scope),
   });
   await view.renderCard('contact', 'c1');
   await flush();
-  return { mount, view, client, toasts, timer };
+  return { mount, view, client, toasts, timer, hidden, doc };
 }
 
 /** The note row in the cronologia that shows `text`, or undefined. */
@@ -338,6 +341,61 @@ test('cb348c9fcaeb: opening another customer sends a waiting withdrawal at once'
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
 });
 
+// backlog:947260f9f036 (review Muse #871 giro 1): leaving the scheda and
+// coming back to the same customer (scheda → offerta → «← cliente») paints
+// the skeleton at once, but a note in its «Annulla» window stays waiting:
+// Annulla keeps working until the window ends. Only another customer sends
+// it at once (#867), and then the toast with its Annulla leaves.
+test('947260f9f036: back on the same customer after another screen, a waiting withdrawal keeps its Annulla', async () => {
+  const { mount, view, client, toasts, timer, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing is sent on the way back');
+  assert.deepEqual(hidden, [], 'the Annulla toast stays');
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays hidden while the window is open');
+  toasts[0].options.action.run();
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'Annulla still brings it back');
+  timer.endAll();
+  await flush();
+  assert.equal(client.writes.length, 0, 'and nothing is ever sent');
+});
+
+test('947260f9f036: back on the same customer, a withdrawal not undone leaves when its window ends', async () => {
+  const { mount, view, client, timer } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  view.invalidate();
+  await view.renderCard('contact', 'c1');
+  await flush();
+  timer.endAll();
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined);
+});
+
+test('947260f9f036: opening another customer sends the waiting withdrawal and takes its Annulla away', async () => {
+  const { mount, view, client, toasts, hidden } = await open();
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  await flush();
+  const scope = toasts[0].options.scope;
+  assert.ok(typeof scope === 'string' && scope !== '', 'the Annulla toast has an owner the shell can hide');
+  view.invalidate();
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId]), [['/api/customer-hub/notes/withdraw', 'n-mia']]);
+  assert.deepEqual(hidden, [scope], 'the Annulla toast leaves when the withdrawal is sent');
+});
+
+test('947260f9f036: the shell hides the scheda toast by its owner', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  const wiring = /const customerCardView = createCustomerCardView\(\{([\s\S]*?)\n\}\);/.exec(app);
+  assert.ok(wiring && /hideToast: \(scope\) => \{ if \(toaster !== null\) toaster\.hideScope\(scope\); \}/.test(wiring[1]));
+});
+
 test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
   const loaded = { timeline: timelineOf([MINE, THEIRS]) };
   const revised = withRevisedNote(loaded, 'n-mia', 'Nuovo testo');
@@ -360,4 +418,158 @@ test('cb348c9fcaeb: the cronologia helpers and the refusal sentences', () => {
   ]) {
     assert.equal(noteChangeRefusalText(error, 'Nota non modificata. Riprova più tardi.'), sentence);
   }
+});
+
+// ---------------------------------------------------------------------------
+// backlog:fe9be5f0af4a — production verification 13/11 after #867
+// ---------------------------------------------------------------------------
+
+/** An event target the page fires `pagehide` on. */
+function fakeWindow() {
+  const listeners = {};
+  return {
+    listeners,
+    addEventListener(type, handler) { (listeners[type] ??= []).push(handler); },
+    fire(type) { for (const handler of listeners[type] ?? []) handler({ type }); },
+  };
+}
+
+/** A fake document that knows which node has the focus and where the caret is. */
+function focusDocument() {
+  const doc = createFakeDocument();
+  const listeners = {};
+  doc.activeElement = null;
+  doc.visibilityState = 'visible';
+  doc.addEventListener = (type, handler) => { (listeners[type] ??= []).push(handler); };
+  doc.fire = (type) => { for (const handler of listeners[type] ?? []) handler({ type }); };
+  const proto = Object.getPrototypeOf(doc.createElement('div'));
+  const restore = { focus: proto.focus, setSelectionRange: proto.setSelectionRange };
+  proto.focus = function focus() { this.__focused = true; doc.activeElement = this; };
+  proto.setSelectionRange = function setSelectionRange(start, end) { this.__selection = [start, end]; };
+  doc.restore = () => { proto.focus = restore.focus; if (restore.setSelectionRange) proto.setSelectionRange = restore.setSelectionRange; else delete proto.setSelectionRange; };
+  return doc;
+}
+
+const settle = async () => {
+  await flush();
+  await new Promise((resolve) => { setTimeout(resolve, 5); });
+  await flush();
+};
+
+test('fe9be5f0af4a: leaving the page inside the Annulla window sends the withdrawal at once, with keepalive and its key', async () => {
+  const pageWindow = fakeWindow();
+  const { mount, client, hidden, toasts } = await open(fakeClient(), 'spazio-prova', { pageWindow });
+  await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  assert.equal(client.writes.length, 0, 'nothing leaves while Annulla is offered');
+  pageWindow.fire('pagehide');
+  await flush();
+  assert.equal(client.writes.length, 1);
+  const [write] = client.writes;
+  assert.deepEqual([write.path, write.body], ['/api/customer-hub/notes/withdraw', { resource: 'contact', id: 'c1', noteId: 'n-mia' }]);
+  assert.equal(write.keepalive, true, 'the request outlives the page');
+  assert.match(String(write.key), /^v1\./, 'through the /bo write client: same submission key as any write');
+  assert.deepEqual(hidden, [toasts[0].options.scope], 'the Annulla toast leaves with the withdrawal');
+  pageWindow.fire('pagehide');
+  await flush();
+  assert.equal(client.writes.length, 1, 'sent once');
+});
+
+test('fe9be5f0af4a: another browser tab sends nothing and Annulla still works (review Muse #878, P2)', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount, client, toasts, timer, hidden } = await open(fakeClient(), 'spazio-prova', { doc, pageWindow: fakeWindow() });
+    await byAction(noteRow(mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+    doc.visibilityState = 'hidden';
+    doc.fire('visibilitychange');
+    await flush();
+    assert.equal(client.writes.length, 0, 'a hidden page is not a page that left');
+    assert.deepEqual(hidden, [], 'the Annulla toast stays');
+    doc.visibilityState = 'visible';
+    doc.fire('visibilitychange');
+    toasts[0].options.action.run();
+    await flush();
+    assert.ok(noteRow(mount, 'Richiamare lunedì'), 'Annulla brought the note back');
+    timer.endAll();
+    await flush();
+    assert.equal(client.writes.length, 0, 'and nothing is ever sent');
+  } finally {
+    doc.restore();
+  }
+});
+
+test('fe9be5f0af4a: Modifica puts the cursor in the note, at the end of its text, and keeps it through a repaint', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount, view } = await open(fakeClient(), 'spazio-prova', { doc });
+    byAction(noteRow(mount, 'Richiamare lunedì'), 'edit-note').dispatch('click');
+    await settle();
+    const field = editField(mount);
+    assert.equal(doc.activeElement, field, 'the cursor is in the field, never on the page body');
+    assert.deepEqual(field.__selection, ['Richiamare lunedì'.length, 'Richiamare lunedì'.length], 'at the end of the text');
+    field.value = 'Richiamare lunedì mattina';
+    await view.renderCard('contact', 'c1');
+    await settle();
+    assert.notEqual(editField(mount), field, 'the scheda was repainted');
+    assert.equal(doc.activeElement, editField(mount), 'the new field has the cursor again');
+    assert.deepEqual(editField(mount).__selection, ['Richiamare lunedì mattina'.length, 'Richiamare lunedì mattina'.length]);
+  } finally {
+    doc.restore();
+  }
+});
+
+test('fe9be5f0af4a: the later focus attempt never takes the focus back from where the operator moved (review Muse #878)', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount } = await open(fakeClient(), 'spazio-prova', { doc });
+    byAction(noteRow(mount, 'Richiamare lunedì'), 'edit-note').dispatch('click');
+    const elsewhere = doc.createElement('input');
+    elsewhere.focus();
+    await settle();
+    assert.equal(doc.activeElement, elsewhere, 'the operator keeps the field they moved to');
+  } finally {
+    doc.restore();
+  }
+});
+
+test('fe9be5f0af4a: Dettagli › Modifica puts the cursor in the first field, at the end', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount } = await open(fakeClient(), 'spazio-prova', { doc });
+    byAction(mount, 'edit-details').dispatch('click');
+    await settle();
+    const first = mount.findAll('input').find((node) => node.getAttribute('name') === 'firstName');
+    assert.ok(first, 'the form is open');
+    assert.equal(doc.activeElement, first);
+    assert.deepEqual(first.__selection, [String(first.value).length, String(first.value).length]);
+  } finally {
+    doc.restore();
+  }
+});
+
+test('fe9be5f0af4a: a corrected note says «modificata» with the hour of the correction', async () => {
+  const hour = (iso) => new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' }).format(new Date(iso));
+  const corrected = { ...MINE, revisedAt: '2026-11-12T14:05:00.000Z', revisedBy: ME };
+  const { mount } = await open(fakeClient({ items: [corrected, THEIRS] }));
+  const head = noteRow(mount, 'Richiamare lunedì').findAll('p')[0].textContent;
+  assert.ok(head.endsWith(`· ${hour(MINE.occurredAt)} · modificata ${hour(corrected.revisedAt)}`), head);
+  assert.ok(!noteRow(mount, 'Preventivo inviato').textContent.includes('modificata'), 'an untouched note does not say it');
+});
+
+test('fe9be5f0af4a: right after Salva the corrected note already says «modificata»', async () => {
+  const client = fakeClient();
+  const { mount } = await open(client);
+  byAction(noteRow(mount, 'Richiamare lunedì'), 'edit-note').dispatch('click');
+  editField(mount).value = 'Richiamare martedì';
+  // The server's cronologia carries revisedAt once the correction is on record.
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    const answer = await original(path, options);
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/')) {
+      return { ...answer, entries: { ...answer.entries, items: answer.entries.items.map((item) => (item.id === 'n-mia' ? { ...item, revisedAt: '2026-11-13T18:00:00.000Z' } : item)) } };
+    }
+    return answer;
+  };
+  editField(mount).dispatch('keydown', key('Enter'));
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare martedì').textContent.includes('modificata'));
 });

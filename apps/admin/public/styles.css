@@ -384,6 +384,9 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
 .bo-offer .offer-quote:first-of-type { border-top: 0; }
+/* Review Muse #871: the place of the price books and of each quote while they read. */
+.bo-offer .offer-quote-create-wait { padding: 4px 0 8px; }
+.bo-offer .offer-quote[data-loading="true"] > * + *, .bo-offer .offer-quote-create-wait > * + * { margin-top: 6px; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -754,6 +757,8 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-entry .bo-scheda-entry-more { justify-self: start; min-height: 0; margin: 0; padding: 4px 14px 0; border: 0; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); border-radius: 0; background: var(--surface); color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; width: 100%; text-align: left; }
 .bo-scheda-timeline .bo-scheda-older { align-self: center; margin-top: 6px; min-height: 0; padding: 8px 16px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
 .bo-scheda-timeline .bo-scheda-older:hover { border-color: var(--ink); }
+/* backlog:947260f9f036: the grey row where the stage moves arrive. */
+.bo-scheda-timeline .bo-scheda-moves-wait { margin: 0; }
 .bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
 .bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-offer { margin: 0; font-size: 14px; }
@@ -2558,7 +2563,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer-channels { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0 10px; border-bottom: 1px solid var(--line-faint); }
 .bo-scheda-composer-channel { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 550; cursor: pointer; user-select: none; transition: border-color .12s, background .12s; }
 .bo-scheda-composer-channel input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.bo-scheda-composer-channel:hover { border-color: var(--ink); }
+/* backlog:f48593bb06d4: an off chip never answers the hover like a live one. */
+.bo-scheda-composer-channel:not([data-off="true"]):hover { border-color: var(--ink); }
 .bo-scheda-composer-channel[data-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
 .bo-scheda-composer-channel[data-selected="true"]::before { content: "✓"; font-size: 11px; }
 .bo-scheda-composer-channel[data-off="true"] { color: var(--dim); background: transparent; border-style: dashed; border-color: var(--line-dashed); cursor: not-allowed; font-weight: 450; }
@@ -2581,6 +2587,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-composer-ai-go { flex: none; min-height: 0; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--agent); color: var(--surface); font-size: 13px; font-weight: 650; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-go:hover { background: var(--agent-ink); }
 .bo-scheda-composer .bo-composer-ai-go[disabled] { opacity: .6; cursor: progress; }
+/* backlog:f48593bb06d4: AI off or no channel — Genera reads switched off, the reason sits on the line below. */
+.bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"], .bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"]:hover { opacity: 1; background: var(--line); color: var(--muted); cursor: not-allowed; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line { color: var(--muted); }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line a { color: var(--accent); font-weight: 600; }
 .bo-composer-ai-line { margin: 6px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
 .bo-composer-ai-line:empty { display: none; }
 .bo-scheda-composer .bo-composer-ai-undo { min-height: 0; padding: 0; border: 0; background: none; color: var(--agent-ink); font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
@@ -2594,7 +2604,6 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-composer-ai-pick { text-align: left; max-width: 230px; border-radius: 12px; }
 .bo-composer-ai-pick-label { display: block; font-weight: 600; }
 .bo-composer-ai-preview { display: block; margin-top: 2px; font-weight: 400; font-size: 11.5px; line-height: 1.4; opacity: .85; white-space: normal; }
-.bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }

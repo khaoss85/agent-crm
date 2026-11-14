@@ -148,6 +148,27 @@ test('82235e46e3e9: without a roster a provider id still never shows, and the no
   assert.ok(!mount.textContent.includes('google|118'));
 });
 
+test('2883ef12f233: a note naming its author reads that name even when the roster is unreadable', async () => {
+  // Live 12/11 (verifier 2026-11-13): the API names the author and the
+  // scheda still signed «Nota · dal team». The server-provided name wins
+  // over the roster lookup, which needs an admin-gated read.
+  const note = {
+    entry: 'note', id: 'n0', body: 'Richiamare lunedì',
+    teamAuthorId: 'google|999', teamAuthor: 'daniele pelleri',
+    occurredAt: '2026-11-10T10:00:00.000Z',
+  };
+  const failing = fakeClient({ timeline: entries([note]) });
+  const base = failing.request.bind(failing);
+  failing.request = async (path, options) => {
+    if (path === '/api/spine/memberships') throw Object.assign(new Error('x'), { status: 403 });
+    return base(path, options);
+  };
+  const { mount } = await open(failing);
+  assert.ok(mount.textContent.includes('Nota · da daniele pelleri'), mount.textContent.slice(0, 400));
+  assert.ok(!mount.textContent.includes('dal team'));
+  assert.ok(!mount.textContent.includes('google|999'));
+});
+
 test('82235e46e3e9: the empty state names «Scrivi» for messages and the note field below', async () => {
   const { mount } = await open(fakeClient({ timeline: entries([]) }));
   assert.ok(mount.textContent.includes('Ancora nessun contatto'));
