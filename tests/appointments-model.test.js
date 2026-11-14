@@ -128,7 +128,7 @@ test('the package conforms: identity, one owned record, one declared reach, writ
     dir: join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'appointments'),
     expected: {
       name: 'appointments',
-      version: 4,
+      version: 5,
       resources: ['appointment'],
       requires: ['work/follow-up@1'],
       provides: ['appointment-book@1', 'appointment-schedule@1'],
