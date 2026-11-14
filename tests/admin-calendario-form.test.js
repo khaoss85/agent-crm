@@ -171,7 +171,7 @@ test('form: a listino with one bookable service preselects it, like the scheda w
   assert.equal(byName(mount, 'price').value, '45.00');
 });
 
-test('form: Esc closes it and empties it — the next opening starts clean', async () => {
+test('form: Esc closes it and drops the typed values — the next opening proposes a day and time', async () => {
   const { mount } = await openCalendar();
   openManual(mount);
   const fill = (name, value) => {
@@ -179,7 +179,8 @@ test('form: Esc closes it and empties it — the next opening starts clean', asy
     node.value = value;
     node.dispatch('input');
   };
-  fill('date', '2026-10-22');
+  // A day away from the default proposal, so the reopen proves the reset.
+  fill('date', '2026-10-24');
   fill('start', '10:00');
   fill('end', '10:30');
   fill('price', '12.00');
@@ -190,13 +191,18 @@ test('form: Esc closes it and empties it — the next opening starts clean', asy
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  for (const name of ['date', 'start', 'end', 'price', 'notes']) {
+  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
+  // 09:30–10:00 here, now is 2026-10-21); the typed values never survive.
+  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
+  assert.equal(byName(mount, 'end').value, '10:00', 'the next opening proposes 10:00');
+  for (const name of ['price', 'notes']) {
     assert.equal(byName(mount, name).value, '', `${name} starts empty`);
   }
   assert.equal(byName(mount, 'serviceKey').value, '', 'the service starts unchosen');
 });
 
-test('form: × closes it and empties it too, and focus goes back to «Nuovo appuntamento»', async () => {
+test('form: × closes it and drops the typed day too, and focus goes back to «Nuovo appuntamento»', async () => {
   const { mount } = await openCalendar();
   openManual(mount);
   const date = byName(mount, 'date');
@@ -207,7 +213,10 @@ test('form: × closes it and empties it too, and focus goes back to «Nuovo appu
   const toggle = mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento'));
   assert.equal(toggle.__focused, true, 'focus back on the button that opened it');
   openManual(mount);
-  assert.equal(byName(mount, 'date').value, '');
+  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
+  // 09:30 here); the typed 2026-10-23 never survives.
+  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
 });
 
 test('form: a slot picked on the grid seats the same form beside it; Esc drops the slot too', async () => {
@@ -225,8 +234,10 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   pop.dispatch('keydown', { key: 'Escape' });
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick'), undefined, 'the pick leaves the grid');
   openManual(mount);
-  assert.equal(byName(mount, 'start').value, '', 'the old slot never comes back');
-  assert.equal(byName(mount, 'date').value, '');
+  // backlog:134f3ed7 — the old 11:00 slot never comes back; the manual
+  // opening proposes tomorrow 09:30 instead of an empty form.
+  assert.equal(byName(mount, 'start').value, '09:30', 'the old slot never comes back');
+  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
 });
 
 // backlog:3582d91635cb: homonyms in the customer suggestions read apart.
@@ -265,6 +276,26 @@ test('form: customerHint prefers a partial email, then the phone, then the compa
   assert.equal(customerHint({ email: null, phone: { value: '+39 333 123 4567' } }), 'tel. …4567');
   assert.equal(customerHint({ email: '', phone: null, company: { name: 'Palestra Uno' } }), 'Palestra Uno');
   assert.equal(customerHint({ email: 'rotta@', phone: { value: '12' } }), null);
+});
+
+// backlog:134f3ed7 (review giro 1 P2): closeManual() dropped the typed
+// values but kept the typed marks, so the reopened form read its proposed
+// date (tomorrow) as «written» and raised «Hai del testo non salvato».
+test('form: a date typed then dropped by Esc is not unsaved text on reopen', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const { mount } = await openCalendar();
+  openManual(mount);
+  const date = byName(mount, 'date');
+  date.value = '2026-10-24';
+  date.dispatch('input');
+  formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
+  assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
+  openManual(mount);
+  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the proposed date is nobody’s unsaved text');
+  resetVersionWatchState();
 });
 
 // backlog:3582d91635cb (verifier return 1, 2026-11-13): the 2-char cure reads

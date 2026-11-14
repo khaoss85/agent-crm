@@ -377,7 +377,7 @@ export function shapeCustomerCard(profile, subject) {
     subject: Object.freeze({ resource, id }),
     name,
     headline,
-    company: company ? Object.freeze({ id: company.id, name: company.name }) : null,
+    company: company ? Object.freeze({ id: company.id, name: company.name, placeholder: company.placeholder }) : null,
     phone,
     email,
     socials,

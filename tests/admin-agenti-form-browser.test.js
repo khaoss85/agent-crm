@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // The real /bo Agenti page of bo:shots (shell with its sticky top bar,
 // styles.css, demo team), served the same way, in a real Chromium.
 import {
-  harnessHtml, readProbe, runnableChromium, startServer, VIRTUAL_BUDGET_MS,
+  runChromium as runSharedChromium, harnessHtml, readProbe, runnableChromium, startServer, VIRTUAL_BUDGET_MS,
 } from '../scripts/bo-shots.js';
 
 /**
@@ -64,23 +63,11 @@ function pageFor(name) {
     .replace('<div id="probe" hidden></div>', '<div id="probe" hidden></div><div id="formprobe" hidden></div>');
 }
 
-function runChromium(args, timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(CHROMIUM, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`chromium timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.on('error', (error) => { clearTimeout(timer); reject(error); });
-    child.on('close', (status) => {
-      clearTimeout(timer);
-      resolve({ status, stdout, stderr });
-    });
-  });
+// backlog:c7e97de6cf1f (review Muse #900): the shared runner — stopped on
+// no sign of life (output or a request to the shot server), with a safety
+// cap never reached by a normal run; never on a fixed total time.
+function runChromium(args, server) {
+  return runSharedChromium(CHROMIUM, args, { activityAt: () => server.boActivityAt() });
 }
 
 test('f06d06f242d6: after a refused «Nuovo agente», field and error sit below the sticky top bar', { skip: BROWSER_SKIP }, async () => {
@@ -94,7 +81,7 @@ test('f06d06f242d6: after a refused «Nuovo agente», field and error sit below 
         '--headless', ...RUNNABLE.flags, '--dump-dom', `--window-size=${width},${height}`,
         `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`, '--force-prefers-reduced-motion', '--disable-background-networking',
         `http://127.0.0.1:${address.port}/shot-agenti.html`,
-      ], 120000);
+      ], server);
       assert.equal(dom.status, 0, `${width}: chromium exits 0 (stderr: ${(dom.stderr ?? '').slice(-400)})`);
       assert.ok(dom.stdout.includes('<title>agenti-ready</title>'), `${width}: the page painted`);
       assert.equal(readProbe(dom.stdout, 'agenti').agents, 2, `${width}: with the demo team`);

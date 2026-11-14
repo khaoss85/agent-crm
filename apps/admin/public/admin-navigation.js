@@ -51,6 +51,36 @@ export function paintScreenLoading({ doc, mount, label }) {
 }
 
 /**
+ * backlog:25cf0cd8c678 — ogni cambio di schermata riparte dall'alto della
+ * pagina (verifica Mac 13/11: da Agenti scorsa a scrollY 500, Calendario si
+ * apriva a scrollY 286 con il titolo «Agenda del team» nascosto). La vista
+ * condivide il mount e lo scroll è quello della finestra, che la navigazione
+ * non azzerava mai. Ritorna true quando lo scroll è stato azzerato.
+ *
+ * @param {{ win?: any, doc?: any }} [options] la finestra e il documento, iniettati per i test
+ */
+export function resetScreenScroll({ win, doc } = {}) {
+  try {
+    if (win != null && typeof win.scrollTo === 'function') {
+      win.scrollTo(0, 0);
+      return true;
+    }
+  } catch {
+    // Sotto: il fallback sul documento.
+  }
+  try {
+    const root = doc?.documentElement ?? null;
+    const body = doc?.body ?? null;
+    if (root == null && body == null) return false;
+    if (root != null) root.scrollTop = 0;
+    if (body != null) body.scrollTop = 0;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The routed screen failed before painting: while the mount still holds
  * the loading line painted for it, that line gives way to an honest note
  * with a retry, so «Carico…» never hangs over data that will not come.

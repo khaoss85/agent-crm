@@ -57,7 +57,7 @@ export function createCoreAdapters({ database, services, pipelines }) {
      * the local-development scale this framework currently targets.
      *
      * @param {string} name
-     * @returns {Array<{id: string, name: string, domain: string | null}>}
+     * @returns {Array<{id: string, name: string, domain: string | null, placeholder: boolean}>}
      */
     findCompaniesByNormalizedName(name) {
       if (typeof name !== 'string' || name.trim() === '') {
@@ -70,11 +70,14 @@ export function createCoreAdapters({ database, services, pipelines }) {
           id: String(row.id),
           name: String(row.name),
           domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+          // The «no company» flag (backlog:ac65e448fcb4): readers filter
+          // on this, never on the name.
+          placeholder: row.placeholder === true || row.placeholder === 1,
         }));
       const rows = storageMany(database, {
         kind: 'select',
         table: 'companies',
-        columns: ['id', 'name', 'domain', 'created_at'],
+        columns: ['id', 'name', 'domain', 'placeholder', 'created_at'],
         orderBy: [
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },

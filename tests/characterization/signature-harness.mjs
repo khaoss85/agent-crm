@@ -214,6 +214,10 @@ export const SIGNATURE_MANIFESTS = Object.freeze([
     // Package credits (#248): the credit rows feed commercial totals, so the
     // baseline owns this manifest like every other commercial manifest.
     'package-credit.module.json',
+    // Public quote links (backlog:a3b394dd, A5): the share rows bind an
+    // approved version to its public token, so the baseline owns this
+    // manifest like every other commercial manifest.
+    'quote-share.module.json',
   ].map((name) => Object.freeze(['packages/commercial/modules', name])),
   ...[
     'signature-envelope.module.json', 'signature-signer.module.json',

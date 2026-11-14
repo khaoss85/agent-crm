@@ -1,13 +1,13 @@
 // @ts-check
 
-import { elFor, uiAddOption, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
-import { openOfferPanel } from './admin-offer-panel.js';
+import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
@@ -772,12 +772,22 @@ export function detailsRefusalText(error) {
  */
 export const NO_COMPANY_NAME = 'Senza azienda';
 
-/** The company name the scheda shows, or null for none / the reserved one. @param {any} card */
+/** The company name the scheda shows, or null for none / a placeholder. @param {any} card */
 export function shownCompanyName(card) {
+  // The core `placeholder` flag (backlog:ac65e448fcb4) marks the «no
+  // company» row — never the name, so a real company named «Senza
+  // azienda» still shows.
+  const flag = card?.company?.placeholder;
+  if (flag === true || flag === 1) return null;
   const name = typeof card?.company?.name === 'string' ? card.company.name.trim() : '';
-  // Same normalization as customer-data `isNoCompany` (core normalizeCompanyName).
-  const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
-  if (name === '' || normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  if (name === '') return null;
+  if (flag === undefined || flag === null) {
+    // Flag-missing shapes (stale cache, old server, legacy company
+    // view): the name fallback, same normalization as customer-data.
+    // A real company carrying its flag down skips this and shows.
+    const normalized = name.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase();
+    if (normalized === NO_COMPANY_NAME.toLowerCase()) return null;
+  }
   // A stored placeholder (`Unknown (assistenza@…)`) is no company either
   // (review #739 giro 3): the same rule as customer-data
   // `isPlaceholderCompanyName`, through the browser twin.
@@ -1235,6 +1245,8 @@ export function createCustomerCardView(deps) {
   // again at every re-read, so a draft was lost on the way back from
   // another screen or after any save that re-reads the card.
   const composerDrafts = new Map();
+  /** backlog:7fa422415232: minted offer links by quote, so a second «Invia offerta» press on the scheda reuses the same URL the server keeps. */
+  const schedaShareLinks = new Map();
   // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
   // space, customer, channel and words → requestId (review #664): a close
   // and reopen of the composer reads the same request back, never a new POST.
@@ -1248,6 +1260,8 @@ export function createCustomerCardView(deps) {
   // definitive answer (sent, refused, failed) drops the key.
   const composerSendKeys = new Map();
   let shownKey = null;
+  /** The card the on-screen «Riprova» buttons re-read (backlog:3a9bee845cc4). */
+  let retryTarget = null;
   /** The router left the scheda and cleared the mount (backlog:947260f9f036). */
   let offScreen = false;
   let shownSides = [];
@@ -1716,7 +1730,7 @@ export function createCustomerCardView(deps) {
     // even when its own channel is off, and the composer says so there.
     const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
     if (writable.length === 0) {
-      row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
+      row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
     } else {
       for (const channel of ['whatsapp', 'email']) {
         const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
@@ -3005,7 +3019,7 @@ export function createCustomerCardView(deps) {
     const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
       merged.rows.length === 0
-        ? 'nessun canale osservato'
+        ? 'Nessun canale osservato'
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
@@ -3987,11 +4001,11 @@ export function createCustomerCardView(deps) {
         if (channelFilter === 'all') {
           if (movesPending) return;
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
-          list.appendChild(el('p', 'bo-muted', 'Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
+          list.appendChild(el('p', 'bo-muted', 'Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'));
           return;
         }
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio su questo canale'));
-        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivi al cliente con «Scrivi».'));
+        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivigli con «WhatsApp» o «Email».'));
         return;
       }
       const todayKey = romeDayKey(Date.now());
@@ -4645,6 +4659,112 @@ export function createCustomerCardView(deps) {
       wrap.appendChild(stageError);
       box.appendChild(wrap);
     }
+    // backlog:7fa422415232: «Invia offerta» on the scheda offer line — only
+    // when the line is an approved quote, the one state the server shares
+    // through `share-link`. One press mints the public link (the server
+    // reuses the live link of the same version, so a second press shows the
+    // same URL), stages the ready Italian message as the composer draft so it
+    // is already in the message field when the operator opens «Scrivi», and
+    // fills the open composer at once when one is already open. The send
+    // stays the operator's Invia; the sent message then lands in the
+    // cronologia through the normal send flow.
+    if (fromQuote && first?.status === 'approved' && typeof first?.id === 'string' && first.id !== ''
+      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
+      const shareWrap = el('div', 'bo-scheda-share');
+      const shareButton = el('button', undefined, 'Invia offerta');
+      shareButton.setAttribute('type', 'button');
+      shareButton.setAttribute('data-action', 'scheda-share-link');
+      const shareLine = el('p', 'bo-muted', '');
+      shareLine.setAttribute('role', 'status');
+      const shareSend = () => uiBusy(shareButton, 'Creo il link…', async () => {
+        // Review Muse #905 (P1): a slow share-link answer must never land
+        // on another customer's composer. The scheda and the space are
+        // captured before the POST; the draft and the link map keep the
+        // pressed values, while the live composer and the status line
+        // update only when the same scheda is still on screen.
+        const pressShown = shownKey;
+        const pressSpaceId = activeSpaceId();
+        const pressKey = pressSpaceId !== null ? `${pressSpaceId}:${offerCtx.resource}:${offerCtx.id}` : null;
+        shareLine.setAttribute('class', 'bo-muted');
+        shareLine.textContent = 'Creo il link…';
+        try {
+          const answer = await client.request(
+            `/api/modules/quote/records/${encodeURIComponent(first.id)}/actions/share-link`,
+            { method: 'POST', idempotencyKey: submissions.issueKey(), body: JSON.stringify({}) },
+          );
+          const result = answer?.result ?? answer ?? {};
+          const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+          let staged = null;
+          if (fresh !== null) {
+            const origin = typeof deps.origin === 'string' && deps.origin !== ''
+              ? deps.origin
+              : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
+            const url = offerShareUrl(origin, fresh);
+            if (url === null) {
+              if (mount.contains(shareLine)) {
+                shareLine.setAttribute('class', 'field-error');
+                shareLine.textContent = 'Link non creato: indirizzo non valido. Riprova più tardi.';
+              }
+              return;
+            }
+            const share = result.share ?? null;
+            staged = {
+              url,
+              expiresAt: typeof share?.expiresAt === 'string' ? share.expiresAt : null,
+            };
+            schedaShareLinks.set(first.id, staged);
+          } else {
+            staged = schedaShareLinks.get(first.id) ?? null;
+          }
+          if (staged === null) {
+            if (mount.contains(shareLine)) {
+              shareLine.setAttribute('class', 'field-error');
+              shareLine.textContent = result.alreadyExisted === true
+                ? 'Il link esiste già: aprilo dalla pagina offerta.'
+                : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+            }
+            return;
+          }
+          const message = offerShareMessage({ offerName: name, url: staged.url, expiresAt: staged.expiresAt }) ?? staged.url;
+          if (pressKey !== null) {
+            const draft = composerDrafts.get(pressKey) ?? { text: '', subject: '', aiBefore: null };
+            draft.text = message;
+            composerDrafts.set(pressKey, draft);
+          }
+          // The live composer belongs to whoever is on screen now: only
+          // the pressed scheda, still shown in the same space, receives it.
+          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
+            toast('Link pronto per la scheda precedente: riaprila per inviarlo.');
+            return;
+          }
+          const area = mount.querySelector('.bo-scheda-composer-text');
+          if (area) area.value = message;
+          shareLine.setAttribute('class', 'bo-muted');
+          shareLine.textContent = fresh === null ? 'Link già pronto nel composer: è lo stesso di prima.' : 'Link pronto nel composer.';
+          shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
+          const open = el('a', 'offer-share-link-open', 'Apri il link');
+          open.setAttribute('href', staged.url);
+          shareLine.appendChild(open);
+          toast('Link pronto: aprilo con Scrivi e invialo tu.');
+        } catch (error) {
+          shareLine.setAttribute('class', 'field-error');
+          shareLine.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+        }
+      });
+      shareButton.addEventListener('click', () => { void shareSend(); });
+      shareWrap.appendChild(shareButton);
+      shareWrap.appendChild(shareLine);
+      shareWrap.__shareOffer = shareSend;
+      const known = schedaShareLinks.get(first.id);
+      if (known) {
+        shareLine.textContent = 'Link già pronto nel composer.';
+        shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
+        const open = el('a', 'offer-share-link-open', 'Apri il link');
+        open.setAttribute('href', known.url);
+        shareLine.appendChild(open);
+      }
+      box.appendChild(shareWrap);
+    }
     paintStateHistory(box, historyTarget(first, fromQuote), profile, pipelines);
     return true;
   }
@@ -4934,7 +5054,7 @@ export function createCustomerCardView(deps) {
       const outcome = typeof last?.sync === 'string' && last.sync !== '' ? syncLabel(last.sync).toLowerCase() : null;
       box.appendChild(el('p', 'bo-scheda-call-head',
         ['ultima chiamata', direction, when, outcome].filter(Boolean).join(' · ')));
-      box.appendChild(el('p', 'bo-muted', 'nessuna registrazione per questa chiamata'));
+      box.appendChild(el('p', 'bo-muted', 'Nessuna registrazione per questa chiamata'));
       if (before.length > 0) box.appendChild(el('p', 'bo-muted', `+ ${before.length} chiamate precedenti`));
       return;
     }
@@ -4942,7 +5062,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted',
         calls === null || calls === undefined
           ? 'Nessun dato di chiamata registrato per questo cliente'
-          : 'nessuna chiamata registrata per questo cliente'));
+          : 'Nessuna chiamata registrata per questo cliente'));
       return;
     }
     const [first] = items;
@@ -4975,7 +5095,7 @@ export function createCustomerCardView(deps) {
       }
       box.appendChild(list);
     } else {
-      box.appendChild(el('p', 'bo-muted', 'nessun segnale registrato per questa chiamata'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun segnale registrato per questa chiamata'));
     }
     const transcript = first?.transcript;
     if (transcript?.available === true) {
@@ -5026,7 +5146,7 @@ export function createCustomerCardView(deps) {
     const items = [...messageItemsOf(timeline)].sort(
       (a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
     if (items.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun messaggio registrato per questo cliente'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun messaggio registrato per questo cliente'));
       return;
     }
     for (const item of items.slice(0, 5)) {
@@ -5054,7 +5174,7 @@ export function createCustomerCardView(deps) {
     }
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
       return;
     }
     appointmentBody(box, upcoming[0]);
@@ -5122,8 +5242,36 @@ export function createCustomerCardView(deps) {
   // Voce 908f2eb9bbfb: a section that fails shows its own error and leaves
   // the rest of the scheda. Only the card read failing fails the whole
   // scheda — it carries the name, and without a name there is no card.
+  // backlog:3a9bee845cc4: one failed request logs once, however many sections
+  // name it — the same error object reaches every riquadro, and each used to
+  // log its own «[bo] lettura fallita» line (production 13/11: 52 lines for 6
+  // requests under a 429). A failed section also offers «Riprova»: it
+  // re-reads the scheda, so a passed rate limit paints instead of staying
+  // failed.
+  const loggedReadFailures = new WeakSet();
+  const schedaRetryButton = () => {
+    const retry = el('button', 'bo-scheda-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'scheda-retry');
+    const target = retryTarget;
+    retry.addEventListener('click', () => {
+      // A double tap under a rate limit only crowds the server: the first tap
+      // owns the re-read (renderCard keeps only the newest answer anyway).
+      // cta-loading: the shared waiting state — off, aria-busy, «Riprovo…» —
+      // so the guard in tests/admin-cta-busy.test.js sees this retry like
+      // every other /bo write button.
+      if (retry.getAttribute('aria-busy') === 'true') return;
+      uiMarkBusy(retry, 'Riprovo…');
+      if (target !== null) void renderCard(target.resource, target.id);
+    });
+    return retry;
+  };
   const readError = (box, error, failed) => {
-    box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
+    const record = error !== null && (typeof error === 'object' || typeof error === 'function') ? error : null;
+    const first = record === null || !loggedReadFailures.has(record);
+    if (record !== null) loggedReadFailures.add(record);
+    box.appendChild(el('p', 'field-error', humanReadError(error, { failed, log: first ? null : () => {} })));
+    box.appendChild(schedaRetryButton());
   };
 
   /**
@@ -5165,6 +5313,7 @@ export function createCustomerCardView(deps) {
 
   async function renderCard(resource, id) {
     const key = `${resource}/${id}`;
+    retryTarget = { resource, id };
     const renderToken = ++cardRenderToken;
     // A section re-read that starts while this full read is in flight is
     // newer for its part: the full answer never paints over it.
@@ -5278,6 +5427,9 @@ export function createCustomerCardView(deps) {
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
+      // backlog:3a9bee845cc4: a rate limit failing the card read also leaves
+      // a way back — the same re-read the failed sections offer.
+      panel.appendChild(schedaRetryButton());
       // Review #612 round 3: a failed re-read of the scheda already shown
       // keeps its windows (a half-written Scrivi), filter, pages and scroll;
       // only a first read that fails starts from nothing.

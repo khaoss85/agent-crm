@@ -83,16 +83,16 @@ test('619b477c0464: a missed call in the cronologia is a call in the Chiamate bo
   const mount = await render({ timeline: timelineWith([MISSED, EARLIER]), calls: { calls: [] } });
   const box = callsSection(mount);
   assert.ok(box, 'the Chiamate box renders');
-  assert.ok(!box.textContent.includes('nessuna chiamata registrata'), `no «nessuna chiamata» (${box.textContent})`);
+  assert.ok(!box.textContent.includes('Nessuna chiamata registrata'), `no «nessuna chiamata» (${box.textContent})`);
   assert.ok(box.textContent.includes('ultima chiamata · in entrata · 7 nov 2026 · persa'), `the missed call is named (${box.textContent})`);
-  assert.ok(box.textContent.includes('nessuna registrazione per questa chiamata'), 'and says why there is no transcript');
+  assert.ok(box.textContent.includes('Nessuna registrazione per questa chiamata'), 'and says why there is no transcript');
   assert.ok(box.textContent.includes('+ 1 chiamate precedenti'), 'the earlier call is counted');
   assert.ok(mount.textContent.includes('chiamata in entrata'), 'the cronologia still shows it');
 });
 
 test('619b477c0464: with no call anywhere the box still says so', async () => {
   const mount = await render({ timeline: timelineWith([]), calls: { calls: [] } });
-  assert.ok(callsSection(mount).textContent.includes('nessuna chiamata registrata'));
+  assert.ok(callsSection(mount).textContent.includes('Nessuna chiamata registrata'));
 });
 
 test('619b477c0464: a recorded call keeps its own summary first', async () => {
@@ -100,5 +100,5 @@ test('619b477c0464: a recorded call keeps its own summary first', async () => {
   const mount = await render({ timeline: timelineWith([MISSED]), calls });
   const text = callsSection(mount).textContent;
   assert.ok(text.includes('Budget 800 euro.'), 'the recording leads');
-  assert.ok(!text.includes('nessuna registrazione per questa chiamata'));
+  assert.ok(!text.includes('Nessuna registrazione per questa chiamata'));
 });

@@ -1869,7 +1869,7 @@ test('9d06eb1e174b: a same-named subject without a mailbox stays its own row, wi
   assert.equal(self.self, true);
   const homonym = rows.find((row) => row.subjects.includes('broker+adopted-aa11@accordo.invalid'));
   assert.equal(homonym.self, false, 'the homonym is not the session');
-  assert.equal(homonym.access, 'Accesso aggiunto dal pilota');
+  assert.equal(homonym.access, 'Accesso di servizio');
   assert.equal(rows.find((row) => row.subjects.includes('github|1001')).access, 'Accesso GitHub');
   assert.ok(!JSON.stringify(rows.map((row) => row.access)).includes('|'), 'never a technical id');
 });
@@ -1885,9 +1885,10 @@ test('9d06eb1e174b: no «Rimuovi» on one\'s own row; the others keep it', async
   assert.equal(items.length, 4, 'every subject without a proof of identity is a row of its own');
   assert.equal(removeIn(rowOf('Marta Esempio')).length, 1, 'another person keeps «Rimuovi»');
   assert.equal(removeIn(rowOf('dario@esempio.invalid')).length, 0, 'never «Rimuovi» on one\'s own account');
-  const homonym = rowOf('Accesso aggiunto dal pilota');
+  const homonym = rowOf('Accesso di servizio');
   assert.ok(homonym, 'the same-named row reads its access kind');
   assert.equal(removeIn(homonym).length, 1, 'a homonym keeps its «Rimuovi»');
+  assert.doesNotMatch(text(mount), /pilota/i, 'no on-screen text names the pilota');
 });
 
 test('8618ad3f72db: a child switch paused by the space AI shows not-allowed, never the wait cursor', () => {

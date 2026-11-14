@@ -422,6 +422,86 @@ test('review agent-crm#707 giro-2 P1: a digit query keeps the display-size cap o
     'digit candidates keep the display-size cap instead of the whole search scan');
 });
 
+test('120f299445a6: a q search over many messages visits rows once, never once per customer', async () => {
+  // Production 14/11: «NoteInvio» in Clienti answered 503 after ~30 s.
+  // The cause was the per-subject fan-out in listCustomerRecords: every
+  // evidence, message, task and signal table was filtered once per
+  // customer, so the search cost O(customers × rows) and the /bo bridge
+  // deadline fired first. The tables are now bucketed once by customer
+  // key and each customer gathers only its own candidates, so the work
+  // stays O(rows). This test counts the field reads on the message rows:
+  // the old fan-out reads every row once per customer, the bucketed read
+  // once per row plus each customer's own.
+  const CONTACTS = 120;
+  const PER_CONTACT = 34;
+  let fieldReads = 0;
+  const counted = (row) => new Proxy(row, {
+    get(target, property, receiver) {
+      if (typeof property === 'string') fieldReads += 1;
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const contacts = Array.from({ length: CONTACTS }, (_, index) => ({
+    id: `c${index}`,
+    companyId: null,
+    firstName: index === 0 ? 'Nota' : `Cliente${index}`,
+    lastName: index === 0 ? 'Invio' : 'Prova',
+    email: null,
+  }));
+  const baseMs = Date.UTC(2026, 10, 1, 10, 0, 0);
+  const messages = [];
+  contacts.forEach((contact, index) => {
+    for (let n = 0; n < PER_CONTACT; n += 1) {
+      const latest = n === PER_CONTACT - 1 && index === 0;
+      messages.push(counted({
+        id: `m${index}-${n}`,
+        contactId: contact.id,
+        companyId: null,
+        opportunityId: null,
+        subjectResource: 'contact',
+        subjectId: contact.id,
+        channel: 'whatsapp',
+        occurredAt: new Date(baseMs + (index * PER_CONTACT + n) * 60000).toISOString(),
+        body: latest ? 'ultimo messaggio per Nota' : `messaggio ${n} per ${contact.id}`,
+      }));
+    }
+  });
+  const recordService = (rows) => ({
+    list: async ({ limit = 500 } = {}) => rows.slice(0, Math.min(limit, 500)),
+    scan: async ({ limit = 5000 } = {}) => rows.slice(0, Math.min(limit, 5000)),
+    get: async (id) => {
+      const found = rows.find((entry) => entry?.id === id);
+      if (!found) throw Object.assign(new Error(`Unknown ${id}`), { code: 'NOT_FOUND' });
+      return found;
+    },
+  });
+  const messageService = {
+    listWhere: async (shape = {}) => messages.filter((entry) => Object.entries(shape).every(([key, value]) => (
+      Array.isArray(value) ? value.includes(entry?.[key]) : entry?.[key] === value
+    ))),
+  };
+  const modules = {
+    get: (name) => ({
+      contact: { service: recordService(contacts) },
+      company: { service: recordService([]) },
+      'interaction-message': { service: messageService },
+    }[name] ?? null),
+  };
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { q: 'nota', pageSize: '10' },
+  );
+  assert.ok(page.items.some((item) => item.name === 'Nota Invio'), 'the q search finds Nota Invio');
+  const nota = page.items.find((item) => item.name === 'Nota Invio');
+  assert.ok(nota.lastContactText?.includes('ultimo messaggio'), 'its latest message is attributed to it');
+  assert.equal(nota.lastContactAt, new Date(baseMs + (PER_CONTACT - 1) * 60000).toISOString(), 'its latest timestamp is attributed to it');
+  // 120 customers × ~4000 rows × several scans per customer read every
+  // message field millions of times; the bucketed read stays near one
+  // pass per row. The bound is generous on purpose: it fails the fan-out
+  // by an order of magnitude and passes the bucketed read by one.
+  assert.ok(fieldReads < 1_000_000, `row touches stay O(rows), got ${fieldReads}`);
+});
+
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {
   const seen = [];
   const database = { storage: { sync: { execute() {}, many(statement) { seen.push(statement); return []; } } } };

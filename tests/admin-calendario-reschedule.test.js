@@ -414,15 +414,12 @@ test('3d0fbe7d: a route away during the request never repaints the next screen (
     'the late answer starts no week reload',
   );
   // The dropped completion still clears the busy state: back on the calendar,
-  // another move leaves again. a1 is still the selection from before the
-  // route away, and a click toggles — so one click deselects, then select.
+  // another move leaves again. backlog:134f3ed7 — the return is a fresh
+  // entry, so the old selection is gone and a single click selects a1.
   await view.render();
   await settle();
   mount.findAll('input').find((node) => node.getAttribute('name') === 'members').value = 'marco';
   mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
-  await settle();
-  const reselect = eventButton(mount, 'a1');
-  reselect.dispatch('click', { target: reselect });
   await settle();
   await selectEvent(mount, 'a1');
   fillMove(moveForm(mount), { date: '2026-10-22', start: '19:00', end: '19:30' });
