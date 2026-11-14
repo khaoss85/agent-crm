@@ -23,6 +23,7 @@ import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
 import { AGENT_CATALOG, catalogAgentSourceKey, customAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { SQUAD_TEMPLATES, checkCallerKey, squadSourceKey } from '../../../packages/agents/src/squads.js';
 import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -462,6 +463,10 @@ export function buildRouter(app) {
     if (typeof app.readAppointmentTeamWeek !== 'function') {
       throw new NotFoundError('Operation', 'team week');
     }
+    // Owner holds arrive server-side only, through the composed
+    // calendar-sync handle inside the appointments operations — never
+    // through the query, so no private commitment title lands in URLs,
+    // logs or browser history (backlog:af190faf).
     return await app.readAppointmentTeamWeek({
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
@@ -483,6 +488,7 @@ export function buildRouter(app) {
       ...(slotMinutes === undefined ? {} : { slotMinutes }),
       // A proposal must be bookable (backlog:d1e4d90e): the server names its
       // own now, so steps already begun are cut, never offered as free.
+      // Owner holds arrive server-side only (see the team-week route above).
       nowIso: new Date().toISOString(),
     });
   });
@@ -627,6 +633,82 @@ export function buildRouter(app) {
     }
     const input = recordInput(body);
     return respond(201, await app.createTeammateAssignment({ ...stripServerControlledKeys(input), actor }));
+  });
+  // - update: backlog:7d169a3b1dd2 — «Modifica» of a hand-written agent
+  //   (name, role, instructions, optional monthly cap) through update-agent;
+  // - set-status: backlog:7d169a3b1dd2 — «Ritira» / «Riattiva» through
+  //   set-agent-status (paused / active). Both are space-scoped and
+  //   human-gated in the package; without the agents package each answers
+  //   an honest 404 naming the missing operation.
+  router.add('POST', '/api/agents/update', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.updateTeammateAgent !== 'function') {
+      throw new NotFoundError('Operation', 'teammate agents');
+    }
+    const input = stripServerControlledKeys(recordInput(body));
+    return respond(200, await app.updateTeammateAgent({ ...input, actor }));
+  });
+  router.add('POST', '/api/agents/set-status', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.setTeammateAgentStatus !== 'function') {
+      throw new NotFoundError('Operation', 'teammate agents');
+    }
+    const input = stripServerControlledKeys(recordInput(body));
+    return respond(200, await app.setTeammateAgentStatus({ ...input, actor }));
+  });
+
+  // Voce backlog:0d2d8f2e — the «Squadre» screen. Three enumerated adapters
+  // over the declared squad operations, the same shape as the agents routes
+  // above: the kernel owns the path and gates the role, the package owns
+  // the rows, and without the agents package composed each answers an
+  // honest 404 naming the missing operation.
+  // - catalog: the checked-in squad templates (the five ready-made teams);
+  // - create: one squad from a template slug, from a free-text brief matched
+  //   to a template, or from an explicit plan. The source key is made from
+  //   the caller key by the package rule, never taken from the body;
+  // - overview: backlog A, routines, backlog B and the advisor metric of
+  //   one squad, counted from production rows. Approving a proposed run of
+  //   a squad reuses the existing approve/reject/revise routes of the
+  //   deployment that wires the applyAction seam.
+  router.add('GET', '/api/squads/catalog', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.createTeammateSquad !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    return { squads: SQUAD_TEMPLATES };
+  });
+  router.add('POST', '/api/squads/create', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createTeammateSquad !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    const input = stripServerControlledKeys(recordInput(body));
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
+    if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+    // Same caller-key rule as «Nuovo agente» (review #836 P3): the key is
+    // safe, never the name, and a retry with the same key replays.
+    const key = checkCallerKey(input.key);
+    return respond(201, await app.createTeammateSquad({
+      spaceId,
+      sourceKey: squadSourceKey(spaceId, key),
+      ...(input.templateSlug === undefined ? {} : { templateSlug: input.templateSlug }),
+      ...(input.brief === undefined ? {} : { brief: input.brief }),
+      ...(input.plan === undefined ? {} : { plan: input.plan }),
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.spendingCapCents === undefined ? {} : { spendingCapCents: input.spendingCapCents }),
+      actor,
+    }));
+  });
+  router.add('GET', '/api/squads/overview', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readTeammateSquadOverview !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    const spaceId = typeof query.spaceId === 'string' ? query.spaceId.trim() : '';
+    const squad = typeof query.squad === 'string' ? query.squad.trim() : '';
+    if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+    if (squad === '') throw new ValidationError('squad is required', { field: 'squad' });
+    return await app.readTeammateSquadOverview({ spaceId, squadSourceKey: squad });
   });
 
   // Signature provider events (ADR-017). A dedicated route, NOT a record

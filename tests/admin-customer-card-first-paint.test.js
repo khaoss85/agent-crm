@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import { createKnownNames } from '../apps/admin/public/admin-known-names.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -361,4 +362,95 @@ test('f2d39e473e3a: a customer without offers loses the marked row when the prof
   assert.ok(!after.text.includes('Carico offerte'));
   assert.equal(after.list.findAll('div').length, before, 'the same rows, without the marked one');
   assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no trail to read');
+});
+
+// backlog:a762c28a646c (verifica 14/11 00:46Z): the scheda's name waited for
+// customer-hub/card (1,3-3,6 s) although the list or the offer had just
+// shown it. A known name paints at once, in the title and the crumb.
+test('a762c28a646c: a name another view showed paints at once in the scheda and the crumb; the card read confirms it', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const names = createKnownNames({ space: () => null });
+  names.remember('contact', 'c-ada', 'Ada Rossi');
+  const titles = [];
+  const view = createCustomerCardView({ doc, mount, client, knownNames: names, onCustomerTitle: (name) => titles.push(name) });
+  const started = Date.now();
+  const shown = view.renderCard('contact', 'c-ada');
+  const name = mount.findAll('h1').find((node) => node.getAttribute('class') === 'bo-scheda-name');
+  assert.equal(name?.textContent, 'Ada Rossi', 'the name is on screen in the same tick, before any read');
+  assert.ok(Date.now() - started < 300, 'well within 300 ms');
+  assert.deepEqual(titles, ['Ada Rossi'], 'the crumb names the customer at once');
+  const head = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-head');
+  assert.equal(head.getAttribute('aria-busy'), 'true', 'the rest of the header is still reading');
+  await flush(3);
+  client.gates.get('card').release.resolve({ ...CARD, name: 'Ada Rossi Bianchi' });
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
+  client.gates.get('profile').release.resolve(PROFILE);
+  await shown;
+  await flush(3);
+  assert.ok(mount.textContent.includes('Ada Rossi Bianchi'), 'the card read corrects a name that changed');
+  assert.deepEqual(titles, ['Ada Rossi', 'Ada Rossi Bianchi']);
+  assert.equal(names.get('contact', 'c-ada'), 'Ada Rossi Bianchi', 'and the store keeps the name read');
+});
+
+test('a762c28a646c: without a known name the header stays grey until the card lands', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCustomerCardView({ doc, mount, client: deferredClient(), knownNames: createKnownNames({ space: () => null }) });
+  void view.renderCard('contact', 'c-ada');
+  assert.equal(mount.findAll('h1').length, 0, 'no name it has not read');
+  assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'));
+});
+
+// backlog:a060a4aa65b6 (verifica 14/11: «Carico offerte e cambi di stato…»
+// for 3,0-4,1 s from «Per <cliente>»): the roster needs nothing and the
+// offer the person came from is known — both leave behind card and
+// timeline, before the profile.
+// Review Muse #887 giro 2 (P1): card and timeline keep the first wave to
+// themselves; the roster and the known offer's history leave the moment it
+// ends — ahead of the profile, never waiting for it.
+test('a060a4aa65b6: from an offer, the team and that offer’s history leave right after the first wave, before the profile ends', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const names = createKnownNames({ space: () => null });
+  names.rememberOffer('contact', 'c-ada', 'o1');
+  const view = createCustomerCardView({ doc, mount, client, knownNames: names });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  const kind = (path) => (path.startsWith('/api/customer-hub/card/') ? 'card' : path.startsWith('/api/customer-hub/timeline/') ? 'timeline' : 'other');
+  assert.deepEqual(client.reads.map(kind).sort(), ['card', 'timeline'], 'the first wave is card and timeline alone');
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
+  const order = client.reads.map((path) => path.split('?')[0]);
+  const profileAt = order.findIndex((path) => path.startsWith('/api/customer-data/profile/'));
+  assert.ok(profileAt > 0, 'the profile is asked');
+  assert.ok(order.indexOf('/api/spine/memberships') > -1 && order.indexOf('/api/spine/memberships') < profileAt, 'the roster ahead of the profile');
+  const auditAt = client.reads.findIndex((path) => path.startsWith('/api/audit') && path.includes('entityId=o1'));
+  assert.ok(auditAt > -1 && auditAt < profileAt, 'the offer history ahead of the profile, while the profile still reads');
+  client.gates.get('roster').release.resolve({ items: [] });
+  client.gates.get('audit').release.resolve({ items: [MOVE] });
+  client.gates.get('card').release.resolve(CARD);
+  await flush(3);
+  client.gates.get('profile').release.resolve(OFFER_PROFILE);
+  await shown;
+  await flush();
+  const done = timelineRows(mount);
+  assert.ok(/Pacchetto sede: da .+ a .+/.test(done.text), 'the move is in as soon as the profile lands');
+  assert.equal(client.reads.filter((path) => path.startsWith('/api/audit')).length, 1, 'one history read, reused');
+  assert.equal(client.reads.filter((path) => path === '/api/spine/memberships').length, 1, 'one roster read, reused');
+});
+
+test('a060a4aa65b6: without a known offer no history is guessed; the roster still leaves after the first wave', async () => {
+  const client = deferredClient();
+  const view = createCustomerCardView({ doc: createFakeDocument(), mount: createMount(), client, knownNames: createKnownNames({ space: () => null }) });
+  void view.renderCard('contact', 'c-ada');
+  await flush(3);
+  assert.ok(!client.reads.includes('/api/spine/memberships'), 'not beside card and timeline');
+  client.gates.get('card').release.resolve(CARD);
+  await flush(3);
+  assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no guess at which offer');
+  assert.ok(client.reads.includes('/api/spine/memberships'));
 });

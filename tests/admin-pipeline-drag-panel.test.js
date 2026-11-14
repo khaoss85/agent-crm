@@ -264,8 +264,11 @@ test('Dan 11/11: a failed drop puts the card back in its place with a clear mess
   assert.equal(card.getAttribute('aria-busy'), 'false', 'no longer waiting');
   const error = card.childNodes.find((n) => classes(n).includes('field-error'));
   assert.ok(error && !classes(error).includes('hidden'), 'the reason shows on the card itself');
-  assert.equal(error.textContent, 'Spostamento non riuscito. Riprova più tardi.');
-  assert.ok(toasts.some((item) => item.error && item.message === 'Spostamento non riuscito. Riprova più tardi.'), 'and in a toast');
+  // backlog:85630aa14a4f: one message, next to its Riprova — never a
+  // second copy in a red toast.
+  assert.equal(error.textContent, 'Spostamento non riuscito.');
+  assert.ok(!classes(card.childNodes.find((n) => n.getAttribute?.('data-action') === 'move-retry')).includes('hidden'), 'with Riprova beside it');
+  assert.ok(!toasts.some((item) => item.error), 'and no red toast repeating it');
 });
 
 test('Dan 11/11: a drop onto Vinta asks Conferma first and leaves the card in place', async () => {
@@ -347,11 +350,61 @@ test('Dan 11/11: × closes the panel without re-rendering the board and hands fo
   const apri = apriOf(mount, 'a');
   apri.dispatch('click');
   const panel = panelOf(mount);
-  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click');
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 0 });
   assert.equal(panelOf(mount), undefined, 'the panel is gone');
   assert.equal(mount.childNodes[0], boardPanel, 'the same board node: the scroll stays where it was');
   assert.equal(client.calls.length, reads, 'no re-read of the board');
   assert.ok(apri.__focused, 'focus goes back to Apri');
+});
+
+test('85630aa14a4f: a mouse × hands focus back to the open card, and the page does not jump', async () => {
+  const doc = createFakeDocument();
+  const { mount } = await board([record('a', 'discovery')], { doc });
+  const apri = apriOf(mount, 'a');
+  // Where focus is, like document.activeElement (the real browser proof:
+  // admin-pipeline-panel-focus-browser.test.js).
+  apri.focus = (options) => { doc.activeElement = apri; apri.focusOptions = options ?? null; };
+  apri.dispatch('click');
+  const panel = panelOf(mount);
+  assert.ok(panel, 'the panel is open');
+  doc.activeElement = panel; // the ✕ inside the panel had it
+  panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 1 });
+  assert.equal(panelOf(mount), undefined, 'the panel is gone');
+  assert.equal(doc.activeElement, apri, 'focus is on the open card (its Apri)');
+  assert.equal(apri.parentNode.getAttribute('data-record'), 'a');
+  assert.deepEqual(apri.focusOptions, { preventScroll: true }, 'standard options only: the page does not jump');
+});
+
+test('85630aa14a4f: closing the panel brings the board back to its pre-open scroll', async () => {
+  const { mount } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  const boardEl = cardOf(mount, 'a').parentNode.parentNode;
+  boardEl.scrollLeft = 130;
+  apriOf(mount, 'a').dispatch('click');
+  assert.ok(panelOf(mount), 'the panel is open');
+  boardEl.scrollLeft = 260; // the panel made room: the board moved on
+  panelOf(mount).findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 0 });
+  assert.equal(panelOf(mount), undefined, 'the panel is gone');
+  assert.equal(boardEl.scrollLeft, 130, 'the board is back where it was before the panel');
+});
+
+test('85630aa14a4f: the open card is marked, on screen and across a filter re-render', async () => {
+  const { mount } = await board([record('a', 'discovery'), record('b', 'demo')]);
+  apriOf(mount, 'a').dispatch('click');
+  const card = cardOf(mount, 'a');
+  assert.ok(classes(card).includes('is-open'), 'the open card carries the style hook');
+  assert.equal(card.getAttribute('aria-current'), 'true', 'and names itself current');
+  const other = cardOf(mount, 'b');
+  assert.ok(!classes(other).includes('is-open'), 'the other card stays unmarked');
+  assert.equal(other.getAttribute('aria-current'), null, 'and current nowhere else');
+  const search = mount.findAll('input').find((n) => n.getAttribute('data-filter') === 'q');
+  search.value = 'Offerta';
+  search.dispatch('input');
+  const fresh = cardOf(mount, 'a');
+  assert.ok(classes(fresh).includes('is-open'), 'the fresh card keeps the style hook');
+  assert.equal(fresh.getAttribute('aria-current'), 'true', 'and stays current');
+  panelOf(mount).findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 0 });
+  assert.ok(!classes(cardOf(mount, 'a')).includes('is-open'), 'closing the panel clears the mark');
+  assert.equal(cardOf(mount, 'a').getAttribute('aria-current'), null, 'and current leaves with it');
 });
 
 test('Dan 11/11: Esc and a click outside close the panel; a click inside keeps it', async () => {
@@ -445,8 +498,10 @@ test('Dan 11/11: Persa from the panel asks the reason; a failed move says why in
   const post = client.calls.find((call) => call.method === 'POST');
   assert.deepEqual(JSON.parse(post.body), { toStage: 'lost', fromStage: 'discovery', reason: 'Budget' });
   const alert = panel.findAll('small').find((n) => n.getAttribute('role') === 'alert');
-  assert.equal(alert.textContent, 'Spostamento non riuscito. Riprova più tardi.', 'the failure reads inside the panel');
+  assert.equal(alert.textContent, 'Spostamento non riuscito.', 'the failure reads inside the panel');
   assert.ok(!classes(alert).includes('hidden'));
+  const retry = panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move-retry');
+  assert.ok(retry && !classes(retry).includes('hidden'), 'Riprova shows beside the failure');
 });
 
 test('Dan 11/11: a closed offer (Vinta) shows no Cambia fase in the panel', async () => {

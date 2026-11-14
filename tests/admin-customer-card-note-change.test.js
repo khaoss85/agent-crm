@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import {
   NOTE_WITHDRAW_GRACE_MS,
+  NOTE_WITHDRAWALS_STORAGE_KEY,
   createCustomerCardView,
   noteChangeRefusalText,
   withRevisedNote,
@@ -136,6 +137,8 @@ async function open(client = fakeClient(), spaceId = 'spazio-prova', extra = {})
   const timer = manualWait();
   const view = createCustomerCardView({
     doc, mount, client, spaceId, wait: timer.wait, ...(extra.pageWindow ? { pageWindow: extra.pageWindow } : {}),
+    ...(extra.sessionStorage ? { sessionStorage: extra.sessionStorage } : {}),
+    ...(extra.storage ? { storage: extra.storage } : {}),
     toast: (text, error = false, options = {}) => toasts.push({ text, error, options }),
     hideToast: (scope) => hidden.push(scope),
   });
@@ -572,4 +575,285 @@ test('fe9be5f0af4a: right after Salva the corrected note already says «modifica
   editField(mount).dispatch('keydown', key('Enter'));
   await flush();
   assert.ok(noteRow(mount, 'Richiamare martedì').textContent.includes('modificata'));
+});
+
+// ---------------------------------------------------------------------------
+// backlog:4eceae80a5ca — production verification 14/11 after #878
+// ---------------------------------------------------------------------------
+
+/** A Storage-shaped map (sessionStorage / localStorage). */
+function memoryStore() {
+  const map = new Map();
+  return {
+    map,
+    getItem: (name) => (map.has(name) ? map.get(name) : null),
+    setItem: (name, value) => { map.set(name, String(value)); },
+    removeItem: (name) => { map.delete(name); },
+  };
+}
+
+/** The first page: its keepalive withdrawal leaves but the server has not applied it yet. */
+function slowWithdrawClient() {
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path, body: JSON.parse(String(options.body)), keepalive: options.keepalive === true, key: options.headers?.['Idempotency-Key'] ?? null });
+      return new Promise(() => {});
+    }
+    return original(path, options);
+  };
+  return client;
+}
+
+test('4eceae80a5ca: a reload right after Elimina keeps the note hidden and sends the withdrawal again with the same key', async () => {
+  const session = memoryStore();
+  const local = memoryStore();
+  const pageWindow = fakeWindow();
+  const first = await open(slowWithdrawClient(), 'spazio-prova', { pageWindow, sessionStorage: session, storage: local });
+  await byAction(noteRow(first.mount, 'Richiamare lunedì'), 'withdraw-note').listeners.click[0]();
+  pageWindow.fire('pagehide');
+  await flush();
+  assert.equal(first.client.writes.length, 1, 'the keepalive withdrawal left with the page');
+  const firstKey = first.client.writes[0].key;
+  const [stored] = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY));
+  assert.deepEqual({ ...stored, expiresAt: typeof stored.expiresAt },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: firstKey, expiresAt: 'number' },
+    'written down before the page went away');
+
+  // The new page reads the cronologia before the server applied the first POST.
+  const client = fakeClient();
+  const second = await open(client, 'spazio-prova', { sessionStorage: session, storage: local });
+  assert.equal(noteRow(second.mount, 'Richiamare lunedì'), undefined, 'the note never comes back');
+  assert.ok(noteRow(second.mount, 'Preventivo inviato'));
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId, write.key]),
+    [['/api/customer-hub/notes/withdraw', 'n-mia', firstKey]], 'sent again under the SAME key: the server replays, never a second write');
+  await flush();
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'the entry leaves once the cronologia no longer lists the note');
+});
+
+test('4eceae80a5ca: a withdrawal the server already applied is not sent again; another space or customer is left alone', async () => {
+  const session = memoryStore();
+  const later = Date.now() + 60_000;
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-gia-ritirata', idempotencyKey: 'v1.20261114.00000000000000000000000000000001', expiresAt: later },
+    { spaceId: 'altro-spazio', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.00000000000000000000000000000002', expiresAt: later },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c9', noteId: 'n-mia', idempotencyKey: 'v1.20261114.00000000000000000000000000000003', expiresAt: later },
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-altra', idempotencyKey: 'v1.20261114.00000000000000000000000000000004', expiresAt: Date.now() - 1 },
+  ]));
+  const { mount, client } = await open(fakeClient(), 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.equal(client.writes.length, 0, 'nothing to send again');
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'a withdrawal stored for another space hides nothing here');
+  assert.ok(noteRow(mount, 'Preventivo inviato'), 'an expired entry hides nothing');
+  const left = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).map((entry) => `${entry.spaceId}/${entry.id}/${entry.noteId}`);
+  assert.deepEqual(left, ['altro-spazio/c1/n-mia', 'spazio-prova/c9/n-mia'], 'done and expired entries leave, the others wait for their scheda');
+});
+
+test('4eceae80a5ca: after Aggiungi nota with Invio the cursor stays in the empty field', async () => {
+  const doc = focusDocument();
+  try {
+    const { mount, client } = await open(fakeClient(), 'spazio-prova', { doc });
+    const field = () => mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody');
+    field().focus();
+    field().value = 'Prima nota';
+    field().dispatch('keydown', key('Enter'));
+    await settle();
+    assert.equal(client.writes.filter((write) => write.path === '/api/customer-hub/notes').length, 1);
+    assert.equal(doc.activeElement, field(), 'the cursor is in the note field, never on the page body');
+    assert.equal(field().value, '', 'and the field is empty for the next note');
+  } finally {
+    doc.restore();
+  }
+});
+
+for (const [label, failure] of [
+  ['the pilot refusing the same key (502)', Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 502, code: 'BO_CRM_CLAIM_MISMATCH' })],
+  ['a network failure', Object.assign(new Error('fetch failed'), { code: 'NETWORK_ERROR' })],
+]) {
+  test(`4eceae80a5ca: a failed send again after a reload (${label}) shows the note again, says so and forgets the entry`, async () => {
+    const session = memoryStore();
+    session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+      { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.0000000000000000000000000000000a', expiresAt: Date.now() + 60_000 },
+    ]));
+    const client = fakeClient({ refuse: { '/api/customer-hub/notes/withdraw': failure } });
+    const { mount, toasts } = await open(client, 'spazio-prova', { sessionStorage: session });
+    await flush();
+    assert.equal(client.writes.length, 1, 'sent again once');
+    assert.ok(noteRow(mount, 'Richiamare lunedì'), 'the note is back, never hidden in silence');
+    assert.deepEqual([toasts.at(-1).text, toasts.at(-1).error], ['Non sono riuscito a eliminare la nota: riprova.', true]);
+    assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'the entry is forgotten');
+  });
+}
+
+test('4eceae80a5ca: a send again answered «already withdrawn» is done, quietly', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.0000000000000000000000000000000b', expiresAt: Date.now() + 60_000 },
+  ]));
+  const refused = Object.assign(new Error('withdrawn'), { status: 409, code: 'WORK_NOTE_WITHDRAWN' });
+  // The first page's withdrawal landed between the cronologia read and the send again.
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path });
+      client.state.items = client.state.items.filter((item) => item.id !== 'n-mia');
+      throw refused;
+    }
+    return original(path, options);
+  };
+  const { mount, toasts } = await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays out');
+  assert.ok(!toasts.some((entry) => entry.error), 'no error toast');
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null);
+});
+
+// ---- review Muse #883 ---------------------------------------------------------
+
+const storedEntry = (over = {}) => ({
+  spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia',
+  idempotencyKey: 'v1.20261114.000000000000000000000000000000c1', expiresAt: Date.now() + 60_000, ...over,
+});
+
+/** A view whose first cronologia read of c1 never answers (the operator leaves before it lands). */
+function heldTimelineView(session, pageWindow = null) {
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/contact/c1')) return new Promise(() => {});
+    return original(path, options);
+  };
+  const view = createCustomerCardView({
+    doc: createFakeDocument(), mount: createMount(), client, spaceId: 'spazio-prova', wait: manualWait().wait,
+    toast: () => {}, hideToast: () => {}, sessionStorage: session, ...(pageWindow ? { pageWindow } : {}),
+  });
+  return { client, view };
+}
+
+test('4eceae80a5ca (review Muse #883, P2): a restored withdrawal still leaves when the operator opens another customer first', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const { client, view } = heldTimelineView(session);
+  void view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(client.writes.length, 0, 'c1 cronologia not read yet: nothing settled');
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId, write.key]),
+    [['/api/customer-hub/notes/withdraw', 'n-mia', storedEntry().idempotencyKey]], 'sent with its own key');
+});
+
+test('4eceae80a5ca (review Muse #883, P2): a restored withdrawal is written down again on pagehide and sent', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const pageWindow = fakeWindow();
+  const { client, view } = heldTimelineView(session, pageWindow);
+  void view.renderCard('contact', 'c1');
+  await flush();
+  session.removeItem(NOTE_WITHDRAWALS_STORAGE_KEY);
+  pageWindow.fire('pagehide');
+  // Read as the page goes away: the answer of the keepalive POST never
+  // reaches a page that is gone.
+  const [kept] = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY));
+  assert.equal(kept.noteId, 'n-mia', 'the next page still knows it');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.body.noteId, write.keepalive]), [['n-mia', true]]);
+});
+
+test('4eceae80a5ca (review Muse #883, P2): an unreadable cronologia sends the restored withdrawal again, never hides it in silence', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/')) {
+      throw Object.assign(new Error('boom'), { status: 503 });
+    }
+    return original(path, options);
+  };
+  await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((write) => write.body.noteId), ['n-mia']);
+});
+
+test('4eceae80a5ca (review Muse #883, P3): settling one withdrawal leaves the same note id of another space or customer alone', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    storedEntry(),
+    storedEntry({ spaceId: 'altro-spazio', idempotencyKey: 'v1.20261114.000000000000000000000000000000a2' }),
+    storedEntry({ id: 'c9', idempotencyKey: 'v1.20261114.000000000000000000000000000000c9' }),
+    storedEntry({ noteId: 'n-altra', idempotencyKey: 'non-una-chiave' }),
+  ]));
+  const { client } = await open(fakeClient(), 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.body.noteId, write.key]), [['n-mia', storedEntry().idempotencyKey]],
+    'only this space and customer; a key of another shape is never sent');
+  const left = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).map((entry) => `${entry.spaceId}/${entry.id}/${entry.noteId}`);
+  assert.deepEqual(left, ['altro-spazio/c1/n-mia', 'spazio-prova/c9/n-mia']);
+});
+
+// ---- review Muse #883, round 2 --------------------------------------------------
+
+test('4eceae80a5ca (review Muse #883, P1): a cut cronologia that does not list the note sends the withdrawal again, never drops it', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry({ noteId: 'n-vecchia', idempotencyKey: 'v1.20261114.000000000000000000000000000000ee' })]));
+  // Only the newest page: the old note sits further back.
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    const answer = await original(path, options);
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/')) {
+      return { ...answer, entries: { ...answer.entries, truncated: true, count: 120 } };
+    }
+    return answer;
+  };
+  let held = () => {};
+  const gate = new Promise((resolve) => { held = resolve; });
+  const write = client.request;
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path, body: JSON.parse(String(options.body)), key: options.headers?.['Idempotency-Key'] ?? null });
+      await gate;
+      return { id: 'n-ritiro', withdrawn: true };
+    }
+    return write(path, options);
+  };
+  await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((entry) => [entry.body.noteId, entry.key]), [['n-vecchia', 'v1.20261114.000000000000000000000000000000ee']],
+    'sent again with its own key');
+  assert.equal(JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).length, 1, 'kept until the server answers');
+  held();
+  await flush();
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'forgotten once the server confirmed it');
+});
+
+test('4eceae80a5ca (review Muse #883, P2): a withdrawal restored in one space never hides or sends the same note id in another space', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry({ spaceId: 'spazio-a' })]));
+  let space = 'spazio-a';
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  let firstTimeline = true;
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/') && firstTimeline) {
+      firstTimeline = false;
+      return new Promise(() => {}); // space A's cronologia never lands
+    }
+    return original(path, options);
+  };
+  const mount = createMount();
+  const view = createCustomerCardView({
+    doc: createFakeDocument(), mount, client, spaceId: () => space, wait: manualWait().wait,
+    toast: () => {}, hideToast: () => {}, sessionStorage: session,
+  });
+  void view.renderCard('contact', 'c1');
+  await flush();
+  space = 'spazio-b'; // the same record id c1 in another space
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(noteRow(mount, 'Richiamare lunedì'), 'space B shows its own note');
+  assert.equal(client.writes.length, 0, 'nothing of space A is sent in space B');
 });

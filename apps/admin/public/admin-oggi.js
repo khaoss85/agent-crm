@@ -34,7 +34,7 @@ import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
 import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, countedChannel, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { isNotificationMessage, memberLabel, nameFromProfile, plural, readableName } from './admin-labels.js';
+import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
 import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
@@ -242,6 +242,21 @@ export function isTodayInRome(value, now = new Date()) {
   const day = romeDayKey(value);
   if (day === null) return false;
   return day === romeDayKey(now);
+}
+
+/**
+ * Whether an appointment start still lies ahead (backlog:57e3d1685e58):
+ * a slot already behind us today is done showing up in «Ti resta» and
+ * never offers «Prepara». Same mark rule as nextAppointment: without a
+ * real `now` nothing is filtered.
+ * @param {unknown} startsAt
+ * @param {Date} [now]
+ */
+function startsAtOrAfterNow(startsAt, now) {
+  const start = toInstant(startsAt);
+  if (start === null) return false;
+  const mark = now instanceof Date ? now.getTime() : NaN;
+  return Number.isNaN(mark) || start.getTime() >= mark;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,13 +533,11 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
     const action = followupAction(task, now);
     if (action) actions.push(action);
   }
-  const today = (Array.isArray(appointments) ? appointments : [])
-    .filter((row) => row != null
-      && (row.status === 'booked' || row.status === 'confirmed')
-      && isTodayInRome(row.startsAt, now));
-  today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
-  if (today.length > 0) {
-    const prep = appointmentPrepAction(today[0], names, pendingNames === true);
+  // backlog:57e3d1685e58: the prep reads the next call still ahead, never an
+  // appointment already behind us today — a past slot must not offer «Prepara».
+  const next = nextAppointment(appointments, now);
+  if (next !== null) {
+    const prep = appointmentPrepAction(next, names, pendingNames === true);
     if (prep) actions.push(prep);
   }
   const capped = actions.length > ADVISOR_ACTION_LIMIT;
@@ -686,10 +699,13 @@ export async function executeAdvisorAction(client, action, run) {
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
+  // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
+  // a past slot stays in the agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
-      && isTodayInRome(row.startsAt, now));
+      && isTodayInRome(row.startsAt, now)
+      && startsAtOrAfterNow(row.startsAt, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
@@ -758,9 +774,17 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
     // appointment is with — the team member's name from the roster, else a
     // short honest cue from the notes. Never invented when neither exists,
     // and never the member's technical id (production 10/11 read
-    // «broker+…@accordo.invalid» and «google|…» here).
+    // «broker+…@accordo.invalid» and «google|…» here). A team mailbox is
+    // never a name either (backlog:57e3d1685e58: the operator's own
+    // address read under the contact): only a real name reads, then the
+    // contact's own address from the stored label (a synced invitee keeps
+    // its email there), then the notes cue.
     const team = memberLabel(row?.teamMemberId, members);
-    const cue = team ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
+    const teamName = team !== null && !team.includes('@') ? team : null;
+    const labelMail = memberText(row?.subjectLabel);
+    const cue = teamName
+      ?? (labelMail !== null && labelMail.includes('@') ? labelMail : null)
+      ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
     const card = cardHrefForSubject(row);
@@ -1013,7 +1037,10 @@ export function buildServerReplies(answer, now = new Date()) {
       channel,
       subjectKey: `${resource}:${id}`,
       namePending: false,
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: il badge è il cliente (iniziali come
+      // Clienti e la scheda), mai la mattonella del canale. Il canale
+      // resta in `channel` e nella riga «da … · Email».
+      mono: badgeInitials(name),
       name,
       preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
       when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
@@ -1167,7 +1194,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       // notification keeps its stored label, never a grey bar for good.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: le righe Da rispondere mostrano le
+      // iniziali del cliente come Clienti e la scheda; le Notifiche
+      // automatiche (gruppo a parte) tengono la mattonella del canale.
+      mono: machine ? (channelTile(channel) ?? badgeInitials(name)) : badgeInitials(name),
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
       // residue or hidden preheaders; the subject alone when the body cleans away.

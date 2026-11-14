@@ -147,6 +147,9 @@ export function pageNumbers(pages, page) {
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
+  // backlog:a762c28a646c: each name the list shows is remembered, so the
+  // scheda it opens reads it at once.
+  const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client } = deps;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
@@ -1024,6 +1027,7 @@ export function createCustomerListView(deps) {
       card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
+      knownNames?.remember(row.resource, row.id, row.name);
       head.appendChild(el('span', 'bo-clienti-avatar', customerInitials(name)));
       const who = el('div', 'bo-clienti-who');
       const nameLink = link(

@@ -473,6 +473,59 @@ test('recap follows the prototype sentence with real counts', () => {
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
 
+test('57e3d1685e58: past appointments leave «Ti resta» and offer no «Prepara»', () => {
+  const past = { ...APPT_TODAY, id: 'appt-past', startsAt: '2026-10-19T06:00:00.000Z' }; // 08:00 in Rome, behind OGGI_NOW
+  assert.equal(
+    buildTodayRecap({ appointments: [past, APPT_TODAY], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [past], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso e nessun appuntamento per oggi.',
+  );
+  assert.deepEqual(
+    buildAdvisorActions({ tasks: [], appointments: [past], now: OGGI_NOW }).actions,
+    [],
+    'no prep for a slot already behind us',
+  );
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [past, APPT_TODAY], now: OGGI_NOW }).actions;
+  assert.equal(prep?.record.id, 'appt-1', 'the prep reads the call still ahead');
+  const agenda = buildTodayAgenda([past, APPT_TODAY], OGGI_NOW);
+  assert.equal(agenda.length, 2, 'the agenda still lists the past slot, grey');
+  assert.equal(agenda[0].past, true);
+});
+
+test('57e3d1685e58: the chi line shows the contact address, never the user one', () => {
+  const userMail = 'operatore@esempio.it';
+  const contactMail = 'ospite@esempio.it';
+  const roster = [{ subject: 'op-1', displayName: null, email: userMail }];
+  const synced = {
+    ...APPT_TODAY, id: 'appt-sync', teamMemberId: 'op-1',
+    subjectLabel: contactMail, notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([synced], OGGI_NOW, {}, roster)[0].who,
+    contactMail,
+    'the contact email, never the operator one',
+  );
+  const noted = { ...synced, id: 'appt-notes', subjectLabel: 'Giulia Romano', notes: 'Vuole la scheda.' };
+  assert.equal(
+    buildTodayAgenda([noted], OGGI_NOW, {}, roster)[0].who,
+    'Vuole la scheda.',
+    'no contact address: the notes cue, still never the user email',
+  );
+  const bare = { ...synced, id: 'appt-bare', subjectLabel: 'Giulia Romano' };
+  delete bare.notes;
+  assert.equal(buildTodayAgenda([bare], OGGI_NOW, {}, roster)[0].who, null);
+  const named = buildTodayAgenda(
+    [{ ...APPT_TODAY, teamMemberId: 'op-1' }],
+    OGGI_NOW,
+    {},
+    [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
+  );
+  assert.equal(named[0].who, 'Marco Ferri', 'a real team name still reads first');
+});
+
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
@@ -1283,7 +1336,7 @@ test('Da rispondere: one row per conversation waiting on the team, newest first 
   const inbox = buildInbox({ messages, conversations, now });
   assert.equal(inbox.total, 2, 'the answered and the closed conversations are not waiting');
   assert.deepEqual(inbox.rows.map((row) => row.name), ['Lia Marroni', 'Fio Neri'], 'newest first');
-  assert.equal(inbox.rows[0].mono, 'IG');
+  assert.equal(inbox.rows[0].mono, 'LM', 'backlog:0f78353438c5: the badge is the client initials, never the channel tile');
   assert.equal(inbox.rows[0].when, 'da 30 min · Instagram');
   assert.equal(inbox.rows[1].href, '#/customer-card/contact/p1', 'Rispondi opens the scheda');
   assert.equal(waitedFor('2026-11-03T15:00:00Z', now), 'da ieri');
@@ -1298,7 +1351,7 @@ test('Da rispondere renders its rows, the empty line and the unreadable line', a
     renderOggi({ doc, mount, userName: 'Dan', navigate: (h) => navigated.push(h), home: { actions: [], agenda: [], inbox } });
     return { mount, navigated };
   };
-  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'WA', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
+  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'FN', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
   assert.ok(full.mount.textContent.includes('Da rispondere'));
   assert.ok(full.mount.textContent.includes('1 in attesa'));
   assert.ok(full.mount.textContent.includes('Fio Neri') && full.mount.textContent.includes('Quanto costa?'));

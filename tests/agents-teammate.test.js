@@ -324,9 +324,9 @@ test('every execution is recorded with agent, assignment, cost and outcome', asy
 test('the package declares its identity, resources and operations', () => {
   const graph = createAgentsPackage({});
   assert.equal(graph.name, 'agents');
-  assert.deepEqual(graph.resources, ['teammate-agent', 'teammate-assignment', 'teammate-run']);
+  assert.deepEqual(graph.resources, ['teammate-agent', 'teammate-assignment', 'teammate-run', 'teammate-squad']);
   const names = (graph.operations ?? []).map((entry) => entry.name).sort();
-  assert.deepEqual(names, ['approve-run', 'create-agent', 'create-assignment', 'reject-run', 'revise-run', 'run-due']);
+  assert.deepEqual(names, ['approve-run', 'create-agent', 'create-assignment', 'create-squad', 'read-squad-overview', 'reject-run', 'revise-run', 'run-due', 'set-agent-status', 'update-agent']);
 });
 
 test('a capped agent refuses an assignment without a cost estimate', async () => {

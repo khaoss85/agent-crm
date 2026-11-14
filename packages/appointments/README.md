@@ -63,6 +63,25 @@ detail reads the sync state through) and the subject envelope (who the
 slot is for). `tests/appointment-team-week.test.js` proves it with no
 database.
 
+Owner holds with no guest (backlog `af190faf`): owner commitments from the
+composed `calendarSync` handle (`listOwnerBlocks({ teamMemberId, from, to })`,
+the same shape the Google sync writes — `{ teamMemberId, startsAt, endsAt,
+title? }`) hold on every read and every write path — week, suggest,
+propose, confirm, link and reschedule. No caller, request or query input
+carries blocks (agent-crm keeps no sync store: the sync handle is the
+consuming project's adapter work, and the HTTP routes never forward a
+`busyBlocks` query value); a composition without the handle keeps main
+behaviour, and a wired store that fails or answers nothing fails the call
+closed (503 `APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE`). The package proves
+each store block strictly — closed shape (any extra key like `status` or
+`id` is refused), member identity trimmed like the roster filter, provable
+slot, 400 with field `busyBlocks` otherwise, on every path. Each member
+group answers a required `busy` list beside `appointments`:
+`{ startsAt, endsAt, title }`, title defaulting to `Occupato`. Titles live
+only in this authorized read — booking refusals stay generic
+(`APPOINTMENTS_OVERLAP` over the held range, no title) so a booker can
+never probe private commitments.
+
 ## Booking flow (BO-F3-02, backlog `c1d05e6547fc`)
 
 `"07 Calendario"`: the operator proposes slots, confirms once, the
@@ -74,7 +93,8 @@ all additive — `bookAppointment` is unchanged and `advanceAppointment` keeps i
   only: no row is written, no slot is invented; a held row whose slot cannot
   be proven fails the suggestion closed. With `nowIso` named, a step already
   begun is cut too: a proposal must be bookable, so the past is never
-  offered (backlog `d1e4d90e`).
+  offered (backlog `d1e4d90e`). A step a store owner hold overlaps is
+  never offered either (backlog `af190faf`).
 - `proposeBooking(request + spaceId)` validates, fails fast on a held slot,
   then reads the space `book-appointments` switch. Switch on: a draft is
   answered and nothing is written. Switch off: a `space-ai-proposal` is

@@ -59,7 +59,7 @@ const OFF_PIPELINE_LISTED = 50;
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption, uiButton, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBusy, uiButton, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * Italian month names for the `✦ Previsione di <mese>` title (C4). A static
@@ -225,7 +225,22 @@ export function isTransientConflict(error) {
   return record.code === 'CONFLICT' && (record.status === 409 || record.status === undefined)
     && record.details !== null && typeof record.details === 'object' && record.details.transient === true;
 }
+/**
+ * backlog:4eceae80a5ca — a move another write beat (409: CONFLICT,
+ * STALE_STAGE, STALE_POSITION): the server already holds the winner's
+ * move, so the board is read again instead of putting the card back where
+ * it started.
+ * @param {unknown} error
+ */
+export function lostToAnotherWrite(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  // Exactly these three 409s (review Muse #883): SAME_STAGE, TERMINAL_STAGE
+  // and every other refusal keep the instant put-back with their line.
+  return record.status === 409 && ['CONFLICT', 'STALE_STAGE', 'STALE_POSITION'].includes(record.code);
+}
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
+/** The card's own controls: a press on one never opens the offer panel. */
+const CARD_CONTROLS = 'button, a, select, input, textarea, label, .card-confirm';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
 /**
@@ -298,7 +313,15 @@ export function readStageConfirm(panel, target) {
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
   const { client } = bindAdminMutations(deps.client, deps);
-  const toast = deps.toast ?? (() => {});
+  const rawToast = deps.toast ?? (() => {});
+  // backlog:85630aa14a4f: the shell's way to take the Pipeline's toast down
+  // (a failed move says so on its card, once — never also in a toast).
+  const hideToast = typeof deps.hideToast === 'function' ? deps.hideToast : () => {};
+  /** The offer whose move spoke last in the toast, or null. */
+  let toastOwner = null;
+  const toast = (...args) => { toastOwner = null; rawToast(...args); };
+  /** A toast that belongs to one offer's move. */
+  const moveToast = (id, ...args) => { rawToast(...args); toastOwner = id; };
   // The pending pause of a queued stage move (production 07/11: on the
   // pilot a move rides the operation queue and the card sat aria-busy for
   // minutes with no word). Injectable like the composer's send wait, so
@@ -385,6 +408,38 @@ export function createPipelineBoard(deps) {
   }
 
   /**
+   * Where a seated card waits for the server: record id → its column on
+   * screen, which a fresh read (the truth) or a settled move clears. While a
+   * move is in flight the record still names the old stage, so the «Sposta
+   * in» menu reads this, not the record (backlog:85630aa14a4f).
+   * @type {Map<string, string>}
+   */
+  const seatedStages = new Map();
+
+  /**
+   * Rebuild one seated card's «Sposta in» menu on its column on screen: the
+   * column the card is in is no choice, the one it left is back. The person's
+   * pending choice survives when it is still a choice.
+   * @param {string} id @param {string} stageKey
+   */
+  function syncMoveSelect(id, stageKey) {
+    const controls = cardNodes.get(id);
+    const pipeline = cached.pipeline;
+    if (!controls || !pipeline || !controls.select) return;
+    const keep = controls.select.value;
+    const select = controls.select;
+    while (select.firstChild) select.removeChild(select.firstChild);
+    let first = '';
+    for (const target of pipeline.stages) {
+      if (target.key === stageKey) continue;
+      if (!first) first = target.key;
+      select.appendChild(el(doc, 'option', { text: target.label, attrs: { value: target.key } }));
+    }
+    const kept = pipeline.stages.some((target) => target.key === keep && target.key !== stageKey);
+    select.value = kept ? keep : first;
+  }
+
+  /**
    * Move one card on screen, before the server answers: the card to the top
    * of the target column and its record from one column's count and totals
    * to the other's. Returns `undo` that puts card and numbers back together,
@@ -419,6 +474,9 @@ export function createPipelineBoard(deps) {
     if (toStage !== fromStage) paintColumnSummary(toStage);
     syncEmptyLine(target);
     syncEmptyLine(home.parent);
+    // backlog:85630aa14a4f: the menu follows the card, not the pending write.
+    seatedStages.set(id, toStage);
+    syncMoveSelect(id, toStage);
     return () => {
       if (typeof home.parent.insertBefore === 'function') {
         home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent && home.next !== card ? home.next : null);
@@ -430,6 +488,8 @@ export function createPipelineBoard(deps) {
       if (toStage !== fromStage) paintColumnSummary(toStage);
       syncEmptyLine(home.parent);
       syncEmptyLine(target);
+      seatedStages.set(id, fromStage);
+      syncMoveSelect(id, fromStage);
     };
   }
 
@@ -661,7 +721,7 @@ export function createPipelineBoard(deps) {
     // from the first moment, as before.
     if (!quietToast) {
       const where = stageLabel(pipeline, toStage);
-      toast(reorder ? `Aggiornamento dell'ordine in ${where}…` : `Spostamento in ${where}…`, false, undoOptions());
+      moveToast(id, reorder ? `Aggiornamento dell'ordine in ${where}…` : `Spostamento in ${where}…`, false, undoOptions());
     }
     let settled = false;
     void wait(MOVE_SLOW_MS).then(() => {
@@ -689,6 +749,7 @@ export function createPipelineBoard(deps) {
       const unplaced = placement !== null ? placementNotSaved(answer) : null;
       settled = true;
       moveLocks.delete(id);
+      seatedStages.delete(id);
       // An undone move does not repaint its landing: the reverse write is
       // next, and the board re-reads after it.
       if (!intent.undone) await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
@@ -701,9 +762,9 @@ export function createPipelineBoard(deps) {
         const where = stageLabel(pipeline, toStage);
         // The server said yes: now, and only now, «Spostata in …». «Annulla»
         // stays: the write stands, so it can still go back.
-        if (unplaced === null) toast(done ?? (reorder ? `Ordine aggiornato in ${where}.` : `Spostata in ${where}.`), false, undoOptions());
+        if (unplaced === null) moveToast(id, done ?? (reorder ? `Ordine aggiornato in ${where}.` : `Spostata in ${where}.`), false, undoOptions());
         else {
-          toast(unplaced === 'refused'
+          moveToast(id, unplaced === 'refused'
             ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
             : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
         }
@@ -727,22 +788,47 @@ export function createPipelineBoard(deps) {
         return { pending: true };
       }
       moveLocks.delete(id);
+      seatedStages.delete(id);
       const message = moveFailureText(error);
-      if (error?.code === 'STALE_POSITION') {
+      const lost = lostToAnotherWrite(error);
+      if (lost) {
         // Review Muse #852 (P2): the column changed under this drop. On the
         // pilot the stage write may already have landed before the place was
         // refused (two writes, not one): never guess by putting the card
-        // back — the fresh board says where it is.
+        // back — the fresh board says where it is. STALE_STAGE (backlog
+        // 1541408e8144): someone else moved the card meanwhile, so the card
+        // the person sees is stale the same way — the re-read tells the truth.
+        // backlog:4eceae80a5ca: the same for a lost CONFLICT.
         restore = null;
         await renderBoard(pipeline.name, { quiet: true });
       } else if (restore) {
         restore();
         restore = null;
       }
-      for (const view of moveViewsOf(id)) view.fail(message);
-      // The toast that said «Spostata» is replaced by the truth — unless the
-      // person already undid it: the card is where they wanted it.
-      if (!intent.undone) toast(message, true);
+      // backlog:85630aa14a4f: «Riprova» sends the same move again — same
+      // column, same place, a new request — for a failure that may pass
+      // (the server or the network); never after a refusal that would only
+      // repeat. An «Annulla» write (quietToast) is retried by nobody.
+      const resend = !quietToast && moveMayPassAgain(error)
+        ? () => runMove(pipeline, id, fromStage, toStage, reason, { undo, done, placement })
+        : null;
+      // Lost to another write (STALE_STAGE, …): the fresh board above holds
+      // the card where it belongs, so the card carries no message and no
+      // Riprova — the move is superseded. Every other failure sits on the
+      // card (and on the open panel), with Riprova when it may pass.
+      const views = lost ? [] : moveViewsOf(id);
+      for (const view of views) view.fail(message, resend);
+      // One message, never two: shown on the card, the toast that said
+      // «Spostamento in …» goes away; with no card to show it (a filter,
+      // a superseded move) the toast says it, with the same Riprova. An
+      // «Annulla» already put the card where the person wanted it.
+      if (!intent.undone && !quietToast) {
+        if (views.length) {
+          if (toastOwner === id) { hideToast(); toastOwner = null; }
+        } else {
+          moveToast(id, message, true, resend ? { action: { label: 'Riprova', run: () => { void resend(); } } } : undefined);
+        }
+      }
       const waking = wakeWaitText(error) !== null;
       settle({ failed: true, message, waking });
       return { failed: true, message, waking };
@@ -963,6 +1049,8 @@ export function createPipelineBoard(deps) {
     cached = { pipeline, pipelines: composed, records };
     // A fresh read is the truth a queued move waited for: it releases it.
     for (const [id, lock] of [...moveLocks]) if (lock === 'queued') moveLocks.delete(id);
+    // The records name the true stages again: no seated column survives.
+    seatedStages.clear();
     // A fresh server read may have moved the records: a pending Conferma
     // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
@@ -1079,6 +1167,8 @@ export function createPipelineBoard(deps) {
         // The fresh board starts unscrolled: the open card's column (maybe
         // a new one, after Cambia fase) comes out from under the panel again.
         keepOpenColumnInView();
+        // backlog:85630aa14a4f: the fresh cards need the open mark too.
+        markOpenCard();
       }
     }
     return panel;
@@ -1780,10 +1870,26 @@ export function createPipelineBoard(deps) {
     if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
-    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
-    if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
+    if (code === 'STALE_STAGE') return "Questa offerta è stata spostata altrove nel frattempo: la pipeline si aggiorna.";
+    // Review Muse #893 (P2): a lost write offers no Riprova, so its words never ask for one.
+    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.';
+    if (isTransientConflict(error)) return 'Questa offerta è stata spostata nel frattempo: la pipeline si aggiorna.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
-    return 'Spostamento non riuscito. Riprova più tardi.';
+    // backlog:85630aa14a4f: the words match the Riprova next to them.
+    return 'Spostamento non riuscito.';
+  }
+
+  /**
+   * backlog:85630aa14a4f: a move failure that may pass if sent again — the
+   * server or the network failed (5xx, 408, 429, no answer). A refusal
+   * (SAME_STAGE, TERMINAL_STAGE, a missing reason, a stale 409) would only
+   * repeat itself.
+   */
+  function moveMayPassAgain(error) {
+    if (lostToAnotherWrite(error) || isMovePending(error)) return false;
+    const status = Number(error?.status);
+    if (!Number.isFinite(status) || status === 0) return true;
+    return status >= 500 || status === 408 || status === 429;
   }
 
   /** Toggle one hook class on a node without touching its other classes. */
@@ -1935,10 +2041,22 @@ export function createPipelineBoard(deps) {
       // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
       // click, and a click that ends a text selection stays on the board.
       card.setAttribute('data-openable', 'true');
+      // backlog:85630aa14a4f (verifica 14/11): a press that starts on one of
+      // the card's own controls never opens the panel, even when the click
+      // lands on the card itself — the press may move the layout under the
+      // pointer (Riprova pressed, then the click arrived on the card).
+      let pressedControl = false;
+      card.addEventListener('pointerdown', (event) => {
+        const target = event?.target ?? null;
+        pressedControl = Boolean(target && typeof target.closest === 'function' && target.closest(CARD_CONTROLS));
+      });
       card.addEventListener('click', (event) => {
+        const fromControl = pressedControl;
+        pressedControl = false;
+        if (fromControl) return;
         const target = event?.target ?? null;
         if (target && typeof target.closest === 'function'
-          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+          && target.closest(CARD_CONTROLS)) return;
         const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
         if (selection && selection.isCollapsed === false && String(selection) !== '') return;
         go();
@@ -1952,8 +2070,13 @@ export function createPipelineBoard(deps) {
     const selectId = `move-${record.id}`;
     const label = el(doc, 'label', { text: 'Sposta in', attrs: { for: selectId } });
     const select = el(doc, 'select', { attrs: { id: selectId } });
+    // backlog:85630aa14a4f: a card repainted while its move is in flight
+    // (a filter, a reopened panel) offers the column on screen, not the one
+    // the record still names until the server answers.
+    const seated = seatedStages.get(String(record.id));
+    const menuStage = moveLocks.has(String(record.id)) && typeof seated === 'string' ? seated : stage.key;
     for (const target of pipeline.stages) {
-      if (target.key === stage.key) continue;
+      if (target.key === menuStage) continue;
       select.appendChild(el(doc, 'option', { text: target.label, attrs: { value: target.key } }));
     }
     const moveButton = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button' } });
@@ -1964,7 +2087,15 @@ export function createPipelineBoard(deps) {
     // move that landed meanwhile would only answer a stale-stage refusal.
     const statusNode = el(doc, 'small', { class: 'card-status hidden', attrs: { role: 'status', 'aria-live': 'polite' } });
     const retryButton = el(doc, 'button', { class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'move-retry' } });
-    retryButton.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    /** backlog:85630aa14a4f: after a failure, the same move again; while unconfirmed, a board read. */
+    let resendMove = null;
+    retryButton.addEventListener('click', (event) => {
+      // The click is Riprova's alone: it never reaches the card (which opens the panel).
+      if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+      const again = resendMove;
+      if (again) void uiBusy(retryButton, 'Riprovo…', () => again());
+      else void renderBoard(pipeline.name);
+    });
     const showStatus = (text, retry) => {
       statusNode.textContent = text;
       statusNode.setAttribute('class', text ? 'card-status' : 'card-status hidden');
@@ -1992,6 +2123,7 @@ export function createPipelineBoard(deps) {
     };
     const cardView = {
       start() {
+        resendMove = null;
         markCardBusy(true);
         errorNode.textContent = '';
         errorNode.setAttribute('class', 'field-error hidden');
@@ -1999,11 +2131,16 @@ export function createPipelineBoard(deps) {
         confirmError.setAttribute('class', 'field-error hidden');
         showStatus(MOVE_IN_FLIGHT, false);
       },
-      slow() { showStatus(MOVE_SLOW, false); },
-      unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
-      fail(message) {
+      // backlog:85630aa14a4f: the wait stays said while it lasts — the slow
+      // note joins «Spostamento in corso…», never replaces it.
+      slow() { showStatus(`${MOVE_IN_FLIGHT} ${MOVE_SLOW}`, false); },
+      unconfirmed() { resendMove = null; showStatus(MOVE_UNCONFIRMED, true); },
+      fail(message, resend = null) {
         markCardBusy(false);
-        showStatus('', false);
+        // backlog:85630aa14a4f: Riprova sends the same move again, when it
+        // may pass; a refusal shows its line alone.
+        resendMove = resend;
+        showStatus('', resend !== null);
         errorNode.textContent = message;
         errorNode.setAttribute('class', 'field-error');
       },
@@ -2135,7 +2272,13 @@ export function createPipelineBoard(deps) {
       text: '✕',
       attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'offer-drawer-close' },
     });
-    close.addEventListener('click', () => closeOfferDrawer({ refocus: true }));
+    // backlog:85630aa14a4f: focus goes back to Apri only for a keyboard
+    // close (Enter on × has detail 0, a mouse click does not) — a mouse
+    // close must not light the keyboard-only «Sposta in» row through
+    // :focus-within.
+    // backlog:85630aa14a4f: a mouse × hands focus back to the open card too,
+    // with no focus ring (the keyboard-only «Sposta in» row stays hidden).
+    close.addEventListener('click', (event) => closeOfferDrawer({ refocus: event?.detail === 0 ? true : 'pointer' }));
     head.appendChild(close);
     node.appendChild(head);
     const body = el(doc, 'div', { class: 'bo-composer-body bo-pipeline-offer-body' });
@@ -2153,7 +2296,9 @@ export function createPipelineBoard(deps) {
       if (!node.parentNode) { closeOfferDrawer({ refocus: false }); return; }
       const target = event?.target ?? null;
       if (target && node.contains(target)) return;
-      closeOfferDrawer({ refocus: false });
+      // backlog:85630aa14a4f: a click on empty board gives focus back to the
+      // card; a click on a field or a button keeps it there.
+      closeOfferDrawer({ refocus: 'outside' });
     };
     node.addEventListener('keydown', onKey);
     const docListens = typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function';
@@ -2175,22 +2320,65 @@ export function createPipelineBoard(deps) {
     };
     paintOfferDrawer(pipeline, record);
     mount.appendChild(node);
+    // backlog:85630aa14a4f: where the board was before the panel moved it —
+    // closing brings it back, at 1024 px like at 1280.
+    const openCard = cardElements.get(recordId) ?? null;
+    const openBoard = openCard?.parentNode?.parentNode ?? null;
+    drawer.savedScroll = openBoard ? Number(openBoard.scrollLeft ?? 0) : null;
     keepOpenColumnInView();
+    markOpenCard();
     if (typeof close.focus === 'function') close.focus();
     node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
   }
 
-  /** Close the offer panel; with `refocus`, focus goes back to its Apri. */
+  /** The open offer's card carries the mark (style hook + aria-current). */
+  function markOpenCard() {
+    for (const [id, card] of cardElements) {
+      const open = drawer !== null && id === drawer.recordId;
+      toggleHook(card, 'is-open', open);
+      if (open) card.setAttribute('aria-current', 'true');
+      else if (typeof card.removeAttribute === 'function') card.removeAttribute('aria-current');
+    }
+  }
+
+  /**
+   * Close the offer panel; with `refocus`, focus goes back to the open
+   * card's Apri — true: the keyboard closed it; 'pointer': a mouse ×, the
+   * page does not scroll; 'outside': a press outside, only if focus landed
+   * nowhere.
+   * @param {{ refocus: boolean | 'pointer' | 'outside' }} options
+   */
   function closeOfferDrawer({ refocus }) {
     if (!drawer) return;
-    const { node, opener, recordId, detach } = drawer;
+    const { node, opener, recordId, detach, savedScroll } = drawer;
     drawer = null;
     detach();
     if (node.parentNode) node.parentNode.removeChild(node);
     freeOfferRoom();
+    // backlog:85630aa14a4f: the board goes back to where it was before the
+    // panel moved it; the open mark leaves with the panel.
+    markOpenCard();
+    const card = cardElements.get(recordId) ?? null;
+    const boardEl = card?.parentNode?.parentNode ?? null;
+    if (typeof savedScroll === 'number' && Number.isFinite(savedScroll) && boardEl) {
+      boardEl.scrollLeft = savedScroll;
+    }
     if (!refocus) return;
     const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
-    if (live && typeof live.focus === 'function') live.focus();
+    if (!live || typeof live.focus !== 'function') return;
+    if (refocus === true) { live.focus(); return; }
+    // The mouse closed it: focus goes back and the page does not jump; after
+    // a mouse click the browser's own :focus-visible shows no ring (review
+    // Muse #893: no non-standard option).
+    const quiet = () => live.focus({ preventScroll: true });
+    if (refocus === 'pointer') { quiet(); return; }
+    // A press outside: the browser moves focus after this pointerdown (to
+    // the field or button pressed, else nowhere). Only when it landed
+    // nowhere does the open card take it back.
+    void wait(0).then(() => {
+      const active = doc.activeElement ?? null;
+      if ((active === null || active === doc.body) && mount.contains(live)) quiet();
+    });
   }
 
   /**
@@ -2286,8 +2474,16 @@ export function createPipelineBoard(deps) {
     const retry = el(doc, 'button', {
       class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'drawer-move-retry' },
     });
-    // Riprova re-reads the board, never a second POST (review #657).
-    retry.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    // backlog:85630aa14a4f: after a failure Riprova sends the same move
+    // again; while unconfirmed it re-reads the board, never a second POST
+    // (review #657).
+    let resendMove = null;
+    retry.addEventListener('click', (event) => {
+      if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+      const again = resendMove;
+      if (again) void uiBusy(retry, 'Riprovo…', () => again());
+      else void renderBoard(pipeline.name);
+    });
     box.appendChild(retry);
     let pending = null;
     const id = String(record.id);
@@ -2305,20 +2501,25 @@ export function createPipelineBoard(deps) {
     // per offer, the bounded «Non ancora confermato» with Riprova.
     drawer.moveView = {
       start() {
+        resendMove = null;
         lockControls(true);
         say(error, '');
         say(status, MOVE_IN_FLIGHT);
         retry.setAttribute('class', 'small secondary hidden');
       },
-      slow() { say(status, MOVE_SLOW); },
+      // backlog:85630aa14a4f: the wait stays said while it lasts.
+      slow() { say(status, `${MOVE_IN_FLIGHT} ${MOVE_SLOW}`); },
       unconfirmed() {
+        resendMove = null;
         say(status, MOVE_UNCONFIRMED);
         retry.setAttribute('class', 'small secondary');
       },
-      fail(message) {
+      fail(message, resend = null) {
         lockControls(false);
         say(status, '');
-        retry.setAttribute('class', 'small secondary hidden');
+        // backlog:85630aa14a4f: Riprova in the panel too, when the move may pass.
+        resendMove = resend;
+        retry.setAttribute('class', resend ? 'small secondary' : 'small secondary hidden');
         say(error, message);
       },
     };

@@ -144,9 +144,11 @@ test('3d811389bb4c: a 503 «spazio in avvio» reads as a wait in plain words, ne
   await tick();
   client.posts[0].fail(Object.assign(new Error('Spazio di lavoro in avvio'), { status: 503, code: 'WORKSPACE_STARTING' }));
   await tick();
-  const last = events[events.length - 1];
-  assert.equal(last.message, 'Il servizio si sta avviando: attendi qualche secondo e riprova.');
+  // backlog:85630aa14a4f: the words sit on the card, beside Riprova (one message, no toast copy).
+  const error = cardOf(mount, 'a').childNodes.find((n) => classes(n).includes('field-error'));
+  assert.equal(error.textContent, 'Il servizio si sta avviando: attendi qualche secondo e riprova.');
   assert.ok(!events.some((item) => item.message.includes('Riprova più tardi')));
+  assert.ok(!mount.textContent.includes('Riprova più tardi'));
   assert.equal(where(mount, 'a'), 'discovery', 'the card is back where it was');
 });
 

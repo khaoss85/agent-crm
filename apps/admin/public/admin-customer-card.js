@@ -6,7 +6,7 @@ import { NOT_AVAILABLE_NOTE, channelState, countedChannel } from './admin-channe
 import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -22,6 +22,7 @@ import {
   formatCustomValue,
   saveFieldValue,
 } from './admin-custom-fields.js';
+import { readBookingServices } from './admin-calendario.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -897,6 +898,73 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/**
+ * backlog:4eceae80a5ca — the withdrawals a page sent as it went away. The
+ * keepalive POST of pagehide can land after the next page has already read
+ * the cronologia (production 14/11: a reload right after Elimina showed the
+ * note again, 2 tries out of 2). They are kept in sessionStorage — the
+ * note, its customer, the space, the submission key and a deadline — so the
+ * next scheda hides the note at once and, if the cronologia still lists
+ * it, sends the withdrawal again with the SAME key (the server replays the
+ * first one, never a second write). An entry leaves when the cronologia no
+ * longer lists the note, or when its deadline passes.
+ */
+export const NOTE_WITHDRAWALS_STORAGE_KEY = 'accordo.bo.note-withdrawals.v1';
+/** How long a stored withdrawal is kept for the next page. */
+export const NOTE_WITHDRAWAL_KEEP_MS = 10 * 60 * 1000;
+
+/** @typedef {{ spaceId: string | null, resource: string, id: string, noteId: string, idempotencyKey: string, expiresAt: number }} StoredWithdrawal */
+
+/**
+ * The stored withdrawals still in time, never a throw.
+ * @param {any} storage @param {number} now
+ * @returns {StoredWithdrawal[]}
+ */
+export function readStoredWithdrawals(storage, now) {
+  let raw = null;
+  try {
+    raw = storage?.getItem?.(NOTE_WITHDRAWALS_STORAGE_KEY) ?? null;
+  } catch {
+    return [];
+  }
+  if (typeof raw !== 'string' || raw === '') return [];
+  let list;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  return list.filter((entry) => entry && typeof entry === 'object'
+    && typeof entry.resource === 'string' && typeof entry.id === 'string'
+    && typeof entry.noteId === 'string' && typeof entry.idempotencyKey === 'string'
+    // The shell's own submission key shape (admin-submission.js), never
+    // another string sent as a key (review Muse #883).
+    && /^v1\.\d{8}\.[0-9a-f]{32}$/.test(entry.idempotencyKey)
+    && (entry.spaceId === null || typeof entry.spaceId === 'string')
+    && Number.isFinite(entry.expiresAt) && entry.expiresAt > now);
+}
+
+/**
+ * The same withdrawal: space, record kind, customer and note (review Muse
+ * #883, P3) — never the note id alone.
+ * @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} a
+ * @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} b
+ */
+export function sameWithdrawal(a, b) {
+  return a.spaceId === b.spaceId && a.resource === b.resource && a.id === b.id && a.noteId === b.noteId;
+}
+
+/** @param {any} storage @param {StoredWithdrawal[]} list */
+export function writeStoredWithdrawals(storage, list) {
+  try {
+    if (list.length === 0) storage?.removeItem?.(NOTE_WITHDRAWALS_STORAGE_KEY);
+    else storage?.setItem?.(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Storage full or refused: the keepalive POST alone still goes.
+  }
+}
+
 /** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
 const NOTE_TOAST_SCOPE = 'scheda-nota';
 /** The LLM gate codes that mean «the AI is off here», not an outage. */
@@ -951,6 +1019,13 @@ export function createCustomerCardView(deps) {
     titleKnown = false;
     lastTitle = undefined;
   };
+  /**
+   * backlog:a762c28a646c: the names other views already showed (the
+   * Clienti list, an offer's «Per <cliente>»): the scheda paints one at
+   * once, before its own card read lands.
+   * @type {{ remember: (resource: unknown, id: unknown, name: unknown) => void, get: (resource: unknown, id: unknown) => string | null } | null}
+   */
+  const knownNames = deps.knownNames && typeof deps.knownNames.get === 'function' ? deps.knownNames : null;
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -1148,6 +1223,7 @@ export function createCustomerCardView(deps) {
     const drafts = {};
     const note = root.querySelector('[name="noteBody"]');
     if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (hasFocus(note)) drafts.noteFocused = true;
     // backlog:cb348c9fcaeb: what is typed in an open «Modifica».
     const noteEdit = root.querySelector('[name="noteEditBody"]');
     if (noteEdit && typeof noteEdit.value === 'string') {
@@ -1218,7 +1294,7 @@ export function createCustomerCardView(deps) {
   });
 
   /** Every read of the scheda, none landed yet (backlog:1a96094db71d). */
-  const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines']);
+  const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines', 'services']);
 
   /**
    * The scheda's reads in two waves. backlog:1a96094db71d: with `onPart`
@@ -1245,6 +1321,7 @@ export function createCustomerCardView(deps) {
       profile: null, profileError: null, enrichment: null, enrichmentError: null,
       calls: null, callsError: null, fieldDefs: null, fieldDefsError: null,
       fieldValues: null, fieldValuesError: null, pipelines: [],
+      services: null, servicesError: null,
     };
     const pending = PART_NAMES_PENDING();
     // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
@@ -1292,6 +1369,22 @@ export function createCustomerCardView(deps) {
       PART_READS.card(encoded).then((read) => firstTake('card', read, false)),
       PART_READS.timeline(encoded).then((read) => firstTake('timeline', read)),
     ]);
+    // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
+    // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
+    // nothing, and the offer the person came from is already known — both
+    // leave as soon as the first wave is done (or its budget ends), ahead of
+    // the profile and without waiting for it. Review Muse #887 (P1): never
+    // beside card and timeline, which keep the first wave to themselves.
+    // The profile's own paint reuses them (historyReads, rosterRead).
+    if (typeof onPart === 'function') {
+      void wave2gate.then(() => {
+        void readRoster();
+        const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
+        if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
+      // A client that throws at once fails the card on its own read; this
+      // early start never adds a second, unhandled failure.
+      }).catch(() => {});
+    }
     // Voce 4cd1bbb646d0: second wave — everything else, after the first
     // paint of card/timeline (or the budget). take() never throws (settle
     // catches), so this await always runs: a failed card still reads the
@@ -1318,6 +1411,27 @@ export function createCustomerCardView(deps) {
       // exactly like the Pipeline board (the shell shares one schema read).
       // Without them the offer line falls back to the core stage.
       settle(() => client.request('/api/schema')).then((read) => take('pipelines', read, false)),
+      // backlog:0d68c387: the listino names the booked service — the same
+      // bookable list the «Nuovo appuntamento» menu reads, so the scheda
+      // and the menu never disagree. A failed read keeps the slug words
+      // (the screen it replaces), never a failed scheda.
+      // Review rev-agent-crm-889-4db30273 (P2): a non-404 failure is
+      // diagnosable — one warn line with the cause only (name/code/status
+      // and the space, never a payload), mirroring the calendario's
+      // «bo-calendario services unreadable». A 404 stays silent: it only
+      // means an older server without the listino.
+      settle(() => readBookingServices(client)).then((read) => {
+        if (read.error && !isNotComposedFailure(read.error)
+          && typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            'bo-scheda services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${spaceId ?? 'none'}`,
+          );
+        }
+        take('services', read);
+      }),
     ]));
     await Promise.all([wave1, wave2]);
     return { ...loaded };
@@ -3501,7 +3615,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3512,11 +3626,12 @@ export function createCustomerCardView(deps) {
     // window is already gone from the screen.
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
-      && pendingWithdrawals.has(`${timelineKey}#${item.id}`);
+      && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
-      ...cancelledAppointmentEntries(timeline),
+      ...bookedAppointmentEntries(timeline, serviceNames),
+      ...cancelledAppointmentEntries(timeline, serviceNames),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
@@ -3571,9 +3686,18 @@ export function createCustomerCardView(deps) {
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
-      if (channelFilter === 'note' && authors.length > 1) {
+      // backlog:6c40dcfaeb3f: no «dal team» chip that splits into names a
+      // moment later. Review Muse #894 (P2): the chips that can already be named show at
+      // once (a human handle, an API-named writer); a provider id the
+      // roster alone can name, and the «dal team» bucket, wait for it.
+      const chipAuthors = rosterSettled ? authors : authors.filter((author) => {
+        if (author === '') return false;
+        const first = notes.find((note) => noteAuthor(note) === author) ?? null;
+        return first !== null && noteWriterName(first) !== null;
+      });
+      if (channelFilter === 'note' && authors.length > 1 && chipAuthors.length > 0) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
-        for (const author of authors) {
+        for (const author of chipAuthors) {
           // backlog:2883ef12f233: like the signature, a chip prefers the
           // API-named author of one of its notes over the roster lookup.
           const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
@@ -3629,7 +3753,7 @@ export function createCustomerCardView(deps) {
       ? profile.identity.company.name : null;
     const offers = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
       ? profile.opportunities.items : [];
-    const offerEvents = offers
+    let offerEvents = offers
       .filter((row) => typeof row?.id === 'string' && Number.isFinite(Date.parse(String(row?.createdAt ?? ''))))
       .map((row) => ({
         entry: 'offer-created', id: `offerta:${row.id}`, occurredAt: row.createdAt,
@@ -3666,12 +3790,27 @@ export function createCustomerCardView(deps) {
     // later reads — the profile names the offers, then the trail their
     // moves. Until both are in, the messages and notes show with one marked
     // row; the offers' creation and their moves then arrive together.
+    /**
+     * The offer's trail read: its stage moves, and — backlog:6c40dcfaeb3f —
+     * who created it, from the same source as the offer page's «Creata
+     * da»: the offer's creation entry in that trail.
+     * @param {{items: any, people: Array<any>}} answer
+     */
+    const applyHistory = (answer) => {
+      stageEvents = stageRowsOf(answer);
+      const record = offers.find((row) => row?.id === historyId) ?? null;
+      // The offer page's own rule and guard (review Muse #894): a full page
+      // of the trail may hide the creation, and then nobody is named.
+      const who = record === null ? null : offerCreatorLabel(answer?.items, record, answer?.people ?? []);
+      if (who === null || who === '—') return;
+      offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
+    };
     /** @type {'none' | 'pending' | 'done' | 'failed'} */
     let historyState = profilePending ? 'pending' : 'none';
     if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
       if (settled !== undefined) {
-        stageEvents = stageRowsOf(settled);
+        applyHistory(settled);
         historyState = 'done';
       } else {
         historyState = 'pending';
@@ -3741,6 +3880,19 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        if (item?.entry === 'appointment-booked') {
+          // backlog:0d68c387: the booking's own row — the note card shape,
+          // with a ✓ mark. No reason line: a booking carries none.
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note bo-scheda-entry-booked');
+          const mark = el('span', 'bo-scheda-chan bo-tile-booked', '✓');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-note-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head', item.title));
+          row.appendChild(paper);
+          list.appendChild(row);
+          continue;
+        }
         if (item?.entry === 'appointment-cancelled') {
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note bo-scheda-entry-cancelled');
           const mark = el('span', 'bo-scheda-chan bo-tile-cancelled', '×');
@@ -3783,7 +3935,8 @@ export function createCustomerCardView(deps) {
           // backlog:2883ef12f233: the API-named author wins over the
           // roster, which an admin-gated read may withhold.
           const writer = noteWriterName(item);
-          const author = writer !== null ? `da ${writer}` : 'dal team';
+          const waits = signatureWaits(item?.teamAuthorId, item?.teamAuthor);
+          const author = writer !== null && !waits ? `da ${writer}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -3793,8 +3946,17 @@ export function createCustomerCardView(deps) {
           // the correction beside the hour of the note.
           const revisedWhen = typeof item?.revisedAt === 'string' ? timeParts(item.revisedAt) : null;
           const revised = typeof item?.revisedAt === 'string' ? ` · modificata${revisedWhen ? ` ${revisedWhen}` : ''}` : '';
-          paper.appendChild(el('p', 'bo-scheda-entry-head',
-            `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`));
+          // backlog:6c40dcfaeb3f: while the roster is read the writer's place
+          // holds a grey bar — «Nota · ▬ · 10:00» — never «dal team».
+          const noteHead = el('p', 'bo-scheda-entry-head');
+          if (waits) {
+            noteHead.appendChild(el('span', undefined, 'Nota · '));
+            noteHead.appendChild(signaturePlaceholder());
+            noteHead.appendChild(el('span', undefined, `${when ? ` · ${when}` : ''}${revised}`));
+          } else {
+            noteHead.textContent = `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`;
+          }
+          paper.appendChild(noteHead);
           const mine = myActorId();
           const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
             && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
@@ -3828,8 +3990,11 @@ export function createCustomerCardView(deps) {
         const bubble = el('div', 'bo-scheda-bubble');
         // The side already says the direction: the head names channel,
         // person and hour once (it used to repeat the channel three times).
+        // backlog:6c40dcfaeb3f: an outbound passage's writer waits for the
+        // roster like a note's — no «il team» that becomes a name later.
+        const whoWaits = isOutbound && signatureWaits(item?.teamAuthorId);
         const who = isOutbound
-          ? (writerName(item?.teamAuthorId) ?? 'il team')
+          ? (whoWaits ? null : (writerName(item?.teamAuthorId) ?? 'il team'))
           : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
             ? item.remoteHandle.trim()
             // Review #626 giro 2: a received passage without a handle still
@@ -3849,7 +4014,13 @@ export function createCustomerCardView(deps) {
           row.setAttribute('data-unread', 'true');
           entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
         }
-        entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        if (whoWaits) {
+          entryHead.appendChild(el('span', undefined, `${channelLabel(item?.channel)} · `));
+          entryHead.appendChild(signaturePlaceholder());
+          if (when) entryHead.appendChild(el('span', undefined, ` · ${when}`));
+        } else {
+          entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        }
         bubble.appendChild(entryHead);
         const outcome = typeof item?.sync === 'string' && item.sync !== '' ? syncLabel(item.sync) : null;
         if (item?.entry === 'call') {
@@ -3958,7 +4129,7 @@ export function createCustomerCardView(deps) {
     if (historyState === 'pending' && !profilePending) {
       void readHistory(historyId).then((answer) => {
         historyState = 'done';
-        stageEvents = stageRowsOf(answer);
+        applyHistory(answer);
         drawList();
       }, () => {
         historyState = 'failed';
@@ -3980,6 +4151,8 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
       if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
+      // backlog:4eceae80a5ca: a repaint never takes the cursor out of the note.
+      if (pendingDrafts?.noteFocused === true) focusAtEnd(noteInput);
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -4011,8 +4184,13 @@ export function createCustomerCardView(deps) {
           const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
             (loaded) => withNote(loaded, saved, written));
           toast('Nota aggiunta');
-          mount.querySelector('[name="noteBody"]')?.focus?.();
+          // backlog:4eceae80a5ca (production 14/11: after Invio the focus
+          // was on the page body, and a second note typed at once lost its
+          // letters): the cursor stays in the empty field, through the
+          // repaint of the copy and the one of the re-read.
+          focusAtEnd(mount.querySelector('[name="noteBody"]'));
           await refreshed;
+          focusAtEnd(mount.querySelector('[name="noteBody"]'));
         } catch (error) {
           const said = noteRefusalText(error);
           noteError.textContent = said;
@@ -4144,7 +4322,10 @@ export function createCustomerCardView(deps) {
     // status is its approval («approvata» meant the price was cleared, not
     // the sale): it reads only for a quote with no readable opportunity,
     // and in full on #/quotes/<id>, where the line links.
-    const offerStatus = shownOfferState(first, fromQuote, opportunities, pipelines);
+    // backlog:a060a4aa65b6 (verifica 14/11: «qualificazione» on an offer
+    // outside any board): the state reads as the Pipeline names it, with a
+    // capital — «Qualificazione», «Prova» — never the bare lower-case word.
+    const offerStatus = upperFirst(shownOfferState(first, fromQuote, opportunities, pipelines));
     // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
     const line = el('p', 'bo-scheda-offer');
     line.appendChild(el('span', 'bo-scheda-offer-name', name));
@@ -4436,7 +4617,7 @@ export function createCustomerCardView(deps) {
   // file, so it names the set instead of importing it).
   const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
 
-  function nextAppointment(box, timeline, timelineError = null) {
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
@@ -4473,7 +4654,7 @@ export function createCustomerCardView(deps) {
     // made readable) with the team member when the handle reads as a name;
     // the row names the long Rome day. No place and no Google sync line:
     // the booking records neither, so none is written.
-    const service = serviceTitle(next?.serviceKey);
+    const service = serviceTitle(next?.serviceKey, serviceNames);
     const member = teamName(next?.teamMemberId);
     box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
     const day = dayParts(next?.startsAt);
@@ -4492,7 +4673,7 @@ export function createCustomerCardView(deps) {
    * row records none), with the reason the operator gave. Never an id.
    * @param {any} timeline
    */
-  function cancelledAppointmentEntries(timeline) {
+  function cancelledAppointmentEntries(timeline, serviceNames = null) {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     return items
       .filter((item) => String(item?.status ?? '') === 'cancelled')
@@ -4503,15 +4684,66 @@ export function createCustomerCardView(deps) {
           id: `appointment-cancelled:${String(item?.id ?? '')}`,
           entry: 'appointment-cancelled',
           occurredAt: typeof item?.decidedAt === 'string' && item.decidedAt !== '' ? item.decidedAt : item?.startsAt,
-          title: ['Appuntamento annullato', serviceTitle(item?.serviceKey), slot].filter(Boolean).join(' · '),
+          title: ['Appuntamento annullato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: reason !== '' ? reason : null,
         };
       });
   }
 
-  /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
-  function serviceTitle(serviceKey) {
-    const words = typeof serviceKey === 'string' ? serviceKey.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  /**
+   * backlog:0d68c387 — a confirmed booking reads in the cronologia as its
+   * own row («Appuntamento fissato · servizio · data»), at the slot it
+   * fixes: the booking used to leave no row, only its cancellation. A
+   * decided cancellation (decidedAt) then sorts after it, newest first.
+   * @param {any} timeline
+   * @param {Map<string, string> | null} serviceNames
+   */
+  function bookedAppointmentEntries(timeline, serviceNames = null) {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    return items
+      .filter((item) => ['booked', 'confirmed'].includes(String(item?.status ?? '')))
+      .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
+      .map((item) => {
+        const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
+        return {
+          id: `appointment-booked:${String(item?.id ?? '')}`,
+          entry: 'appointment-booked',
+          occurredAt: item?.startsAt,
+          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
+          reason: null,
+        };
+      });
+  }
+
+  /**
+   * The listino names behind the booked keys (`serviceKey` or `key` →
+   * `name`), from the same bookable list the booking menu reads. Unknown
+   * keys stay unknown: serviceTitle falls back to the slug words.
+   * @param {any} services the `readBookingServices` answer, or null
+   */
+  function serviceNamesOf(services) {
+    /** @type {Map<string, string>} */
+    const names = new Map();
+    for (const entry of Array.isArray(services) ? services : []) {
+      const key = typeof entry?.serviceKey === 'string' && entry.serviceKey !== ''
+        ? entry.serviceKey
+        : (typeof entry?.key === 'string' ? entry.key : '');
+      const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+      if (key !== '' && name !== '' && !names.has(key)) names.set(key, name);
+    }
+    return names;
+  }
+
+  /**
+   * The booked service as the listino names it («Lezione di prova»), never
+   * the raw slug. A key the listino does not name reads as slug words
+   * («lezione-prova» → «Lezione prova»), like before.
+   */
+  function serviceTitle(serviceKey, serviceNames = null) {
+    const key = typeof serviceKey === 'string' ? serviceKey : '';
+    const named = serviceNames instanceof Map ? serviceNames.get(key) : null;
+    if (typeof named === 'string' && named !== '') return named;
+    const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
     return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
   }
 
@@ -4718,6 +4950,9 @@ export function createCustomerCardView(deps) {
       // with the same name re-narrows the crumb instead of staying silent.
       resetTitle();
     }
+    // backlog:4eceae80a5ca: what the previous page withdrew stays hidden —
+    // restored after the switch above sent what the last customer left.
+    restoreStoredWithdrawals(resource, id);
     const firstVisit = progressive;
     progressive = false;
     if (firstVisit) heldFailures = { token: renderToken, drops: [] };
@@ -4761,6 +4996,12 @@ export function createCustomerCardView(deps) {
         partials = false;
       }
     };
+    // backlog:a762c28a646c: the crumb names a customer another view already
+    // showed at once; the card read confirms (or corrects) it.
+    if (partials && knownNames !== null) {
+      const known = knownNames.get(resource, id);
+      if (known !== null) emitTitle(known);
+    }
     partialPaint(null, PART_NAMES_PENDING());
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
@@ -4793,6 +5034,10 @@ export function createCustomerCardView(deps) {
     lastShown = { key, resource, id, loaded };
     paint(key, resource, id, loaded);
     markRead(resource, id, loaded.timeline);
+    // backlog:4eceae80a5ca: a withdrawal the previous page sent is done
+    // once the cronologia no longer lists its note, and sent again if it
+    // does — or if the cronologia could not be read.
+    settleStoredWithdrawals(resource, id, loaded.timelineError ? null : loaded.timeline);
   }
 
   /**
@@ -4830,6 +5075,7 @@ export function createCustomerCardView(deps) {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
       fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
+      services,
     } = loaded;
     const reloadEnrichment = enrichmentReloader(key, resource, id);
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
@@ -4838,11 +5084,13 @@ export function createCustomerCardView(deps) {
     }
     retainedDrafts = null;
     emitTitle(card?.name ?? null);
+    knownNames?.remember(resource, id, card?.name);
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,
         enrichment, enrichmentError, calls, callsError,
         fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+        services,
       });
     } finally {
       pendingDrafts = null;
@@ -4868,7 +5116,7 @@ export function createCustomerCardView(deps) {
   function readHistory(targetId) {
     let read = historyReads.get(targetId);
     if (read === undefined) {
-      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
+      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=${OFFER_AUDIT_LIMIT}`;
       // backlog:947260f9f036: the roster and the trail leave together — in
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
@@ -4926,9 +5174,18 @@ export function createCustomerCardView(deps) {
    * «Elimina» waiting for its «Annulla» window, by `<resource>/<id>#<noteId>`.
    * The note is hidden at once; the withdrawal leaves when the window ends,
    * or at once when the scheda opens another customer.
-   * @type {Map<string, { resource: string, id: string, noteId: string, state: 'waiting' | 'sending' }>}
+   * @type {Map<string, { resource: string, id: string, noteId: string, spaceId: string | null, idempotencyKey?: string, restored?: boolean, state: 'waiting' | 'sending' | 'restored' }>}
    */
   const pendingWithdrawals = new Map();
+  /**
+   * The key of a withdrawal in the view: space, customer and note (review
+   * Muse #883, P2) — the same record id in another space is another key.
+   * @param {string | null} spaceId @param {string} resource @param {string} id @param {string} noteId
+   */
+  const withdrawalKey = (spaceId, resource, id, noteId) => `${spaceId ?? ''}|${resource}/${id}#${noteId}`;
+  /** A withdrawal of this customer in the space on screen. @param {any} pending @param {string} resource @param {string} id */
+  const withdrawalHere = (pending, resource, id) => pending.spaceId === activeSpaceId()
+    && pending.resource === resource && pending.id === id;
   /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
@@ -4999,10 +5256,14 @@ export function createCustomerCardView(deps) {
       await client.request('/api/customer-hub/notes/withdraw', {
         method: 'POST',
         body: JSON.stringify({ resource, id, noteId }),
+        // One key per withdrawal (backlog:4eceae80a5ca): a send again from
+        // the next page is the same submission, replayed by the server.
+        idempotencyKey: pending.idempotencyKey,
         // Sent while the page goes away: the request outlives it.
         ...(keepalive ? { keepalive: true } : {}),
       });
       pendingWithdrawals.delete(pendingKey);
+      forgetStoredWithdrawal(pending);
       // The note stays out of the cronologia; then only the cronologia is
       // read again, so the screen is the server's answer.
       if (lastShown !== null && lastShown.key === key && shownKey === key) {
@@ -5010,7 +5271,22 @@ export function createCustomerCardView(deps) {
       }
     } catch (error) {
       pendingWithdrawals.delete(pendingKey);
-      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
+      // A refused withdrawal is not tried again by the next page.
+      forgetStoredWithdrawal(pending);
+      const code = typeof error?.code === 'string' ? error.code : '';
+      if (pending.restored === true && (code === 'WORK_NOTE_WITHDRAWN' || code === 'WORK_NOTE_NOT_FOUND')) {
+        // The withdrawal the previous page sent already landed: done, quietly.
+        if (lastShown !== null && lastShown.key === key && shownKey === key) {
+          await refreshParts(resource, id, ['timeline'], (loaded) => withoutNote(loaded, noteId));
+        }
+        return;
+      }
+      // backlog:4eceae80a5ca: a send again from the next page that fails for
+      // any other reason (the pilot refusing the same key, 502) never keeps
+      // the note hidden in silence: it comes back, and the toast says so.
+      toast(pending.restored === true
+        ? 'Non sono riuscito a eliminare la nota: riprova.'
+        : noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
       // The note comes back where it was, then the cronologia is read again.
       repaintIfShown(resource, id);
       if (lastShown !== null && lastShown.key === key && shownKey === key) {
@@ -5025,9 +5301,16 @@ export function createCustomerCardView(deps) {
    * @param {{ keepalive?: boolean }} [options]
    */
   function flushWithdrawals(options = {}) {
-    if (pendingWithdrawals.size === 0) return;
-    hideToast(NOTE_TOAST_SCOPE);
-    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey, options);
+    const unsent = [...pendingWithdrawals.entries()]
+      .filter(([, pending]) => pending.state === 'waiting' || pending.state === 'restored');
+    if (unsent.length === 0) return;
+    if (unsent.some(([, pending]) => pending.state === 'waiting')) hideToast(NOTE_TOAST_SCOPE);
+    // Review Muse #883 (P2): a withdrawal restored from the previous page
+    // and not settled yet leaves too, never hidden until it expires.
+    for (const [pendingKey, pending] of unsent) {
+      pending.state = 'waiting';
+      void commitWithdrawal(pendingKey, options);
+    }
   }
   // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
   // window lost the withdrawal — the timer died with the page and the note
@@ -5036,8 +5319,93 @@ export function createCustomerCardView(deps) {
   // with keepalive. Hiding it (another browser tab) does nothing (review
   // Muse #878, P2): the «Annulla» window stays whole while the page lives.
   const pageWindow = deps.pageWindow ?? (typeof window === 'undefined' ? null : window);
+  const sessionStore = deps.sessionStorage
+    ?? (typeof globalThis.sessionStorage === 'undefined' ? null : globalThis.sessionStorage);
+  const nowMs = typeof deps.now === 'function' ? deps.now : () => Date.now();
+  /** @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} pending */
+  function forgetStoredWithdrawal(pending) {
+    const list = readStoredWithdrawals(sessionStore, nowMs());
+    const kept = list.filter((entry) => !sameWithdrawal(entry, pending));
+    if (kept.length !== list.length) writeStoredWithdrawals(sessionStore, kept);
+  }
+  /**
+   * backlog:4eceae80a5ca: what leaves with the page is written down first,
+   * for the next page — the withdrawals still in their Annulla window and
+   * the ones this page restored and has not settled yet (review Muse #883).
+   */
+  function storeWaitingWithdrawals() {
+    const unsent = [...pendingWithdrawals.values()]
+      .filter((pending) => pending.state === 'waiting' || pending.state === 'restored');
+    if (unsent.length === 0) return;
+    const fresh = unsent.map((pending) => ({
+      spaceId: pending.spaceId, resource: pending.resource, id: pending.id, noteId: pending.noteId,
+      idempotencyKey: pending.idempotencyKey, expiresAt: nowMs() + NOTE_WITHDRAWAL_KEEP_MS,
+    }));
+    const others = readStoredWithdrawals(sessionStore, nowMs())
+      .filter((entry) => !fresh.some((item) => sameWithdrawal(item, entry)));
+    writeStoredWithdrawals(sessionStore, [...others, ...fresh]);
+  }
   if (pageWindow && typeof pageWindow.addEventListener === 'function') {
-    pageWindow.addEventListener('pagehide', () => flushWithdrawals({ keepalive: true }));
+    pageWindow.addEventListener('pagehide', () => {
+      storeWaitingWithdrawals();
+      flushWithdrawals({ keepalive: true });
+    });
+  }
+  /**
+   * backlog:4eceae80a5ca — at the start of a scheda read: the withdrawals the
+   * previous page sent for this customer in this space are hidden at once
+   * (the cronologia may still list them for a moment).
+   * @param {string} resource @param {string} id
+   */
+  function restoreStoredWithdrawals(resource, id) {
+    const spaceId = activeSpaceId();
+    for (const entry of readStoredWithdrawals(sessionStore, nowMs())) {
+      if (entry.spaceId !== spaceId || entry.resource !== resource || entry.id !== id) continue;
+      const pendingKey = withdrawalKey(entry.spaceId, resource, id, entry.noteId);
+      if (pendingWithdrawals.has(pendingKey)) continue;
+      pendingWithdrawals.set(pendingKey, {
+        resource, id, noteId: entry.noteId, idempotencyKey: entry.idempotencyKey, restored: true, spaceId: entry.spaceId,
+        state: /** @type {'waiting' | 'sending' | 'restored'} */ ('restored'),
+      });
+    }
+  }
+  /**
+   * Once the cronologia is read: a stored withdrawal whose note is gone is
+   * done — its entry leaves; one whose note is still listed is sent again
+   * with its own key.
+   * @param {string} resource @param {string} id @param {any} timeline
+   */
+  function settleStoredWithdrawals(resource, id, timeline) {
+    const items = timeline?.entries?.items;
+    if (!Array.isArray(items)) {
+      // Review Muse #883 (P2): an unreadable cronologia cannot say the
+      // withdrawal is done — it is sent again (same key), never left hidden.
+      for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+        if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
+        pending.state = 'waiting';
+        void commitWithdrawal(pendingKey);
+      }
+      return;
+    }
+    const listed = new Set(items.filter((item) => item?.entry === 'note').map((item) => item.id));
+    // Review Muse #883 (P1): a cut cronologia (only its newest page) cannot
+    // say an older note is gone — a note it does not list may sit further
+    // back, so the withdrawal is sent again (same key), never dropped.
+    const complete = timeline?.entries?.truncated !== true;
+    const spaceId = activeSpaceId();
+    const stored = readStoredWithdrawals(sessionStore, nowMs());
+    const kept = stored.filter((entry) => !(complete && entry.spaceId === spaceId && entry.resource === resource
+      && entry.id === id && !listed.has(entry.noteId)));
+    if (kept.length !== stored.length) writeStoredWithdrawals(sessionStore, kept);
+    for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+      if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
+      if (complete && !listed.has(pending.noteId)) {
+        pendingWithdrawals.delete(pendingKey);
+        continue;
+      }
+      pending.state = 'waiting';
+      void commitWithdrawal(pendingKey);
+    }
   }
   /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
@@ -5045,9 +5413,16 @@ export function createCustomerCardView(deps) {
    * @param {string} resource @param {string} id @param {string} noteId
    */
   function withdrawNote(resource, id, noteId) {
-    const pendingKey = `${resource}/${id}#${noteId}`;
+    const pendingKey = withdrawalKey(activeSpaceId(), resource, id, noteId);
     if (pendingWithdrawals.has(pendingKey)) return;
-    const pending = { resource, id, noteId, state: /** @type {'waiting' | 'sending'} */ ('waiting') };
+    const pending = {
+      resource, id, noteId,
+      // backlog:4eceae80a5ca: the submission key is chosen now, so the next
+      // page can send the same withdrawal again under it.
+      idempotencyKey: submissions.issueKey(),
+      spaceId: activeSpaceId(),
+      state: /** @type {'waiting' | 'sending' | 'restored'} */ ('waiting'),
+    };
     pendingWithdrawals.set(pendingKey, pending);
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
@@ -5073,6 +5448,13 @@ export function createCustomerCardView(deps) {
   }
   /** @type {Array<any> | null} */
   let rosterPeople = null;
+  /**
+   * backlog:6c40dcfaeb3f: whether a roster read has answered in this view
+   * (names, an empty team or a refusal). Until then a signature waits — a
+   * neutral placeholder, never «dal team» that turns into a name 8-15 s
+   * later on a cold load.
+   */
+  let rosterSettled = false;
   function readRoster() {
     if (rosterRead === null) {
       const read = client.request('/api/spine/memberships').then(
@@ -5085,11 +5467,17 @@ export function createCustomerCardView(deps) {
       );
       rosterRead = read;
       void read.then((people) => {
-        if (rosterRead !== read || people.length === 0) return;
-        const first = rosterPeople === null;
-        rosterPeople = people;
-        // Names arrive after the first paint: paint once more, no read.
-        if (first && lastShown !== null && lastShown.key === shownKey) {
+        // Any answer settles the waiting signatures — a refusal too, whose
+        // read is already dropped for the next paint to ask again.
+        const firstAnswer = !rosterSettled;
+        rosterSettled = true;
+        if (rosterRead !== read && !firstAnswer) return;
+        const firstNames = people.length > 0 && rosterPeople === null;
+        if (people.length > 0) rosterPeople = people;
+        // Names arrive after the first paint: paint once more, no read. The
+        // first answer repaints even without names: the waiting signatures
+        // then read «dal team» for a writer the team really does not name.
+        if ((firstNames || firstAnswer) && lastShown !== null && lastShown.key === shownKey) {
           paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
         }
       });
@@ -5119,6 +5507,27 @@ export function createCustomerCardView(deps) {
     if (named !== '') return named;
     return writerName(item?.teamAuthorId);
   }
+  /**
+   * backlog:6c40dcfaeb3f: a signature that waits for the roster — the row
+   * names a writer, the API gave no name and no roster answer is in yet.
+   * @param {unknown} authorId @param {unknown} [apiName]
+   */
+  function signatureWaits(authorId, apiName = null) {
+    if (rosterSettled) return false;
+    if (typeof apiName === 'string' && apiName.trim() !== '') return false;
+    if (typeof authorId !== 'string' || authorId.trim() === '') return false;
+    // Review Muse #894 (P2): a writer whose name reads without the roster
+    // (a human handle, «elena» → «Elena») is named at once; only an id the
+    // roster alone can name waits.
+    return writerName(authorId) === null;
+  }
+  /** The neutral place of a name still being read: a short grey bar, no words. */
+  function signaturePlaceholder() {
+    const bar = uiSkeleton(doc, { width: '4em' });
+    bar.setAttribute('class', `${bar.getAttribute('class')} bo-scheda-who-pending`);
+    bar.setAttribute('data-who-pending', 'true');
+    return bar;
+  }
 
   /**
    * backlog:1a96094db71d — the scheda while its reads land: the structure
@@ -5133,7 +5542,10 @@ export function createCustomerCardView(deps) {
   function paintPartial(key, resource, id, partial, pending) {
     const waiting = pending ?? PART_NAMES_PENDING();
     if (partial?.cardError) return;
-    if (partial?.card) emitTitle(partial.card.name ?? null);
+    if (partial?.card) {
+      emitTitle(partial.card.name ?? null);
+      knownNames?.remember(resource, id, partial.card.name);
+    }
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
     try {
       buildAndShow(key, resource, id, {
@@ -5228,8 +5640,12 @@ export function createCustomerCardView(deps) {
     card, timeline, timelineError, profile, profileError,
     enrichment, enrichmentError, calls, callsError,
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+    services = null,
     pending = null,
   }) {
+    // backlog:0d68c387: the listino names behind the booked service keys —
+    // the booking menu's list, or an empty map (slug words) while it loads.
+    const serviceNames = serviceNamesOf(services);
     const panel = el('div', 'bo-scheda');
     if (pending !== null && pending.size > 0) {
       panel.setAttribute('aria-busy', 'true');
@@ -5242,8 +5658,21 @@ export function createCustomerCardView(deps) {
       const head = el('div', 'bo-scheda-head');
       head.setAttribute('data-loading', 'true');
       head.setAttribute('aria-busy', 'true');
-      head.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
-      head.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+      // backlog:a762c28a646c: a name another view already showed reads at
+      // once; the rest of the header stays grey until the card lands.
+      const known = knownNames !== null ? knownNames.get(resource, id) : null;
+      if (known !== null) {
+        const avatar = el('span', 'bo-scheda-avatar', customerInitials(known));
+        avatar.setAttribute('aria-hidden', 'true');
+        head.appendChild(avatar);
+        const titles = el('div', 'bo-scheda-titles');
+        titles.appendChild(el('h1', 'bo-scheda-name', known));
+        titles.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+        head.appendChild(titles);
+      } else {
+        head.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+        head.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+      }
       panel.appendChild(head);
     } else {
       header(panel, card, resource, id);
@@ -5292,7 +5721,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'));
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames);
     }
     if (waits('calls')) {
       skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');
@@ -5315,7 +5744,7 @@ export function createCustomerCardView(deps) {
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
-    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);
