@@ -32,6 +32,7 @@ import {
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
+  isNonCanonicalEmailRow,
   isProfileEmailStandinRow,
   mergeProfileConnections,
 } from './admin-channels-count.js';
@@ -506,9 +507,12 @@ export function withProfileConnections(activity, profile = null) {
   const preFilter = mergeProfileConnections(entries, profile);
   // The profile-Gmail stand-in never votes Email in the count or the
   // table: without a real channel connection the send fails 409
-  // (backlog:3805161965cd). The fix and grant cards keep reading the raw
-  // entries (the view runs them on the unfiltered activity).
-  const merged = preFilter.filter((row) => !isProfileEmailStandinRow(row));
+  // (backlog:3805161965cd). An alias ('gmail') or a case variant ('Email')
+  // spelling never votes either — the server matches entry.channel exactly,
+  // like in the composer (Muse P1+P2 giro 7 on #848). The fix and grant
+  // cards keep reading the raw entries (the view runs them on the
+  // unfiltered activity).
+  const merged = preFilter.filter((row) => !isProfileEmailStandinRow(row) && !isNonCanonicalEmailRow(row));
   // Identity means nothing changed, row for row: a removed Email
   // stand-in plus an added profile link is a change even at equal length,
   // so the length shortcut never stands alone.
@@ -1266,10 +1270,12 @@ export function createSyncView(deps) {
     // included, plus a linked channel outside the nine (review #647).
     // Backlog:3805161965cd: the profile-Gmail stand-in never votes Email —
     // without a real channel connection the send fails 409, so Stato sync
-    // prints the same number Oggi prints (cf365ada15b9). The table rows
-    // keep painting from the shared merge untouched (review #680).
+    // prints the same number Oggi prints (cf365ada15b9). An alias ('gmail')
+    // or a case variant ('Email') never votes either (Muse P1+P2 giro 7 on
+    // #848). The table rows keep painting from the shared merge untouched
+    // (review #680).
     const count = channelConnectionCount(
-      entriesOf(activity).filter((row) => !isProfileEmailStandinRow(row)),
+      entriesOf(activity).filter((row) => !isProfileEmailStandinRow(row) && !isNonCanonicalEmailRow(row)),
     );
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));

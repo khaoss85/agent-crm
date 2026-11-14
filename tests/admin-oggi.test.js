@@ -868,13 +868,31 @@ test('Google connections from GET /api/profile vote Calendar, never Email alone'
   assert.ok(!withRow.some((entry) => entry.channel === 'email'), 'a real Email row takes Email out of the invite');
 });
 
-// Backlog:3805161965cd (review giro 6 P1, paired): a real Email row
-// stored under the alias spelling counts Email in «x di 9» and takes it
-// out of the invite — count and invite never disagree on the same row.
-test('3805161965cd: an alias-spelled real Email row counts and un-invites Email', () => {
+// Backlog:3805161965cd (Muse P1 giro 7 on #848, paired): a real row
+// stored under an alias spelling ('gmail') can never send — the server
+// matches entry.channel === channel exactly — so it counts nothing and
+// stays invited, like in the composer. Count and invite never disagree on
+// the same row. (Supersedes the giro 6 expectation, which pinned the
+// disagreement the giro 7 review cures.)
+test('3805161965cd: an alias-spelled real Email row votes nothing and stays invited', () => {
   const aliasRow = [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }];
-  assert.equal(countConnectedNine(aliasRow, null), 1, 'the alias-spelled row counts Email');
-  assert.ok(!missingLeadChannels(aliasRow, null).some((entry) => entry.channel === 'email'), 'the same row takes Email out of the invite');
+  assert.equal(countConnectedNine(aliasRow, null), 0, 'the alias-spelled row counts no Email');
+  assert.ok(missingLeadChannels(aliasRow, null).some((entry) => entry.channel === 'email'), 'the same row keeps Email invited');
+  const invite = buildChannelInvite({ connections: aliasRow });
+  assert.ok(invite.leads.includes('Email'), 'the strip invites the Email the composer requires');
+});
+
+// Backlog:3805161965cd (Muse P2 giro 7 on #848, paired): a case-variant
+// spelling ('Email') votes nowhere either — the count, the invite and the
+// lead channels read it exactly like the composer and the state do (off),
+// with the same case everywhere.
+test('3805161965cd: a capital-spelled real Email row votes nowhere', () => {
+  const rows = [{ channel: 'Email', status: 'active', connectionKey: 'gmail-1' }];
+  assert.equal(countConnectedNine(rows, null), 0, 'the capital spelling counts no Email');
+  assert.ok(missingLeadChannels(rows, null).some((entry) => entry.channel === 'email'), 'the lead channels keep inviting Email');
+  const invite = buildChannelInvite({ connections: rows });
+  assert.equal(invite.connected, 0, 'the strip counts no Email');
+  assert.ok(invite.leads.includes('Email'), 'the strip invites Email');
 });
 
 test('A key-only Email row votes nothing on Oggi and stays invited', () => {

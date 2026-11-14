@@ -19,6 +19,7 @@ import {
   NINE_CHANNEL_IDS,
   channelConnectionCount,
   channelState,
+  isNonCanonicalEmailRow,
   isProfileEmailStandinRow,
   mergeProfileConnections,
 } from '../apps/admin/public/admin-channels-count.js';
@@ -300,6 +301,23 @@ test('isProfileEmailStandinRow shares the composer rule, key and alias spellings
   assert.equal(isProfileEmailStandinRow(null), false);
 });
 
+// Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): Email votes only on
+// its canonical spelling — an alias ('gmail') or a case variant ('Email')
+// can never send, so it never reads `collegato`, whatever key it carries.
+// Every other channel keeps the shared alias mapping ('google-calendar'
+// still reads `collegato`).
+test('isNonCanonicalEmailRow names the Email spellings that can never send', () => {
+  assert.equal(isNonCanonicalEmailRow({ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }), true, 'alias spelling with a real key');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'Email', status: 'active', connectionKey: 'gmail-1' }), true, 'case variant with a real key');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'GMAIL', status: 'active', connectionKey: 'gmail-1' }), true, 'upper-case alias');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'email', status: 'active', connectionKey: 'gmail-1' }), false, 'the canonical spelling votes');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'google-calendar', status: 'active' }), false, 'other channels keep their aliases');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'calendar', status: 'active' }), false);
+  assert.equal(isNonCanonicalEmailRow({ channel: 'messenger', status: 'active' }), false, 'Meta aliases stay untouched');
+  assert.equal(isNonCanonicalEmailRow(null), false);
+  assert.equal(isNonCanonicalEmailRow({}), false, 'no channel votes nothing');
+});
+
 // Muse review on #848, giro 4 P1 (backlog:3805161965cd): a sole
 // profile-Gmail Email stand-in never holds `da-completare` — with a composed
 // Email adapter it falls through to `da-collegare` with the guided route,
@@ -319,4 +337,20 @@ test('channelState: a sole Email stand-in with a composed adapter reads da-colle
     adapters,
   });
   assert.equal(pending.state, 'da-completare', 'a real row still holds da-completare');
+});
+
+// Backlog:3805161965cd (Muse P1 giro 7 on #848): an alias- or
+// case-variant-spelled real Email row never reads `collegato` — with a
+// composed adapter it cures to the guided flow, like the composer cures,
+// never the loop back to Profilo.
+test('channelState: a non-canonical Email spelling never reads collegato', () => {
+  const adapters = [{ name: 'email-adapter', version: 1 }];
+  for (const channel of ['gmail', 'Email']) {
+    const state = channelState('email', {
+      rows: [{ channel, status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }],
+      adapters,
+    });
+    assert.equal(state.state, 'da-collegare', `${channel}: never collegato without the canonical spelling`);
+    assert.equal(state.connectRoute, '#/connettori/email', `${channel}: the guided flow cures it`);
+  }
 });

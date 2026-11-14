@@ -40,7 +40,7 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
-import { channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { channelConnectionCount, isNonCanonicalEmailRow, mergeProfileConnections } from './admin-channels-count.js';
 import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -174,7 +174,12 @@ export function countSpaceChannels(answer, profile = null) {
   // The shared count (backlog:e381c48581fa): linked channels, not active
   // rows — two accounts on one channel are one channel — with the profile
   // links merged, like «2 di 9» on Oggi and Stato sync (review #782 P1).
-  return channelConnectionCount(mergeProfileConnections(entries, profile)).connected;
+  // Backlog:3805161965cd (Muse P1 giro 7 on #848): Email votes only on its
+  // canonical spelling, like in the composer — an alias ('gmail') or a case
+  // variant ('Email') can never send.
+  return channelConnectionCount(
+    mergeProfileConnections(entries, profile).filter((row) => !isNonCanonicalEmailRow(row)),
+  ).connected;
 }
 
 /**

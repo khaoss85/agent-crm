@@ -152,6 +152,23 @@ export function isProfileEmailStandinRow(row) {
   return typeof key === 'string' && key.trim().toLowerCase().startsWith('profile:');
 }
 
+/**
+ * Whether one row spells Email in a way that can never send
+ * (backlog:3805161965cd, Muse P1+P2 giro 7 on #848): the send route matches
+ * `entry.channel === channel` exactly (POST /api/customer-hub/messages), so
+ * only the canonical 'email' spelling votes Email anywhere — an adapter
+ * alias ('gmail') or a case variant ('Email') reads off on every screen,
+ * like in the composer. Every other channel keeps the shared alias mapping
+ * (countedChannel): a stored 'google-calendar' still counts Calendar.
+ * @param {unknown} row connection-like row ({ channel })
+ */
+export function isNonCanonicalEmailRow(row) {
+  if (row === null || typeof row !== 'object') return false;
+  const spelling = typeof row.channel === 'string' ? row.channel : '';
+  if (spelling === 'email') return false;
+  return countedChannel(spelling) === 'email' || countedChannel(spelling.toLowerCase()) === 'email';
+}
+
 export function mergeProfileConnections(rows, profile = null) {
   const list = Array.isArray(rows) ? rows.filter((row) => row != null && typeof row === 'object') : [];
   const items = profileItems(profile);
@@ -346,8 +363,13 @@ export function profileGrantConnected(profile, channel) {
  */
 export function channelState(channel, { rows = [], profile = null, adapters = null, guided = [] } = {}) {
   const id = countedChannel(channel);
+  // Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): Email votes only on
+  // its canonical spelling — the server matches entry.channel === channel
+  // exactly, so an alias ('gmail') or a case variant ('Email') never reads
+  // `collegato` here, like in the composer. Every other channel keeps the
+  // shared alias mapping.
   const matching = mergeProfileConnections(rows, profile)
-    .filter((row) => countedChannel(row.channel) === id);
+    .filter((row) => countedChannel(row.channel) === id && !isNonCanonicalEmailRow(row));
   const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
   // The profile-Gmail stand-in is no channel connection (the send without
   // one fails 409), so it never reads `collegato` — Connettori agrees with

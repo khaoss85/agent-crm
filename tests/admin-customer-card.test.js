@@ -16,7 +16,7 @@ import {
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { offerStageLabel } from '../apps/admin/public/admin-labels.js';
-import { countConnectedNine } from '../apps/admin/public/admin-oggi.js';
+import { buildChannelInvite, countConnectedNine, missingLeadChannels } from '../apps/admin/public/admin-oggi.js';
 import { channelConnectionCount, channelState } from '../apps/admin/public/admin-channels-count.js';
 import { syncConnectRoute, withProfileConnections } from '../apps/admin/public/admin-sync.js';
 import { ASSISTANT_SPACE_DISABLED_NOTICE, FREE_QUESTION_DISABLED_NOTICE, assistantDisabledNotice } from '../apps/admin/public/admin-assistant.js';
@@ -2985,6 +2985,32 @@ test('3805161965cd: the composer leaves an alias-spelled row off like the server
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the alias-spelled row never enables Email');
   assert.equal(fromValueOf(panel), '', 'no route, no sender: «Da» stays empty');
+});
+
+// Backlog:3805161965cd (Muse P1 giro 7 su #848, paired): an alias-spelled
+// real row ('gmail' with a real key) can never send — the server matches
+// entry.channel === channel exactly — so every screen reads it off: the
+// state never `collegato`, Oggi and Stato sync count no Email, the strip
+// and the lead channels keep inviting Email, and the composer keeps it
+// off. One paired test asserting channelState and composerChannelsFor
+// (through the mounted composer) agree on the same row.
+test('3805161965cd: every screen agrees on an alias-spelled real Email row', async () => {
+  const rows = [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }];
+  const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
+  const state = channelState('email', { rows, adapters: emailAdapters });
+  assert.equal(state.state, 'da-collegare', 'the state never reads collegato');
+  assert.equal(state.connectRoute, '#/connettori/email', 'the state cures to the guided flow');
+  assert.equal(countConnectedNine(rows, null), 0, 'Oggi counts no Email');
+  assert.ok(missingLeadChannels(rows, null).some((entry) => entry.channel === 'email'), 'the lead channels keep inviting Email');
+  const invite = buildChannelInvite({ connections: rows });
+  assert.ok(invite.leads.includes('Email'), 'the strip invites the Email the composer requires');
+  const synced = withProfileConnections({ connections: rows }, null);
+  assert.ok(!channelConnectionCount(synced.connections).connectedChannels.includes('email'), 'Stato sync counts no Email either');
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: rows }, profile: null }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the composer keeps Email off too');
 });
 
 // Voce eaa84ccafc53: the pilot merges the profile mailbox into the

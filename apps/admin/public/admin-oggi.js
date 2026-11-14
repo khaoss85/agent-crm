@@ -32,7 +32,7 @@
 
 import { CONNECTOR_CATALOG } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, countedChannel, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, countedChannel, isNonCanonicalEmailRow, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1303,7 +1303,11 @@ const isInviteSyntheticEmailRow = isProfileEmailStandinRow;
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 function mergeInviteConnections(connections = [], profile = null) {
-  return mergeProfileConnections(connections, profile).filter((row) => !isInviteSyntheticEmailRow(row));
+  // Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): Email votes only on
+  // its canonical spelling — an alias ('gmail') or a case variant ('Email')
+  // can never send, so it never counts here either, like in the composer.
+  return mergeProfileConnections(connections, profile)
+    .filter((row) => !isInviteSyntheticEmailRow(row) && !isNonCanonicalEmailRow(row));
 }
 
 /**
@@ -1334,15 +1338,15 @@ export function countConnectedNine(connections = [], profile = null) {
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function missingLeadChannels(connections = [], profile = null) {
-  // Backlog:3805161965cd (review giro 6 P1): the invite votes on the
-  // counted id, never the raw spelling — a real active row stored as
-  // channel 'gmail' counts Email in «x di 9» via the shared aliases, so it
-  // must take Email out of the invite too.
+  // Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): the invite votes
+  // Email only on the canonical spelling, with the same case the count and
+  // the composer read — an alias ('gmail') or a case variant ('Email') can
+  // never send, so it stays invited, like in «x di 9».
   const active = new Set(
     (Array.isArray(connections) ? connections : [])
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string'
-        && !isInviteSyntheticEmailRow(row))
-      .map((row) => countedChannel(row.channel.toLowerCase())),
+        && !isInviteSyntheticEmailRow(row) && !isNonCanonicalEmailRow(row))
+      .map((row) => countedChannel(row.channel)),
   );
   for (const channel of googleNineChannels(profile)) {
     if (channel === 'email') continue;
