@@ -11,6 +11,7 @@ import {
   LAST_CONTACT_PREVIEW_CHARS,
   applyCustomerListQuery,
   channelWordsIn,
+  filterCustomerRows,
   parseCustomerListQuery,
   previewLastContactText,
   shapeCustomerRow,
@@ -169,6 +170,34 @@ test('the seven quick views are saved filter descriptors, not row snapshots', ()
   });
   const unknown = rowOf({}, baseReads());
   assert.equal(applyCustomerListQuery([unread, read, unknown], parseCustomerListQuery({ vista: 'da-leggere' })).total, 1);
+});
+
+test('a view rule combines with the Stato filter: Clienti attivi never shows a Contatto (backlog:0dd85ba9)', () => {
+  const ada = rowOf({ contact: { firstName: 'Ada', lastName: 'Rossi' } }, baseReads());
+  const cliente = rowOf({ contact: { firstName: 'Mario', lastName: 'Rossi' } }, {
+    identitiesBySubject: new Map([['contact:c1', [IDENTITY()]]]),
+    statusBySubject: new Map([['contact:c1', { value: 'cliente', reason: 'orders: 1 on record' }]]),
+  });
+  const rows = [ada, cliente];
+  // No Stato filter: the view alone cuts by its rule.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi' })).total, 1);
+  // Stato=Contatto with the view open: the combination matches nothing —
+  // the view never shows a Contatto, and its pill counts zero, not 18.
+  const conflict = parseCustomerListQuery({ vista: 'clienti-attivi', stato: 'contatto' });
+  assert.equal(applyCustomerListQuery(rows, conflict).total, 0);
+  const counts = new Map(CUSTOMER_VIEWS.map((view) => [view.id, filterCustomerRows(rows, conflict, view).length]));
+  assert.equal(counts.get('clienti-attivi'), 0);
+  assert.equal(counts.get('nuovi-lead'), 1);
+  assert.equal(counts.get('tutti'), 1);
+  // The reported case: view open with a search — Ada Rossi is a Contatto,
+  // so only the Cliente named Rossi stays.
+  const found = applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi', q: 'Rossi' }));
+  assert.equal(found.total, 1);
+  assert.equal(found.items[0].status.value, 'cliente');
+  // Symmetric conflict: Nuovi lead never shows a Cliente.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'nuovi-lead', stato: 'cliente' })).total, 0);
+  // Agreement is not a conflict: the matching Stato filter keeps the row.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi', stato: 'cliente' })).total, 1);
 });
 
 test('da-leggere sorts by newest unread first, rows without unread last', () => {

@@ -171,10 +171,18 @@ export function createMountGate(mount) {
  * @returns {string}
  */
 export function customerCrumbLabel(target, label, remembered) {
-  if (!target || target.view !== 'customer-card' || !remembered) return label;
-  if (remembered.resource !== target.resource || remembered.id !== target.subjectId) return label;
+  if (!target || target.view !== 'customer-card') return label;
+  // backlog:4eceae80a5ca: while the card is read the crumb holds the place
+  // of the name («Clienti / …»), never a bare «Clienti» for a second.
+  if (!remembered || remembered.resource !== target.resource || remembered.id !== target.subjectId) {
+    return `${label} / ${CUSTOMER_CRUMB_PENDING}`;
+  }
+  // A card that could not be read names nobody: the plain screen label.
   return typeof remembered.name === 'string' && remembered.name !== '' ? `${label} / ${remembered.name}` : label;
 }
+
+/** The place of the customer's name in the crumb while the card is read. */
+export const CUSTOMER_CRUMB_PENDING = '…';
 
 /**
  * backlog:f2d39e473e3a — the offer page's crumb («Offerta / <cliente> /
