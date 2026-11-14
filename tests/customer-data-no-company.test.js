@@ -356,3 +356,39 @@ test('a company-only import row naming «Senza azienda» takes its own placehold
   const list = await app.listCustomers({});
   assert.ok(!list.items.some((item) => item.id === company.id), 'no standalone row for the reserved name');
 });
+
+test('nessuna rotta HTTP cambia placeholder (backlog:ac65e448fcb4, arbitrato 14/11 giro 5)', async (t) => {
+  const app = createAccordoApp({ dbPath: ':memory:' });
+  const server = createHttpServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    app.close();
+  });
+
+  const real = await app.services.companies.create({ name: 'Reale Srl', domain: null }, { actor: OPERATOR });
+  assert.equal(real.placeholder, false);
+
+  for (const method of ['PATCH', 'PUT']) {
+    const response = await fetch(`${baseUrl}/api/companies/${real.id}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ placeholder: true }),
+    });
+    assert.ok(response.status < 200 || response.status >= 300, `${method} non risponde 2xx`);
+    await response.text().catch(() => {});
+    assert.equal(isNoCompany(await app.services.companies.get(real.id)), false, `${method} non cambia il flag`);
+  }
+
+  const refused = await fetch(`${baseUrl}/api/companies`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Intrusa', placeholder: true }),
+  });
+  assert.equal(refused.status, 400, 'POST con placeholder resta 400');
+});
