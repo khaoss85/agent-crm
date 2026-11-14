@@ -2465,10 +2465,11 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:6e6750ff8163 — × or Esc on the «Nuovo appuntamento» form:
-   * it closes AND empties, so the next opening starts clean — never the
-   * old slot, customer or price left behind. Focus goes back to the
-   * «Nuovo appuntamento» button.
+   * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
+   * appuntamento» form: it closes AND drops the typed values — never the
+   * old slot, customer or price left behind. The next opening proposes a
+   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
+   * goes back to the «Nuovo appuntamento» button.
    */
   function closeManual() {
     if (!state.selection && !state.manualOpen && !state.draftFill) return;
