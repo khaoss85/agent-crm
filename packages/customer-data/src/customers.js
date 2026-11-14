@@ -476,7 +476,14 @@ export function viewFilters(view) {
 export function filterCustomerRows(rows, query, view, todayIso) {
   const all = Array.isArray(rows) ? rows : [];
   const viewExtra = viewFilters(view);
-  const wantedStatus = query.stato !== 'all' ? query.stato : viewExtra.stato ?? 'all';
+  // A view's rule combines with the explicit filters (AND, backlog:0dd85ba9):
+  // a view that names a stato never shows the other one, even when the
+  // Stato filter asks for it — then the combination matches nothing, so the
+  // pill counts zero and the page stays empty instead of listing Contatti
+  // under «Clienti attivi».
+  const viewStatus = viewExtra.stato ?? 'all';
+  const statusConflict = viewStatus !== 'all' && query.stato !== 'all' && query.stato !== viewStatus;
+  const wantedStatus = viewStatus !== 'all' ? viewStatus : query.stato;
   const channelHits = query.q ? channelWordsIn(query.q) : [];
   // Channel words filter by channel AND are removed from the text: unlike the
   // prototype (which ignored the remaining words once a channel hit), "marco
@@ -488,6 +495,7 @@ export function filterCustomerRows(rows, query, view, todayIso) {
   const needle = typeof query.valore === 'string' && query.valore !== ''
     ? query.valore.toLowerCase() : null;
   const filtered = all.filter((row) => {
+    if (statusConflict) return false;
     if (wantedStatus !== 'all' && row?.status?.value !== wantedStatus) return false;
     if (query.campo !== undefined) {
       const entry = (row?.customFields ?? []).find((field) => field?.key === query.campo) ?? null;
