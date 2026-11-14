@@ -187,7 +187,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -240,6 +240,7 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
       // backlog:0d68c387: the bookable list naming the services. Unstubbed
       // it reads as not composed, like an older server without the route.
       if (path === '/api/appointments/services') {
+        if (servicesError) throw servicesError;
         if (services === null) throw Object.assign(new Error('Not Found'), { status: 404 });
         return { services };
       }
@@ -609,6 +610,43 @@ test('without the listino the booked service still reads as slug words', async (
   const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
   assert.equal(booked.length, 1, 'the booking still has its row');
   assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione prova ·'), booked[0].textContent);
+});
+
+// backlog:0d68c387, review rev-agent-crm-889-4db30273 (P2): a failed
+// listino read (500/timeout) still reads as slug words, but leaves one
+// diagnosable warn line with the cause — never a silent fallback.
+test('a failed listino read still reads slug words and warns with the cause', async () => {
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => { warned.push(args); };
+  let mount;
+  try {
+    mount = await renderCard(stubClient({
+      servicesError: Object.assign(new Error('Service Unavailable'), { status: 503 }),
+      timeline: {
+        ...TIMELINE,
+        appointments: {
+          available: true,
+          count: 1,
+          truncated: false,
+          items: [
+            {
+              id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+              serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            },
+          ],
+        },
+      },
+    }));
+  } finally {
+    console.warn = realWarn;
+  }
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione prova ·'), booked[0].textContent);
+  const lines = warned.filter((args) => args[0] === 'bo-scheda services unreadable:');
+  assert.equal(lines.length, 1, 'one warn line names the failed listino read');
+  assert.ok(String(lines[0].join(' ')).includes('503'), 'the warn carries the status');
 });
 
 test('the channel filter narrows the timeline to one channel', async () => {

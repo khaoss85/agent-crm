@@ -1331,7 +1331,23 @@ export function createCustomerCardView(deps) {
       // bookable list the «Nuovo appuntamento» menu reads, so the scheda
       // and the menu never disagree. A failed read keeps the slug words
       // (the screen it replaces), never a failed scheda.
-      settle(() => readBookingServices(client)).then((read) => take('services', read)),
+      // Review rev-agent-crm-889-4db30273 (P2): a non-404 failure is
+      // diagnosable — one warn line with the cause only (name/code/status
+      // and the space, never a payload), mirroring the calendario's
+      // «bo-calendario services unreadable». A 404 stays silent: it only
+      // means an older server without the listino.
+      settle(() => readBookingServices(client)).then((read) => {
+        if (read.error && !isNotComposedFailure(read.error)
+          && typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            'bo-scheda services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${spaceId ?? 'none'}`,
+          );
+        }
+        take('services', read);
+      }),
     ]));
     await Promise.all([wave1, wave2]);
     return { ...loaded };
