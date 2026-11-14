@@ -261,3 +261,96 @@ test('an unknown squad refuses with SQUAD_UNKNOWN', async () => {
     (error) => error.code === 'SQUAD_UNKNOWN',
   );
 });
+
+test('a second squad from the same template refuses with SQUAD_NAME_TAKEN before any write', async () => {
+  const { modules, ops } = compose();
+  await ops.createSquad({
+    actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-1', templateSlug: 'lead-generation',
+  });
+  await assert.rejects(
+    () => ops.createSquad({
+      actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-2', templateSlug: 'lead-generation',
+    }),
+    (error) => error.code === 'SQUAD_NAME_TAKEN',
+  );
+  const agents = await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE });
+  assert.equal(agents.length, 2, 'the refused squad leaves no orphan member');
+  const renamed = await ops.createSquad({
+    actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-2', templateSlug: 'lead-generation', name: 'Acquisizione lead bis',
+  });
+  assert.equal(renamed.duplicate, false);
+  assert.ok(renamed.members.every((agent) => agent.name.startsWith('Acquisizione lead bis · ')));
+});
+
+test('a bad routine plan or a missing cost estimate refuses before any write', async () => {
+  const { modules, ops } = compose();
+  const base = {
+    name: 'Squadra rotta',
+    objective: 'Non si crea.',
+    metric: { name: 'Cose', target: 1, unit: 'cose' },
+    members: [{ key: 'uno', name: 'Uno', role: 'Fa', instructions: 'Fa cose senza farle da solo.' }],
+    routines: [{ memberKey: 'uno', phrase: 'ogni settimana fai', plan: { cadence: 'weekly', timeOfDay: '08:00' } }],
+    phases: [{ name: 'Solo', approval: 'review' }],
+  };
+  await assert.rejects(
+    () => ops.createSquad({ actor: USER, spaceId: SPACE, sourceKey: 'sq-bad-plan', plan: base }),
+    (error) => /weekday/.test(error.message),
+  );
+  const capped = {
+    ...base,
+    members: [{ key: 'uno', name: 'Uno', role: 'Fa', instructions: 'Fa cose senza farle da solo.', spendingCapCents: 500 }],
+    routines: [{ memberKey: 'uno', phrase: 'ogni giorno fai', plan: { cadence: 'daily', timeOfDay: '08:00' } }],
+  };
+  await assert.rejects(
+    () => ops.createSquad({ actor: USER, spaceId: SPACE, sourceKey: 'sq-bad-cost', plan: capped }),
+    (error) => error.code === 'AGENT_COST_ESTIMATE_REQUIRED',
+  );
+  const agents = await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE });
+  assert.equal(agents.length, 0, 'refused plans leave no orphan member');
+});
+
+test('a retry with a changed spec refuses with SQUAD_SPEC_CHANGED', async () => {
+  const { modules, ops } = compose();
+  await ops.createSquad({
+    actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-1', templateSlug: 'lead-generation',
+  });
+  await assert.rejects(
+    () => ops.createSquad({
+      actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-1', templateSlug: 'lead-generation', name: 'Altro nome',
+    }),
+    (error) => error.code === 'SQUAD_SPEC_CHANGED',
+  );
+  const agents = await modules.get('teammate-agent').service.listWhere({ spaceId: SPACE });
+  assert.equal(agents.length, 2, 'the refused retry adds no member');
+});
+
+test('a squad row of the wrong shape answers SQUAD_ROW_CORRUPT, never TypeError', async () => {
+  const { modules, ops } = compose();
+  const made = await ops.createSquad({
+    actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-1', templateSlug: 'lead-generation',
+  });
+  await modules.get('teammate-squad').service.applyManaged(
+    made.squad.id, { membersJson: '"x"' }, { actor: USER },
+  );
+  await assert.rejects(
+    () => ops.readSquadOverview({ spaceId: SPACE, squadSourceKey: 'sq-lead-1' }),
+    (error) => error.code === 'SQUAD_ROW_CORRUPT',
+  );
+  await modules.get('teammate-squad').service.applyManaged(
+    made.squad.id, { membersJson: '[{"key":"x"}]', phasesJson: '{"a":1}' }, { actor: USER },
+  );
+  await assert.rejects(
+    () => ops.readSquadOverview({ spaceId: SPACE, squadSourceKey: 'sq-lead-1' }),
+    (error) => error.code === 'SQUAD_ROW_CORRUPT',
+  );
+});
+
+test('an ownerId refuses instead of being silently dropped', async () => {
+  const { ops } = compose();
+  await assert.rejects(
+    () => ops.createSquad({
+      actor: USER, spaceId: SPACE, sourceKey: 'sq-lead-1', templateSlug: 'lead-generation', ownerId: 'presti-owner',
+    }),
+    (error) => error.code === 'VALIDATION_ERROR' && /ownerId/.test(error.message),
+  );
+});

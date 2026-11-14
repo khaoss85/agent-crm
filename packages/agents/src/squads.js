@@ -442,6 +442,13 @@ export function checkSquadInput(record) {
   if (/** @type {any} */ (input).plan === undefined && /** @type {any} */ (input).templateSlug === undefined && /** @type {any} */ (input).brief === undefined) {
     throw new ValidationError('a squad needs a templateSlug, a brief or an explicit plan', { field: 'templateSlug' });
   }
+  // backlog:0d2d8f2e (review #875): squads store no ownership field, so an
+  // ownerId would be accepted and silently dropped — the caller would
+  // believe ownership was recorded while any future owner-based check would
+  // fail open. Refuse it instead: pass no ownerId.
+  if (/** @type {any} */ (input).ownerId !== undefined && /** @type {any} */ (input).ownerId !== null) {
+    throw new ValidationError('squads store no ownerId: drop it from the request', { field: 'ownerId' });
+  }
   const spec = resolveSquadSpec(input);
   if (spec.metric.target <= 0) {
     throw new ValidationError('plan.metric.target must be positive', { field: 'plan.metric.target' });
@@ -462,9 +469,6 @@ export function checkSquadInput(record) {
     brief: /** @type {any} */ (input).brief === undefined || /** @type {any} */ (input).brief === null
       ? null
       : boundedLine(/** @type {any} */ (input).brief, 'brief', 500),
-    ownerId: /** @type {any} */ (input).ownerId === undefined || /** @type {any} */ (input).ownerId === null
-      ? null
-      : boundedLine(/** @type {any} */ (input).ownerId, 'ownerId', 128),
   };
 }
 
@@ -475,17 +479,32 @@ export function squadMemberAgentName(squadName, memberName) {
 
 /** Fail-closed decode of a stored squad row (members, phases, sources, outputs). @param {any} row */
 export function decodeSquadRow(row) {
+  const corrupt = (field) => {
+    throw new AppError(`Stored squad ${field} is not a list`, { code: 'SQUAD_ROW_CORRUPT', status: 500 });
+  };
   const parse = (value, field) => {
     if (value === null || value === undefined || value === '') return field === 'sources' || field === 'outputs' ? [] : null;
+    let parsed;
     try {
-      return JSON.parse(String(value));
+      parsed = JSON.parse(String(value));
     } catch {
       throw new AppError(`Stored squad ${field} is not JSON`, { code: 'SQUAD_ROW_CORRUPT', status: 500 });
     }
+    // backlog:0d2d8f2e (review #875): valid JSON of the wrong shape (a
+    // string, a number, an object) is still corrupt — the overview maps
+    // over these lists and must answer SQUAD_ROW_CORRUPT, never TypeError.
+    if (!Array.isArray(parsed)) corrupt(field);
+    return parsed;
   };
+  const members = parse(row?.membersJson, 'members') ?? [];
+  for (const member of members) {
+    if (!member || typeof member !== 'object' || typeof member.agentSourceKey !== 'string' || member.agentSourceKey === '') {
+      corrupt('members');
+    }
+  }
   return {
     ...row,
-    members: parse(row?.membersJson, 'members') ?? [],
+    members,
     phases: parse(row?.phasesJson, 'phases') ?? [],
     sources: parse(row?.sourcesJson, 'sources') ?? [],
     outputs: parse(row?.outputsJson, 'outputs') ?? [],
