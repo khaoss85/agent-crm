@@ -63,9 +63,11 @@ export function createAgentsPackage(options = {}) {
     // reject-run (outcome `rejected`) and revise-run (edit one proposal).
     // 3: backlog:1f7cb20d3c30 — hand-written agents: one @name per space
     // (AGENT_NAME_TAKEN) and run-due's `runnable` seam (engine-less agents wait).
-    // 4: backlog:0d2d8f2e — squads: create-squad (template, brief or plan)
+    // 4: backlog:7d169a3b1dd2 — a hand-written agent is edited and paused or
+    // resumed through update-agent and set-agent-status.
+    // 5: backlog:0d2d8f2e — squads: create-squad (template, brief or plan)
     // and the per-squad overview (backlog A, routines, backlog B, metrics).
-    version: 4,
+    version: 5,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
@@ -115,6 +117,46 @@ export function createAgentsPackage(options = {}) {
         create(runtime) {
           const ops = opsFor(runtime);
           return (request) => ops.createAssignment(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'update-agent',
+        appMethod: 'updateTeammateAgent',
+        label: 'Update a teammate agent',
+        description:
+          'Update a hand-written agent of one space: name, role, working instructions and optional monthly '
+          + 'spending cap (an explicit null clears it). The @name stays unique in the space, excluding the '
+          + 'agent itself. Idempotent by absolute values: reapplying the same fields is a no-op.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'agentSourceKey', type: 'string', hint: 'The agent to update, of that space.' },
+          { name: 'name', type: 'string', hint: 'Optional new display name.' },
+          { name: 'role', type: 'string', hint: 'Optional new role.' },
+          { name: 'instructions', type: 'string', hint: 'Optional new working instructions.' },
+          { name: 'spendingCapCents', type: 'integer', hint: 'Optional new monthly cap in cents; null clears it.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.updateAgent(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-agent-status',
+        appMethod: 'setTeammateAgentStatus',
+        label: 'Pause or resume a teammate agent',
+        description:
+          'Pause a hand-written agent of one space so it receives no more assignments, or resume it. '
+          + 'Status only: active or paused. Writing the status it already carries replays.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'agentSourceKey', type: 'string', hint: 'The agent to pause or resume, of that space.' },
+          { name: 'status', type: 'string', hint: 'active or paused.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.setAgentStatus(request);
         },
       },
       {
@@ -239,7 +281,7 @@ export { AGENT_APPLY_PERMISSION };
 export { AGENT_CATALOG, catalogAgentSourceKey } from './catalog.js';
 // backlog:1f7cb20d3c30: hand-written agents («Nuovo agente») and the one
 // @mention name rule both the backoffice and create-agent use.
-export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey } from './catalog.js';
+export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey, isCustomAgentSourceKey } from './catalog.js';
 // backlog:0d2d8f2e: the squad templates the «Squadre» screen offers, and the
 // squad source-key rule the create route uses.
 export { PHASE_APPROVAL_LABEL, PHASE_APPROVALS, SQUAD_TEMPLATES, squadSourceKey } from './squads.js';

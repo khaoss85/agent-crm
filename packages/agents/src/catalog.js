@@ -97,6 +97,18 @@ export function customAgentSourceKey(spaceId, key) {
 }
 
 /**
+ * Whether a source key belongs to a hand-written agent. `update-agent`
+ * and `set-agent-status` only touch these: a catalogue key
+ * (`agent:<space>:<slug>`) is refused, so a direct POST can never rename,
+ * pause or resume a catalogue agent the card gates keep read-only
+ * (review #879 giro 2). Mirrored by `isHandAgentKey` in the backoffice.
+ * @param {unknown} key
+ */
+export function isCustomAgentSourceKey(key) {
+  return typeof key === 'string' && key.startsWith('custom-agent:');
+}
+
+/**
  * The name an agent answers to in an @mention: accents, case and spaces
  * folded, so «@Report vendite» and «@reportvendite» are the same agent.
  * Two agents of one space may never fold to the same name.
