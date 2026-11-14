@@ -1137,6 +1137,74 @@ test('Oggi with unreadable channels still links Connettori (backlog:803d127c4458
   assert.equal(anchor.getAttribute('href'), '#/connettori', 'the link lands on Connettori');
 });
 
+test('Oggi without a readable space never reports the channels as inactive (backlog:0c0186a242af)', async () => {
+  const clientFor = ({ refuse = false } = {}) => {
+    const seen = [];
+    return {
+      seen,
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
+        seen.push(path);
+        if (path === '/api/schema') return { domains: { channels: {} } };
+        if (path === '/api/profile') return null;
+        if (path === '/api/spine/memberships') return { items: [] };
+        if (path.startsWith('/api/modules/channel-connection/records')) {
+          if (refuse) {
+            const error = new Error('Request failed (403)');
+            error.status = 403;
+            throw error;
+          }
+          return { items: [] };
+        }
+        throw new Error(`unexpected read: ${path}`);
+      },
+    };
+  };
+  // No space id, like a caller that does not know the active space yet: the
+  // scoped read never leaves and the section stays unknown, not inactive.
+  const spaceless = clientFor();
+  const noSpace = await loadOggiData(spaceless, OGGI_NOW);
+  assert.equal(noSpace.channelsAvailable, false, 'no read, no composed flag');
+  assert.equal(noSpace.channelsUnknown, true, 'unknown, never inactive');
+  assert.ok(
+    spaceless.seen.every((path) => !path.startsWith('/api/modules/channel-connection/records')),
+    'no request without spaceId leaves Oggi',
+  );
+  // Space given but the scoped read refused: same unknown state.
+  const refused = clientFor({ refuse: true });
+  const denied = await loadOggiData(refused, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(denied.channelsAvailable, false, 'refused read, no composed flag');
+  assert.equal(denied.channelsUnknown, true, 'unknown, never inactive');
+  // Space given and the read answered: composed, not unknown — even empty.
+  const answered = clientFor();
+  const read = await loadOggiData(answered, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(read.channelsAvailable, true, 'the scoped read decides');
+  assert.equal(read.channelsUnknown, false, 'a read answer is not unknown');
+  // The render names the unknown state and never the inactive one, keeping
+  // the way to connect one.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      channelsUnknown: true,
+      availability: { work: true, appointments: true, channels: false },
+    },
+  });
+  assert.ok(!mount.textContent.includes('non sono attivi'), 'never the inactive line for an unread space');
+  assert.ok(mount.textContent.includes('I canali non si sono potuti leggere in questo spazio.'), 'the unknown line shows');
+  const anchor = mount.findAll('a').find((node) => node.textContent.includes('Collega un canale'));
+  assert.ok(anchor, 'the link renders');
+  assert.equal(anchor.getAttribute('href'), '#/connettori', 'the link lands on Connettori');
+});
+
 test('Oggi says partial past 100 follow-up and appointments, never cuts silently (backlog:803d127c4458)', async () => {
   const over = (base, prefix) => Array.from(
     { length: OGGI_READ_LIMIT + 1 },
