@@ -45,6 +45,24 @@ const CHANNEL_LABELS = Object.freeze({
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 
+/**
+ * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
+ * `status.reason` (technical English diagnostics naming packages, e.g.
+ * «no signed business found in the composed packages (orders: not readable
+ * here; …)»). The tooltip says in plain Italian why the customer is in
+ * that state; an unknown state carries no tooltip rather than a raw
+ * diagnostic.
+ */
+const STATO_TOOLTIPS = Object.freeze({
+  cliente: 'È un cliente perché ha almeno un acquisto confermato.',
+  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+});
+
+/** Plain-Italian tooltip for a customer state, or null when unknown. */
+export function statoTooltip(value) {
+  return STATO_TOOLTIPS[String(value ?? '').toLowerCase()] ?? null;
+}
+
 /** localStorage key for the visible columns (operator-local, like the shell). */
 export const CLIENTI_COLUMNS_KEY = 'accordo.clienti.columns';
 
@@ -270,13 +288,10 @@ export function createCustomerListView(deps) {
       Object.assign(state, {
         vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
-    } else if (state.q !== '') {
-      // backlog:4968615de0a4: coming back to Clienti from another page the
-      // search starts empty — never a list filtered by a word typed earlier.
-      // Filters, order and columns stay: they show in the bar.
-      state.q = '';
-      state.page = 1;
     }
+    // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
+    // scheda) keeps the search too — like the filters, it shows in the bar
+    // and clears only with its own Azzera.
     drawShell();
     return load();
   }
@@ -905,7 +920,8 @@ export function createCustomerListView(deps) {
       case 'stato': {
         const value = String(row.status?.value ?? '');
         const node = el('span', `bo-clienti-pill bo-pill-${value || 'none'}`, STATO_LABELS[value] ?? (value || '—'));
-        if (row.status?.reason) node.setAttribute('title', row.status.reason);
+        const hint = statoTooltip(value);
+        if (hint) node.setAttribute('title', hint);
         return node;
       }
       case 'ultimo': {
@@ -991,8 +1007,17 @@ export function createCustomerListView(deps) {
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = frame?.status ?? null;
     if (statusLine) {
+      // backlog:ee1244a145c9: a view emptied by no search reads as itself —
+      // «Nessun cliente corrisponde…» only answers an actual search or filter.
+      const searching = state.q !== '' || state.canale !== 'all' || state.stato !== 'all' || state.campo !== '';
+      const views = data?.views ?? FALLBACK_VIEWS;
+      const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
       statusLine.textContent = total === 0
-        ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+        ? (searching
+          ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+          : (state.vista === 'tutti' || viewLabel === null
+            ? 'Nessun cliente ancora.'
+            : `Nessun cliente in «${viewLabel}».`))
         : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }

@@ -15,6 +15,7 @@ import {
   createMountGate,
   paintScreenFailure,
   paintScreenLoading,
+  resetScreenScroll,
 } from '../apps/admin/public/admin-navigation.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -121,4 +122,30 @@ test('la nota di errore non tocca una schermata già dipinta', () => {
 
   assert.equal(result, false);
   assert.equal(mount.textContent, 'Oggi caricato');
+});
+
+test('il cambio di schermata azzera lo scroll della finestra (backlog:25cf0cd8c678)', () => {
+  const calls = [];
+  const win = { scrollTo: (x, y) => { calls.push([x, y]); } };
+
+  const result = resetScreenScroll({ win, doc: null });
+
+  assert.equal(result, true);
+  assert.deepEqual(calls, [[0, 0]]);
+});
+
+test('senza scrollTo lo scroll si azzera dal documento', () => {
+  const root = { scrollTop: 500 };
+  const body = { scrollTop: 500 };
+
+  const result = resetScreenScroll({ win: {}, doc: { documentElement: root, body } });
+
+  assert.equal(result, true);
+  assert.equal(root.scrollTop, 0);
+  assert.equal(body.scrollTop, 0);
+});
+
+test('senza finestra né documento non c’è niente da azzerare', () => {
+  assert.equal(resetScreenScroll({}), false);
+  assert.equal(resetScreenScroll(), false);
 });

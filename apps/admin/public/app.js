@@ -5,7 +5,7 @@ import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { createShellSchemaClient } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
-import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -546,6 +546,7 @@ import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createAgentiView } from './admin-agenti.js';
+import { readCommandAgents } from './admin-cmdk.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
@@ -1128,17 +1129,15 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
-      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
-      // agents from the same teammate-agent module read the Agenti screen
-      // makes — the hand-written agent suggests like the catalogue ones.
+      // backlog:1f7cb20d3c30 + backlog:fd1c564a21d9: the «@» rows of
+      // the ⌘K bar read the space's agents from the same teammate-agent
+      // module read the Agenti screen makes — never gated on the
+      // navigation voice, so the bar suggests an agent whenever the
+      // screen itself could list one. The hand-written agent suggests
+      // like the catalogue ones.
       async agents() {
-        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
-        const params = new URLSearchParams({ limit: '201' });
         const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
-        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
-        else return null;
-        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
-        return Array.isArray(answer?.items) ? answer.items : [];
+        return readCommandAgents((path) => moduleClient.request(path), spaceId);
       },
     },
     onPickSpace: (id) => {
@@ -1352,6 +1351,11 @@ async function route() {
   const previousView = lastRoutedView;
   lastRoutedView = targetForHash(hash).view;
   const keepClienti = CLIENTI_PAIR.has(lastRoutedView) && CLIENTI_PAIR.has(previousView ?? '');
+  // backlog:25cf0cd8c678: la nuova schermata parte da scrollY 0 con il
+  // titolo visibile — lo scroll della finestra non sopravvive al cambio.
+  // Solo la coppia lista/finestra «Nuovo cliente» resta com'era (backlog
+  // ff8bb60f417f: la lista sotto la finestra non si ricarica).
+  if (!keepClienti) resetScreenScroll({ win: window, doc: document });
   if (targetForHash(hash).view === 'settings') {
     // The panel paints synchronously on the real mount: no view handle
     // may paint over it.

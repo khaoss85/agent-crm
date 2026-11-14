@@ -111,6 +111,32 @@ export function agentCommand(item) {
 }
 
 /**
+ * The space's agents for a «@» query (backlog:fd1c564a21d9): the same
+ * teammate-agent module read the Agenti screen makes, so the bar suggests
+ * an agent whenever the screen itself could list one — never gated on the
+ * navigation voice. A 404 reads as «not composed» (null, like no agents),
+ * any other failure is thrown so the bar names the failed read.
+ * MEM_ACC_REUSE: no new record, the packages/agents managed module.
+ * @param {(path: string) => Promise<any>} request
+ * @param {unknown} spaceId
+ * @returns {Promise<Array<any> | null>}
+ */
+export async function readCommandAgents(request, spaceId) {
+  const id = typeof spaceId === 'string' ? spaceId.trim() : '';
+  if (id === '') return null;
+  const params = new URLSearchParams({ limit: '201' });
+  params.set('filter.spaceId', id);
+  try {
+    const answer = await request(`/api/modules/teammate-agent/records?${params.toString()}`);
+    return Array.isArray(answer?.items) ? answer.items : [];
+  } catch (error) {
+    const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+    if (record.status === 404 || record.code === 'NOT_FOUND') return null;
+    throw error;
+  }
+}
+
+/**
  * The palette rows for one query, in display order: Pagine, Clienti,
  * Offerte, then the explicit ask row. A query starting with «@» talks to an
  * agent (admin-assistant.js): the space's matching agents first (backlog

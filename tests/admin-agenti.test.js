@@ -18,6 +18,8 @@ import {
   createAgentiView,
   describeSchedule,
   findMentionedAgent,
+  hasWaitingProposal,
+  newAgentErrorText,
   renderTeamAgentRows,
   spentThisMonthCents,
   isDaFareRun,
@@ -974,4 +976,25 @@ test('backlog 2df6a513cc4d: dopo Affida la pagina rilegge da sola e lascia «In 
   assert.ok(text.includes('Bozza per i lead'), 'la proposta è in «Da fare»');
   view.invalidate();
   assert.equal(timers.length, 0, 'fuori dalla pagina niente letture');
+});
+
+test('fd1c564a21d9: il rifiuto di «Nuovo agente» dice la causa vera e cosa fare', () => {
+  const refused = newAgentErrorText(Object.assign(new Error('Route not found'), { status: 404, code: 'NOT_FOUND' }));
+  assert.ok(!refused.includes('non sono attivi'), `mai la riga del non attivo: ${refused}`);
+  assert.ok(refused.includes('la creazione non è attiva qui'), `la causa vera: ${refused}`);
+  assert.ok(refused.includes('Riprova tra poco'), `cosa fare: ${refused}`);
+  assert.ok(refused.includes('resta qui'), `il testo scritto resta: ${refused}`);
+  assert.ok(!/404|NOT_FOUND/.test(refused), 'niente codici tecnici');
+  assert.equal(newAgentErrorText(Object.assign(new Error('denied'), { status: 403 })), 'Non hai il permesso di creare agenti in questo spazio: chiedilo a chi gestisce il team.');
+  assert.ok(newAgentErrorText(Object.assign(new Error('down'), { status: 502 })).includes('riprova tra poco'));
+});
+
+test('fd1c564a21d9: un incarico da approvare non mostra «Fatto»', () => {
+  const done = { sourceKey: 'a-done', status: 'completed', cadence: 'once' };
+  const waiting = [{ assignmentSourceKey: 'a-done', sourceKey: 'r-1', outcome: 'proposed' }];
+  assert.equal(hasWaitingProposal(done, waiting), true);
+  assert.equal(assignmentStatusLabel(done, waiting), 'Da approvare', 'la proposta in attesa vince sul finito');
+  assert.equal(assignmentStatusLabel(done, []), 'Fatto', 'senza proposte resta Fatto');
+  assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-other', sourceKey: 'r-2', outcome: 'proposed' }]), 'Fatto', 'la proposta di un altro non conta');
+  assert.equal(assignmentStatusLabel(done, [{ assignmentSourceKey: 'a-done', sourceKey: 'r-3', outcome: 'applied' }]), 'Fatto', 'un giro applicato non è da approvare');
 });

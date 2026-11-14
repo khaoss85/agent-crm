@@ -315,7 +315,7 @@ export function readStoredSpaces(storage) {
         name: entry.name,
         initials: typeof entry.initials === 'string' && entry.initials !== ''
           ? entry.initials.slice(0, 2).toUpperCase()
-          : entry.name.slice(0, 2).toUpperCase(),
+          : spaceInitialsFor(entry.name),
       }));
   } catch {
     return [];
@@ -360,7 +360,7 @@ export function mergeSpaces(primary, secondary) {
       const initials = typeof /** @type {any} */ (entry).initials === 'string'
         && /** @type {any} */ (entry).initials.trim() !== ''
         ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
-        : name.slice(0, 2).toUpperCase();
+        : spaceInitialsFor(name);
       out.push({ id, name, initials });
     }
     return out;
@@ -390,19 +390,92 @@ export function resolveSpaceShortcut(event, spaces) {
 }
 
 /**
+ * Space badge initials from the space name (backlog:ecb26347d12c): the
+ * first letter of the first two words («Presti Group» → «PG»), else the
+ * first two alphanumeric characters («Presti» → «PR»). The same word rule
+ * as `nameInitials` in admin-spazi-accessi.js — reused here, never a new
+ * rule — so «Spazio locale» reads «SL» like defaultSpaces().
+ * @param {unknown} name
+ */
+export function spaceInitialsFor(name) {
+  if (typeof name !== 'string') return '·';
+  const words = name.split(/\s+/)
+    .map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, ''))
+    .filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Badge color for one space (backlog:ecb26347d12c): a deterministic hue
+ * from the space id, so two spaces never share the badge color and the
+ * same space reads the same everywhere. White text stays readable on it.
+ * @param {unknown} id
+ */
+export function spaceBadgeColor(id) {
+  const text = typeof id === 'string' ? id : '';
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360} 45% 42%)`;
+}
+
+/**
+ * The «Cambia spazio» button label (backlog:ecb26347d12c): it lists only
+ * the shortcuts that exist — «Cambia spazio (⌘1/2)» with two spaces,
+ * never the fixed «(⌘1/2/3)». Past nine spaces only ⌘1…⌘9 exist.
+ * @param {unknown} spaces
+ */
+export function spaceSwitcherLabel(spaces) {
+  const count = Array.isArray(spaces) ? spaces.length : 0;
+  const shown = Math.max(0, Math.min(count, 9));
+  if (shown < 2) return 'Cambia spazio';
+  const parts = [];
+  for (let n = 1; n <= shown; n++) parts.push(String(n));
+  return `Cambia spazio (⌘${parts.join('/')})`;
+}
+
+/**
  * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
- * get a hint; the rest render without one.
+ * get a hint; the rest render without one. Display initials never repeat
+ * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
+ * the word rule («Prova Validazione B1» → «PV»), then longer slices of
+ * the name — the first unused candidate, so «Presti Group» and «Prova
+ * Validazione B1» read differently even when both arrive as «PR».
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
  */
 export function spaceMenuItems(spaces, activeId) {
-  return spaces.map((space, index) => ({
-    id: space.id,
-    name: space.name,
-    initials: space.initials ?? space.name.slice(0, 2).toUpperCase(),
-    keyHint: index < 9 ? `⌘${index + 1}` : '',
-    active: space.id === activeId,
-  }));
+  const list = Array.isArray(spaces) ? spaces : [];
+  const seen = new Set();
+  return list.map((space, index) => {
+    const name = typeof space?.name === 'string' ? space.name : '';
+    const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
+      ? space.initials.trim().toUpperCase()
+      : '';
+    const word = spaceInitialsFor(name);
+    const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '').toUpperCase();
+    const candidates = stored !== '' ? [stored, word] : [word];
+    if (clean.length >= 3) candidates.push(clean.slice(0, 3));
+    if (clean.length >= 3) candidates.push(`${clean[0]}${clean[clean.length - 1]}`);
+    let initials = candidates[0] ?? '·';
+    for (const candidate of candidates) {
+      if (candidate !== '' && !seen.has(candidate)) {
+        initials = candidate;
+        break;
+      }
+    }
+    seen.add(initials);
+    return {
+      id: space.id,
+      name: space.name,
+      initials,
+      color: spaceBadgeColor(space?.id),
+      keyHint: index < 9 ? `⌘${index + 1}` : '',
+      active: space.id === activeId,
+    };
+  });
 }
 
 /**
@@ -633,12 +706,19 @@ export function createShellView({
 
   function renderSidebar() {
     clearMount(sidebar);
-    const space = activeSpace();
+    // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
+    // per-space colors, so two spaces never read the same; the button label
+    // lists only the shortcuts that exist.
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const space = items.find((entry) => entry.active) ?? items[0];
+    const switcherLabel = spaceSwitcherLabel(state.spaces);
 
     const spaceButton = el(doc, 'button', 'bo-space');
     spaceButton.setAttribute('aria-haspopup', 'true');
-    spaceButton.setAttribute('title', 'Cambia spazio (⌘1/2/3)');
-    const badge = el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase());
+    spaceButton.setAttribute('title', switcherLabel);
+    spaceButton.setAttribute('aria-label', switcherLabel);
+    const badge = el(doc, 'span', 'bo-space-badge', space.initials);
+    badge.setAttribute('style', `background: ${space.color}`);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -658,10 +738,11 @@ export function createShellView({
     const menu = el(doc, 'div', 'bo-space-menu hidden');
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', 'Spazi di lavoro');
-    for (const entry of spaceMenuItems(state.spaces, state.activeSpaceId)) {
+    for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
       const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
+      ini.setAttribute('style', `background: ${entry.color}`);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -861,7 +942,13 @@ export function createShellView({
     // opens the sidebar as a drawer. Both hidden above 560px by the
     // stylesheet, so desktop is unchanged.
     const phoneSpace = el(doc, 'div', 'bo-phonebar-space');
-    phoneSpace.appendChild(el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase()));
+    // backlog:ecb26347d12c: the phone bar shows the same de-duplicated
+    // initials and color as the sidebar switcher.
+    const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
+    const phoneBadge = el(doc, 'span', 'bo-space-badge', phoneSpaceEntry.initials);
+    phoneBadge.setAttribute('style', `background: ${phoneSpaceEntry.color}`);
+    phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
     const phoneRole = sessionRoleLabel(state.user.role);
@@ -1239,7 +1326,9 @@ export function shellScreenFor(target) {
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
-    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    // backlog:bfc070243427: the quote lives on the offer's board — Pipeline
+    // stays highlighted on the preventivo, like on the offer.
+    case 'quote-detail': return { id: 'pipeline', label: 'Preventivo' };
     // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
     case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
