@@ -1,68 +1,66 @@
 // @ts-check
 
 /**
- * Concurrent share-link mint on PostgreSQL (backlog:a3b394dd, P1 giro 5).
+ * Concurrent share-link mint on PostgreSQL (backlog:a3b394dd, P1 giro 6).
  *
- * Two share-link calls for the same approved version at the same instant must
- * leave exactly one live link row: the loser reuses the winner's link
- * (`alreadyExisted: true`, no bearer) instead of minting a second live token.
+ * Two share-link mints for the same approved version run at the same instant
+ * in TWO SEPARATE OS PROCESSES (not two calls in one process): each process
+ * has its own in-process mint lock, so only the database gate can serialize
+ * them. Exactly one mint must win; the loser reuses the winner's link
+ * (`alreadyExisted: true`, no bearer) instead of minting a second live row.
  * Sequential reuse is already covered on SQLite
- * (`tests/commercial-quote-share-link.test.js`); this file proves the
- * concurrent case where both executions overlap inside their own
- * SERIALIZABLE transactions.
+ * (`tests/commercial-quote-share-link.test.js`).
  *
- * Skips cleanly without a database (the helper returns null); set
- * ACCORDO_PG_TEST_URL at a real PostgreSQL 16 to execute — CI always does.
+ * Skips cleanly without a database; set ACCORDO_PG_TEST_URL at a real
+ * PostgreSQL 16 to execute — CI always does.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildShareLinkAction } from '../packages/commercial/src/quote-share.js';
-
-const { bootPostgresqlApp } = await import('./helpers/postgresql-application.js');
+import { openIsolatedPostgresqlPlanes } from './helpers/postgresql-application.js';
+import { bootStubShareApp } from './helpers/quote-share-mint-app.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const quoteShareManifest = JSON.parse(
-  readFileSync(join(here, '..', 'packages', 'commercial', 'modules', 'quote-share.module.json'), 'utf8'),
-);
+const WORKER = join(here, 'helpers', 'quote-share-mint-worker.mjs');
 
-/** Minimal quote shape: only what share-link reads (status gate + version pointer). */
-function quoteStubManifest() {
-  return {
-    manifestVersion: 1,
-    name: 'quote',
-    description: 'Test stub: the approved-version pointer share-link mints for.',
-    fields: [
-      { name: 'status', type: 'string' },
-      { name: 'currentVersionId', type: 'string' },
-      { name: 'currentVersionNumber', type: 'integer' },
-      { name: 'draftRevision', type: 'integer' },
-    ],
-  };
+/** Start one mint worker process; resolves with its SHARE_MINT_RESULT row. */
+function runMintWorker(params) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--no-warnings', WORKER, JSON.stringify(params)], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.stderr.on('data', (chunk) => { err += chunk; });
+    child.on('error', reject);
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`mint worker timed out; stderr tail: ${err.slice(-2000)}`));
+    }, 120_000);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const line = out.split('\n').find((entry) => entry.startsWith('SHARE_MINT_RESULT '));
+      if (code !== 0 || !line) {
+        reject(new Error(
+          `mint worker exit ${code}; stderr tail: ${err.slice(-2000)}; stdout tail: ${out.slice(-2000)}`,
+        ));
+        return;
+      }
+      resolve(JSON.parse(line.slice('SHARE_MINT_RESULT '.length)));
+    });
+  });
 }
 
-test('two concurrent share-link mints leave one live link; the loser reuses', { timeout: 120_000 }, async (t) => {
-  // The portable PostgreSQL path requires a contract-2 graph; share-link ships
-  // contract 1 on the sync path. The mint logic under test is identical —
-  // only the envelope version differs.
-  const shareLinkAction = { ...buildShareLinkAction(), actionContract: 2 };
-  const booted = await bootPostgresqlApp(t, {
-    selected: {
-      packageContract: 2,
-      packages: [],
-      actions: [shareLinkAction],
-      modules: [
-        { name: 'quote', manifest: quoteStubManifest() },
-        { name: 'quote-share', manifest: quoteShareManifest },
-      ],
-    },
-  });
-  if (!booted) return;
-  const { app } = booted;
-  const actor = { type: 'user', id: 'mint-race' };
+test('two share-link mints in separate processes leave one live link; the loser reuses', { timeout: 180_000 }, async (t) => {
+  const planes = await openIsolatedPostgresqlPlanes(t);
+  if (!planes) return;
+  const tenantId = 'acme';
+  const app = await bootStubShareApp({ control: planes.control, data: planes.data, tenantId });
+  t.after(() => app.close());
 
   const quote = await app.modules.get('quote').service.create({
     status: 'approved',
@@ -71,33 +69,29 @@ test('two concurrent share-link mints leave one live link; the loser reuses', { 
     draftRevision: 1,
   });
 
-  const attempt = () => app.runAction({
-    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor,
-  }).then((ran) => ({
-    ok: true,
-    alreadyExisted: ran.result.alreadyExisted,
-    hasToken: ran.result.token !== null && ran.result.token !== undefined,
-  })).catch((error) => ({
-    ok: false, code: error.code ?? null, message: String(error.message).slice(0, 160),
-  }));
-
-  const [first, second] = await Promise.all([attempt(), attempt()]);
-  const minted = [first, second].filter((row) => row.ok && !row.alreadyExisted);
-  const reused = [first, second].filter((row) => row.ok && row.alreadyExisted);
+  const params = {
+    control: planes.control,
+    data: planes.data,
+    tenantId,
+    quoteId: quote.id,
+  };
+  const [first, second] = await Promise.all([runMintWorker(params), runMintWorker(params)]);
   const outcomes = [first, second]
     .map((row) => `${row.ok}:${row.ok ? (row.alreadyExisted ? 'reused' : 'minted') : row.code}`)
     .sort();
   assert.deepEqual(
     outcomes,
     ['true:minted', 'true:reused'],
-    `one call mints, the other reuses (got ${JSON.stringify([first, second])})`,
+    `one worker mints, the other reuses (got ${JSON.stringify([first, second])})`,
   );
+  const minted = [first, second].filter((row) => row.ok && !row.alreadyExisted);
+  const reused = [first, second].filter((row) => row.ok && row.alreadyExisted);
   assert.equal(minted.length, 1);
   assert.equal(reused.length, 1, `the loser reuses instead of erroring (got ${JSON.stringify([first, second])})`);
   assert.equal(minted[0].hasToken, true, 'the minted result carries the bearer once');
   assert.equal(reused[0].hasToken, false, 'the reused link carries no second bearer');
 
   const rows = await app.modules.get('quote-share').service.listWhere({ quoteVersionId: 'v-race-1' });
-  assert.equal(rows.length, 1, `one row per version after a concurrent mint (got ${rows.length})`);
+  assert.equal(rows.length, 1, `one row per version after a cross-process concurrent mint (got ${rows.length})`);
   assert.equal(rows[0].status, 'active');
 });

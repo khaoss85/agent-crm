@@ -252,14 +252,12 @@ function expiredLink() {
 }
 
 /**
- * Same-process exclusion for concurrent share-link mints: two mints for one
- * approved version must never both insert — the loser reuses the winner's
- * link. Each action already runs in its own SERIALIZABLE PostgreSQL
- * transaction (whose transient-conflict retry re-reads), so cross-process
- * racers still converge on one row; this lock keeps same-process racers from
- * both reaching the insert, so the common case reuses without an abort. Held
- * across the re-check and the insert only — never across the commit, which
- * the framework owns. One version per lock, never nested, so it cannot
+ * Same-process fast path for concurrent share-link mints: two mints for one
+ * approved version in this process serialize here, so the loser reuses the
+ * winner's link without aborting. It cannot help across processes (web and
+ * worker are different backends) — there the database gate below decides.
+ * Held across the re-check and the insert only — never across the commit,
+ * which the framework owns. One version per lock, never nested, so it cannot
  * deadlock; entries are removed when their mint settles.
  */
 const inflightShareMints = new Map();
@@ -271,6 +269,90 @@ function withVersionMintLock(versionId, fn) {
   return prior.catch(() => {}).then(fn).finally(() => {
     releaseCurrent();
     if (inflightShareMints.get(versionId) === current) inflightShareMints.delete(versionId);
+  });
+}
+
+/** A serialization contest the outer runtime must retry fresh, never answer here. */
+function isTransientConflict(error) {
+  return error instanceof ConflictError && Boolean(error?.details?.transient);
+}
+
+/**
+ * The cross-process gate both mints contend on: one serialization fence on
+ * the quote row itself, inside the action transaction, before the re-check
+ * and the insert. A partial unique index cannot name a «live» row here —
+ * liveness is `expiresAt > now()`, which an index predicate cannot hold, and
+ * a plain per-version index would forbid the specified expired-then-fresh
+ * mint — and the statement vocabulary has no raw SQL for an advisory lock.
+ * So the fence writes the quote row's own `updated_at` back unchanged: no
+ * audit, no event, no value change, only the row lock. Every action runs in
+ * its own SERIALIZABLE PostgreSQL transaction, so two overlapping mints
+ * updating the SAME quote row make exactly one loser with a transient 40001
+ * conflict; the write-outcome runtime retries that loser in a fresh
+ * transaction, where the re-check sees the winner's row and reuses it. A mint
+ * that starts after the winner committed never contends: its re-check
+ * already sees the row.
+ *
+ * @param {any} modules
+ */
+async function claimMintSlot(modules, cfg, quote) {
+  const quotes = optionalService(modules, cfg.quoteModule);
+  const table = quotes?.manifest?.table;
+  if (!quotes || typeof table !== 'string'
+    || (typeof quotes.mutationSync !== 'function' && typeof quotes.mutationAsync !== 'function')) {
+    throw new AppError('quote-share storage cannot prove an atomic mint claim', {
+      code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+    });
+  }
+  const where = [{ column: 'id', op: 'eq', value: quote.id }];
+  const fence = (read, write) => {
+    const row = read();
+    if (!row) {
+      throw new AppError('The quote mint fence found no quote row to gate on', {
+        code: 'COMMERCIAL_STATE_CORRUPT', status: 409,
+      });
+    }
+    // updated_at is a guaranteed base column on every module table: writing
+    // back exactly what this transaction reads moves nothing.
+    const stamp = row.updated_at ?? row.updatedAt ?? quote.updatedAt ?? nowIso();
+    write({
+      kind: 'update',
+      table,
+      values: [{ column: 'updated_at', value: stamp }],
+      where,
+    });
+  };
+  const syncApi = quotes?.database?.storage?.sync;
+  if (syncApi && typeof syncApi.execute === 'function' && typeof syncApi.maybeOne === 'function'
+    && typeof syncApi.savepoint === 'function' && typeof quotes.mutationSync === 'function') {
+    quotes.mutationSync(() => {
+      fence(
+        () => syncApi.maybeOne({ kind: 'select', table, columns: '*', where }),
+        (statement) => syncApi.execute(statement),
+      );
+    });
+    return;
+  }
+  if (typeof quotes.mutationAsync === 'function') {
+    await quotes.mutationAsync(async (storage) => {
+      const row = await storage.maybeOne({ kind: 'select', table, columns: '*', where });
+      if (!row) {
+        throw new AppError('The quote mint fence found no quote row to gate on', {
+          code: 'COMMERCIAL_STATE_CORRUPT', status: 409,
+        });
+      }
+      const stamp = row.updated_at ?? quote.updatedAt ?? nowIso();
+      await storage.execute({
+        kind: 'update',
+        table,
+        values: [{ column: 'updated_at', value: stamp }],
+        where,
+      });
+    });
+    return;
+  }
+  throw new AppError('quote-share storage cannot prove an atomic mint claim', {
+    code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
   });
 }
 
@@ -347,7 +429,11 @@ export function buildShareLinkAction(config) {
       // never both insert. The loser reuses the winner's link — even when
       // the winner committed between our re-check and our insert: on a
       // conflict we re-read and reuse instead of minting a second live row.
+      // A transient serialization conflict is not that case: the fence lost
+      // a same-row contest, so this transaction is doomed — rethrow and let
+      // the outer runtime retry fresh, where the re-check sees the winner.
       const minted = await withVersionMintLock(quote.currentVersionId, async () => {
+        await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);
         if (existing) return { reused: existing.share };
         const token = generateShareToken();
@@ -369,6 +455,7 @@ export function buildShareLinkAction(config) {
           return { share, token };
         } catch (error) {
           if (!(error instanceof ConflictError)) throw error;
+          if (isTransientConflict(error)) throw error;
           const winner = await resolveVersionShare(shares, quote, at);
           if (!winner) throw error;
           return { reused: winner.share };
