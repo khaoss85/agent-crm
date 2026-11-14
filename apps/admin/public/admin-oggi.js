@@ -1390,18 +1390,51 @@ function noteReadFailure(scope, error) {
 }
 
 /**
+ * One bounded page of a module, with the evidence when the page is not the
+ * whole list (backlog:803d127c4458): one row past OGGI_READ_LIMIT, so
+ * exactly the limit is a complete read, never a silent cut. Callers render
+ * the `capped` note for every day list they show — Oggi never cuts a list
+ * in silence.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} module
  * @param {Record<string, string>} [filters]
+ * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
  */
 async function readModulePage(client, module, filters = {}) {
-  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT) });
+  const query = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
   for (const [field, value] of Object.entries(filters)) {
     if (value !== undefined && value !== null) query.set(`filter.${field}`, String(value));
   }
   const answer = await client.request(`/api/modules/${module}/records?${query.toString()}`);
-  if (!Array.isArray(answer?.items)) return [];
-  return answer.items;
+  const items = Array.isArray(answer?.items) ? answer.items : [];
+  return { rows: items.slice(0, OGGI_READ_LIMIT), capped: items.length > OGGI_READ_LIMIT };
+}
+
+/**
+ * Connections of one space, for the channel invite (backlog:803d127c4458).
+ * The read carries `filter.spaceId`, so an active connection in space A
+ * never hides the invite to connect the channel in space B, and no row of
+ * another space ever reaches the browser (review giro 10, P1 :1438: the
+ * second unfiltered channel-connection page is gone, so there is no
+ * client-side drop of other spaces' rows). One row past the page, like the
+ * Agenti read (review #661 P3): `capped` carries the evidence that
+ * something was left out, so exactly OGGI_READ_LIMIT rows is not capped.
+ * Rows stored before spaces existed carry no spaceId and the server only
+ * matches equality: they are NOT read here (no unfiltered page), they stay
+ * a server-side follow-up; the scoped page alone decides `capped`.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {string} space
+ * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
+ */
+async function readSpaceConnections(client, space) {
+  const scopedQuery = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
+  scopedQuery.set('filter.spaceId', space);
+  const scopedAnswer = await client.request(`/api/modules/channel-connection/records?${scopedQuery.toString()}`);
+  const scopedItems = Array.isArray(scopedAnswer?.items) ? scopedAnswer.items : [];
+  return {
+    rows: scopedItems.slice(0, OGGI_READ_LIMIT),
+    capped: scopedItems.length > OGGI_READ_LIMIT,
+  };
 }
 
 /**
@@ -1469,11 +1502,19 @@ export async function readAppointmentNames(client, appointments, next, now) {
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {Date} [now]
  */
-export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null } = {}) {
+export async function loadOggiData(client, now = new Date(), { onEssentials = null, onNames = null, spaceId = null } = {}) {
+  // Backlog 803d127c4458: the channel invite belongs to one space. The id
+  // arrives as an option so the read below can scope itself; an empty or
+  // missing id is no space, never a default one.
+  const space = typeof spaceId === 'string' && spaceId.trim() !== '' ? spaceId.trim() : null;
   const outcome = {
     workAvailable: false,
     appointmentsAvailable: false,
     channelsAvailable: false,
+    channelsPartial: false,
+    tasksPartial: false,
+    appointmentsPartial: false,
+    inboxPartial: false,
     interactionsAvailable: false,
     tasks: [],
     appointments: [],
@@ -1516,13 +1557,22 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // The profile read started already: nothing waits on it.
     return outcome;
   }
-  /** One fail-soft module read: the rows, or null after naming the failure. */
+  /** One fail-soft module read: the page ({ rows, capped }), or null after naming the failure. */
   const page = (scope, module, filters) => readModulePage(client, module, filters).then(
-    (rows) => rows,
+    (paged) => paged,
     (error) => { noteReadFailure(scope, error); return null; },
   );
   const skip = Promise.resolve(undefined);
   const interactions = domains.interactions != null;
+  // Backlog 803d127c4458: without a space id there is nothing to scope
+  // the connections read to, so it is skipped and the section renders its
+  // honest line — never another space's rows as this space's invite.
+  const connectionsRead = domains.channels != null && space !== null
+    ? readSpaceConnections(client, space).then(
+      (paged) => paged,
+      (error) => { noteReadFailure('channel-connection', error); return null; },
+    )
+    : skip;
   // backlog:bab63e32acdb (verification 12/11: the names in «Da rispondere»
   // came 10-16 s late): the Clienti view is the slowest read — it starts
   // with the rest but never holds the day back; its section waits in grey.
@@ -1533,10 +1583,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('da-rispondere', error); return null; },
     )
     : Promise.resolve(null);
-  const [tasks, appointments, connections, profile, messages, conversations] = await Promise.all([
+  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
-    domains.channels != null ? page('channel-connection', 'channel-connection') : skip,
+    connectionsRead,
     profileRead,
     // The «Da rispondere» inbox: the latest messages and their conversations.
     // Messages are the inbox; conversations only lend the name and the closed
@@ -1549,17 +1599,20 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // for Oggi and Clienti; fail-soft to the messages read below.
   outcome.replies = null;
   outcome.repliesPending = repliesComposed;
-  if (Array.isArray(tasks)) {
-    outcome.tasks = tasks;
+  if (tasksPage != null) {
+    outcome.tasks = tasksPage.rows;
+    outcome.tasksPartial = tasksPage.capped === true;
     outcome.workAvailable = true;
   }
-  if (Array.isArray(appointments)) {
-    outcome.appointments = appointments;
+  if (appointmentsPage != null) {
+    outcome.appointments = appointmentsPage.rows;
+    outcome.appointmentsPartial = appointmentsPage.capped === true;
     outcome.appointmentsAvailable = true;
   }
-  if (Array.isArray(connections)) {
-    outcome.connections = connections;
+  if (connectionsPage != null) {
+    outcome.connections = connectionsPage.rows;
     outcome.channelsAvailable = true;
+    outcome.channelsPartial = connectionsPage.capped === true;
   }
   // Google Calendar and Gmail connect per person through the pilot's Google
   // consent, not through channel-connection rows: the same GET /api/profile
@@ -1568,11 +1621,15 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.profile = profile ?? null;
   if (interactions) {
     outcome.inboxComposed = true;
-    if (Array.isArray(messages)) {
-      outcome.inboxMessages = messages;
+    if (messagesPage != null) {
+      outcome.inboxMessages = messagesPage.rows;
+      outcome.inboxPartial = messagesPage.capped === true;
       outcome.inboxAvailable = true;
     }
-    if (Array.isArray(conversations)) outcome.inboxConversations = conversations;
+    // A capped conversation page only drops some profile names (they read
+    // fail-soft per subject, with the handle as fallback), never a waiting
+    // row: only the messages page can hide a row, so only it sets the flag.
+    if (conversationsPage != null) outcome.inboxConversations = conversationsPage.rows;
   }
   outcome.next = upcomingAppointment(outcome.appointments, now);
   // The essentials are in (agenda, Da rispondere, advisor, channels): the
@@ -1593,12 +1650,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const briefRead = (async () => {
     if (subject === null || !nonEmptyText(subject.subjectResource) || !nonEmptyText(subject.subjectId)) return;
     try {
-      const [briefMessages, calls] = await Promise.all([
+      const [briefMessagesPage, briefCallsPage] = await Promise.all([
         readModulePage(client, 'interaction-message', subject),
         readModulePage(client, 'interaction-call', subject),
       ]);
-      outcome.briefMessages = briefMessages;
-      outcome.briefCalls = calls;
+      outcome.briefMessages = briefMessagesPage.rows;
+      outcome.briefCalls = briefCallsPage.rows;
       outcome.interactionsAvailable = true;
     } catch (error) {
       noteReadFailure('interactions', error);
@@ -1848,6 +1905,9 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
+ *     channelsPartial?: boolean,
+ *     tasksPartial?: boolean,
+ *     appointmentsPartial?: boolean,
  *     profile?: unknown,
  *     availability?: { work?: boolean, appointments?: boolean, channels?: boolean },
  *     error?: string,
@@ -1855,7 +1915,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     disabled?: boolean,
  *     namesPending?: boolean,
  *     notificationsOpen?: boolean,
- *     inbox?: { available?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
+ *     inbox?: { available?: boolean, partial?: boolean, total?: number, rows?: Array<any>, notifications?: { total: number, rows: Array<any> } } | null,
  *     pressed?: { id: unknown, kind: string } | null,
  *   },
  * }} options
@@ -1970,6 +2030,12 @@ export function renderOggi({
     if (home.capped === true) {
       advisor.appendChild(el(doc, 'p', 'bo-muted', `Mostro le prime ${actions.length} azioni.`));
     }
+  }
+  // Backlog 803d127c4458: the follow-up source itself can pass the page —
+  // the advisor cards are capped apart, so the source cut needs its own
+  // note, never a silent cut of scadenze.
+  if (home.tasksPartial === true) {
+    advisor.appendChild(el(doc, 'p', 'bo-muted', `L'elenco delle cose da fare è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
   }
   // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
   // day is done only when nothing waits in «Da rispondere» either.
@@ -2115,6 +2181,11 @@ export function renderOggi({
       });
       inbox.appendChild(line);
     }
+    // Backlog 803d127c4458: past the messages page the count above
+    // undercounts — the cut is disclosed, never silent.
+    if (home.inbox.partial === true) {
+      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+    }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
     const notifications = home.inbox.available === false ? null : home.inbox.notifications;
@@ -2198,6 +2269,11 @@ export function renderOggi({
     }
     agenda.appendChild(list);
   }
+  // Backlog 803d127c4458: past the page the agenda may miss scadenze —
+  // the cut is disclosed, never silent.
+  if (home.appointmentsPartial === true) {
+    agenda.appendChild(el(doc, 'p', 'bo-muted', `L'elenco degli appuntamenti è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+  }
   if (home.availability?.appointments !== false) {
     const toCalendar = el(doc, 'a', 'bo-oggi-more', 'Apri il calendario →');
     toCalendar.setAttribute('href', '#/calendario');
@@ -2279,8 +2355,18 @@ export function renderOggi({
   // ---- Missing channels ----
   const missing = Array.isArray(home.missing) ? home.missing : [];
   if (home.availability?.channels === false) {
+    // Backlog 803d127c4458: even when the channels do not read (no space
+    // yet, refused read, package not composed), the operator keeps the way
+    // to connect one — the strip never strands them without a link.
     const note = el(doc, 'section', 'bo-oggi-section');
     note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
+    const anchor = el(doc, 'a', 'bo-oggi-invite', 'Collega un canale →');
+    anchor.setAttribute('href', '#/connettori');
+    anchor.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate('#/connettori');
+    });
+    note.appendChild(anchor);
     page.appendChild(note);
   } else {
     // The prototype strip (9c7d1477a8d4, production 08/11 after #687):
@@ -2296,20 +2382,30 @@ export function renderOggi({
         leads: missing.map((entry) => String(entry?.label ?? '')).filter((label) => label !== ''),
         aside: null,
       };
-    if (invite.leads.length > 0) {
+    // Backlog 803d127c4458: past the page the strip says so — a silent cut
+    // would undercount «x di 9» and could drop the very channel to invite.
+    // The note renders even with no leads left, so a capped read never
+    // passes for a complete one.
+    const partialChannels = home.channelsPartial === true && Array.isArray(home.connections);
+    if (invite.leads.length > 0 || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
-      const anchor = el(doc, 'a', 'bo-oggi-invite', '');
-      anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
-      const aside = invite.aside !== null ? ` (${invite.aside})` : '';
-      anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
-      anchor.setAttribute('href', '#/connettori');
-      anchor.addEventListener('click', (event) => {
-        if (event && typeof event.preventDefault === 'function') event.preventDefault();
-        navigate('#/connettori');
-      });
-      section.appendChild(anchor);
+      if (invite.leads.length > 0) {
+        const anchor = el(doc, 'a', 'bo-oggi-invite', '');
+        anchor.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
+        const aside = invite.aside !== null ? ` (${invite.aside})` : '';
+        anchor.appendChild(el(doc, 'span', undefined, ` Collega ${invite.leads.join(', ')} per non perdere nessun lead${aside} →`));
+        anchor.setAttribute('href', '#/connettori');
+        anchor.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate('#/connettori');
+        });
+        section.appendChild(anchor);
+      }
+      if (partialChannels) {
+        section.appendChild(el(doc, 'p', 'bo-muted', `Mostro i primi ${home.connections.length} collegamenti (elenco parziale).`));
+      }
       page.appendChild(section);
     }
   }
@@ -2384,6 +2480,21 @@ export function createOggiView(deps) {
   const setTimer = typeof deps.setTimer === 'function' ? deps.setTimer : (fn, ms) => setTimeout(fn, ms);
   const clearTimer = typeof deps.clearTimer === 'function' ? deps.clearTimer : (id) => clearTimeout(id);
   const { client: bound } = bindAdminMutations(deps.client, deps);
+  /**
+   * The live space id for the space-scoped reads (backlog:803d127c4458):
+   * the shell hands it over like it does to every other space-scoped
+   * view, read late so the read follows the space switcher. A throwing
+   * accessor is a missing space, never a crash.
+   */
+  const readSpace = () => {
+    try {
+      const live = typeof deps.spaceId === 'function' ? deps.spaceId() : null;
+      if (typeof live === 'string' && live.trim() !== '') return live.trim();
+    } catch {
+      // A throwing accessor is a missing space, never a crash.
+    }
+    return null;
+  };
   /**
    * Guard against a stale async response overwriting a newer view
    * (backlog:607f33ee): the home paints into the shell's shared mount, so
@@ -2509,6 +2620,7 @@ export function createOggiView(deps) {
       : last.inboxAvailable
         ? {
           available: true,
+          partial: last.inboxPartial === true,
           ...buildInbox({
             messages: last.inboxMessages,
             conversations: last.inboxConversations,
@@ -2549,6 +2661,9 @@ export function createOggiView(deps) {
         inbox,
         missing,
         connections: last.connections,
+        channelsPartial: last.channelsPartial === true,
+        tasksPartial: last.tasksPartial === true,
+        appointmentsPartial: last.appointmentsPartial === true,
         profile: last.profile ?? null,
         availability: {
           work: last.workAvailable,
@@ -2747,7 +2862,7 @@ export function createOggiView(deps) {
     const token = ++renderToken;
     let data;
     try {
-      data = await loadOggiData(bound, lastMeta.now);
+      data = await loadOggiData(bound, lastMeta.now, { spaceId: readSpace() });
     } catch {
       data = null;
     }
@@ -2791,6 +2906,7 @@ export function createOggiView(deps) {
       const current = round;
       if (current.load === null) {
         current.load = Promise.resolve().then(() => loadOggiData(bound, now, {
+          spaceId: readSpace(),
           // Backlog 2a075e2d9250: agenda and Da rispondere are in — paint
           // the day now, the names and the call recap fill in after.
           onEssentials: (partial) => {
