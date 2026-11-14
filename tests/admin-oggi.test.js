@@ -814,7 +814,7 @@ test('connected count reads actual connections against the nine', () => {
   );
 });
 
-test('Google connections from GET /api/profile vote Calendar, never Email alone', () => {
+test('Google connections from GET /api/profile vote Email and Calendar', () => {
   const both = {
     connections: {
       available: true,
@@ -825,24 +825,12 @@ test('Google connections from GET /api/profile vote Calendar, never Email alone'
     },
   };
   assert.deepEqual(googleNineChannels(both), ['email', 'calendar']);
-  // Backlog:3805161965cd: the profile Gmail alone never connects Email —
-  // the send needs its own channel connection (409 otherwise), like in the
-  // composer. Calendar still votes.
-  assert.equal(countConnectedNine([], both), 1, 'Calendar alone reads «1 di 9», Gmail votes nothing');
-  // A real Email row still counts Email, once with the Gmail link around.
+  assert.equal(countConnectedNine([], both), 2, 'Gmail and Calendar alone read «2 di 9»');
+  // A Gmail vote never doubles an Email row: one vote per channel.
   assert.equal(
     countConnectedNine([{ channel: 'email', status: 'active' }], both),
     2,
-    'email row plus calendar counts Email once',
-  );
-  // A synthetic profile row alone connects nothing either.
-  assert.equal(
-    countConnectedNine(
-      [{ channel: 'email', status: 'active', connectionKey: 'profile:gmail', source: 'profile' }],
-      null,
-    ),
-    0,
-    'a profile-sourced email row alone reads as not connected',
+    'email row plus gmail still counts Email once',
   );
   // Only `connected` counts: revoked, error and missing stay out.
   assert.equal(countConnectedNine([], {
@@ -860,16 +848,13 @@ test('Google connections from GET /api/profile vote Calendar, never Email alone'
   assert.equal(countConnectedNine([], { connections: { available: false, items: [] } }), 0);
   assert.equal(countConnectedNine([], { connections: { available: true, items: 'nope' } }), 0);
   assert.deepEqual(googleNineChannels({ connections: { available: true, items: [{ connector: 'toString', status: 'connected' }] } }), []);
-  // A connected Gmail leaves Email in the lead invite; only a real Email
-  // row takes it out.
+  // A connected Gmail removes Email from the lead invite, like an Email row.
   const missing = missingLeadChannels([], both);
-  assert.ok(missing.some((entry) => entry.channel === 'email'), 'profile-only Gmail still invites Email');
+  assert.ok(!missing.some((entry) => entry.channel === 'email'), 'Gmail-connected Email stays out of the invite');
   assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), 'other lead channels stay in');
-  const withRow = missingLeadChannels([{ channel: 'email', status: 'active', connectionKey: 'gmail-1' }], both);
-  assert.ok(!withRow.some((entry) => entry.channel === 'email'), 'a real Email row takes Email out of the invite');
 });
 
-test('Oggi strip with Gmail and Calendar linked counts Calendar and invites Email', () => {
+test('Oggi strip with Gmail and Calendar connected counts them and links Connettori', () => {
   const profile = {
     connections: {
       available: true,
@@ -896,12 +881,10 @@ test('Oggi strip with Gmail and Calendar linked counts Calendar and invites Emai
     },
   });
   // The prototype count: «x di 9», Stripe included (9c7d1477a8d4).
-  // Backlog:3805161965cd: Gmail alone never connects Email — only Calendar
-  // counts here, and the strip invites the Email the composer requires.
-  assert.ok(mount.textContent.includes('1 di 9 collegati'), 'Calendar alone reads as one connected');
+  assert.ok(mount.textContent.includes('2 di 9 collegati'), 'Gmail plus Calendar read as two connected');
+  assert.ok(!mount.textContent.includes('Collega Email'), 'Email is not invited once Gmail is connected');
   const strip = mount.findAll('a').find((node) => node.getAttribute('class') === 'bo-oggi-invite');
   assert.ok(strip, 'the strip renders');
-  assert.ok(strip.textContent.includes('Email'), 'profile-only Gmail still invites Email');
   assert.equal(strip.getAttribute('href'), '#/connettori', 'the strip lands on Connettori');
   // Connettori heads with the Collegamenti Google card, so the Collega
   // links are one click from the strip (covered by admin-connectors.test.js
@@ -927,8 +910,7 @@ test('loadOggiData reads the Google links from GET /api/profile, fail-soft', asy
   }, OGGI_NOW);
   assert.equal(data.profile, profile, 'the profile travels with the load');
   assert.ok(seen.includes('/api/profile'), 'the load reads the Google links');
-  assert.equal(countConnectedNine(data.connections, data.profile), 0, 'Gmail alone never counts Email as connected');
-  assert.ok(missingLeadChannels(data.connections, data.profile).some((entry) => entry.channel === 'email'), 'profile-only Gmail still invites Email');
+  assert.equal(countConnectedNine(data.connections, data.profile), 1, 'Gmail counts Email as connected');
 
   const refused = await loadOggiData({
     request: async (path, options = {}) => {
@@ -1818,8 +1800,6 @@ test('2a075e2d9250: Oggi has a load ceiling, then an Italian note with Riprova, 
 // backlog:5083e7a77c26 (b): production read «2 di 9 collegati» over eight
 // names. Gmail and Calendar from the profile, nothing else: the number and
 // the names must come from one list, so connected + named = total.
-// Backlog:3805161965cd: Gmail alone never connects Email, so the same space
-// now reads «1 di 9» with Email among the invited names.
 test('5083e7a77c26: the strip count equals the list it names', () => {
   const profile = {
     connections: {
@@ -1850,9 +1830,8 @@ test('5083e7a77c26: the strip count equals the list it names', () => {
   // The aside names the missing channels that are not leads to connect here.
   const aside = named[2] ? named[2].split('; ').flatMap((part) => part.replace(/ (dal Profilo|non ancora disponibil[ei])$/, '').split(/, | e /)) : [];
   assert.equal(Number(count[1]) + names.length + aside.length, Number(count[2]), `«${count[0]}», ${names.length} names and ${aside.length} apart tell one story`);
-  assert.equal(count[0], '1 di 9 collegati', 'the prototype count, Stripe included');
-  assert.ok(names.includes('Email'), 'profile-only Gmail invites Email');
-  assert.ok(!names.includes('Google Calendar'), 'connected channels are not invited');
+  assert.equal(count[0], '2 di 9 collegati', 'the prototype count, Stripe included');
+  assert.ok(!names.includes('Email') && !names.includes('Google Calendar'), 'connected channels are not invited');
 });
 
 // backlog:5083e7a77c26 (a): the prototype always pairs the agenda with
@@ -2211,10 +2190,8 @@ test('9c7d1477a8d4: the invite counts of 9, keeps the prototype line and names o
     },
   };
   const live = strip([{ channel: 'whatsapp', status: 'active' }], presti);
-  // Backlog:3805161965cd: Gmail alone never connects Email — WhatsApp plus
-  // Calendar read «2 di 9» and Email joins the invite, like the composer.
-  assert.ok(live.includes('2 di 9 collegati'), live);
-  assert.ok(live.includes('Collega Instagram, Facebook, TikTok, Email, Telefono, Form sito per non perdere nessun lead (Stripe non ancora disponibile) →'), live);
+  assert.ok(live.includes('3 di 9 collegati'), live);
+  assert.ok(live.includes('Collega Instagram, Facebook, TikTok, Telefono, Form sito per non perdere nessun lead (Stripe non ancora disponibile) →'), live);
   const demo = strip([]);
   assert.ok(demo.includes('0 di 9 collegati'), demo);
   assert.ok(demo.includes('per non perdere nessun lead'), demo);

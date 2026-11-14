@@ -1579,18 +1579,27 @@ export function createCustomerCardView(deps) {
    * @param {any} card the frozen card from `read-customer-card`
    * @param {unknown} connections the sync-state entries (`GET /api/connectors`), or null before they load
    * @param {unknown} profile the space-profile answer (`GET /api/profile`, served by
-   *   the pilot), or null when unreadable — kept for the call shape only:
-   *   a linked Gmail mailbox there never connects Email by itself
-   *   (backlog:3805161965cd), the server refuses the send with 409
-   *   CHANNEL_CONNECTION_NOT_ACTIVE without its own channel connection.
+   *   the pilot), or null when unreadable — its linked Gmail mailbox also
+   *   connects Email (backlog:a935af6a6d19)
    */
   function composerChannelsFor(card, connections, profile) {
-    void profile;
     /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
     const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
     /** The pilot's profile mailbox merged as a connection row: never a route. */
     const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
+    // Voce a935af6a6d19: the profile Google link counts for Email. The
+    // Connettori screen links channel connections (one row per account),
+    // while Profilo links the operator's Gmail mailbox — without this the
+    // composer says «non collegato» on a space whose mailbox is linked.
+    // A revoked, errored or unreadable link changes nothing: only a
+    // `connected` Gmail item with a mailbox connects the channel.
+    const items = Array.isArray(profile?.connections?.items) && profile.connections.available === true
+      ? profile.connections.items
+      : [];
+    const gmail = items.find((item) => item?.connector === 'gmail' && item?.status === 'connected'
+      && typeof item?.account === 'string' && item.account.trim() !== '') ?? null;
+    const gmailSender = gmail !== null ? gmail.account.trim() : null;
     const socials = Array.isArray(card?.socials) ? card.socials : [];
     const handleFor = (system) => {
       const found = socials.find((row) => String(row?.system ?? '').toLowerCase() === system
@@ -1609,35 +1618,43 @@ export function createCustomerCardView(deps) {
     };
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
-      // Backlog:3805161965cd: only a real channel connection connects a
-      // channel. The send queues on its connectionKey and the server
-      // refuses anything else with 409 — a synthetic `profile:` row or a
-      // Gmail mailbox linked only in the space profile names no route, so
-      // Email with those alone reads off with its Connettori link instead
-      // of failing on Invia. Whatever their order (review #648, giro 2),
-      // the real row wins and its account is the mailbox «Da» names, so
-      // «Da» and the route agree.
+      // A real channel connection is preferred over the pilot's synthetic
+      // profile row, whatever their order (review #648, giro 2): the real
+      // row's key is a route readSyncState knows and its account is the
+      // mailbox that route sends from, so «Da» and the route agree. The
+      // synthetic row only stands in when it is the sole active one.
       const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
-      const live = active.find((entry) => !isSyntheticRow(entry)) ?? null;
-      // A connection key is never a sender: a `profile:` handle (any
-      // case) or the row's own key posing as an account counts as missing
-      // (voce eaa84ccafc53, review #648).
+      const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
+      // The channel connection wins (it carries the connectionKey the send
+      // queues on); the profile Gmail mailbox only fills the gap, with no
+      // key — the server still needs its own email connection to send.
+      const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
+      // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
+      // connections as an active email row (`profile:gmail`). Its account is
+      // the mailbox the «Da» row names; without one the profile Gmail still
+      // fills it. A connection key is never a sender: a `profile:` handle
+      // (any case) or the row's own key posing as an account counts as
+      // missing.
       const liveAccount = channel === 'email' && live !== null && typeof live.account === 'string'
         && live.account.trim() !== '' && !isProfileKey(live.account)
         && live.account.trim() !== String(live.connectionKey ?? '').trim()
         ? live.account.trim() : null;
-      const sender = liveAccount;
+      const sender = liveAccount ?? (gmailLinked ? gmailSender : null);
+      // The synthetic profile row is no channel connection: its key is not
+      // a route the send queues on, so it is never sent (the server derives
+      // the route from the space's own mailbox).
+      const synthetic = live !== null && isSyntheticRow(live);
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
       // channel with an empty «Da».
-      const linked = live !== null;
+      const linked = live !== null || gmailLinked;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
         linked,
         connected: linked && (channel !== 'email' || sender !== null),
-        connectionKey: live !== null && typeof live.connectionKey === 'string'
+        connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
         sender,
       });
@@ -1939,10 +1956,9 @@ export function createCustomerCardView(deps) {
    * The «Scrivi» composer panel (backlog:e9b4fc2f): channel choice among
    * the customer's own channels, preselected recipient, text, Invia.
    * A channel without a connection reads switched off with its link to
-   * Connettori — Email too when only the space Gmail is linked in the
-   * profile (backlog:3805161965cd): the server needs its own channel
-   * connection and would refuse the send with 409. A channel without any
-   * address names that instead. Invia queues through
+   * Connettori — except Email with the space Gmail linked in the profile,
+   * which reads connected with its sender (backlog:a935af6a6d19); a channel
+   * without any address names that instead. Invia queues through
    * `POST /api/customer-hub/messages` — the recipient stays server-derived,
    * the panel only shows it.
    */
@@ -2000,10 +2016,6 @@ export function createCustomerCardView(deps) {
     }
     const wait = el('p', 'bo-muted', 'Leggo i canali collegati…');
     panel.appendChild(wait);
-    // Backlog:3805161965cd: the space profile (`GET /api/profile`, served
-    // by the pilot) is still read, but its Gmail link never connects Email
-    // by itself — the channel connections decide alone, so the composer
-    // never offers a send the server would refuse with 409.
     // backlog:f48593bb06d4: the AI state starts with the channel reads, in
     // parallel; the AI row reads the same (cached) answer when it paints.
     void readSpaceAi(spaceId, { opening: true });

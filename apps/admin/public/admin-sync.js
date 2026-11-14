@@ -32,7 +32,6 @@ import {
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
-  isProfileEmailStandin,
   mergeProfileConnections,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -486,56 +485,18 @@ export const SYNC_CHANNELS = NINE_CHANNELS;
 
 /**
  * The activity payload with the profile links merged in as connections
- * (backlog:cf365ada15b9): the shared count reads Calendar from
- * GET /api/profile on Oggi, so Stato sync must see it too, or the two
+ * (backlog:cf365ada15b9): the shared count reads Gmail and Calendar from
+ * GET /api/profile on Oggi, so Stato sync must see them too, or the two
  * screens print two numbers for one space. The pilot already merges them
  * server-side; a channel that has an active row keeps that row alone.
- * Backlog:803d127c4458: the profile Gmail stand-in never merges as Email
- * (shared `isProfileEmailStandin`) — without its own channel connection
- * the send fails with 409, like in the composer and on Oggi, so the hero,
- * the table and the count invite Email instead of painting it connected.
-/**
- * A stand-in row that still has something to say stays visible
- * (backlog:cf365ada15b9): a stopped import or a non-active binding owns a
- * fix card on this screen, so the stand-in filter keeps it even though it
- * never counts as connected (backlog:803d127c4458).
- * @param {any} entry one activity connection entry.
- */
-function standinKeepsRow(entry) {
-  if (entry === null || typeof entry !== 'object') return false;
-  const status = typeof entry.status === 'string' ? entry.status : '';
-  if (status !== '' && status !== 'active') return true;
-  const { code, dead } = lastErrorOf(entry);
-  return code !== null || dead > 0;
-}
-
-/**
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
-  const merged = mergeProfileConnections(entries, profile)
-    .filter((row) => !isProfileEmailStandin(row) || standinKeepsRow(row));
-  // Backlog 803d127c4458 (review Muse giro 4 P1): a length tie is not "no
-  // change" — the filter may drop the Email stand-in while the merge adds
-  // another profile channel in the same call. Compare the content instead.
-  const unchanged = merged.length === entries.length
-    && merged.every((row, index) => row === entries[index]);
-  return unchanged ? activity : { ...activity, connections: merged };
-}
-
-/**
- * Rows the hero, the table and the count may read as linked
- * (backlog:803d127c4458, review Muse giro 8 P1): a profile Email
- * stand-in kept for its fix card never votes here — without its own
- * channel connection the send fails with 409, like the composer, Oggi
- * and Stato sync's own table say. The fix cards read the full activity.
- * @param {unknown} activity the GET /api/connectors/activity payload, possibly null.
- */
-export function syncCountableEntries(activity) {
-  return entriesOf(activity).filter((row) => !isProfileEmailStandin(row));
+  const merged = mergeProfileConnections(entries, profile);
+  return merged.length === entries.length ? activity : { ...activity, connections: merged };
 }
 
 /**
@@ -666,18 +627,13 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
     }
     return { channel, list, received, lastAt, worst, expiringAt, importing, keys };
   };
-  // Linked means an active binding that is not a profile stand-in
-  // (backlog:803d127c4458, review Muse giro 8 P1): a stand-in kept for
-  // its fix card stays visible with its pill, but it never votes
-  // «collegato» — the composer refuses to send through it.
-  const live = (entry) => entry.status === 'active' && !isProfileEmailStandin(entry);
   const rows = SYNC_CHANNELS.map((fixed) => {
     const agg = aggregate(fixed.id, byChannel.get(fixed.id) ?? []);
     // Connected means an active binding, the shared count's predicate
     // (review #680 P2-2): a suspended or pending row keeps its pill so the
     // problem stays visible, but it is not «collegato» and lights no hero.
     const present = agg.list.length > 0;
-    const connected = agg.list.some(live);
+    const connected = agg.list.some((entry) => entry.status === 'active');
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
     const pill = present ? channelPill(agg, nowMs, connected) : null;
@@ -704,7 +660,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = channelPill(agg, nowMs, list.some(live));
+    const pill = channelPill(agg, nowMs, list.some((entry) => entry.status === 'active'));
     const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
@@ -712,7 +668,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       mark: syncMark(channel),
       direction: directionLabel(list[0]?.direction ?? null),
       present: true,
-      connected: list.some(live),
+      connected: list.some((entry) => entry.status === 'active'),
       received: agg.received,
       lastAt: agg.lastAt,
       pill,
@@ -1286,15 +1242,14 @@ export function createSyncView(deps) {
   function renderTable(box, activity) {
     const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
     // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
-    // channelConnectionCount over the countable rows — a stand-in kept
-    // for its fix card never votes here (giro 8 P1), like in the table
-    // above. A linked channel outside the fixed nine (SMS, Telegram) is
-    // a row of the table, so it counts and so does its place — «1 di 10»
-    // (review #647 P2); a row that is not active (suspended, pending)
-    // keeps its pill but is not «collegato».
+    // channelConnectionCount over the same rows, profile links included.
+    // A linked channel outside the fixed nine (SMS, Telegram) is a row of
+    // the table, so it counts and so does its place — «1 di 10» (review
+    // #647 P2); a row that is not active (suspended, pending) keeps its
+    // pill but is not «collegato».
     // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
     // included, plus a linked channel outside the nine (review #647).
-    const count = channelConnectionCount(syncCountableEntries(activity));
+    const count = channelConnectionCount(entriesOf(activity));
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));

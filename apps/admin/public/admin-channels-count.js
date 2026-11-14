@@ -162,35 +162,6 @@ export function mergeProfileConnections(rows, profile = null) {
 }
 
 /**
- * A `profile:<connector>` connection key is the pilot's profile mailbox
- * merged as a row, never an account or a route: any case counts, like the
- * composer (giro 8 P1: the composer lowercases before the prefix test
- * while the count read an upper-case PROFILE: key as a real link).
- * @param {unknown} value
- */
-function isProfileKey(value) {
-  return typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
-}
-
-/**
- * Whether one row stands in for the space-profile Gmail rather than a
- * real channel connection (backlog:803d127c4458): the rows
- * `mergeProfileConnections` merges in, marked `source: 'profile'`, and the
- * composer treats a `profile:` connectionKey as synthetic too (giro 7 P1:
- * a key-only Email row read «collegato» but could not send). Both markers
- * count here, like `isProfileRow`. The server refuses the send with 409
- * CHANNEL_CONNECTION_NOT_ACTIVE without a real connection, so these rows
- * never vote Email — on Oggi and on Stato sync alike, so the two screens
- * print one count.
- * @param {unknown} row
- */
-export function isProfileEmailStandin(row) {
-  if (row == null || typeof row !== 'object') return false;
-  if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
-  return row.source === 'profile' || isProfileKey(row.connectionKey);
-}
-
-/**
  * The display name of one channel of the universe.
  * @param {string} channel
  */
@@ -286,7 +257,8 @@ export const NOT_AVAILABLE_NOTE = 'Questo canale non si può ancora collegare da
  * @param {any} row
  */
 function isProfileRow(row) {
-  return row != null && (row.source === 'profile' || isProfileKey(row.connectionKey));
+  return row != null && (row.source === 'profile'
+    || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:')));
 }
 
 /** Channels of the nine the guided `#/connettori/<channel>` flow never serves. */
@@ -335,13 +307,7 @@ function profileConnects(profile, channel) {
  */
 export function channelState(channel, { rows = [], profile = null, adapters = null, guided = [] } = {}) {
   const id = countedChannel(channel);
-  // Backlog:803d127c4458 (review Muse giro 5 P1): the profile Gmail
-  // stand-in never votes Email here either — Oggi, Stato sync and the
-  // composer already exclude it (shared `isProfileEmailStandin`), and the
-  // send fails with 409 without a real channel connection. Filtering it at
-  // this shared gate keeps one connected predicate for every screen.
   const matching = mergeProfileConnections(rows, profile)
-    .filter((row) => !isProfileEmailStandin(row))
     .filter((row) => countedChannel(row.channel) === id);
   const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
   const active = matching.find((row) => row.status === 'active') ?? null;

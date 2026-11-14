@@ -36,16 +36,13 @@ import {
   syncAgo,
   syncChannelRows,
   syncChannelTable,
-  syncCountableEntries,
   syncFeedItems,
   syncFixItems,
   syncGrantCards,
   syncIdentityCards,
   syncIndicator,
   timeAgo,
-  withProfileConnections,
 } from '../apps/admin/public/admin-sync.js';
-import { channelConnectionCount } from '../apps/admin/public/admin-channels-count.js';
 import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS, loadFixCount } from '../apps/admin/public/admin-shell.js';
@@ -1248,10 +1245,7 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  // Backlog:803d127c4458: the profile Gmail alone never connects Email —
-  // the send needs its own channel connection (409 otherwise), like in the
-  // composer and on Oggi. Calendar still counts, so the card reads «1 di 9».
-  assert.equal(count[0], '1 di 9 collegati', 'Calendar counts on Stato sync, Gmail alone does not');
+  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1315,20 +1309,15 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
 // counted as connected, but with no update and no events they wait for
 // the first event like any other quiet row (DECISION to be confirmed:
 // «senza aggiornamento né eventi» covers profile-merged rows too).
-// Backlog:803d127c4458 narrows it for Email: the profile Gmail stand-in
-// is not a sendable route (409 without a real channel connection), so it
-// no longer merges — the card reads «1 di 9», Calendar waits for the
-// first event, and Email offers Collega like the composer requires.
 test('#680 P2-1: profile links counted as connected wait for the first event', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('1 di 9 collegati'));
+  assert.ok(mount.textContent.includes('2 di 9 collegati'));
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento'], 'quiet Google Calendar waits');
-  assert.ok(mount.textContent.includes('Collega'), 'Email without its own connection offers Collega');
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
 });
 
 test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {
@@ -1546,74 +1535,4 @@ test('e381c48581fa: with no adapter Stato sync offers Collega only where Connett
     const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
     assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
   }
-});
-
-// backlog:803d127c4458 (review Muse giro 4 P1): the length-equality shortcut
-// returned the unfiltered activity when the filter dropped the Email
-// stand-in and the merge added another profile channel in the same call
-// (remove 1, add 1: the lengths tie). The production shape: the server
-// already merged the Email stand-in, and the profile offers Calendar too.
-test('803d127c4458: withProfileConnections swaps the Email stand-in for the merged Calendar row', () => {
-  const emailStandin = {
-    connectionKey: 'profile:gmail',
-    channel: 'email',
-    account: 'a@example.com',
-    status: 'active',
-    health: 'ok',
-    source: 'profile',
-  };
-  const activity = activityOf({ connections: [emailStandin] });
-  const profile = {
-    member: {},
-    connections: {
-      available: true,
-      reason: null,
-      items: [
-        { connector: 'gmail', status: 'connected', account: 'a@example.com' },
-        { connector: 'calendar', status: 'connected', account: 'a@example.com' },
-      ],
-      meta: { configured: true },
-    },
-  };
-  const merged = withProfileConnections(activity, profile);
-  assert.notEqual(merged, activity, 'a new activity: the content changed on a length tie');
-  assert.deepEqual(merged.connections.map((row) => row.channel), ['calendar']);
-  assert.equal(merged.connections[0].source, 'profile');
-  // Unchanged input keeps its identity: no merge, no stand-in, no profile.
-  const plain = activityOf();
-  assert.equal(withProfileConnections(plain, null), plain);
-});
-
-test('803d127c4458: withProfileConnections drops the quiet key-only stand-in but keeps the stopped import', () => {
-  const quiet = entryOf({ connectionKey: 'profile:gmail', channel: 'email', status: 'active', health: 'ok', sync: null });
-  const dropped = withProfileConnections(activityOf({ connections: [quiet] }), null);
-  assert.notEqual(dropped, activityOf({ connections: [quiet] }), 'a new activity object');
-  assert.deepEqual(dropped.connections, [], 'the quiet stand-in never counts as connected');
-  const stopped = entryOf({
-    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
-    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso.' },
-  });
-  const kept = withProfileConnections(activityOf({ connections: [stopped] }), null);
-  assert.equal(kept.connections.length, 1, 'the stopped import keeps its fix card');
-  assert.equal(kept.connections[0].connectionKey, 'profile:gmail');
-});
-
-test('803d127c4458 giro 8 P1: the kept error stand-in keeps its fix card but never counts connected', () => {
-  const broken = entryOf({
-    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
-    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso.' },
-  });
-  const kept = withProfileConnections(activityOf({ connections: [broken] }), null);
-  assert.equal(kept.connections.length, 1, 'the error stand-in keeps its fix card');
-  const table = syncChannelTable(kept, NOW);
-  const email = table.find((row) => row.channel === 'email');
-  assert.equal(email.present, true, 'the broken binding stays visible in the table');
-  assert.equal(email.connected, false, 'the broken stand-in never reads connected');
-  assert.equal(email.pill?.tone, 'altro', 'the broken binding keeps its fix pill');
-  const indicator = syncIndicator(kept, NOW);
-  assert.equal(indicator.title, 'Nessun canale attivo', 'the hero invites fixes, never a linked Email');
-  assert.equal(
-    channelConnectionCount(syncCountableEntries(kept)).connected, 0,
-    'the kept stand-in never votes in the «n di 9» count',
-  );
 });
