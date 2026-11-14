@@ -332,10 +332,10 @@ function selfSubjectOf(settled) {
   return null;
 }
 
-/** The sign-in kind of a person's subjects, or null (never a technical id). */
+/** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
 const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
 /** @param {Array<string>} subjects */
-function accessLabel(subjects) {
+export function accessLabel(subjects) {
   const kinds = [];
   for (const subject of subjects) {
     const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));

@@ -2087,12 +2087,32 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(['marco'], [], null), [
     {
       ids: ['marco'], id: 'marco', name: null, label: 'Marco',
+      email: null, sub: null,
       active: true, listed: true,
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
   assert.deepEqual(personRows([], [], []), [], 'no names and no roster: no rows');
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
+});
+
+// backlog:c0b718741f0f — every Team row carries the small sub-line like Spazi
+// e accessi: the mailbox when it adds to the painted name, else the access
+// kind, else nothing.
+test('personRows carries the small sub-line: mailbox or access kind', () => {
+  const withMail = personRows(['github|1'], [], [
+    { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+  ]);
+  assert.equal(withMail[0].sub, 'dan@example.com', 'the mailbox paints under the name');
+  assert.equal(withMail[0].email, 'dan@example.com');
+  const mailLabel = personRows([], [], [{ subject: 'x|1', role: 'member', email: 'sara@example.com' }]);
+  assert.equal(mailLabel[0].label, 'sara@example.com');
+  assert.equal(mailLabel[0].sub, null, 'no repeat when the label already is the mailbox');
+  const access = personRows(['google|1049abc'], [], [{ subject: 'google|1049abc', role: 'owner' }]);
+  assert.equal(access[0].label, 'Membro del team');
+  assert.equal(access[0].sub, 'Accesso Google', 'the access kind stands in without a mailbox');
+  const typed = personRows(['marco'], [], null);
+  assert.equal(typed[0].sub, null, 'typed words alone paint no sub-line');
 });
 
 // backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
@@ -2298,7 +2318,9 @@ test('the Team card merges one human across roster subjects', async () => {
   const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n') + texts(mount, 'p').join('\n');
   assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
   assert.ok(!painted.includes('google|1049abc'), 'no technical subject id on screen');
-  assert.ok(!painted.includes('dan@example.com'), 'the mailbox is one person, not a second row');
+  // backlog:c0b718741f0f — the mailbox paints once, as the small sub-line of
+  // the single row: one person, not a second row.
+  assert.ok(teamToggles(mount)[0].textContent.includes('dan@example.com'), 'the mailbox is the sub-line of the one row');
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the detail card opens');

@@ -26,6 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
@@ -361,9 +362,12 @@ export function teamRows(named, hidden) {
  * with no roster name and no mailbox paints the teamPeople label (plain
  * words for a stored id, the operator's own typed words, a pipe id never
  * paints anywhere); such a row falls back to the generic «Membro del
- * team». No role line: the E2E takes the «Proprietario» chip out
+ * team». No role chip: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
- * accessi. Tint stays hashed on the stable primary subject and initials
+ * accessi. Each row still carries a small sub-line like Spazi e accessi:
+ * the mailbox when it adds to the painted name, else the access kind
+ * («Accesso Google», …), else nothing. Tint stays hashed on the stable
+ * primary subject and initials
  * follow the painted name, so a block and its toggle always match.
  * @param {unknown} named @param {unknown} hidden @param {unknown} members
  */
@@ -442,11 +446,19 @@ export function personRows(named, hidden, members) {
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
+    const email = group.email ?? null;
+    // backlog:c0b718741f0f — the small sub-line like Spazi e accessi: the
+    // mailbox when it adds to the painted name, else the access kind of the
+    // person's subjects, else nothing (a row whose label already is the
+    // mailbox never repeats it).
+    const sub = email !== null && name !== email ? email : (accessLabel(group.subjects) ?? null);
     return {
       ids: [...group.subjects],
       id: primary,
       name,
       label,
+      email,
+      sub,
       listed,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
@@ -2346,8 +2358,9 @@ export function createCalendarioView(deps) {
    * backlog:df55cf25 (specs/calendario.md C10, C11): the Team card — one
    * toggle row per PERSON, never a technical id. Each row paints the person
    * name (displayName, mailbox, or the operator's own typed words), tinted
-   * and initialled to match its grid blocks. No role line: the E2E takes
-   * the «Proprietario» chip out of the card (roles live on in Spazi e
+   * and initialled to match its grid blocks, with the mailbox or the access
+   * kind in piccolo underneath like Spazi e accessi. No role chip: the E2E
+   * takes the «Proprietario» chip out of the card (roles live on in Spazi e
    * accessi). A click on a listed person hides all of their identities'
    * blocks (C11) with no reload; a click on a roster person nobody named yet
    * lists all of their subjects and loads their week instead of typing
@@ -2396,7 +2409,18 @@ export function createCalendarioView(deps) {
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
-      toggle.appendChild(el(doc, 'span', { text: row.label }));
+      // backlog:c0b718741f0f — the name with its small sub-line (mailbox or
+      // access kind, like Spazi e accessi) underneath, never a role chip.
+      const names = el(doc, 'span', { className: 'cal-team-names' });
+      names.appendChild(el(doc, 'span', { text: row.label }));
+      if (row.sub !== null && row.sub !== undefined) {
+        names.appendChild(el(doc, 'div', {
+          className: 'bo-spazi-status',
+          attrs: row.sub === row.email ? { title: row.email } : {},
+          text: row.sub,
+        }));
+      }
+      toggle.appendChild(names);
       toggle.addEventListener('click', () => {
         // A toggle click is the operator's own choice: the roster auto-fill
         // no longer owns the filter from here on.
