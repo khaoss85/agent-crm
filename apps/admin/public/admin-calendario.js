@@ -2477,6 +2477,10 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): the typed
+    // marks go with the values, or the next opening reads the proposed
+    // date as «written» and raises a false unsaved-text warning.
+    state.manualTyped.clear();
     state.draftFill = null;
     state.draftWrote = null;
     state.customerPick = null;
@@ -5121,6 +5125,9 @@ export function createCalendarioView(deps) {
       state.selection = null;
       state.manualOpen = false;
       state.manual = null;
+      // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): leaving
+      // and returning drops the typed marks too, never a stale «written».
+      state.manualTyped.clear();
       state.draftFill = null;
       state.draftWrote = null;
       state.customerPick = null;

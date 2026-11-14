@@ -277,3 +277,23 @@ test('form: customerHint prefers a partial email, then the phone, then the compa
   assert.equal(customerHint({ email: '', phone: null, company: { name: 'Palestra Uno' } }), 'Palestra Uno');
   assert.equal(customerHint({ email: 'rotta@', phone: { value: '12' } }), null);
 });
+
+// backlog:134f3ed7 (review giro 1 P2): closeManual() dropped the typed
+// values but kept the typed marks, so the reopened form read its proposed
+// date (tomorrow) as «written» and raised «Hai del testo non salvato».
+test('form: a date typed then dropped by Esc is not unsaved text on reopen', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const { mount } = await openCalendar();
+  openManual(mount);
+  const date = byName(mount, 'date');
+  date.value = '2026-10-24';
+  date.dispatch('input');
+  formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
+  assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
+  openManual(mount);
+  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the proposed date is nobody’s unsaved text');
+  resetVersionWatchState();
+});
