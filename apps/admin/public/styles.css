@@ -2254,6 +2254,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card { position: relative; }
 /* backlog:85630aa14a4f: solo il focus da tastiera apre la riga; un clic col mouse su Riprova o Apri non sposta più la card sotto il puntatore. */
 .pipeline-card:has(:focus-visible) .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+/* Review Muse #893 (P1): un browser senza :has tiene il comportamento di prima, così la riga resta raggiungibile da tastiera. */
+@supports not selector(:has(*)) {
+  .pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }

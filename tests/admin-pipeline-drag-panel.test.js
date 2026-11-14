@@ -357,19 +357,22 @@ test('Dan 11/11: × closes the panel without re-rendering the board and hands fo
   assert.ok(apri.__focused, 'focus goes back to Apri');
 });
 
-test('85630aa14a4f: a mouse × hands focus back to the open card, without the focus ring', async () => {
-  const { mount } = await board([record('a', 'discovery')]);
+test('85630aa14a4f: a mouse × hands focus back to the open card, and the page does not jump', async () => {
+  const doc = createFakeDocument();
+  const { mount } = await board([record('a', 'discovery')], { doc });
   const apri = apriOf(mount, 'a');
-  const focusCalls = [];
-  apri.focus = (options) => { focusCalls.push(options ?? null); };
+  // Where focus is, like document.activeElement (the real browser proof:
+  // admin-pipeline-panel-focus-browser.test.js).
+  apri.focus = (options) => { doc.activeElement = apri; apri.focusOptions = options ?? null; };
   apri.dispatch('click');
   const panel = panelOf(mount);
   assert.ok(panel, 'the panel is open');
+  doc.activeElement = panel; // the ✕ inside the panel had it
   panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 1 });
   assert.equal(panelOf(mount), undefined, 'the panel is gone');
-  assert.equal(focusCalls.length, 1, 'focus goes back to the open card (its Apri)');
-  assert.equal(focusCalls[0]?.focusVisible, false, 'with no ring: a mouse closed it');
-  assert.equal(focusCalls[0]?.preventScroll, true, 'and the page does not jump');
+  assert.equal(doc.activeElement, apri, 'focus is on the open card (its Apri)');
+  assert.equal(apri.parentNode.getAttribute('data-record'), 'a');
+  assert.deepEqual(apri.focusOptions, { preventScroll: true }, 'standard options only: the page does not jump');
 });
 
 test('85630aa14a4f: closing the panel brings the board back to its pre-open scroll', async () => {

@@ -1871,8 +1871,9 @@ export function createPipelineBoard(deps) {
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
     if (code === 'STALE_STAGE') return "Questa offerta è stata spostata altrove nel frattempo: la pipeline si aggiorna.";
-    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
-    if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
+    // Review Muse #893 (P2): a lost write offers no Riprova, so its words never ask for one.
+    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.';
+    if (isTransientConflict(error)) return 'Questa offerta è stata spostata nel frattempo: la pipeline si aggiorna.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     // backlog:85630aa14a4f: the words match the Riprova next to them.
     return 'Spostamento non riuscito.';
@@ -2342,8 +2343,9 @@ export function createPipelineBoard(deps) {
 
   /**
    * Close the offer panel; with `refocus`, focus goes back to the open
-   * card's Apri — true: the keyboard closed it; 'pointer': a mouse ×, no
-   * ring; 'outside': a press outside, only if focus landed nowhere.
+   * card's Apri — true: the keyboard closed it; 'pointer': a mouse ×, the
+   * page does not scroll; 'outside': a press outside, only if focus landed
+   * nowhere.
    * @param {{ refocus: boolean | 'pointer' | 'outside' }} options
    */
   function closeOfferDrawer({ refocus }) {
@@ -2365,9 +2367,10 @@ export function createPipelineBoard(deps) {
     const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
     if (!live || typeof live.focus !== 'function') return;
     if (refocus === true) { live.focus(); return; }
-    // The mouse closed it: focus goes back without the ring
-    // (FocusOptions.focusVisible), and the page does not jump.
-    const quiet = () => live.focus({ preventScroll: true, focusVisible: false });
+    // The mouse closed it: focus goes back and the page does not jump; after
+    // a mouse click the browser's own :focus-visible shows no ring (review
+    // Muse #893: no non-standard option).
+    const quiet = () => live.focus({ preventScroll: true });
     if (refocus === 'pointer') { quiet(); return; }
     // A press outside: the browser moves focus after this pointerdown (to
     // the field or button pressed, else nowhere). Only when it landed

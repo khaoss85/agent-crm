@@ -198,8 +198,13 @@ test('85630aa14a4f: a press that starts on Riprova never opens the panel, even i
 
 test('85630aa14a4f: the «Sposta in» row opens on keyboard focus only, never on a mouse press inside the card', () => {
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
-  assert.ok(!/\.pipeline-card:focus-within \.card-move/.test(css), 'no :focus-within reveal (a mouse press on Riprova moved the card under the pointer)');
-  assert.match(css, /\.pipeline-card:has\(:focus-visible\) \.card-move \{[^}]*position: static/, 'the keyboard still reveals it');
+  // Review Muse #893 (P1): a browser without :has keeps the old reveal, inside @supports only.
+  const fallback = /@supports not selector\(:has\(\*\)\) \{([\s\S]*?)\n\}/.exec(css);
+  const outside = fallback ? css.replace(fallback[0], '') : css;
+  assert.ok(!/\.pipeline-card:focus-within \.card-move/.test(outside), 'no :focus-within reveal where :has works (a mouse press on Riprova moved the card under the pointer)');
+  assert.match(css, /\.pipeline-card:has\(:focus-visible\) \.card-move \{[^}]*position: static/, 'the keyboard reveals it');
+  assert.ok(fallback, 'browsers without :has get a fallback');
+  assert.match(fallback[1], /\.pipeline-card:focus-within \.card-move \{[^}]*position: static/, 'where the keyboard still opens the row (the old behaviour)');
 });
 
 // ---- One message, matching the button --------------------------------------
@@ -257,22 +262,21 @@ test('85630aa14a4f: a refusal that would only repeat (TERMINAL_STAGE) shows its 
 
 // ---- Closing the panel with the mouse ---------------------------------------
 
-test('85630aa14a4f: a press on empty board closes the panel and gives focus back to the card, with no ring', async () => {
+test('85630aa14a4f: a press on empty board closes the panel and gives focus back to the card', async () => {
   const doc = listeningDocument();
   const { mount } = await board([record('a', 'discovery'), record('b', 'demo')], {
     doc, wait: (ms) => (ms === 0 ? Promise.resolve() : new Promise(() => {})),
   });
   const apri = apriOf(cardOf(mount, 'a'));
-  const focusCalls = [];
-  apri.focus = (options) => { focusCalls.push(options ?? null); };
+  apri.focus = (options) => { doc.activeElement = apri; apri.focusOptions = options ?? null; };
   apri.dispatch('click');
   assert.ok(panelOf(mount));
-  doc.activeElement = doc.body;
+  doc.activeElement = doc.body; // the press landed on nothing focusable
   doc.dispatch('pointerdown', { target: columnOf(mount, 'demo') });
   assert.equal(panelOf(mount), undefined, 'the panel closed');
   await tick();
-  assert.equal(focusCalls.length, 1, 'focus is back on the open card (its Apri)');
-  assert.deepEqual(focusCalls[0], { preventScroll: true, focusVisible: false }, 'without the ring, without a jump');
+  assert.equal(doc.activeElement, apri, 'focus is back on the open card (its Apri)');
+  assert.deepEqual(apri.focusOptions, { preventScroll: true }, 'without a jump');
 });
 
 test('85630aa14a4f: a press outside on a field keeps focus there', async () => {
@@ -281,15 +285,14 @@ test('85630aa14a4f: a press outside on a field keeps focus there', async () => {
     doc, wait: (ms) => (ms === 0 ? Promise.resolve() : new Promise(() => {})),
   });
   const apri = apriOf(cardOf(mount, 'a'));
-  const focusCalls = [];
-  apri.focus = (options) => { focusCalls.push(options ?? null); };
+  apri.focus = () => { doc.activeElement = apri; };
   apri.dispatch('click');
   const search = mount.findAll('input').find((n) => n.getAttribute('data-filter') === 'q');
   doc.activeElement = search; // the browser focused the pressed field
   doc.dispatch('pointerdown', { target: search });
   await tick();
   assert.equal(panelOf(mount), undefined, 'the panel closed');
-  assert.equal(focusCalls.length, 0, 'the field keeps the focus');
+  assert.equal(doc.activeElement, search, 'the field keeps the focus');
 });
 
 // ---- The open card's mark ----------------------------------------------------
