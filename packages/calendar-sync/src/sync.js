@@ -194,7 +194,69 @@ function requireMapping(mapping) {
 
 /** The local half of a linked row, as one comparable string. */
 export function appointmentFingerprint(row) {
-  return JSON.stringify([row?.startsAt ?? null, row?.endsAt ?? null, row?.notes ?? null, row?.status ?? null]);
+  return JSON.stringify([row?.startsAt ?? null, row?.endsAt ?? null, row?.notes ?? null, row?.status ?? null,
+    typeof row?.recurrenceRule === 'string' && row.recurrenceRule !== '' ? row.recurrenceRule : null]);
+}
+
+/**
+ * The `recurrence` the push sends to Google for a series head
+ * (backlog:0f2ae629e09b): the appointment row's validated rule as one
+ * `RRULE:` line, so the series arrives on Google as one recurring event.
+ * Only the head (occurrenceIndex 0) carries it — later occurrences push
+ * nothing of their own, and a row with an unreadable rule pushes no
+ * recurrence rather than a guessed one. Null when there is no series.
+ */
+const SERIES_ISO_BYDAY = Object.freeze({ 1: 'MO', 2: 'TU', 3: 'WE', 4: 'TH', 5: 'FR', 6: 'SA', 7: 'SU' });
+export function seriesRecurrence(row) {
+  if (!row || typeof row.recurrenceRule !== 'string' || row.recurrenceRule.trim() === '') return null;
+  if (row.occurrenceIndex !== 0 && row.occurrenceIndex !== '0' && row.occurrenceIndex !== null && row.occurrenceIndex !== undefined) {
+    return null;
+  }
+  let rule;
+  try {
+    rule = JSON.parse(row.recurrenceRule);
+  } catch {
+    return null;
+  }
+  if (!rule || typeof rule !== 'object' || typeof rule.kind !== 'string' || rule.kind === 'none') return null;
+  const freq = rule.unit === 'day' ? 'DAILY' : rule.unit === 'week' ? 'WEEKLY' : rule.unit === 'month' ? 'MONTHLY' : rule.unit === 'year' ? 'YEARLY'
+    : rule.kind === 'daily' ? 'DAILY' : rule.kind === 'weekly' || rule.kind === 'weekdays' ? 'WEEKLY'
+      : rule.kind === 'monthly' ? 'MONTHLY' : rule.kind === 'yearly' ? 'YEARLY' : null;
+  if (freq === null) return null;
+  if (typeof rule.interval === 'number' && (!Number.isSafeInteger(rule.interval) || rule.interval < 1)) return null;
+  const parts = [`RRULE:FREQ=${freq}`];
+  if (typeof rule.interval === 'number' && rule.interval !== 1) parts.push(`INTERVAL=${rule.interval}`);
+  const days = rule.kind === 'weekdays'
+    ? [1, 2, 3, 4, 5]
+    : Array.isArray(rule.days) && rule.days.every((day) => SERIES_ISO_BYDAY[day] !== undefined)
+      ? [...rule.days].sort((a, b) => a - b)
+      : null;
+  if (freq === 'WEEKLY' && days !== null) parts.push(`BYDAY=${days.map((day) => SERIES_ISO_BYDAY[day]).join(',')}`);
+  if (freq === 'MONTHLY' && rule.kind === 'monthly') {
+    try {
+      const seen = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date(row.startsAt));
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(seen);
+      const weekday = match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).getUTCDay() : NaN;
+      const firstDow = match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)).getUTCDay() : NaN;
+      if (match && Number.isInteger(weekday)) {
+        const nth = Math.floor((Number(match[3]) - 1 - ((weekday - firstDow + 7) % 7)) / 7) + 1;
+        const iso = weekday === 0 ? 7 : weekday;
+        parts.push(`BYDAY=${nth}${SERIES_ISO_BYDAY[iso]}`);
+      }
+    } catch {
+      return null;
+    }
+  }
+  if (typeof rule.count === 'number' && Number.isSafeInteger(rule.count) && rule.count >= 1) {
+    parts.push(`COUNT=${rule.count}`);
+  } else if (typeof rule.until === 'string' && rule.until.trim() !== '') {
+    const raw = rule.until.trim();
+    const ms = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? Date.parse(`${raw}T23:59:59.999Z`) : Date.parse(raw);
+    if (!Number.isFinite(ms)) return null;
+    parts.push(`UNTIL=${new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}`);
+  }
+  return Object.freeze([parts.join(';')]);
 }
 
 // Google event ids are calendar-scoped, but the appointment source key is
@@ -1375,12 +1437,19 @@ export function createCalendarSyncOperations(options = {}) {
             field: 'mapping.summaryForAppointment',
           });
         }
+        // A linked series (backlog:0f2ae629e09b) arrives on Google as one
+        // recurring event: only the head carries the RRULE — later
+        // occurrences are local grid rows the push never exports on their
+        // own. A row with an unreadable rule exports no recurrence, never a
+        // guessed one.
+        const recurrence = seriesRecurrence(row);
         const created = await providerCall(calendarId, 'insertEvent', {
           calendarId,
           summary: summary.slice(0, 200),
           description: row.notes ?? '',
           start: { dateTime: row.startsAt },
           end: { dateTime: row.endsAt },
+          ...(recurrence === null ? {} : { recurrence }),
           extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
         }, GRANT_PURPOSE_WRITE);
         await storeLink({

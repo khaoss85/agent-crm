@@ -406,12 +406,20 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, recurrence = null, secret } = {}) {
       requireGrant({ secret }, 'insertEvent');
       const cal = calendar(calendarId);
       const eventId = id === undefined ? `fake-${cal.seq + 1}-${Math.floor(nowMs() % 100000)}` : checkEventId(id);
       if (liveEvent(cal, eventId)) {
         throw fakeError('GOOGLE_EVENT_CONFLICT', 409, `event "${eventId}" already exists`);
+      }
+      // A pushed series (backlog:0f2ae629e09b) lands as one recurring
+      // event: the RRULE lines ride the stored row like seeds do. Anything
+      // else refuses — a guessed schedule is never written.
+      const lines = recurrence === null || recurrence === undefined ? null : recurrence;
+      if (lines !== null && (!Array.isArray(lines) || lines.length === 0 || lines.length > 8
+        || lines.some((line) => typeof line !== 'string' || line.length === 0 || line.length > 256))) {
+        throw fakeError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent needs a bounded recurrence string array when naming one');
       }
       const stored = {
         id: eventId,
@@ -422,6 +430,7 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: nowIso(),
         extendedProperties: { ...extendedProperties },
+        ...(lines === null ? {} : { recurrence: Object.freeze([...lines]) }),
       };
       cal.events.set(eventId, stored);
       touch(cal, eventId);

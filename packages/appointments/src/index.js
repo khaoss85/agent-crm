@@ -33,6 +33,9 @@ import {
   readSchedule,
   readTeamWeek,
   rescheduleAppointment,
+  SERIES_SCOPES,
+  seriesScopeRows,
+  validateSeriesScope,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
@@ -42,6 +45,15 @@ import {
   validateReminderChannel,
   validateSubject,
 } from './appointments.js';
+import {
+  RECURRENCE_ISO_DAYS,
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  recurrenceToRRule,
+  validateRecurrence,
+} from './recurrence.js';
 import {
   APPOINTMENT_REMINDER_SEND_ACTION,
   APPOINTMENT_REMINDER_SWEEP_HANDLER,
@@ -93,6 +105,13 @@ export const APPOINTMENTS_DOMAIN = APPOINTMENTS_PACKAGE;
 export const APPOINTMENTS_RESOURCES = Object.freeze([APPOINTMENT_MODULE]);
 
 export {
+  RECURRENCE_ISO_DAYS,
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  recurrenceToRRule,
+  validateRecurrence,
   APPOINTMENT_INITIAL,
   APPOINTMENT_STATES,
   APPOINTMENT_TERMINAL,
@@ -122,6 +141,9 @@ export {
   reminderHistoryBody,
   reminderMessageKey,
   reminderSourceKey,
+  SERIES_SCOPES,
+  seriesScopeRows,
+  validateSeriesScope,
   reminderThreadKey,
   seedReminderSweep,
   suggestSlots,
@@ -218,7 +240,12 @@ export function createAppointmentsPackage(options = {}) {
     // a reason through `app.cancelAppointmentBooking` — the lifecycle's own
     // `-> cancelled` advance, idempotent on an already cancelled row.
     // Additive: the transition table and the booking contract are untouched.
-    version: 4,
+    // 5 (backlog:0f2ae629e09b): Google-Calendar-style series — `recurrence`
+    // on the booking request expands to one row per occurrence (each with
+    // the series key and its index), every occurrence conflict-checked
+    // before the first write; cancel/reschedule take a `scope` (single,
+    // following, all). Additive: singles book exactly as before.
+    version: 5,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -419,8 +446,11 @@ export function createAppointmentsPackage(options = {}) {
           'The reminder send is the booking\'s own approved template to the booking\'s own recipient, and nothing else: no free text ever sends from this path.',
           'A failed automatic send leaves the follow-up open: the human still owes the reminder, and the jobs table shows why the try failed.',
         ],
+        recurrence: 'a series is one validated rule (daily, weekly, monthly, yearly, weekdays, custom) expanded to one row '
+          + 'per occurrence with the series key and index; each occurrence is conflict-checked before the first write, '
+          + 'only the head carries the reminder, and cancel/reschedule take a scope (single, following, all)',
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
-          'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
+          'free-text notifications or sends', 'package credits or payments', 'waitlists'],
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
       };
     },

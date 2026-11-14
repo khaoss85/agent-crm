@@ -2,6 +2,7 @@
 
 import { createHash } from 'node:crypto';
 
+import { expandRecurrence, validateRecurrence } from './recurrence.js';
 import {
   ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -383,6 +384,10 @@ export function validateAppointmentRequest(request) {
     throw new ValidationError('remindAt must be before startsAt: a reminder at or after the slot reminds nobody', { field: 'remindAt' });
   }
   const sourceKey = validateSourceKey(value.sourceKey, 'sourceKey');
+  // A Google-Calendar-style series (backlog:0f2ae629e09b): null means «Non
+  // si ripete». Anything else is normalized here, so every booking path
+  // below (book, propose, confirm) expands the same validated rule.
+  const recurrence = validateRecurrence(value.recurrence ?? null);
   const reminderChannel = validateReminderChannel(value.reminderChannel, remindAt);
   if (reminderChannel !== null) {
     // One bound, one place: the derivation throws naming it when the
@@ -392,6 +397,7 @@ export function validateAppointmentRequest(request) {
   }
   return {
     sourceKey,
+    recurrence,
     subject: validateSubject(value.subject),
     // The team member is an opaque team identity — the same convention as the
     // interactions package's teamAuthorId. No roster is read and none is
@@ -580,6 +586,105 @@ function replayOrConflict(existing, submitted) {
 }
 
 /**
+ * Series scope (backlog:0f2ae629e09b): «solo questo / questo e i successivi /
+ * tutti» for cancel and reschedule. Anything else is refused naming `scope`,
+ * never guessed.
+ */
+export const SERIES_SCOPES = Object.freeze(['single', 'following', 'all']);
+export function validateSeriesScope(value) {
+  if (value === undefined || value === null || value === '') return 'single';
+  const scope = String(value).trim();
+  if (!SERIES_SCOPES.includes(scope)) {
+    throw new ValidationError('scope must be one of single, following, all: solo questo, questo e i successivi, tutti', {
+      field: 'scope',
+    });
+  }
+  return scope;
+}
+
+/** Short Italian label of an occurrence slot for 409 messages the operator reads. */
+function seriesOccurrenceLabel(startsAt) {
+  try {
+    const words = new Intl.DateTimeFormat('it-IT', {
+      timeZone: 'Europe/Rome', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(startsAt));
+    return words;
+  } catch {
+    return String(startsAt);
+  }
+}
+
+/**
+ * The rows a scoped cancel/move touches: `single` is the named row alone;
+ * `following` adds every same-series row from its slot on; `all` is the
+ * whole series. A scope wider than one on a row that belongs to no series
+ * is refused — cancelling «tutti» of one booking must never silently cancel
+ * one. Sorted soonest first, so messages and writes read in grid order.
+ */
+export async function seriesScopeRows(appointments, row, scope) {
+  if (scope === 'single' || !row?.seriesKey) return Object.freeze([row]);
+  if (typeof appointments?.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  const siblings = await appointments.listWhere({ seriesKey: row.seriesKey });
+  const fromMs = Date.parse(row.startsAt);
+  const inScope = siblings.filter((candidate) => {
+    if (!candidate || typeof candidate.startsAt !== 'string') return false;
+    if (scope === 'all') return true;
+    const ms = Date.parse(candidate.startsAt);
+    return Number.isFinite(ms) && Number.isFinite(fromMs) && ms >= fromMs;
+  });
+  inScope.sort((a, b) => String(a.startsAt ?? '').localeCompare(String(b.startsAt ?? ''))
+    || String(a.id ?? '').localeCompare(String(b.id ?? '')));
+  if (!inScope.some((candidate) => candidate && candidate.id === row.id)) inScope.unshift(row);
+  return Object.freeze(inScope);
+}
+
+/**
+ * First conflicting occurrence of a series against held rows (plus the
+ * series' own earlier slots, so a rule overlapping itself is refused naming
+ * the pair). Null when every occurrence is free.
+ */
+function seriesConflict(held, teamMemberId, slots, total) {
+  const seen = [];
+  for (let index = 0; index < slots.length; index += 1) {
+    const slot = slots[index];
+    const probe = { teamMemberId, startMs: slot.startMs, endMs: slot.endMs };
+    const conflict = findOverlap(probe, [...(held ?? []), ...seen]);
+    if (conflict) return { index, slot, conflict };
+    seen.push({
+      id: `series-occurrence-${index + 1}-of-${total}`,
+      status: 'booked',
+      startsAt: slot.startsAt,
+      endsAt: slot.endsAt,
+    });
+  }
+  return null;
+}
+
+/** The 409 the operator's dialog shows: which occurrence is busy, and by what. */
+function seriesOverlapError(teamMemberId, hit, total) {
+  return new AppError(
+    `L'occorrenza ${hit.index + 1} di ${total} (${seriesOccurrenceLabel(hit.slot.startsAt)}) è occupata: `
+      + `il membro "${teamMemberId}" ha già un appuntamento dalle ${hit.conflict.startsAt} alle ${hit.conflict.endsAt} `
+      + `(stato "${hit.conflict.status}"). Sposta la serie o annulla l'appuntamento che la occupa, poi riprova.`,
+    {
+      code: 'APPOINTMENTS_OVERLAP',
+      status: 409,
+      details: {
+        conflictingId: hit.conflict.id ?? null,
+        status: hit.conflict.status ?? null,
+        occurrenceIndex: hit.index,
+        occurrenceStartsAt: hit.slot.startsAt,
+        occurrenceCount: total,
+      },
+    },
+  );
+}
+
+/**
  * The deterministic business identity of the reminder follow-up: one booking
  * owns at most one reminder, and a retried booking replays the same reminder
  * rather than scheduling a second.
@@ -750,49 +855,15 @@ function reminderRequest(input, source) {
 }
 
 /**
- * Book one appointment: validate, refuse a slot the team member already holds,
- * store the row as `booked`, and — when the request names `remindAt` — open
- * exactly one work follow-up reminder inside the same transaction, due at the
- * named instant. Idempotent by source key.
- *
- * A booking with `remindAt` must run inside the caller's
- * `database.transactionAsync`: the appointment and its reminder commit as one
- * pair, so a reminder refusal rolls the booking back with it. A booking
- * without `remindAt` is one atomic row and carries no such requirement.
- *
- * The reminder title fits the follow-up bound by construction: the service key
- * is at most 48 characters and the instant renders at 24.
+ * The stored row for one booking or one series occurrence: the same shape on
+ * every path, so a single and an occurrence compare identically and old rows
+ * (from before the series columns existed) read back as singles. `series` is
+ * null for a single booking, or `{ seriesKey, occurrenceIndex,
+ * recurrenceRule }` for an occurrence — the head's key is the claim's own
+ * source key, later occurrences derive `:r2`, `:r3`, … from it.
  */
-export async function bookAppointment(context, request) {
-  const names = resolvedNames(context.moduleNames);
-  const appointments = appointmentService({ modules: context.modules, names });
-  const actor = context.actor;
-  // Evidence names its author: an anonymous booking would hold a customer's
-  // slot with nobody accountable for it, so a missing actor is refused.
-  const who = requireActor(actor);
-  const input = validateAppointmentRequest(request);
-  const source = bindSourcePackage(input.source, context.consumer);
-  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
-  // Derived before any read or write, so a key that cannot own a reminder
-  // fails closed at validation time rather than mid-booking.
-  const reminderKey = input.remindAt === null ? null : reminderSourceKey(input.sourceKey);
-
-  // The overlap and idempotency reads below are exact-match — never a bounded
-  // page: a booking that silently misses a row past a page boundary is a
-  // double booking or a duplicate. Without an exact-match read neither
-  // invariant can be checked, so a service without one fails closed before the
-  // first read rather than booking blind.
-  if (typeof appointments.listWhere !== 'function') {
-    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
-      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
-    });
-  }
-
-  // The pair promise, proven before the first write: with a reminder named,
-  // the booking and its follow-up must commit together.
-  if (input.remindAt !== null) requireBookingTransaction(appointments);
-
-  const submitted = {
+function submittedBooking(input, source, reminderKey, series) {
+  return {
     subjectResource: input.subject.resource,
     subjectId: input.subject.id,
     subjectOwner: input.subject.owner,
@@ -822,7 +893,185 @@ export async function bookAppointment(context, request) {
     reminderTemplateVars: input.reminderChannel ? JSON.stringify(input.reminderChannel.template.variables) : null,
     sourcePackage: source.package,
     sourceAction: source.action,
+    seriesKey: series?.seriesKey ?? null,
+    occurrenceIndex: series?.occurrenceIndex ?? null,
+    recurrenceRule: series?.recurrenceRule ?? null,
   };
+}
+
+/**
+ * Book a whole series (backlog:0f2ae629e09b): the validated rule expands to
+ * its occurrence slots, every slot is conflict-checked before the first
+ * write (one busy occurrence refuses the whole series with a 409 naming its
+ * date), then each occurrence is stored with the series key and its index.
+ * Only the head carries the reminder: one series, one reminder, on the first
+ * slot — per-occurrence reminders are a follow-up, never silent rows.
+ * Idempotent by derived source key: a retried series replays its stored
+ * occurrences and completes the ones a lost answer never stored.
+ */
+async function bookSeries(context, input) {
+  const names = resolvedNames(context.moduleNames);
+  const appointments = appointmentService({ modules: context.modules, names });
+  const who = requireActor(context.actor);
+  const source = bindSourcePackage(input.source, context.consumer);
+  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+  if (typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+  if (input.remindAt !== null) requireBookingTransaction(appointments);
+  const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+  if (slots.length === 0) {
+    throw new AppError('The series expands to no occurrence: a rule that books nothing is refused', {
+      code: 'APPOINTMENTS_SERIES_EMPTY', status: 500,
+    });
+  }
+  const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
+  const ruleJson = JSON.stringify(input.recurrence);
+  const headReminderKey = input.remindAt === null ? null : reminderSourceKey(keys[0]);
+  const inputFor = (index) => (index === 0
+    ? { ...input, sourceKey: keys[0] }
+    : {
+      ...input,
+      sourceKey: keys[index],
+      startsAt: slots[index].startsAt,
+      endsAt: slots[index].endsAt,
+      remindAt: null,
+      reminderChannel: null,
+    });
+  const submittedFor = (index) => submittedBooking(
+    inputFor(index),
+    source,
+    index === 0 ? headReminderKey : null,
+    { seriesKey: input.sourceKey, occurrenceIndex: index, recurrenceRule: ruleJson },
+  );
+  const runCritical = async () => {
+    // The series' own rows never block it: a retried series re-reads its
+    // committed occurrences below instead of 409ing on them.
+    const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+    const others = held.filter((row) => !row || row.seriesKey !== input.sourceKey);
+    const stored = [];
+    for (const key of keys) stored.push((await appointments.listWhere({ sourceKey: key }))[0] ?? null);
+    const missing = [];
+    for (let index = 0; index < slots.length; index += 1) {
+      const submitted = submittedFor(index);
+      if (stored[index]) {
+        replayOrConflict(stored[index], submitted);
+      } else {
+        missing.push({ index, slot: slots[index], submitted });
+      }
+    }
+    if (missing.length > 0) {
+      const hit = seriesConflict(
+        others,
+        input.teamMemberId,
+        missing.map((entry) => ({ ...entry.slot, occurrenceIndex: entry.index })),
+        slots.length,
+      );
+      if (hit) {
+        const at = missing.find((entry) => entry.slot.startsAt === hit.slot.startsAt) ?? missing[0];
+        throw seriesOverlapError(input.teamMemberId, { index: at.index, slot: at.slot, conflict: hit.conflict }, slots.length);
+      }
+    }
+    if (input.reminderChannel !== null) {
+      await checkReminderSendable(context, { input });
+    }
+    const rows = [];
+    for (let index = 0; index < slots.length; index += 1) {
+      if (stored[index]) {
+        rows.push(stored[index]);
+        continue;
+      }
+      const submitted = submittedFor(index);
+      try {
+        rows.push(await appointments.createManaged({
+          sourceKey: keys[index],
+          ...submitted,
+          subjectLabel: input.subject.label,
+          status: APPOINTMENT_INITIAL,
+          bookedAt: now,
+          decidedAt: null,
+          cancelReason: null,
+          actorType: who.type,
+          actorId: who.id,
+        }, { actor: who }));
+      } catch (error) {
+        if (!isUniqueConflict(error)) throw error;
+        const raced = (await appointments.listWhere({ sourceKey: keys[index] }))[0];
+        if (!raced) throw error;
+        rows.push(replayOrConflict(raced, submitted));
+      }
+    }
+    let reminder = null;
+    if (input.remindAt !== null) {
+      reminder = await createReminder(context, { input: inputFor(0), source });
+    }
+    const replayed = missing.length === 0;
+    return { rows, reminder, replayed };
+  };
+  const runInTransaction = bookingTransaction(appointments);
+  const { rows, reminder, replayed } = await withMemberBooking(
+    input.teamMemberId,
+    runInTransaction ? () => runInTransaction(runCritical) : runCritical,
+  );
+  return Object.freeze({
+    appointment: rows[0],
+    occurrences: Object.freeze(rows),
+    occurrenceCount: rows.length,
+    seriesKey: input.sourceKey,
+    reminder,
+    replayed,
+  });
+}
+
+/**
+ * Book one appointment: validate, refuse a slot the team member already holds,
+ * store the row as `booked`, and — when the request names `remindAt` — open
+ * exactly one work follow-up reminder inside the same transaction, due at the
+ * named instant. Idempotent by source key.
+ *
+ * A booking with `remindAt` must run inside the caller's
+ * `database.transactionAsync`: the appointment and its reminder commit as one
+ * pair, so a reminder refusal rolls the booking back with it. A booking
+ * without `remindAt` is one atomic row and carries no such requirement.
+ *
+ * The reminder title fits the follow-up bound by construction: the service key
+ * is at most 48 characters and the instant renders at 24.
+ */
+export async function bookAppointment(context, request) {
+  const names = resolvedNames(context.moduleNames);
+  const appointments = appointmentService({ modules: context.modules, names });
+  const actor = context.actor;
+  // Evidence names its author: an anonymous booking would hold a customer's
+  // slot with nobody accountable for it, so a missing actor is refused.
+  const who = requireActor(actor);
+  const input = validateAppointmentRequest(request);
+  // A series books its occurrences, each conflict-checked, through the series
+  // path below — the single path underneath never sees a recurrence.
+  if (input.recurrence !== null) return bookSeries(context, input);
+  const source = bindSourcePackage(input.source, context.consumer);
+  const now = typeof context.now === 'function' ? context.now() : new Date().toISOString();
+  // Derived before any read or write, so a key that cannot own a reminder
+  // fails closed at validation time rather than mid-booking.
+  const reminderKey = input.remindAt === null ? null : reminderSourceKey(input.sourceKey);
+
+  // The overlap and idempotency reads below are exact-match — never a bounded
+  // page: a booking that silently misses a row past a page boundary is a
+  // double booking or a duplicate. Without an exact-match read neither
+  // invariant can be checked, so a service without one fails closed before the
+  // first read rather than booking blind.
+  if (typeof appointments.listWhere !== 'function') {
+    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
+      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
+    });
+  }
+
+  // The pair promise, proven before the first write: with a reminder named,
+  // the booking and its follow-up must commit together.
+  if (input.remindAt !== null) requireBookingTransaction(appointments);
+
+  const submitted = submittedBooking(input, source, reminderKey, null);
 
   // The check-then-act below runs serialized per team member on every path:
   // the member chain above orders same-process bookings so the loser re-reads
@@ -1173,7 +1422,55 @@ export async function rescheduleAppointment(context, request) {
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
+  // Series scope (backlog:0f2ae629e09b): «solo questo» moves one row to the
+  // named slot; «questo e i successivi» / «tutti» shift every in-scope row by
+  // the same delta, so the series keeps its rhythm. A wider scope on a row
+  // that belongs to no series is refused, never silently single.
+  const scope = validateSeriesScope(record.scope);
+  if (scope !== 'single' && !first.seriesKey) {
+    throw new ValidationError('scope following and all need a series occurrence: this appointment belongs to no series', {
+      field: 'scope',
+    });
+  }
   const runInTransaction = bookingTransaction(appointments);
+  const checkReminderSurvives = (row, nextStartMs, nextStartIso) => {
+    const dueAt = row.reminderDueAt ?? null;
+    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
+      const dueMs = Date.parse(dueAt);
+      if (Number.isFinite(dueMs) && nextStartMs <= dueMs) {
+        throw new AppError(
+          `The stored reminder is due at ${dueAt}: the new slot starts at ${nextStartIso}, at or after the reminder, `
+          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
+          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
+        );
+      }
+    }
+  };
+  const checkSlotFree = (held, memberIdFor, startMs, endMs, excludeIds, occurrence) => {
+    const others = held.filter((row) => row && !excludeIds.has(row.id));
+    const conflict = findOverlap({ teamMemberId: memberIdFor, startMs, endMs }, others);
+    if (conflict) {
+      const where = occurrence
+        ? `L'occorrenza ${occurrence.index + 1} di ${occurrence.total} (${seriesOccurrenceLabel(occurrence.startsAt)}) è occupata: `
+        : '';
+      throw new AppError(
+        `${where}Il membro "${memberIdFor}" ha già un altro appuntamento in questa fascia oraria `
+        + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
+        + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+        {
+          code: 'APPOINTMENTS_OVERLAP',
+          status: 409,
+          details: {
+            conflictingId: conflict.id ?? null,
+            status: conflict.status ?? null,
+            ...(occurrence
+              ? { occurrenceIndex: occurrence.index, occurrenceStartsAt: occurrence.startsAt, occurrenceCount: occurrence.total }
+              : {}),
+          },
+        },
+      );
+    }
+  };
   const critical = async () => {
     const current = await lookup();
     if (APPOINTMENT_TERMINAL.includes(current.status)) {
@@ -1182,44 +1479,77 @@ export async function rescheduleAppointment(context, request) {
         { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: null } },
       );
     }
-    if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
-      return { appointment: current, moved: false };
+    const targets = await seriesScopeRows(appointments, current, scope);
+    if (scope === 'single') {
+      if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
+        return { appointment: current, moved: false, occurrences: Object.freeze([]) };
+      }
+      // The booking invariant survives the drag: the stored reminder still
+      // fires before the slot. Re-read inside the critical section, so a
+      // reminder written between the two reads is seen too.
+      checkReminderSurvives(current, startsAt.ms, startsAt.iso);
+      const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
+      checkSlotFree(held, current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
+      return {
+        appointment: await appointments.applyManaged(
+          current.id,
+          { startsAt: startsAt.iso, endsAt: endsAt.iso },
+          { actor: who },
+        ),
+        moved: true,
+        occurrences: Object.freeze([]),
+      };
     }
-    // The booking invariant survives the drag: the stored reminder still
-    // fires before the slot. Re-read inside the critical section, so a
-    // reminder written between the two reads is seen too.
-    const dueAt = current.reminderDueAt ?? null;
-    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
-      const dueMs = Date.parse(dueAt);
-      if (Number.isFinite(dueMs) && startsAt.ms <= dueMs) {
+    const deltaMs = startsAt.ms - Date.parse(current.startsAt);
+    const durationMs = Date.parse(current.endsAt) - Date.parse(current.startsAt);
+    const inScopeIds = new Set(targets.map((row) => row.id));
+    const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
+    const plans = targets.map((row, position) => {
+      const fromMs = Date.parse(row.startsAt);
+      const nextStartMs = fromMs + deltaMs;
+      const next = {
+        row,
+        nextStartsAt: new Date(nextStartMs).toISOString(),
+        nextEndsAt: new Date(nextStartMs + durationMs).toISOString(),
+        nextStartMs,
+        nextEndMs: nextStartMs + durationMs,
+        position,
+      };
+      return next;
+    });
+    for (const plan of plans) {
+      if (APPOINTMENT_TERMINAL.includes(plan.row.status)) {
         throw new AppError(
-          `The stored reminder is due at ${dueAt}: the new slot starts at ${startsAt.iso}, at or after the reminder, `
-          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
-          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
+          `An appointment in state "${plan.row.status}" cannot be rescheduled; it is terminal and moves nowhere`,
+          { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: plan.row.status, to: null, occurrenceStartsAt: plan.row.startsAt } },
         );
       }
+      checkReminderSurvives(plan.row, plan.nextStartMs, plan.nextStartsAt);
+      checkSlotFree(held, current.teamMemberId, plan.nextStartMs, plan.nextEndMs, inScopeIds, {
+        index: plan.row.occurrenceIndex ?? plan.position,
+        total: targets.length,
+        startsAt: plan.nextStartsAt,
+      });
     }
-    const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
-    const others = held.filter((row) => row && row.id !== current.id);
-    const conflict = findOverlap(
-      { teamMemberId: current.teamMemberId, startMs: startsAt.ms, endMs: endsAt.ms },
-      others,
-    );
-    if (conflict) {
-      throw new AppError(
-        `Il membro "${current.teamMemberId}" ha già un altro appuntamento in questa fascia oraria `
-        + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
-        + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
-        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
-      );
-    }
-    return {
-      appointment: await appointments.applyManaged(
-        current.id,
-        { startsAt: startsAt.iso, endsAt: endsAt.iso },
+    const moved = [];
+    for (const plan of plans) {
+      if (plan.row.startsAt === plan.nextStartsAt && plan.row.endsAt === plan.nextEndsAt) {
+        moved.push(plan.row);
+        continue;
+      }
+      moved.push(await appointments.applyManaged(
+        plan.row.id,
+        { startsAt: plan.nextStartsAt, endsAt: plan.nextEndsAt },
         { actor: who },
-      ),
+      ));
+    }
+    const named = moved.find((row) => row.id === current.id) ?? moved[0];
+    return {
+      appointment: named,
       moved: true,
+      occurrences: Object.freeze(moved.map((row) => Object.freeze({
+        id: row.id, sourceKey: row.sourceKey, startsAt: row.startsAt, endsAt: row.endsAt,
+      }))),
     };
   };
   // The move serializes on the appointment identity as well as the member:
@@ -1230,7 +1560,7 @@ export async function rescheduleAppointment(context, request) {
   // refuses 409 or advances the winner's row, never a terminal row silently
   // moved to a new slot.
   const recordId = safeText(first.id, 'id', MAX_ID);
-  const { appointment, moved } = await withMemberBooking(
+  const { appointment, moved, occurrences } = await withMemberBooking(
     memberId,
     () => withAppointmentAdvance(
       recordId,
@@ -1254,7 +1584,7 @@ export async function rescheduleAppointment(context, request) {
       pushError = Object.freeze({ code });
     }
   }
-  return Object.freeze({ appointment, moved, push, pushError });
+  return Object.freeze({ appointment, moved, occurrences: occurrences ?? Object.freeze([]), scope, push, pushError });
 }
 
 /**
@@ -1339,41 +1669,72 @@ export async function cancelAppointment(context, request) {
     return row;
   };
   const first = await lookup();
-  let appointment = first;
-  let cancelled = false;
-  if (first.status !== CANCELLED_STATE) {
+  // Series scope (backlog:0f2ae629e09b): «solo questo / questo e i successivi
+  // / tutti». A wider scope on a row that belongs to no series is refused —
+  // «tutti» of one booking must never silently cancel one.
+  const scope = validateSeriesScope(record.scope);
+  if (scope !== 'single' && !first.seriesKey) {
+    throw new ValidationError('scope following and all need a series occurrence: this appointment belongs to no series', {
+      field: 'scope',
+    });
+  }
+  const targets = await seriesScopeRows(appointments, first, scope);
+  const advanceOne = async (row) => {
+    if (row.status === CANCELLED_STATE) return { row, cancelled: false };
     try {
-      appointment = await advanceAppointment(
+      const next = await advanceAppointment(
         { appointments, actor: who, now: context.now },
-        first,
+        row,
         CANCELLED_STATE,
         reason,
       );
-      cancelled = true;
+      return { row: next, cancelled: true };
     } catch (error) {
       // Another cancellation won the race between the read and the write:
       // its row is the answer, never a 409 on the operator's own intent.
       if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
         throw error;
       }
-      appointment = await lookup();
+      const fresh = await lookup();
+      return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: fresh.status === CANCELLED_STATE };
     }
-  }
+  };
+  const settled = [];
+  for (const target of targets) settled.push(await advanceOne(target));
+  const namedEntry = settled.find((entry) => entry.row.id === first.id) ?? settled[0];
+  const appointment = namedEntry.row;
+  const cancelled = namedEntry.cancelled;
+  const occurrences = Object.freeze(settled.map((entry) => Object.freeze({
+    id: entry.row.id,
+    sourceKey: entry.row.sourceKey,
+    startsAt: entry.row.startsAt,
+    cancelled: entry.cancelled,
+  })));
   // The push rides the idempotent path on a replay too: a first attempt
-  // whose push failed converges Google on the retry.
+  // whose push failed converges Google on the retry. A scoped cancellation
+  // also converges the series head — it carries the Google RRULE, so Google
+  // sees the series change even when the named row is a later occurrence.
+  const pushKeys = [appointment.sourceKey];
+  const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
+  if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
-    try {
-      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
-    } catch (error) {
-      const code = typeof error?.code === 'string' && error.code !== ''
-        ? error.code
-        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
-      pushError = Object.freeze({ code });
+    for (const key of pushKeys) {
+      try {
+        const answered = await calendarPush(calendarId, key, { spaceId, actor: who });
+        if (push === null) push = answered;
+      } catch (error) {
+        if (pushError === null) {
+          const code = typeof error?.code === 'string' && error.code !== ''
+            ? error.code
+            : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+          pushError = Object.freeze({ code });
+        }
+      }
     }
   }
-  return Object.freeze({ appointment, cancelled, push, pushError });
+  return Object.freeze({ appointment, cancelled, occurrences, scope, push, pushError });
 }
 
 /**
@@ -1464,6 +1825,13 @@ function projectTeamWeekRow(row) {
     currency: row.currency,
     notes: row.notes ?? null,
     sourceKey: row.sourceKey,
+    // Series paint (backlog:0f2ae629e09b): the grid shows every occurrence,
+    // and the cancel/move dialogs offer «solo questo / questo e i successivi
+    // / tutti» only on rows that belong to a series. Old rows read back with
+    // nulls — singles, like before.
+    seriesKey: row.seriesKey ?? null,
+    occurrenceIndex: row.occurrenceIndex ?? null,
+    recurrenceRule: row.recurrenceRule ?? null,
     subject: Object.freeze({
       resource: row.subjectResource,
       id: row.subjectId,
@@ -1857,6 +2225,14 @@ export async function proposeBooking(context, request) {
       + `(${conflict.startsAt} to ${conflict.endsAt}, status "${conflict.status}"): propose a free slot instead.`,
       { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
     );
+  }
+  // A series proposal checks every occurrence, not just the head: Conferma
+  // books the whole series or nothing, so a busy later slot must stop the
+  // proposal with the same message the booking would answer.
+  if (input.recurrence !== null) {
+    const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+    const hit = seriesConflict(held, input.teamMemberId, slots, slots.length);
+    if (hit) throw seriesOverlapError(input.teamMemberId, hit, slots.length);
   }
   const gate = requireFlowPermissionGate(context);
   // P1 12/11: the switch answers «may the agent book on its own». A person
