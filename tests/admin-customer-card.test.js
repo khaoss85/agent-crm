@@ -190,7 +190,7 @@ const CALLS = {
   ],
 };
 
-function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
+function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enriched = ENRICHED, failHub = false, cardError = null, timelineError = null, profileError = null, calls = null, failCalls = false, callsError = null, enrichedError = null, fieldDefs = [], fieldValues = [], onRequest = null, onExtract = null, schema = null, audit = [], auditError = null, team = [], teamError = null, services = null, servicesError = null } = {}) {
   const requested = [];
   const writes = [];
   const client = {
@@ -223,6 +223,13 @@ function stubClient({ card = CARD, timeline = TIMELINE, profile = PROFILE, enric
         return profile;
       }
       if (path.startsWith('/api/customer-data/enriched/')) {
+        // Backlog e5e3e886: «Aggiorna» starts an extraction run with a POST
+        // on .../enriched/:resource/:id/extract — a write, never another
+        // GET. The run answer defaults to no proposals.
+        if ((options?.method ?? 'GET') !== 'GET') {
+          if (onExtract) return onExtract(path, body, options);
+          return { status: 'done', proposals: [] };
+        }
         if (enrichedError) throw enrichedError;
         if (!enriched) throw Object.assign(new Error('Not Found'), { status: 404 });
         return enriched;
@@ -476,7 +483,7 @@ test('the next appointment skips cancelled, past and done bookings', async () =>
   assert.ok(!text.includes('coach-guido'), 'the slot never prints the internal member id');
 });
 
-test('with no upcoming booking the scheda says none is booked', async () => {
+test('2c1c0e149cf9: with no upcoming booking the appointment card hides, the recap vista still says so', async () => {
   const mount = await renderCard(stubClient({
     timeline: {
       ...TIMELINE,
@@ -493,7 +500,48 @@ test('with no upcoming booking the scheda says none is booked', async () => {
       },
     },
   }));
-  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'a terminal-only schedule reads as none booked');
+  // Voce 2c1c0e149cf9: the prototype shows no empty «Prossimo appuntamento».
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Prossimo appuntamento'), 'a terminal-only schedule hides the empty card');
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'the vista still reads as none booked');
+});
+
+// Voce 2c1c0e149cf9, review Codex #854 (P2): the timeline arrives
+// oldest-first, but the Messaggi preview keeps the five newest — never the
+// five oldest labelled as if the newer ones were «precedenti».
+test('2c1c0e149cf9: the recap Messaggi vista previews the five newest messages, not the five oldest', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      entries: {
+        available: true,
+        count: 7,
+        truncated: false,
+        items: [1, 2, 3, 4, 5, 6, 7].map((index) => ({
+          entry: 'message', id: `mx-${index}`, conversationId: 't1', channel: 'whatsapp', direction: 'inbound',
+          sync: 'received', body: `Messaggio numero ${index}`, teamAuthorId: null,
+          remoteHandle: '+39 333 1234567', errorCode: null,
+          occurredAt: `2026-10-20T0${index}:00:00.000Z`,
+        })),
+      },
+    },
+  }));
+  const messaggi = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'messaggi');
+  assert.ok(messaggi, 'the recap keeps its Messaggi vista');
+  messaggi.dispatch('click');
+  // The cronologia lists every message; the preview scope is the recap body.
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  const text = recap.textContent;
+  for (const index of [7, 6, 5, 4, 3]) {
+    assert.ok(text.includes(`Messaggio numero ${index}`), `the newest message ${index} is previewed`);
+  }
+  assert.ok(!text.includes('Messaggio numero 1'), 'the oldest message falls outside the preview');
+  assert.ok(!text.includes('Messaggio numero 2'), 'the second oldest message falls outside the preview');
+  assert.ok(text.includes('+ 2 messaggi precedenti'), 'the hidden two read as precedenti');
 });
 
 // backlog:5346ab531538: a cancelled appointment leaves the calendar grid but
@@ -691,8 +739,8 @@ test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeli
   assert.ok(text.includes('Le identità non si sono potute leggere. Riprova più tardi.'), 'the identities name the failure');
   assert.ok(text.includes('Offerta'), 'the offer section stays');
   assert.ok(text.includes("L'offerta non si è potuta leggere. Riprova più tardi."), 'the offer names the failure instead of hiding as none');
-  assert.ok(text.includes('Prossimi passi'), 'the next-steps section stays');
-  assert.ok(text.includes('I prossimi passi non si sono potuti leggere. Riprova più tardi.'), 'the next steps name the failure instead of hiding as none');
+  assert.ok(text.includes('Prossime azioni'), 'the recap azioni block stays');
+  assert.ok(text.includes('Le prossime azioni non si sono potute leggere. Riprova più tardi.'), 'the next actions name the failure instead of hiding as none');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 
@@ -712,9 +760,16 @@ test('voce 908f2eb9bbfb, review round 2: with the calls in error the Chiamate ca
   const mount = await renderCard(stubClient({ callsError: failure }), 'call-x');
   const text = mount.textContent;
   assert.ok(!text.includes('Scheda non disponibile'), 'the card does not fail as a whole');
-  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the AI summary names the failure');
-  assert.ok(text.includes('Chiamate'), 'the calls section stays');
-  assert.ok(text.includes('Le chiamate non si sono potute leggere. Riprova più tardi.'), 'the calls name the failure instead of dropping the card');
+  // Voce 2c1c0e149cf9: the standalone «✦ Riepilogo AI» and «Chiamate» cards
+  // are the recap's default Chiamate vista — the failure names itself there.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel stays');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista stays');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the failure shows on the default vista');
+  assert.ok(text.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'), 'the vista names the failure instead of dropping the panel');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('Chiamate'), 'no standalone Chiamate card: the prototype has none');
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card: the recap replaces it');
 });
 
 test('voce 908f2eb9bbfb, review round 2: a 404 timeline or profile is not-composed, never a retry error', async () => {
@@ -843,9 +898,12 @@ test('BO-F1-08: the scheda shows the AI summary, the signals and the openable tr
   assert.ok(callsPath, 'the card reads the calls for this customer');
   assert.ok(callsPath.includes('spaceId=call-a'), 'the space stays explicit in the read');
 
-  assert.ok(text.includes('Riepilogo AI'), 'the summary section exists');
+  // Voce 2c1c0e149cf9: the summary lives in the recap's default Chiamate vista.
+  assert.ok(text.includes('✦ Recap per'), 'the recap panel holds the summary');
   assert.ok(text.includes('Cliente con budget 800 euro'), 'the AI summary is shown');
-  assert.ok(text.includes('Chiamate'), 'the calls section exists');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.ok(chiamate, 'the Chiamate vista exists');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'the summary vista is the default');
   assert.ok(text.includes('Budget'), 'the budget signal label is shown');
   assert.ok(text.includes('Tempi'), 'the timing signal label is shown');
   assert.ok(text.includes('il budget massimo è 800 euro'), 'the signal excerpt quotes the transcript');
@@ -918,9 +976,14 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
     'without a space no calls read is attempted');
 
   const uncomposed = await renderCard(stubClient({ failCalls: true }), 'call-a');
-  assert.ok(uncomposed.textContent.includes('Riepilogo AI'), 'the card still renders');
-  assert.ok(uncomposed.textContent.includes('Nessun riepilogo registrato'),
-    'without intelligence composed no summary is shown');
+  // Voce 2c1c0e149cf9: the recap renders with the calls half unavailable.
+  // backlog:619b477c0464: the cronologia call is still named there, even
+  // with the intelligence uncomposed — one source for the calls.
+  assert.ok(uncomposed.textContent.includes('✦ Recap per'), 'the recap still renders');
+  assert.ok(uncomposed.textContent.includes('ultima chiamata'),
+    'without intelligence composed the cronologia call is still named');
+  assert.ok(uncomposed.textContent.includes('nessuna registrazione per questa chiamata'),
+    'with its missing transcript said');
 });
 
 test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', async () => {
@@ -1339,12 +1402,16 @@ test('59def6cb805d: every channel badge reads its Italian label (C15, C17)', asy
   }
 });
 
-// Voce 59def6cb805d (C13): `Arricchito dall'AI` carries the ghost `Aggiorna`
-// button; the click re-reads the enrichment and reports through the toast.
-test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13)', async () => {
+// Voce 59def6cb805d (C13), superseded by backlog e5e3e886: `Arricchito
+// dall'AI` carries the ghost `Aggiorna` button; the click starts one
+// extraction run — a POST on .../enriched/:resource/:id/extract — and
+// reports through the toast. «Nessun dato nuovo» now means the run happened
+// and found nothing, never a re-read.
+test('59def6cb805d: Aggiorna starts one extraction run and toasts the outcome (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  const mount = await renderCard(stubClient(), undefined, toast);
+  const client = stubClient();
+  const mount = await renderCard(client, undefined, toast);
   const refresh = mount.findAll('button').find((node) => node.textContent === 'Aggiorna');
   assert.ok(refresh, 'the Aggiorna button is in the enriched section');
   assert.ok(
@@ -1353,39 +1420,35 @@ test('59def6cb805d: Aggiorna re-reads the enrichment and toasts the outcome (C13
   );
   refresh.dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(client.writes.map((write) => write.path),
+    ['/api/customer-data/enriched/contact/c1/extract'],
+    'one POST leaves: the extraction run, not another GET');
   assert.deepEqual(seen, [{ message: 'Nessun dato nuovo', error: false }],
-    'an unchanged re-read toasts Nessun dato nuovo');
+    'a run that found nothing toasts Nessun dato nuovo');
 });
 
-test('59def6cb805d: Aggiorna shows fresh rows when the re-read changed (C13)', async () => {
+test('59def6cb805d: Aggiorna lists the proposed fields with their source (C13)', async () => {
   const seen = [];
   const toast = (message, error) => { seen.push({ message, error: error ?? false }); };
-  let current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null, items: [],
-  };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) return current;
-      return stubClient().request(path, options);
-    },
-  };
+  const client = stubClient({
+    onExtract: () => ({
+      status: 'done',
+      proposals: [{
+        id: 'p1', field: 'firstName', value: 'Guido', source: 'google-contacts',
+        sourceDetail: 'people/c1', observedAt: '2026-10-20T10:00:00.000Z',
+      }],
+    }),
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
   assert.ok(mount.textContent.includes('Nessun dato arricchito ancora'), 'the section starts empty');
-  current = {
-    customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c1' },
-    linked: false, optedOut: null,
-    items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
-  };
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.ok(mount.textContent.includes('Nome: Guido (fonte: Contatti Google'),
-    'the re-read rows render with source and date');
-  assert.deepEqual(seen, [{ message: 'Dati aggiornati', error: false }],
-    'a changed re-read toasts Dati aggiornati');
+  assert.ok(mount.textContent.includes('L\u2019AI propone: Nome: Guido (fonte: Contatti Google'),
+    'the proposed field renders with its source');
+  assert.deepEqual(seen, [{ message: 'L\u2019AI propone 1 campo da decidere qui sotto.', error: false }],
+    'a run that proposes toasts the count');
 });
 
 test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)', async () => {
@@ -1397,16 +1460,13 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
     linked: false, optedOut: null,
     items: [{ field: 'firstName', value: 'Guido', source: 'google-contacts', observedAt: '2026-10-20T10:00:00.000Z' }],
   };
-  const client = {
-    async request(path, options = {}) {
-      enforceAdminWriteGate(path, options);
-      if (path.startsWith('/api/customer-data/enriched/')) {
-        if (fail) throw Object.assign(new Error('boom'), { status: 500 });
-        return enriched;
-      }
-      return stubClient().request(path, options);
+  const client = stubClient({
+    enriched,
+    onExtract: (path) => {
+      if (fail) throw Object.assign(new Error('boom'), { status: 500 });
+      return { status: 'done', proposals: [] };
     },
-  };
+  });
   const doc = createFakeDocument();
   const mount = createMount();
   await createCustomerCardView({ doc, mount, client, toast }).renderCard('contact', 'c1');
@@ -1414,7 +1474,7 @@ test('59def6cb805d: a failed Aggiorna keeps its rows and toasts the retry (C13)'
   mount.findAll('button').find((node) => node.textContent === 'Aggiorna').dispatch('click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(mount.textContent.includes('Nome: Guido'), 'the previous rows stay on screen');
-  assert.equal(seen.length, 1, 'one toast for the failed re-read');
+  assert.equal(seen.length, 1, 'one toast for the failed run');
   assert.equal(seen[0].error, true, 'the failure toasts as an error');
   assert.ok(seen[0].message.includes('Riprova'), 'the failure toasts the Italian retry');
 });
@@ -2343,9 +2403,18 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   }).renderCard('contact', 'c1');
 
   const byAction = (action) => mount.findAll('button').find((node) => node.getAttribute('data-action') === action);
-  // Dan 06/11: Nuova offerta opens its window over the scheda (see
-  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  // Voce 2c1c0e149cf9: Offerta opens the «Crea con l'AI / Compila
+  // manualmente» menu like the other creation points, never a direct window.
   byAction('new-offer').dispatch('click');
+  assert.equal(byAction('new-offer').getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const byVoice = (voice) => mount.findAll('button').find((node) => node.getAttribute('data-voice') === voice);
+  assert.ok(byVoice('ai'), 'the Crea con l\u2019AI voice exists');
+  assert.ok(byVoice('ai').textContent.includes("Crea con l'AI"), 'the AI voice reads as in the other menus');
+  const manual = byVoice('manual');
+  assert.ok(manual, 'the Compila manualmente voice exists');
+  // Dan 06/11: Compila manualmente opens its window over the scheda (see
+  // tests/admin-offer-panel.test.js) — no navigation, no stash.
+  manual.dispatch('click');
   assert.deepEqual(navs, [], 'Nuova offerta stays on the scheda');
   assert.ok(mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'), 'the offer window opens');
   assert.equal(storage.getItem('accordo.bo.customer-pick.offer'), null, 'no page handoff is needed');
@@ -2362,6 +2431,78 @@ test('714433c2: quick actions open their windows over the scheda with the custom
   assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
     'the offer window steps aside');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null, 'no page handoff is needed');
+});
+
+test('2c1c0e149cf9: the scheda matches the prototype — action order, violet AI, offer menu, recap, suggeriti', async () => {
+  const profile = {
+    ...PROFILE,
+    workTasks: {
+      available: true, count: 2, countIsComplete: true, truncated: false,
+      items: [
+        { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
+        { id: 'w2', status: 'done', name: 'Inviare il listino' },
+      ],
+    },
+  };
+  const mount = await renderCard(stubClient({ profile, calls: CALLS }));
+  // Prototype order: Chiama, WhatsApp, Email, Appuntamento, Offerta, ✦ Chiedi all'AI.
+  const actions = mount.findAll('button')
+    .filter((node) => ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai']
+      .includes(node.getAttribute('data-action')))
+    .map((node) => node.getAttribute('data-action'));
+  assert.deepEqual(actions,
+    ['call-customer', 'compose-whatsapp', 'compose-email', 'new-appointment', 'new-offer', 'quick-ask-ai'],
+    'Appuntamento before Offerta, the AI tile last');
+  // The AI tile wears the assistant violet, never the plain tile style.
+  const ask = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'quick-ask-ai');
+  assert.ok(String(ask.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-tile-ai'),
+    'the AI tile carries the violet class');
+  // Offerta is a menu like the other creation points, never a direct window.
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'ai'),
+    'the Crea con l\u2019AI voice exists');
+  assert.ok(mount.findAll('button').some((node) => node.getAttribute('data-voice') === 'manual'),
+    'the Compila manualmente voice exists');
+  assert.ok(!mount.findAll('div').some((node) => node.getAttribute('data-offer-panel') === 'open'),
+    'no offer window before a voice is chosen');
+  // The violet recap panel replaces the standalone summary and calls cards.
+  assert.ok(mount.textContent.includes('✦ Recap per Guido Presti'), 'the recap names the customer');
+  assert.ok(mount.textContent.includes('Vista per'), 'the Vista per tabs exist');
+  assert.deepEqual(
+    mount.findAll('button').filter((node) => node.getAttribute('data-vista') !== null)
+      .map((node) => node.getAttribute('data-vista')),
+    ['chiamate', 'messaggi', 'appuntamenti'], 'the three viste in prototype order');
+  const chiamate = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'chiamate');
+  assert.equal(chiamate.getAttribute('data-active'), 'true', 'Chiamate is the default vista');
+  const heads = mount.findAll('h4').map((node) => node.textContent);
+  assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card');
+  assert.ok(!heads.includes('Chiamate'), 'no standalone calls card');
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap's PROSSIME AZIONI
+  // is the only copy of the open tasks — no «Prossimi passi» card repeats
+  // it below. The agent-opened step carries the prototype «✦ suggeriti» mark.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(!mount.textContent.includes('Prossimi passi'), 'no duplicate Prossimi passi card under the recap');
+  assert.ok(mount.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
+test('voce 2c1c0e149cf9 (design check 14/11): the «Vista per» tabs are history-chip pills on their own row, never big stacked buttons', async () => {
+  // bo:shots at 1440: the ui-btn base painted the vista tabs big and
+  // stacked in the 300px right column. The guard reads the override rule in
+  // styles.css, the same metrics as the cronologia pills.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const labelRules = [...css.matchAll(/\.bo-scheda-viste-label\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(labelRules.length > 0, 'the viste label rule exists in styles.css');
+  assert.ok(labelRules.some((body) => /flex\s*:\s*1\s+1\s+100%/.test(body)),
+    'the label takes its own row above the pills');
+  const tabRules = [...css.matchAll(/\.bo-scheda-viste\s+\.bo-scheda-vista\.ui-btn\s*\{([^}]*)\}/g)]
+    .map((match) => match[1]);
+  assert.ok(tabRules.length > 0, 'the vista pill override exists in styles.css');
+  const tabs = tabRules[tabRules.length - 1];
+  assert.ok(/height\s*:\s*30px/.test(tabs), 'the tabs are chip-high (30px)');
+  assert.ok(/border-radius\s*:\s*99px/.test(tabs), 'the tabs are pills');
+  assert.ok(/font-size\s*:\s*12\.5px/.test(tabs), 'the tabs read at chip size');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -2384,6 +2525,8 @@ test('review #654: a contact without Azienda picks its own placeholder id under 
     await createCustomerCardView({ doc, mount, client, navigate: () => {}, spaceId: 'presti', toast: () => {} })
       .renderCard('contact', 'c1');
     mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer').dispatch('click');
+    // Voce 2c1c0e149cf9: Offerta is a menu — the manual voice opens the window.
+    mount.findAll('button').find((node) => node.getAttribute('data-voice') === 'manual').dispatch('click');
     const panel = mount.findAll('div').find((node) => node.getAttribute('data-offer-panel') === 'open');
     assert.ok(panel, 'the offer window opens');
     assert.ok(!panel.textContent.includes('deve avere un’azienda'), 'the placeholder company is a company: no block');
@@ -3291,7 +3434,10 @@ test('c2793930850a: quick actions are equal tiles, the note form holds field, bu
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   const tileRules = [...css.matchAll(/\.bo-scheda-tile\s*\{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(tileRules.length > 0, 'the tile rule exists in styles.css');
-  const tileRule = tileRules[tileRules.length - 1];
+  // Voce 2c1c0e149cf9: narrower tile rules (the Offerta menu wrap) share the
+  // selector — the guard reads the base rule that sets word-break, not the
+  // last match.
+  const tileRule = tileRules.find((body) => /word-break/.test(body)) ?? tileRules[tileRules.length - 1];
   // 31/10 (bo:shots su 79efbf01): break-word spezza ancora una parola più
   // larga della tessera; la regola giusta non spezza mai dentro una parola.
   assert.ok(/word-break\s*:\s*keep-all/.test(tileRule) && !/overflow-wrap\s*:\s*break-word/.test(tileRule),
@@ -5121,13 +5267,19 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   const check = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step');
   assert.ok(check, 'the open step carries the circular check');
   assert.equal(check.getAttribute('aria-label'), 'Segna come fatto: Richiamare per la prova');
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap PROSSIME AZIONI is
+  // the only copy — the open step carries its check once.
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 1,
-    'a done task carries no check');
+    'a done task carries no check, the open one once in the recap');
   check.dispatch('click');
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  assert.ok(mount.textContent.includes('nessun passo aperto'), 'the card re-reads: the server list, never an optimistic copy');
+  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
+  // copy — with no open step left the empty azioni block hides like the prototype.
+  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
+  assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
+    'no check without an open step');
 });
 
 test('59def6cb805d: a refused step completion keeps the step and says so in Italian (C24)', async () => {
@@ -5822,7 +5974,7 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', 'Prossimi passi', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
@@ -5857,13 +6009,14 @@ test('backlog:1a96094db71d: each section fills as its own read lands, the slow o
   await land('/api/customer-hub/timeline/');
   assert.ok(mount.textContent.includes(CARD.name), 'the header shows the customer');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia paints with the name, without the profile');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'the profile sections keep their skeleton');
+  assert.ok(isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap keeps its skeleton while calls and profile are out');
   assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the profile');
   assert.equal(mount.firstChild.getAttribute('aria-busy'), 'true', 'still busy while reads are out');
 
-  // The profile lands: its sections fill.
+  // The profile and the calls land: their sections fill.
   await land('/api/customer-data/profile/');
-  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile');
+  await land('/api/call-intelligence/calls/');
+  assert.ok(!isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap fills once calls, timeline and profile land');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
 
   await drain();

@@ -383,7 +383,7 @@ test('the screen renders indicator, fixes, table and feed from live activity', a
   }
   // The Stato sync tab is the open one and carries the fix count.
   const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab') !== null);
-  assert.deepEqual(tabs.map((node) => node.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync1', 'Spazi e accessi']);
+  assert.deepEqual(tabs.map((node) => node.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync1', 'Spazi e accessi', 'Profilo']);
   assert.equal(tabs.find((node) => node.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
 });
 
@@ -1232,9 +1232,11 @@ test('3a3e6eaf C18-C20: a linked row shows agg., events and a coloured pill; no 
   assert.equal(row.getAttribute('class'), null, 'a linked row is not dimmed');
   assert.match(row.childNodes[1].textContent, /^agg\. /, 'the update column reads agg. <tempo>');
   assert.match(row.childNodes[2].textContent, /^\d+ eventi ricevuti$/);
-  const pill = row.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-pill');
+  const pill = row.findAll('span').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-sync-pill'));
   assert.equal(pill.textContent, 'Attivo');
   assert.equal(pill.getAttribute('data-pill'), 'attivo');
+  // backlog:8618ad3f72db: the shared channel state, the same pill as Profilo and Connettori.
+  assert.equal(pill.getAttribute('class'), 'ui-channel-state ui-channel-state-ok bo-sync-pill');
   const text = mount.textContent;
   assert.ok(!text.includes('wa-1') && !text.includes('+39 333 1234567'), 'no binding key nor account handle');
   for (const word of ['Sync now', 'Connect', 'Active', 'Loading', 'Error', 'undefined', 'null']) {
@@ -1247,8 +1249,9 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(!/\.bo-sync-channels \.bo-sync-table td:nth-child\(2\) \{ position: absolute;/.test(css),
     'the update column (agg. / non collegato) is never clipped away');
-  for (const tone of ['attivo', 'permesso', 'importazione', 'attesa']) {
-    assert.ok(css.includes(`.bo-sync-pill[data-pill="${tone}"]`), `the ${tone} pill is coloured`);
+  // backlog:8618ad3f72db: the sync pills wear the shared channel-state tones.
+  for (const tone of ['ok', 'warn', 'data', 'human', 'muted']) {
+    assert.ok(css.includes(`.ui-channel-state-${tone} {`), `the ${tone} channel state is coloured`);
   }
   const phone = css.slice(css.indexOf('@media (max-width: 700px) {\n  .bo-sync-hero-title'));
   assert.match(phone, /\.bo-sync-channels \.bo-sync-table tr \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/,
@@ -1307,6 +1310,14 @@ test('cf365ada15b9: Google Calendar offers Collega on Profilo when the product c
   const stripeRow = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
   assert.equal(stripeRow.findAll('a').length, 0, 'Stripe offers no Collega');
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'non collegato').length, 1, 'only Stripe reads non collegato in the state cell');
+  // backlog:8618ad3f72db: an unlinked row says «non collegato» once at most
+  // (never also in the update column), its state is the shared channel
+  // state and its Collega the shared green button — never an underlined pill.
+  for (const row of mount.findAll('tr').slice(1)) {
+    assert.ok((row.textContent.match(/non collegato/g) ?? []).length <= 1, `said once: ${row.textContent}`);
+  }
+  assert.match(stripeRow.findAll('span').find((node) => node.textContent === 'non collegato').getAttribute('class'), /\bui-channel-state\b/);
+  for (const link of collega) assert.match(link.getAttribute('class') ?? '', /\bui-connect\b/, 'the shared Collega');
   assert.equal(syncConnectRoute('calendar', null), null, 'without the profile there is nothing to offer');
   assert.equal(syncConnectRoute('whatsapp', null), '#/connettori/whatsapp');
 });

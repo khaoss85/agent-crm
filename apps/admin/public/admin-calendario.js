@@ -921,20 +921,103 @@ export function isCancelledRow(row) {
  * digits of the held phone («tel. …4567»), else the company name; null
  * when the customer carries none of them. Never the whole address or
  * number: the hint distinguishes, it does not publish.
+ *
+ * Two homonyms may share the first characters of the address («Prova
+ * Doppione 09/11» twice): the email shows the shortest prefix that no
+ * sibling homonym shares (at least 2 characters), so the two hints read
+ * apart. When even that would print the whole local part, the hint keeps
+ * the first 2 and the last 2 characters («pr…e.a@example.com») instead.
  * @param {any} item one `/api/customer-data/customers` item
+ * @param {any[]} [others] the other suggested customers; only the ones
+ * with the same name can force a longer prefix
  */
-export function customerHint(item) {
+export function customerHint(item, others = []) {
+  const key = customerHintName(item);
+  const sibs = Array.isArray(others)
+    ? others.filter((other) => other !== item && customerHintName(other) === key)
+    : [];
+  // backlog:3582d91635cb — one hint only, in fallback order: a partial
+  // email, else the held phone, else the company. Homonyms never join every
+  // signal: the extra tails and names would publish PII nobody needs.
+  return customerHintEmail(item, sibs)
+    ?? customerHintPhone(item, sibs)
+    ?? customerHintCompany(item, sibs)
+    ?? null;
+}
+
+/** The homonym group key: the display name, lowercased. @param {any} item */
+function customerHintName(item) {
+  const name = typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome';
+  return name.toLowerCase();
+}
+
+/** A valid `local@domain` split, or null. @param {any} item */
+function customerHintSplitEmail(item) {
   const email = typeof item?.email === 'string' ? item.email.trim() : '';
   const at = email.indexOf('@');
-  if (at > 0 && at < email.length - 1) {
-    const local = email.slice(0, at);
-    return `${local.slice(0, Math.min(2, local.length))}…@${email.slice(at + 1)}`;
-  }
-  const phone = typeof item?.phone?.value === 'string' ? item.phone.value : (typeof item?.phone === 'string' ? item.phone : '');
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length >= 4) return `tel. …${digits.slice(-4)}`;
+  if (at <= 0 || at >= email.length - 1) return null;
+  return { local: email.slice(0, at), domain: email.slice(at + 1) };
+}
+
+/**
+ * The partial email: the shortest local-part prefix no sibling homonym
+ * shares (2 characters when nobody shares it); null when another homonym
+ * holds the very same address. @param {any} item @param {any[]} sibs
+ */
+function customerHintEmail(item, sibs) {
+  const split = customerHintSplitEmail(item);
+  if (split === null) return null;
+  const mine = item?.email.trim().toLowerCase();
+  const sibMails = sibs.map((sib) => (typeof sib?.email === 'string' ? sib.email.trim().toLowerCase() : ''));
+  if (sibMails.some((mail) => mail === mine)) return null;
+  const low = split.local.toLowerCase();
+  const myDomain = split.domain.toLowerCase();
+  // backlog:3582d91635cb — only homonyms on the same domain can force a
+  // longer local prefix: a different domain already reads apart, so the
+  // short 2-char hint stays minimal.
+  const sibLocals = sibs
+    .map((sib) => customerHintSplitEmail(sib))
+    .filter((part) => part !== null && part.domain.toLowerCase() === myDomain)
+    .map((part) => part.local.toLowerCase());
+  let len = Math.min(2, split.local.length);
+  while (len < split.local.length && sibLocals.some((local) => local.slice(0, len) === low.slice(0, len))) len += 1;
+  if (len < split.local.length) return `${split.local.slice(0, len)}…@${split.domain}`;
+  if (split.local.length <= 2) return `${split.local}…@${split.domain}`;
+  return `${split.local.slice(0, 2)}…${split.local.slice(-2)}@${split.domain}`;
+}
+
+/** The held phone digits. @param {any} item */
+function customerHintDigits(item) {
+  const phone = typeof item?.phone?.value === 'string'
+    ? item.phone.value
+    : (typeof item?.phone === 'string' ? item.phone : '');
+  return String(phone ?? '').replace(/\D/g, '');
+}
+
+/**
+ * The last four phone digits, unless a sibling homonym ends the same way.
+ * @param {any} item @param {any[]} sibs
+ */
+function customerHintPhone(item, sibs) {
+  const digits = customerHintDigits(item);
+  if (digits.length < 4) return null;
+  const tail = digits.slice(-4);
+  if (sibs.some((sib) => customerHintDigits(sib).slice(-4) === tail && customerHintDigits(sib).length >= 4)) return null;
+  return `tel. …${tail}`;
+}
+
+/**
+ * The company name, unless a sibling homonym carries the same one.
+ * @param {any} item @param {any[]} sibs
+ */
+function customerHintCompany(item, sibs) {
   const company = typeof item?.company?.name === 'string' ? item.company.name.trim() : '';
-  return company !== '' ? company : null;
+  if (company === '') return null;
+  if (sibs.some((sib) => {
+    const other = typeof sib?.company?.name === 'string' ? sib.company.name.trim().toLowerCase() : '';
+    return other !== '' && other === company.toLowerCase();
+  })) return null;
+  return company;
 }
 
 /**
@@ -4203,7 +4286,7 @@ export function createCalendarioView(deps) {
     for (const item of state.customerItems) {
       const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
-      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item) : null;
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item, state.customerItems) : null;
       if (hint !== null) {
         pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
       }

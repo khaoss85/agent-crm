@@ -868,10 +868,14 @@ export function syncFeedItems(activity) {
   return items;
 }
 
-import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy, uiChannelState, uiConnect } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/** Stato sync readings → the shared channel-state tones (backlog:8618ad3f72db). */
+const SYNC_PILL_TONES = Object.freeze({ attivo: 'ok', permesso: 'warn', importazione: 'data', attesa: 'data', altro: 'human' });
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
+
 }
 
 /**
@@ -1313,7 +1317,9 @@ export function createSyncView(deps) {
         doc,
         'td',
         undefined,
-        !present ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
+        // backlog:8618ad3f72db: «non collegato» was said twice on one row
+        // (here and in Stato); the state lives in Stato only.
+        !present ? '—' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
       line.appendChild(el(doc, 'td', undefined, !present ? '—' : eventsReceived(row.received)));
       const stateCell = doc.createElement('td');
@@ -1327,9 +1333,7 @@ export function createSyncView(deps) {
         if (!readOnly() && route !== null) {
           // The green Collega of every other screen (backlog:e381c48581fa),
           // never a dark grey that reads disabled.
-          const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-sync-collega', 'Collega');
-          link.setAttribute('href', route);
-          link.setAttribute('data-action', 'collega');
+          const link = uiConnect(doc, { href: route, action: 'collega', extra: 'bo-sync-collega' });
           link.setAttribute('data-channel', row.channel);
           link.addEventListener('click', (event) => {
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -1340,10 +1344,12 @@ export function createSyncView(deps) {
           // C19 has only `non collegato` for an unlinked row: a row nothing
           // here can connect (Stripe) says that, with no Collega it could
           // not keep — never the off-spec «Non disponibile».
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
+          stateCell.appendChild(uiChannelState(doc, { text: 'non collegato', tone: 'muted', extra: 'bo-sync-muted' }));
         }
       } else {
-        const pill = el(doc, 'span', 'bo-sync-pill', row.pill.text);
+        // backlog:8618ad3f72db: the shared channel state, its tone mapped
+        // from the sync reading (data-pill keeps the sync's own word).
+        const pill = uiChannelState(doc, { text: row.pill.text, tone: SYNC_PILL_TONES[row.pill.tone] ?? 'muted', extra: 'bo-sync-pill' });
         pill.setAttribute('data-pill', row.pill.tone);
         stateCell.appendChild(pill);
       }

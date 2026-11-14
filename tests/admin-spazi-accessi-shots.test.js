@@ -296,7 +296,7 @@ test('the spazi screen renders in a real browser: desktop PNG, team and AI side 
   assert.equal(probe.switches, 6, 'the master AI switch plus the five render');
   assert.equal(probe.master, 1, 'exactly one master «AI dello spazio» switch');
   assert.equal(probe.masterAbove, true, 'the master sits above the five');
-  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'both cards paint the real C7 statistic');
+  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti'], 'the open space paints the real C7 statistic; another space is never read (9d06eb1e174b)');
   assert.equal(probe.apri, 1, 'the non-active card paints Apri, the active one marks Stai lavorando qui');
   assert.equal(probe.panelsDirection, 'row', 'team and AI panels share one row on desktop');
   assert.equal(probe.teamTop, probe.aiTop, 'team and AI panels start on the same row');
@@ -315,7 +315,7 @@ test('the spazi screen renders in a real browser: phone PNG without sideways scr
   assert.equal(probe.switches, 6, 'the phone render holds the master plus the five AI switches');
   assert.equal(probe.master, 1, 'the phone render holds one master switch');
   assert.equal(probe.masterAbove, true, 'on the phone the master sits above the five');
-  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti', '2 canali · 2 persone · 3 clienti'], 'the phone render holds both card statistics');
+  assert.deepEqual(probe.stats, ['2 canali · 2 persone · 3 clienti'], 'the phone render holds the open space statistic');
   assert.equal(probe.apri, 1, 'the phone render holds Apri on the non-active card');
   assert.equal(probe.panelsDirection, 'column', 'the panels stack in one column on the phone');
   assert.ok(probe.scrollWidth <= 390, `no horizontal overflow at 390px (scrollWidth ${probe.scrollWidth})`);

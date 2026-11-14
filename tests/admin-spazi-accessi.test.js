@@ -15,6 +15,7 @@
 import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   SPAZI_AI_DEFAULTS,
   SPAZI_AI_MASTER,
@@ -57,7 +58,7 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
       if (calls) calls.push({ path, body, method: options?.method ?? 'GET' });
       if (path === '/api/spine/context') {
         if (fail.context) throw fail.context;
-        return context ?? { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+        return context ?? { identity: { subject: 'google|sessione-test' }, membership: { role: 'owner', subject: 'google|sessione-test' }, roles: { owner: [], operator: [], observer: [] } };
       }
       if (path === '/api/spine/memberships') {
         if (fail.members) throw fail.members;
@@ -836,7 +837,47 @@ test('e381c48581fa: the active space card counts the profile Calendar but never 
   await flush();
   const rendered = text(mount);
   assert.match(rendered, /1 canale · 1 persona · 3 clienti/, 'the active space counts Calendar, the Gmail stand-in votes nothing (backlog:3805161965cd)');
-  assert.match(rendered, /0 canali · 1 persona · 3 clienti/, 'another space never borrows the profile links');
+  // backlog:9d06eb1e174b: another space is never read, so its card has no
+  // statistic at all — never one borrowed from the profile.
+  assert.equal((rendered.match(/canal[ie] ·/g) ?? []).length, 1, 'only the open space carries a statistic');
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11): opening Spazi e accessi read
+// GET /bo/api/connectors?spaceId=<another space> — 403 for this session —
+// and logged console.error «[bo] lettura fallita». The page reads only the
+// open space's connectors and customers; nothing refused, nothing in red.
+test('9d06eb1e174b: the page never reads another space\'s connectors or customers, and logs no console.error', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const forbidden = Object.assign(new Error('forbidden'), { code: 'BO_SPACE_FORBIDDEN', status: 403 });
+  const base = stubClient({
+    members,
+    connectorsBySpace: { [SPACE]: [] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const asked = [];
+  const client = {
+    async request(path, options = {}) {
+      asked.push(path);
+      if (path.includes('spaceId=altro')) throw forbidden;
+      return base.request(path, options);
+    },
+  };
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => { errors.push(args); };
+  try {
+    const { view: v } = view({
+      client,
+      spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }, { id: 'altro', name: 'Altro', initials: 'AL' }],
+    });
+    await v.render();
+    await flush();
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(asked.filter((path) => path.includes('altro')), [], 'no read for a space that is not open');
+  assert.ok(asked.some((path) => path.startsWith(`/api/connectors?spaceId=${SPACE}`)), 'the open space is still read');
+  assert.deepEqual(errors.filter((args) => String(args[0]).includes('[bo]')), [], 'no console.error');
 });
 
 // Backlog:3805161965cd (supervisore 14/11, P1 giro 8 on #848): with the
@@ -892,9 +933,10 @@ test('an unreadable count omits the statistic, never an invented row', async () 
 });
 
 test('a failed statistic read logs its cause with the space before omitting the row', async () => {
+  // backlog:9d06eb1e174b: a missing statistic is a handled state — a warn.
   const logged = [];
-  const originalError = console.error;
-  console.error = (...args) => { logged.push(args); };
+  const originalError = console.warn;
+  console.warn = (...args) => { logged.push(args); };
   try {
     const down = Object.assign(new Error('down'), { code: 'CHANNELS_DOWN', status: 500 });
     const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
@@ -908,7 +950,7 @@ test('a failed statistic read logs its cause with the space before omitting the 
     assert.equal(entry[1]?.code, 'CHANNELS_DOWN', 'the log keeps the error code');
     assert.equal(entry[1]?.spaceId, SPACE, 'the log names the space');
   } finally {
-    console.error = originalError;
+    console.warn = originalError;
   }
 });
 
@@ -1811,4 +1853,124 @@ test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team cale
   assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
   assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
   assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11): the space cards read «Tu: ruolo
+// non riconosciuto» for the 2-7 s of the context read, then «Tu: Titolare».
+// While the role is not known the card shows a skeleton.
+test('9d06eb1e174b: the card role is a skeleton while the context read is out, then the role', async () => {
+  let release;
+  const contextGate = new Promise((resolve) => { release = resolve; });
+  const base = stubClient({ members: [{ subject: 'marco', role: 'operator', status: 'active' }] });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/spine/context') {
+        await contextGate;
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'never «non riconosciuto» while the read is out');
+  const you = mount.findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-spazi-you'));
+  assert.equal(you?.getAttribute('aria-busy'), 'true', 'the role reads as loading');
+  release();
+  await done;
+  await flush();
+  assert.match(text(mount), /Tu: Titolare/);
+});
+
+test('9d06eb1e174b: a failed context read still says the role is not recognized', async () => {
+  const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
+  const { mount, view: v } = view({ client: stubClient({ fail: { context: failed } }) });
+  await v.render();
+  await flush();
+  assert.match(text(mount), /ruolo non riconosciuto/);
+});
+
+// backlog:9d06eb1e174b (verifica 13-14/11, roster di produzione): one owner
+// listed three times — the verified Google login (real mailbox, person
+// key), the pilot's adopted broker member (same name, internal mailbox
+// only) and the GitHub login — all with «Rimuovi», on their own account too.
+const ROSTER_SELF = [
+  { subject: 'broker+adopted-aa11@accordo.invalid', role: 'owner', status: 'active', displayName: 'Dario Esempio', email: 'broker+adopted-aa11@accordo.invalid' },
+  { subject: 'github|1001', role: 'owner', status: 'active', displayName: 'dario-gh', email: 'broker+github-1001@accordo.invalid' },
+  { subject: 'google|2002', role: 'owner', status: 'active', displayName: 'dario esempio', email: 'dario@esempio.invalid', operatorAccountId: 'acc-1' },
+  { subject: 'google|3003', role: 'operator', status: 'active', displayName: 'Marta Esempio', email: 'marta@esempio.invalid', operatorAccountId: 'acc-2' },
+];
+
+// Review Muse #897 P1: a name is never a proof of identity, not even the
+// session's own. A same-named subject with no mailbox and no person key
+// stays a row of its own, with its «Rimuovi», told apart by its access kind.
+test('9d06eb1e174b: a same-named subject without a mailbox stays its own row, with its access kind and «Rimuovi»', () => {
+  const rows = buildTeamRows(ROSTER_SELF, { selfSubject: 'google|2002' });
+  assert.equal(rows.length, 4, 'no name-only merge, not even for the session\'s own name');
+  const self = rows.find((row) => row.subjects.includes('google|2002'));
+  assert.deepEqual(self.subjects, ['google|2002']);
+  assert.equal(self.self, true);
+  const homonym = rows.find((row) => row.subjects.includes('broker+adopted-aa11@accordo.invalid'));
+  assert.equal(homonym.self, false, 'the homonym is not the session');
+  assert.equal(homonym.access, 'Accesso aggiunto dal pilota');
+  assert.equal(rows.find((row) => row.subjects.includes('github|1001')).access, 'Accesso GitHub');
+  assert.ok(!JSON.stringify(rows.map((row) => row.access)).includes('|'), 'never a technical id');
+});
+
+test('9d06eb1e174b: no «Rimuovi» on one\'s own row; the others keep it', async () => {
+  const context = { identity: { subject: 'google|2002', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [], operator: [], observer: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  const items = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member'));
+  const rowOf = (needle) => items.find((node) => node.textContent.includes(needle));
+  const removeIn = (node) => node.findAll('button').filter((button) => button.textContent === 'Rimuovi');
+  assert.equal(items.length, 4, 'every subject without a proof of identity is a row of its own');
+  assert.equal(removeIn(rowOf('Marta Esempio')).length, 1, 'another person keeps «Rimuovi»');
+  assert.equal(removeIn(rowOf('dario@esempio.invalid')).length, 0, 'never «Rimuovi» on one\'s own account');
+  const homonym = rowOf('Accesso aggiunto dal pilota');
+  assert.ok(homonym, 'the same-named row reads its access kind');
+  assert.equal(removeIn(homonym).length, 1, 'a homonym keeps its «Rimuovi»');
+});
+
+test('8618ad3f72db: a child switch paused by the space AI shows not-allowed, never the wait cursor', () => {
+  const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
+});
+
+// Review Muse #897 P2: an empty identity subject never switches off the
+// protection — the membership subject still names who «Tu» is.
+test('9d06eb1e174b: an empty identity subject falls back to the membership subject', async () => {
+  const context = { identity: { subject: '' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [], operator: [], observer: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  const own = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member')
+    && node.textContent.includes('dario@esempio.invalid'));
+  assert.equal(own.findAll('button').filter((button) => button.textContent === 'Rimuovi').length, 0);
+});
+
+// Review Muse #897 giro 2 (P1): the guard fails closed. While who «Tu» is
+// stays unknown — context failed, or no subject in it — no row offers
+// «Rimuovi», and one line says why; with the identity known only the
+// other rows offer it.
+test('9d06eb1e174b: with the session unknown no row offers «Rimuovi»; known, only the others do', async () => {
+  const removes = (mount) => mount.findAll('button').filter((button) => button.textContent === 'Rimuovi');
+  const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
+  for (const client of [
+    stubClient({ fail: { context: failed }, members: ROSTER_SELF }),
+    stubClient({ context: { identity: { subject: '' }, membership: { role: 'owner', subject: '' }, roles: { owner: [] } }, members: ROSTER_SELF }),
+  ]) {
+    const { mount, view: v } = view({ client });
+    await v.render();
+    await flush();
+    assert.equal(removes(mount).length, 0, 'no «Rimuovi» while the session is unknown');
+    assert.match(text(mount), /Rimuovi non è disponibile: non sono riuscito a verificare il tuo account/);
+  }
+  const context = { identity: { subject: 'google|2002' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  assert.equal(removes(mount).length, 3, 'every other row offers «Rimuovi», never the own one');
+  assert.doesNotMatch(text(mount), /Rimuovi non è disponibile/);
 });
