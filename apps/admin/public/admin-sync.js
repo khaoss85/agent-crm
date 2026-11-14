@@ -527,6 +527,18 @@ export function withProfileConnections(activity, profile = null) {
 }
 
 /**
+ * Rows the hero, the table and the count may read as linked
+ * (backlog:803d127c4458, review Muse giro 8 P1): a profile Email
+ * stand-in kept for its fix card never votes here — without its own
+ * channel connection the send fails with 409, like the composer, Oggi
+ * and Stato sync's own table say. The fix cards read the full activity.
+ * @param {unknown} activity the GET /api/connectors/activity payload, possibly null.
+ */
+export function syncCountableEntries(activity) {
+  return entriesOf(activity).filter((row) => !isProfileEmailStandin(row));
+}
+
+/**
  * Where an unlinked fixed row connects, or null when nothing here can
  * connect it (backlog:cf365ada15b9). A catalogued channel opens its guided
  * flow; Google Calendar opens Profilo when the profile offers the Google
@@ -654,13 +666,18 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
     }
     return { channel, list, received, lastAt, worst, expiringAt, importing, keys };
   };
+  // Linked means an active binding that is not a profile stand-in
+  // (backlog:803d127c4458, review Muse giro 8 P1): a stand-in kept for
+  // its fix card stays visible with its pill, but it never votes
+  // «collegato» — the composer refuses to send through it.
+  const live = (entry) => entry.status === 'active' && !isProfileEmailStandin(entry);
   const rows = SYNC_CHANNELS.map((fixed) => {
     const agg = aggregate(fixed.id, byChannel.get(fixed.id) ?? []);
     // Connected means an active binding, the shared count's predicate
     // (review #680 P2-2): a suspended or pending row keeps its pill so the
     // problem stays visible, but it is not «collegato» and lights no hero.
     const present = agg.list.length > 0;
-    const connected = agg.list.some((entry) => entry.status === 'active');
+    const connected = agg.list.some(live);
     // A blocked binding never poses as importing: the expiry and the
     // running import read only on bindings that are otherwise calm.
     const pill = present ? channelPill(agg, nowMs, connected) : null;
@@ -687,7 +704,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
   for (const [channel, list] of byChannel) {
     if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
     const agg = aggregate(channel, list);
-    const pill = channelPill(agg, nowMs, list.some((entry) => entry.status === 'active'));
+    const pill = channelPill(agg, nowMs, list.some(live));
     const extraCatalogued = cataloguedChannel(channel);
     rows.push({
       channel,
@@ -695,7 +712,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       mark: syncMark(channel),
       direction: directionLabel(list[0]?.direction ?? null),
       present: true,
-      connected: list.some((entry) => entry.status === 'active'),
+      connected: list.some(live),
       received: agg.received,
       lastAt: agg.lastAt,
       pill,
@@ -1265,14 +1282,15 @@ export function createSyncView(deps) {
   function renderTable(box, activity) {
     const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
     // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
-    // channelConnectionCount over the same rows, profile links included.
-    // A linked channel outside the fixed nine (SMS, Telegram) is a row of
-    // the table, so it counts and so does its place — «1 di 10» (review
-    // #647 P2); a row that is not active (suspended, pending) keeps its
-    // pill but is not «collegato».
+    // channelConnectionCount over the countable rows — a stand-in kept
+    // for its fix card never votes here (giro 8 P1), like in the table
+    // above. A linked channel outside the fixed nine (SMS, Telegram) is
+    // a row of the table, so it counts and so does its place — «1 di 10»
+    // (review #647 P2); a row that is not active (suspended, pending)
+    // keeps its pill but is not «collegato».
     // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
     // included, plus a linked channel outside the nine (review #647).
-    const count = channelConnectionCount(entriesOf(activity));
+    const count = channelConnectionCount(syncCountableEntries(activity));
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));

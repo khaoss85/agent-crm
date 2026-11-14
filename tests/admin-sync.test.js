@@ -36,6 +36,7 @@ import {
   syncAgo,
   syncChannelRows,
   syncChannelTable,
+  syncCountableEntries,
   syncFeedItems,
   syncFixItems,
   syncGrantCards,
@@ -44,6 +45,7 @@ import {
   timeAgo,
   withProfileConnections,
 } from '../apps/admin/public/admin-sync.js';
+import { channelConnectionCount } from '../apps/admin/public/admin-channels-count.js';
 import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { SETTINGS_AREAS, loadFixCount } from '../apps/admin/public/admin-shell.js';
@@ -1583,4 +1585,24 @@ test('803d127c4458: withProfileConnections drops the quiet key-only stand-in but
   const kept = withProfileConnections(activityOf({ connections: [stopped] }), null);
   assert.equal(kept.connections.length, 1, 'the stopped import keeps its fix card');
   assert.equal(kept.connections[0].connectionKey, 'profile:gmail');
+});
+
+test('803d127c4458 giro 8 P1: the kept error stand-in keeps its fix card but never counts connected', () => {
+  const broken = entryOf({
+    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
+    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso.' },
+  });
+  const kept = withProfileConnections(activityOf({ connections: [broken] }), null);
+  assert.equal(kept.connections.length, 1, 'the error stand-in keeps its fix card');
+  const table = syncChannelTable(kept, NOW);
+  const email = table.find((row) => row.channel === 'email');
+  assert.equal(email.present, true, 'the broken binding stays visible in the table');
+  assert.equal(email.connected, false, 'the broken stand-in never reads connected');
+  assert.equal(email.pill?.tone, 'altro', 'the broken binding keeps its fix pill');
+  const indicator = syncIndicator(kept, NOW);
+  assert.equal(indicator.title, 'Nessun canale attivo', 'the hero invites fixes, never a linked Email');
+  assert.equal(
+    channelConnectionCount(syncCountableEntries(kept)).connected, 0,
+    'the kept stand-in never votes in the «n di 9» count',
+  );
 });

@@ -162,6 +162,17 @@ export function mergeProfileConnections(rows, profile = null) {
 }
 
 /**
+ * A `profile:<connector>` connection key is the pilot's profile mailbox
+ * merged as a row, never an account or a route: any case counts, like the
+ * composer (giro 8 P1: the composer lowercases before the prefix test
+ * while the count read an upper-case PROFILE: key as a real link).
+ * @param {unknown} value
+ */
+function isProfileKey(value) {
+  return typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
+}
+
+/**
  * Whether one row stands in for the space-profile Gmail rather than a
  * real channel connection (backlog:803d127c4458): the rows
  * `mergeProfileConnections` merges in, marked `source: 'profile'`, and the
@@ -176,8 +187,7 @@ export function mergeProfileConnections(rows, profile = null) {
 export function isProfileEmailStandin(row) {
   if (row == null || typeof row !== 'object') return false;
   if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
-  return row.source === 'profile'
-    || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:'));
+  return row.source === 'profile' || isProfileKey(row.connectionKey);
 }
 
 /**
@@ -276,8 +286,7 @@ export const NOT_AVAILABLE_NOTE = 'Questo canale non si può ancora collegare da
  * @param {any} row
  */
 function isProfileRow(row) {
-  return row != null && (row.source === 'profile'
-    || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:')));
+  return row != null && (row.source === 'profile' || isProfileKey(row.connectionKey));
 }
 
 /** Channels of the nine the guided `#/connettori/<channel>` flow never serves. */

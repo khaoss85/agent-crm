@@ -141,6 +141,17 @@ test('803d127c4458 giro 5 P1: the Gmail stand-in never reads collegato Email', (
   assert.equal(keyOnly.state, 'da-collegare');
 });
 
+test('803d127c4458 giro 8 P1: an upper-case PROFILE: key never reads collegato Email', () => {
+  const gmail = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
+  const state = channelState('email', {
+    rows: [{ connectionKey: 'PROFILE:gmail', channel: 'email', status: 'active', account: 'dan@presti.it' }],
+    adapters: [],
+    profile: gmail,
+  });
+  assert.notEqual(state.state, 'collegato', 'an upper-case profile key never links Email');
+  assert.equal(state.state, 'da-collegare', 'the Collega invite survives');
+});
+
 test('review #782 P3: a composed adapter never routes Calendar or Stripe into the guided flow', () => {
   const offering = { connections: { available: true, items: [{ connector: 'calendar', status: 'disconnected' }] } };
   assert.equal(channelState('calendar', { rows: [], adapters: [{}], profile: offering }).connectRoute, '#/profilo');
