@@ -1,5 +1,5 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
-import { ASSISTANT_STATUS_PATH, assistantStatusCode, createAssistantPanel } from './admin-assistant.js';
+import { createAssistantPanel } from './admin-assistant.js';
 import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
@@ -552,7 +552,7 @@ import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createToastController } from './admin-ui.js';
-import { createSpaziAccessiView } from './admin-spazi-accessi.js';
+import { createSpaziAccessiView, masterEnabled } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
@@ -957,6 +957,9 @@ const spaziAccessiView = createSpaziAccessiView({
   onPickSpace: (id) => {
     pickSpace(id);
   },
+  // backlog 3136d15da7bd: a flipped switch may be the space AI master — the
+  // top bar re-reads it at once instead of keeping yesterday's words.
+  onSwitches: () => { void refreshSpaceAi(); },
   storage: shellStorage,
   toast,
 });
@@ -967,15 +970,18 @@ const profiloView = createProfiloView({
   mount: mountGate.owned('profilo'),
   client: moduleClient,
   member: () => shellUser,
-  // backlog:3136d15d: the name saved on Profilo is live everywhere at
-  // once — the sidebar and the home greeting read this same object.
-  onName: (name) => {
-    shellUser.name = name;
-    shellView?.update({ user: { name } });
-  },
   // backlog:8618ad3f72db: the Impostazioni tab row above the profile.
   navigate: (hash) => { window.location.hash = hash; },
   fixCount: () => shellFixCount,
+  // backlog 3136d15da7bd: after Salva the sidebar footer wears the new name
+  // at once — the page title already does, the shell waited for a reload.
+  onMember: (person) => {
+    if (!person || typeof person !== 'object') return;
+    for (const key of ['name', 'email', 'role']) {
+      if (typeof person[key] === 'string' && person[key] !== '') shellUser[key] = person[key];
+    }
+    shellView?.update({ user: { ...shellUser } });
+  },
 });
 // BO-F6-03: the session profile the host injected (a real session under a
 // mount: space, role, name, email and the space logout URL), or null locally
@@ -1050,8 +1056,11 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
-  // backlog:3136d15d: the bar follows the new space's AI state.
-  void refreshShellAiOff();
+  // backlog 3136d15da7bd: the bar keeps the last words until the new
+  // space's own master is read — no optimistic aiSpaceOff:false, which
+  // would flash an inviting question for a space whose AI is off (or
+  // unknown when the read fails). The sequenced refresh below paints.
+  void refreshSpaceAi();
   // The open card shows space-scoped calls (BO-F1-08): re-render it on
   // the new space instead of leaving the previous space's summaries.
   // The mounted home greets with the space name: re-render it too.
@@ -1154,8 +1163,6 @@ if (boSidebar && boTopbar) {
     win: typeof window !== 'undefined' ? window : null,
   });
   if (shellActiveSpace) shellView.setSpaces(shellSpaces, shellActiveSpace);
-  // backlog:3136d15d: the bar names the space AI state from the start.
-  void refreshShellAiOff();
 }
 
 let shellItems = buildShellNav();
@@ -1192,44 +1199,6 @@ function syncShell(target) {
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
     screenLabel: customerCrumbLabel(target, offerCrumbs.label(target) ?? (typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista'), rememberedCustomerTitle()),
   });
-  // backlog:3136d15d: every navigation re-checks the space AI, so flipping
-  // the master in Spazi e accessi reaches the bar on the next screen.
-  void refreshShellAiOff();
-}
-
-/**
- * Backlog 3136d15d: the top bar says when the space AI is off. One status
- * read per call, shared while in flight; anything but a really disabled
- * space (LLM_SPACE_DISABLED) keeps the normal bar — a missing backend or
- * key never reads as «off».
- * @type {Promise<void> | null}
- */
-let shellAiOffFlight = null;
-
-async function refreshShellAiOff() {
-  if (!shellView) return;
-  if (shellAiOffFlight) {
-    try { await shellAiOffFlight; } catch {
-      // The shared flight already settled the bar; nothing more to do.
-    }
-    return;
-  }
-  const flight = (async () => {
-    let off = false;
-    try {
-      const status = await moduleClient.request(ASSISTANT_STATUS_PATH);
-      off = assistantStatusCode(status) === 'LLM_SPACE_DISABLED';
-    } catch {
-      off = false;
-    }
-    shellView?.update({ aiOff: off });
-  })();
-  shellAiOffFlight = flight;
-  try {
-    await flight;
-  } finally {
-    if (shellAiOffFlight === flight) shellAiOffFlight = null;
-  }
 }
 
 async function refreshShellCounts() {
@@ -1255,6 +1224,38 @@ async function refreshShellCounts() {
 }
 
 /**
+ * Backlog 3136d15da7bd: the top AI bar names the space AI state. The shell
+ * never reads on its own, so app.js pushes it: a space whose master switch
+ * is off gets the off words instead of an inviting question. A read that
+ * fails leaves the bar as it was — an unknown state must never claim the
+ * AI is off, and a late answer for a space left behind never paints.
+ */
+let spaceAiSeq = 0;
+async function refreshSpaceAi() {
+  if (!shellView) return;
+  const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+  if (typeof spaceId !== 'string' || spaceId === '') return;
+  const mine = ++spaceAiSeq;
+  try {
+    const answer = await moduleClient.request(
+      `/api/space-permissions/effective?spaceId=${encodeURIComponent(spaceId)}`,
+    );
+    if (mine !== spaceAiSeq) return;
+    const rows = Array.isArray(answer?.overrides) ? answer.overrides : [];
+    shellView.update({ aiSpaceOff: !masterEnabled(spaceId, rows) });
+  } catch (error) {
+    // Unknown keeps the last words; the Spazi e accessi panel says its own.
+    if (mine !== spaceAiSeq) return;
+    // backlog 3136d15da7bd: a failed master read never silences its cause —
+    // name and code with the space, never body, token or personal data.
+    const cause = error instanceof Error ? error.name : (/** @type {any} */ (error)?.code ?? 'unknown');
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('bo-ai space master unreadable:', cause, /** @type {any} */ (error)?.code ?? null, `spaceId=${spaceId}`);
+    }
+  }
+}
+
+/**
  * @param {{ repaintScreen?: boolean }} [options] review Muse #898: a schema
  * renewed in the background refreshes the navigation only, never the screen.
  */
@@ -1275,6 +1276,9 @@ async function populateNav({ repaintScreen = true } = {}) {
     // backlog:94eabbd4762f: the badges read after the screen opened at boot
     // has read what it shows — never in front of its reads.
     void afterScreen(bootScreen).then(() => refreshShellCounts()).catch(() => {});
+    // backlog 3136d15da7bd: the top AI bar reads the space master once the
+    // boot screen has read what it shows — never in front of its reads.
+    void afterScreen(bootScreen).then(() => refreshSpaceAi()).catch(() => {});
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.

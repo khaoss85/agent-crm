@@ -483,7 +483,7 @@ import { el, uiAddOption, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
  * `client`, spaces and the space picker keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate?: (hash: string) => void, spaces?: () => Array<{id: string, name?: string, initials?: string}>, activeSpaceId?: () => string | null, onPickSpace?: (id: string) => void, toast?: (message: string, error?: boolean) => void, storage?: any}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate?: (hash: string) => void, spaces?: () => Array<{id: string, name?: string, initials?: string}>, activeSpaceId?: () => string | null, onPickSpace?: (id: string) => void, onSwitches?: () => void, toast?: (message: string, error?: boolean) => void, storage?: any}} deps
  */
 export function createSpaziAccessiView(deps) {
   const { doc, mount, navigate } = deps;
@@ -1408,6 +1408,16 @@ export function createSpaziAccessiView(deps) {
           }
           state.confirmFlip = null;
           await refresh();
+          // backlog 3136d15da7bd: a flipped switch may be the space AI
+          // master — the top AI bar re-reads it at once instead of naming
+          // questions while the AI is off (or hiding that it is back on).
+          if (typeof deps.onSwitches === 'function') {
+            try {
+              deps.onSwitches();
+            } catch {
+              // The bar keeps its last words; the panel already said them.
+            }
+          }
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         no.addEventListener('click', () => { state.confirmFlip = null; state.switchRefusal = null; render(); });
