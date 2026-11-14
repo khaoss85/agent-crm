@@ -288,13 +288,10 @@ export function createCustomerListView(deps) {
       Object.assign(state, {
         vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
-    } else if (state.q !== '') {
-      // backlog:4968615de0a4: coming back to Clienti from another page the
-      // search starts empty — never a list filtered by a word typed earlier.
-      // Filters, order and columns stay: they show in the bar.
-      state.q = '';
-      state.page = 1;
     }
+    // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
+    // scheda) keeps the search too — like the filters, it shows in the bar
+    // and clears only with its own Azzera.
     drawShell();
     return load();
   }

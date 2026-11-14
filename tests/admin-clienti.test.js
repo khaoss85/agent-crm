@@ -1182,7 +1182,7 @@ test('4968615de0a4: one way to clear the search — the field’s Azzera; no bro
   assert.equal(input.value, 'milano');
 });
 
-test('4968615de0a4: back on Clienti from another page the search starts empty, filters stay', async () => {
+test('2067a415405c: back on Clienti from a scheda the search and the filters stay', async () => {
   const client = stubClient();
   const { mount, view } = await render(client);
   const input = mount.findAll('input')[0];
@@ -1195,9 +1195,9 @@ test('4968615de0a4: back on Clienti from another page the search starts empty, f
   view.invalidate();
   await view.render();
   const again = mount.findAll('input')[0];
-  assert.equal(again.value, '', 'the field is empty');
+  assert.equal(again.value, 'milano', 'the field keeps the typed search');
   const last = client.calls[client.calls.length - 1];
-  assert.ok(!last.includes('q='), `the list reads without the old search: ${last}`);
+  assert.ok(last.includes('q=milano'), `the list re-reads with the search: ${last}`);
   assert.ok(last.includes('stato=cliente'), 'the filters stay, shown as chips');
   assert.ok(byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Cliente'));
 });
