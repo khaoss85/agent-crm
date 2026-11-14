@@ -1475,9 +1475,10 @@ export function createCustomerCardView(deps) {
       // DECISION (to be confirmed): this screen never reads the schema, so
       // it cannot follow the adapters the way Stato sync does (Muse review
       // on #848): while the schema is unread Stato sync names the guided
-      // flow, and with a composed Email adapter it reads da-completare,
-      // while the composer still cures to Profilo. The paired test pins
-      // all three states, so the screens disagree loudly, never silently.
+      // flow, and with a composed Email adapter it reads da-collegare to
+      // the guided flow, while the composer still cures to Profilo. The
+      // paired test pins all three states, so the screens disagree loudly,
+      // never silently.
       const connectRoute = channel === 'email'
         ? (channelState(channel, { rows: list, profile, adapters: [], guided: [] }).connectRoute ?? '#/connettori')
         : null;

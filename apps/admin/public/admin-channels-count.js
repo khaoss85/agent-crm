@@ -314,7 +314,8 @@ function profileConnects(profile, channel) {
  *   whether this backoffice configures it (an adapter is composed, or the
  *   adapters are unknown); when not, `note` says so in plain words and
  *   `manageRoute` points to Profilo for a profile link.
- * - `da-completare`: rows exist, none active, and an adapter can finish it.
+ * - `da-completare`: real rows exist, none active, and an adapter can finish it
+ *   (the profile-Gmail Email stand-in alone never holds it: no route).
  * - `da-collegare`: nothing linked, and `connectRoute` is where it connects.
  * - `non-disponibile`: nothing linked and nowhere here to connect it.
  *
@@ -361,7 +362,13 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
       manageRoute: onProfile ? '#/profilo' : null,
     });
   }
-  if (matching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
+  // The profile-Gmail Email stand-in is no channel connection, so it never
+  // holds `da-completare` alone: with a composed Email adapter and no real
+  // row that state has no route, while Stato sync and the composer cure
+  // elsewhere (backlog:3805161965cd, Muse review on #848: a sole stand-in
+  // falls through to `da-collegare` with a route).
+  const realMatching = matching.filter((row) => !isProfileEmailStandinRow(row));
+  if (realMatching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
     return shape('da-completare', { managedHere: true });
   }
   // A composed adapter opens the guided flow only for a channel that flow

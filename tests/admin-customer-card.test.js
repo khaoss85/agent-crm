@@ -2821,7 +2821,7 @@ test('3805161965cd: composer cure per adapter state against Stato sync', async (
   assert.equal(syncConnectRoute('email', profile, []), '#/profilo', 'schema read, no adapter: both cure to Profilo');
   assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'schema unread: Stato sync offers the guided flow');
   const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
-  assert.equal(syncConnectRoute('email', profile, emailAdapters), null, 'composed Email adapter: Stato sync reads da-completare, no direct route');
+  assert.equal(syncConnectRoute('email', profile, emailAdapters), '#/connettori/email', 'composed Email adapter: Stato sync cures to the guided flow, never a routeless da-completare (Muse review on #848, giro 4 P1)');
   const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
   const { panel } = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard }),

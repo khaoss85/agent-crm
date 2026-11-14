@@ -284,3 +284,24 @@ test('isProfileEmailStandinRow shares the composer rule, key and alias spellings
   assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }), false, 'a real gmail route stays in');
   assert.equal(isProfileEmailStandinRow(null), false);
 });
+
+// Muse review on #848, giro 4 P1 (backlog:3805161965cd): a sole
+// profile-Gmail Email stand-in never holds `da-completare` — with a composed
+// Email adapter it falls through to `da-collegare` with the guided route,
+// never a dead end with no route. A real pending row still holds it.
+test('channelState: a sole Email stand-in with a composed adapter reads da-collegare, never da-completare', () => {
+  const adapters = [{ name: 'email-adapter', version: 1 }];
+  const standin = { channel: 'email', status: 'active', connectionKey: 'profile:gmail', source: 'profile' };
+  const state = channelState('email', { rows: [standin], adapters });
+  assert.equal(state.state, 'da-collegare');
+  assert.equal(state.connectRoute, '#/connettori/email', 'the guided flow is where the adapter completes');
+  const alias = { channel: 'gmail', status: 'active', connectionKey: 'profile:gmail', source: 'profile' };
+  const aliasState = channelState('email', { rows: [alias], adapters });
+  assert.equal(aliasState.state, 'da-collegare');
+  assert.equal(aliasState.connectRoute, '#/connettori/email');
+  const pending = channelState('email', {
+    rows: [{ channel: 'email', status: 'pending', connectionKey: 'gmail-1' }],
+    adapters,
+  });
+  assert.equal(pending.state, 'da-completare', 'a real row still holds da-completare');
+});
