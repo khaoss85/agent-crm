@@ -144,12 +144,107 @@ test('c048bf6f2dd3: a reload of the same tab answers from the stored copy, renew
   assert.deepEqual(await cached('/api/schema'), { version: '2' }, 'a refused write never breaks the read');
 });
 
-test('c048bf6f2dd3: the shell keys the copy by mount and space and repaints on a change', async () => {
-  const { readFileSync } = await import('node:fs');
-  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
-  const wiring = /const schemaCachedRequest = withSchemaCache\(([\s\S]*?)\n\}\);/.exec(app);
-  assert.ok(wiring, 'one cache for the shell');
-  assert.match(wiring[1], /space: \(\) => `\$\{ADMIN_BASE\}\|\$\{shellActiveSpace \?\? ''\}`/);
-  assert.match(wiring[1], /storage: tabSessionStorage\(\)/);
-  assert.match(wiring[1], /onChange: \(\) => \{\n\s+void populateNav\(\);\n\s+void route\(\);/);
+// Review Muse #898 giro 1: the shell's client, by behaviour — keyed by mount
+// and space, stored per tab, and a differing renewal refreshes the
+// navigation only.
+test('c048bf6f2dd3: the shell client keys by mount and space and refreshes only the navigation', async () => {
+  const { createShellSchemaClient } = await import('../apps/admin/public/admin-schema-cache.js');
+  let clock = 0;
+  let version = '1';
+  let space = 'acme';
+  const navs = [];
+  const tab = new Map();
+  const make = (adminBase) => createShellSchemaClient({
+    request: async () => ({ version, base: adminBase }),
+    adminBase,
+    activeSpace: () => space,
+    storage: { getItem: (key) => tab.get(key) ?? null, setItem: (key, value) => tab.set(key, value) },
+    refreshNav: () => navs.push(adminBase),
+    ttlMs: 1000,
+    now: () => clock,
+  });
+  const w1 = make('/w/1/bo');
+  assert.deepEqual(await w1('/api/schema'), { version: '1', base: '/w/1/bo' });
+  assert.deepEqual([...tab.keys()], ['bo-schema:/w/1/bo|acme'], 'stored under the mount and the space');
+  const w2 = make('/w/2/bo');
+  assert.deepEqual(await w2('/api/schema'), { version: '1', base: '/w/2/bo' }, 'another mount never reads the first copy');
+  version = '2';
+  clock = 5000;
+  assert.deepEqual(await w1('/api/schema'), { version: '1', base: '/w/1/bo' }, 'the copy answers at once');
+  await flush();
+  assert.deepEqual(navs, ['/w/1/bo'], 'a differing renewal refreshes the navigation, once');
+  space = 'altro';
+  version = '3';
+  let other = null;
+  void w1('/api/schema').then((value) => { other = value; });
+  await flush();
+  assert.deepEqual(other, { version: '3', base: '/w/1/bo' }, 'another space reads its own schema');
+});
+
+test('c048bf6f2dd3: a half-typed field survives a schema that changes behind the screen', async () => {
+  const { createShellSchemaClient } = await import('../apps/admin/public/admin-schema-cache.js');
+  const { createOfferDetail } = await import('../apps/admin/public/admin-offer.js');
+  const { createFakeDocument, createMount } = await import('./helpers/fake-dom.js');
+  let clock = 0;
+  let version = '1';
+  const record = { id: 'off1', name: 'Cucina', contactName: 'Giulia Verdi', valueCents: 1000, currency: 'EUR', owner: 'maria', createdAt: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z' };
+  const base = async (path) => {
+    if (path === '/api/schema') return { version, pipelines: [] };
+    if (path.startsWith('/api/opportunities/')) return { ...record };
+    return { items: [] };
+  };
+  const navs = [];
+  const client = { request: createShellSchemaClient({ request: base, adminBase: '/w/1/bo', activeSpace: () => 'acme', refreshNav: () => navs.push(1), ttlMs: 1000, now: () => clock }) };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('off1');
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = '12,5';
+  // Another screen reads the schema after the ttl: the copy answers, a
+  // different one arrives behind it.
+  version = '2';
+  clock = 5000;
+  await client.request('/api/schema');
+  await flush();
+  assert.deepEqual(navs, [1], 'the navigation refreshed');
+  const still = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  assert.equal(still, form, 'the screen was not repainted under the person');
+  assert.equal(still.__editInputs.value.value, '12,5', 'the half-typed value is still there');
+});
+
+test('c048bf6f2dd3: a failed renewal, a refused copy and a failing change say why — once each — and never break the read', async () => {
+  let clock = 0;
+  let fail = false;
+  let version = '1';
+  const warned = [];
+  const cached = withSchemaCache(async () => {
+    if (fail) throw Object.assign(new Error('down'), { code: 'BO_DOWN' });
+    return { version };
+  }, {
+    ttlMs: 1000, now: () => clock, space: () => 's1',
+    storage: { getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); } },
+    onChange: () => { throw new Error('repaint'); },
+    warn: (...parts) => warned.push(parts.join(' ')),
+  });
+  await cached('/api/schema');
+  await cached('/api/schema');
+  fail = true;
+  clock = 5000;
+  assert.deepEqual(await cached('/api/schema'), { version: '1' }, 'a failed renewal keeps the copy');
+  await flush();
+  clock = 10000;
+  await cached('/api/schema');
+  await flush();
+  fail = false;
+  version = '2';
+  clock = 20000;
+  await cached('/api/schema');
+  await flush();
+  assert.deepEqual(await cached('/api/schema'), { version: '2' }, 'a failing repaint never breaks the cache');
+  assert.equal(warned.filter((line) => line.startsWith('bo-schema copy not stored')).length, 1, 'once, not on every read');
+  assert.equal(warned.filter((line) => line.startsWith('bo-schema renewal failed')).length, 1);
+  assert.ok(warned.some((line) => line.includes('BO_DOWN')), 'with its cause');
+  assert.equal(warned.filter((line) => line.startsWith('bo-schema change not applied')).length, 1);
 });

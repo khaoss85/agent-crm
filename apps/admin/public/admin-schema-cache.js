@@ -40,7 +40,21 @@ export function withSchemaCache(request, {
   space = () => null,
   storage = null,
   onChange = () => {},
+  warn = defaultWarn,
 } = {}) {
+  // Review Muse #898: a swallowed failure leaves its cause — once per kind,
+  // never a burst on every read.
+  const warned = new Set();
+  /** @param {string} area @param {unknown} error */
+  const warnOnce = (area, error) => {
+    if (warned.has(area)) return;
+    warned.add(area);
+    try {
+      warn(`bo-schema ${area}:`, error instanceof Error ? error.name : 'unknown', String(/** @type {any} */ (error)?.code ?? ''));
+    } catch {
+      // Logging never breaks the cache.
+    }
+  };
   /** @type {Map<string, {value: any, text: string, at: number}>} */
   const copies = new Map();
   /** @type {Map<string, Promise<any>>} */
@@ -87,15 +101,17 @@ export function withSchemaCache(request, {
       if (storage !== null && text !== '') {
         try {
           storage.setItem(storageKey(key), text);
-        } catch {
+        } catch (error) {
           // Quota or private mode: the next reload waits once, nothing more.
+          warnOnce('copy not stored', error);
         }
       }
       if (before !== null && before.text !== text && key === spaceKey()) {
         try {
           onChange(key);
-        } catch {
+        } catch (error) {
           // A repaint that fails never fails the read that answered.
+          warnOnce('change not applied', error);
         }
       }
       return value;
@@ -115,10 +131,41 @@ export function withSchemaCache(request, {
     if (copy === null) return renew(key, path, options);
     if (now() - copy.at >= ttlMs) {
       // The renewal runs behind the answer; a failed one keeps the copy.
-      void renew(key, path, options).catch(() => {});
+      void renew(key, path, options).catch((error) => warnOnce('renewal failed', error));
     }
     return Promise.resolve(copy.value);
   };
+}
+
+/** @param {...unknown} parts */
+function defaultWarn(...parts) {
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') console.warn(...parts);
+}
+
+/**
+ * The shell's schema client (review Muse #898): keyed by the mount
+ * (`/w/<space>/bo`) plus the active space, kept in the tab's storage, and —
+ * when a renewed schema differs — refreshing the navigation only. The
+ * screen in use is never repainted under the person (a form open, a text
+ * half typed): it reads the new schema at its next navigation.
+ * @param {{
+ *   request: (path: string, options?: any) => Promise<any>,
+ *   adminBase: string,
+ *   activeSpace: () => string | null,
+ *   storage?: { getItem: (key: string) => string | null, setItem: (key: string, value: string) => void } | null,
+ *   refreshNav: () => unknown,
+ *   ttlMs?: number, now?: () => number, warn?: (...parts: unknown[]) => void,
+ * }} options
+ */
+export function createShellSchemaClient({ request, adminBase, activeSpace, storage = null, refreshNav, ttlMs, now, warn }) {
+  return withSchemaCache(request, {
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(now !== undefined ? { now } : {}),
+    ...(warn !== undefined ? { warn } : {}),
+    space: () => `${adminBase}|${activeSpace() ?? ''}`,
+    storage,
+    onChange: () => { void refreshNav(); },
+  });
 }
 
 /** The sessionStorage key prefix of a space's schema copy. */

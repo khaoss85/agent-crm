@@ -3,7 +3,7 @@ import { createAssistantPanel } from './admin-assistant.js';
 import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
-import { withSchemaCache } from './admin-schema-cache.js';
+import { createShellSchemaClient } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
 import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
@@ -232,15 +232,14 @@ const moduleClient = {
   },
 };
 // backlog:c048bf6f2dd3: the schema answers from the space's last copy and
-// renews behind it; a renewed copy that differs repaints the shell and the
-// screen. The key is the mount (one per space) plus the active space.
-const schemaCachedRequest = withSchemaCache((path, options) => moduleClient.rawRequest(path, options), {
-  space: () => `${ADMIN_BASE}|${shellActiveSpace ?? ''}`,
+// renews behind it. Review Muse #898: a renewed copy that differs refreshes
+// the navigation only — the screen in use reads it at its next navigation.
+const schemaCachedRequest = createShellSchemaClient({
+  request: (path, options) => moduleClient.rawRequest(path, options),
+  adminBase: ADMIN_BASE,
+  activeSpace: () => shellActiveSpace,
   storage: tabSessionStorage(),
-  onChange: () => {
-    void populateNav();
-    void route();
-  },
+  refreshNav: () => populateNav({ repaintScreen: false }),
 });
 
 /** The tab's sessionStorage, or null where the browser refuses it. */
@@ -1255,7 +1254,11 @@ async function refreshShellCounts() {
   });
 }
 
-async function populateNav() {
+/**
+ * @param {{ repaintScreen?: boolean }} [options] review Muse #898: a schema
+ * renewed in the background refreshes the navigation only, never the screen.
+ */
+async function populateNav({ repaintScreen = true } = {}) {
   try {
     const schema = await moduleClient.request('/api/schema');
     // Backoffice shell (BO-F0-02): generated modules are the
@@ -1275,7 +1278,7 @@ async function populateNav() {
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.
-    if (MOUNTED && targetForHash(window.location.hash || '#/').view === 'dashboard') route();
+    if (repaintScreen && MOUNTED && targetForHash(window.location.hash || '#/').view === 'dashboard') route();
     // The legacy module nav lives inside the demo chrome, which is rendered
     // standalone only: under a mount there is nothing to fill here.
     if (!generatedNav) return;
