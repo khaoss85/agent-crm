@@ -40,7 +40,7 @@
 // never innerHTML with data, so hostile space, member or role strings are
 // inert text, never markup.
 
-import { channelConnectionCount, isNonCanonicalEmailRow, mergeProfileConnections } from './admin-channels-count.js';
+import { channelConnectionCount, isNonCanonicalEmailRow, isProfileEmailStandinRow, mergeProfileConnections } from './admin-channels-count.js';
 import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -177,8 +177,13 @@ export function countSpaceChannels(answer, profile = null) {
   // Backlog:3805161965cd (Muse P1 giro 7 on #848): Email votes only on its
   // canonical spelling, like in the composer — an alias ('gmail') or a case
   // variant ('Email') can never send.
+  // Backlog:3805161965cd (supervisore 14/11, P1 giro 8 on #848): the
+  // profile-Gmail stand-in is no channel either — without a real channel
+  // connection the send fails 409, so Spazi e accessi prints the same
+  // number Oggi and Stato sync print. Calendar and the other profile
+  // votes keep counting.
   return channelConnectionCount(
-    mergeProfileConnections(entries, profile).filter((row) => !isNonCanonicalEmailRow(row)),
+    mergeProfileConnections(entries, profile).filter((row) => !isNonCanonicalEmailRow(row) && !isProfileEmailStandinRow(row)),
   ).connected;
 }
 
