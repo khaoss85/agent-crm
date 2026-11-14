@@ -2252,7 +2252,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
    «Sposta in» serve a tastiera e touch, non si vede col mouse (si trascina). */
 .pipeline-card .card-move { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .pipeline-card { position: relative; }
-.pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+/* backlog:85630aa14a4f: solo il focus da tastiera apre la riga; un clic col mouse su Riprova o Apri non sposta più la card sotto il puntatore. */
+.pipeline-card:has(:focus-visible) .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }
@@ -2262,7 +2263,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
 .pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
 /* backlog:85630aa14a4f: la card con il pannello aperto resta segnata. */
-.pipeline-card.is-open { border-color: var(--accent); box-shadow: var(--shadow); }
+/* backlog:85630aa14a4f: la card aperta si riconosce a colpo d'occhio: anello verde pieno, non solo il bordo. */
+.pipeline-card.is-open, .pipeline-card[data-openable="true"].is-open:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
 .ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
 .ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 /* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */

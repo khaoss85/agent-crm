@@ -264,8 +264,11 @@ test('Dan 11/11: a failed drop puts the card back in its place with a clear mess
   assert.equal(card.getAttribute('aria-busy'), 'false', 'no longer waiting');
   const error = card.childNodes.find((n) => classes(n).includes('field-error'));
   assert.ok(error && !classes(error).includes('hidden'), 'the reason shows on the card itself');
-  assert.equal(error.textContent, 'Spostamento non riuscito. Riprova più tardi.');
-  assert.ok(toasts.some((item) => item.error && item.message === 'Spostamento non riuscito. Riprova più tardi.'), 'and in a toast');
+  // backlog:85630aa14a4f: one message, next to its Riprova — never a
+  // second copy in a red toast.
+  assert.equal(error.textContent, 'Spostamento non riuscito.');
+  assert.ok(!classes(card.childNodes.find((n) => n.getAttribute?.('data-action') === 'move-retry')).includes('hidden'), 'with Riprova beside it');
+  assert.ok(!toasts.some((item) => item.error), 'and no red toast repeating it');
 });
 
 test('Dan 11/11: a drop onto Vinta asks Conferma first and leaves the card in place', async () => {
@@ -354,15 +357,19 @@ test('Dan 11/11: × closes the panel without re-rendering the board and hands fo
   assert.ok(apri.__focused, 'focus goes back to Apri');
 });
 
-test('85630aa14a4f: a mouse × closes the panel without handing focus back to Apri', async () => {
+test('85630aa14a4f: a mouse × hands focus back to the open card, without the focus ring', async () => {
   const { mount } = await board([record('a', 'discovery')]);
   const apri = apriOf(mount, 'a');
+  const focusCalls = [];
+  apri.focus = (options) => { focusCalls.push(options ?? null); };
   apri.dispatch('click');
   const panel = panelOf(mount);
   assert.ok(panel, 'the panel is open');
   panel.findAll('button').find((n) => n.getAttribute('data-action') === 'offer-drawer-close').dispatch('click', { detail: 1 });
   assert.equal(panelOf(mount), undefined, 'the panel is gone');
-  assert.equal(apri.__focused, undefined, 'no focus back to Apri: the keyboard-only row stays hidden');
+  assert.equal(focusCalls.length, 1, 'focus goes back to the open card (its Apri)');
+  assert.equal(focusCalls[0]?.focusVisible, false, 'with no ring: a mouse closed it');
+  assert.equal(focusCalls[0]?.preventScroll, true, 'and the page does not jump');
 });
 
 test('85630aa14a4f: closing the panel brings the board back to its pre-open scroll', async () => {
@@ -488,7 +495,7 @@ test('Dan 11/11: Persa from the panel asks the reason; a failed move says why in
   const post = client.calls.find((call) => call.method === 'POST');
   assert.deepEqual(JSON.parse(post.body), { toStage: 'lost', fromStage: 'discovery', reason: 'Budget' });
   const alert = panel.findAll('small').find((n) => n.getAttribute('role') === 'alert');
-  assert.equal(alert.textContent, 'Spostamento non riuscito. Riprova più tardi.', 'the failure reads inside the panel');
+  assert.equal(alert.textContent, 'Spostamento non riuscito.', 'the failure reads inside the panel');
   assert.ok(!classes(alert).includes('hidden'));
   const retry = panel.findAll('button').find((n) => n.getAttribute('data-action') === 'drawer-move-retry');
   assert.ok(retry && !classes(retry).includes('hidden'), 'Riprova shows beside the failure');

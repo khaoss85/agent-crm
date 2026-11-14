@@ -586,6 +586,8 @@ const pipelineBoard = createPipelineBoard({
   // backlog:3d811389bb4c: the Pipeline's messages are its own — they close
   // when the person leaves the Pipeline (see the hashchange below).
   toast: (message, error, options) => toast(message, error, { ...(options ?? {}), scope: 'pipeline' }),
+  // backlog:85630aa14a4f: a failed move says so on its card; its waiting toast goes away.
+  hideToast: () => { if (toaster !== null) toaster.hideScope('pipeline'); },
   navigate: (hash) => { window.location.hash = hash; },
   // C3 `Crea con l'AI`: same assistant seam as Clienti and Reporting —
   // the voice opens the BO-F0-04 panel on the pipeline screen.
