@@ -3374,7 +3374,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = []) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3534,9 +3534,14 @@ export function createCustomerCardView(deps) {
     // backlog:947260f9f036: «Tutti» is shown whole or says it is still
     // reading — never two events that become three a moment later. A history
     // already read (a repaint) draws complete at once.
+    // backlog:f2d39e473e3a (pilota 13/11: 2 note → «Offerta creata» →
+    // «Cambio di stato» in 4-5,6 s): the commercial story comes from two
+    // later reads — the profile names the offers, then the trail their
+    // moves. Until both are in, the messages and notes show with one marked
+    // row; the offers' creation and their moves then arrive together.
     /** @type {'none' | 'pending' | 'done' | 'failed'} */
-    let historyState = 'none';
-    if (typeof historyId === 'string' && historyId !== '') {
+    let historyState = profilePending ? 'pending' : 'none';
+    if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
       if (settled !== undefined) {
         stageEvents = stageRowsOf(settled);
@@ -3552,12 +3557,15 @@ export function createCustomerCardView(deps) {
       if (movesPending) {
         const wait = el('p', 'bo-scheda-moves-wait');
         wait.setAttribute('data-loading', 'true');
+        wait.setAttribute('role', 'status');
+        wait.appendChild(el('span', 'bo-muted', 'Carico offerte e cambi di stato…'));
         wait.appendChild(uiSkeleton(doc, { width: '60%', block: true }));
         list.appendChild(wait);
       } else if (channelFilter === 'all' && historyState === 'failed') {
         list.appendChild(el('p', 'bo-muted', 'Cambi di stato non leggibili: riprova più tardi.'));
       }
-      const events = channelFilter === 'all' ? [...offerEvents, ...stageEvents] : [];
+      // The offers' creation waits for their moves: one step, never two.
+      const events = channelFilter === 'all' && historyState !== 'pending' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
@@ -3820,7 +3828,7 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (historyState === 'pending') {
+    if (historyState === 'pending' && !profilePending) {
       void readHistory(historyId).then((answer) => {
         historyState = 'done';
         stageEvents = stageRowsOf(answer);
@@ -5157,7 +5165,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines);
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'));
     }
     if (waits('calls')) {
       skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');

@@ -758,7 +758,7 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-timeline .bo-scheda-older { align-self: center; margin-top: 6px; min-height: 0; padding: 8px 16px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
 .bo-scheda-timeline .bo-scheda-older:hover { border-color: var(--ink); }
 /* backlog:947260f9f036: the grey row where the stage moves arrive. */
-.bo-scheda-timeline .bo-scheda-moves-wait { margin: 0; }
+.bo-scheda-timeline .bo-scheda-moves-wait { margin: 0; display: grid; gap: 6px; font-size: 13px; }
 .bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
 .bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-offer { margin: 0; font-size: 14px; }

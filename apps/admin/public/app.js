@@ -4,7 +4,7 @@ import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { afterScreen, createMountGate, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -597,6 +597,9 @@ const pipelineBoard = createPipelineBoard({
 // Quote builder (ADR-016) over the ADR-009 override seam: the generic action
 // forms cannot browse a price book, so this focused view owns that experience
 // while every mutation still goes through the same server actions.
+/** The crumb of the offer page last read (backlog:f2d39e473e3a, review Muse #881). */
+const offerCrumbs = createOfferCrumbs({ space: () => shellActiveSpace ?? null });
+
 const offerDetail = createOfferDetail({
   doc: document,
   mount: mountGate.owned('offer-detail'),
@@ -604,6 +607,14 @@ const offerDetail = createOfferDetail({
   submissions,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
+  // backlog:f2d39e473e3a: the crumb names the customer and the offer once
+  // read, and keeps them when the shell re-syncs (the schema landing after
+  // the offer); a page that is no longer routed never retitles the screen.
+  onTitle: (label) => {
+    if (!mountGate.isActive('offer-detail')) return;
+    if (!offerCrumbs.named(targetForHash(window.location.hash || '#/'), label)) return;
+    if (shellView) shellView.update({ screenLabel: label });
+  },
 });
 
 const quoteView = createQuoteView({
@@ -1190,7 +1201,7 @@ function syncShell(target) {
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
-    screenLabel: customerCrumbLabel(target, typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista', rememberedCustomerTitle()),
+    screenLabel: customerCrumbLabel(target, offerCrumbs.label(target) ?? (typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista'), rememberedCustomerTitle()),
   });
 }
 
@@ -1349,6 +1360,9 @@ async function route() {
   }
   const hash = window.location.hash || '#/';
   const navToken = ++navSeq;
+  // Review Muse #881: leaving the offer page (settings included) forgets
+  // its crumb, so a later visit never shows a stale one before its read.
+  offerCrumbs.routed(targetForHash(hash));
   // backlog:ff8bb60f417f: opening or closing the Nuovo cliente window keeps
   // the list under it as it was — no reload, no loading frame.
   const previousView = lastRoutedView;
