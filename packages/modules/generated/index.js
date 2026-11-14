@@ -59,6 +59,8 @@ import { createTeammateAssignmentModule } from '../teammate-assignment/src/index
 import * as teammateAssignmentMigrationSource from '../teammate-assignment/src/migration.js';
 import { createTeammateRunModule } from '../teammate-run/src/index.js';
 import * as teammateRunMigrationSource from '../teammate-run/src/migration.js';
+import { createTeammateSquadModule } from '../teammate-squad/src/index.js';
+import * as teammateSquadMigrationSource from '../teammate-squad/src/migration.js';
 import { createWorkActivityModule } from '../work-activity/src/index.js';
 import * as workActivityMigrationSource from '../work-activity/src/migration.js';
 import { createWorkTaskModule } from '../work-task/src/index.js';
@@ -113,6 +115,7 @@ export const generatedModules = [
   { name: 'teammate-agent', createModule: createTeammateAgentModule, migrations: migrationsOf(teammateAgentMigrationSource, 'teammateAgent', 'teammate-agent') },
   { name: 'teammate-assignment', createModule: createTeammateAssignmentModule, migrations: migrationsOf(teammateAssignmentMigrationSource, 'teammateAssignment', 'teammate-assignment') },
   { name: 'teammate-run', createModule: createTeammateRunModule, migrations: migrationsOf(teammateRunMigrationSource, 'teammateRun', 'teammate-run') },
+  { name: 'teammate-squad', createModule: createTeammateSquadModule, migrations: migrationsOf(teammateSquadMigrationSource, 'teammateSquad', 'teammate-squad') },
   { name: 'work-activity', createModule: createWorkActivityModule, migrations: migrationsOf(workActivityMigrationSource, 'workActivity', 'work-activity') },
   { name: 'work-task', createModule: createWorkTaskModule, migrations: migrationsOf(workTaskMigrationSource, 'workTask', 'work-task') },
 ];

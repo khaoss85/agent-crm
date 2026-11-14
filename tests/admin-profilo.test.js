@@ -408,3 +408,65 @@ test('backlog:1cfc68175ab7 a click or Enter during the reread after Salva writes
   await flush(20);
   assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
 });
+
+// PROFILO item 34f7fb85ad8b: opening Modifica hands the Nome field over ready
+// to type — focused with the current name selected — and the field wears the
+// same measure, spacing and label as the other Impostazioni fields
+// (ui-field-row + ui-label + ui-field, tied by for/id, like the sequenze and
+// agenti forms and the shared uiSecretField).
+test('PROFILO 34f7fb85ad8b Modifica focuses Nome with the text selected, styled like the other settings fields', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // The fake DOM has no select(): attach the spy the way a real browser runs it.
+  const selected = [];
+  const rawCreate = doc.createElement.bind(doc);
+  doc.createElement = (tag) => {
+    const node = rawCreate(tag);
+    if (String(tag).toLowerCase() === 'input') {
+      node.select = () => { selected.push(node.getAttribute('name')); };
+    }
+    return node;
+  };
+  const view = createProfiloView({ doc, mount,
+    member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }),
+    client: { request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      return { member: { name: 'Elena Rinaldi' }, connections: { available: true, reason: null, items: [] } };
+    } },
+  });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name');
+  assert.ok(input, 'the edit form offers a Nome field');
+  assert.match(input.getAttribute('class') ?? '', /(^|\s)ui-field(\s|$)/, 'the input wears the settings field measure');
+  assert.match(input.parentNode?.getAttribute?.('class') ?? '', /(^|\s)ui-field-row(\s|$)/, 'the row keeps the settings spacing');
+  const label = mount.findAll('label').find((node) => node.textContent === 'Nome');
+  assert.ok(label, 'the field has a visible Nome label');
+  assert.match(label.getAttribute('class') ?? '', /(^|\s)ui-label(\s|$)/, 'the label reads like the other settings labels');
+  assert.ok(input.getAttribute('id'), 'the field carries an id');
+  assert.equal(label.getAttribute('for'), input.getAttribute('id'), 'the label points at the field');
+  assert.equal(input.__focused, true, 'the Nome field takes focus on open');
+  assert.deepEqual(selected, ['profile-name'], 'the current name is selected, ready to be replaced');
+});
+
+// backlog:f7d2f7f362cf: at rest «Modifica» was a bordered button as wide as
+// the name, sitting between the name and the email like an empty field. It
+// now sits beside the name in one row, at its own text measure.
+test('backlog:f7d2f7f362cf Modifica sits beside the name at its own measure, never like a field', async () => {
+  const mount = await render({ member: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
+    connections: { available: true, reason: null, items: [] } });
+  const edit = mount.findAll('button').find((node) => node.textContent === 'Modifica');
+  assert.ok(edit, 'Modifica is still a button');
+  assert.match(edit.getAttribute('class') ?? '', /(^|\s)bo-profilo-edit-open(\s|$)/, 'the button wears its own-measure class');
+  const row = edit.parentNode;
+  assert.match(row?.getAttribute?.('class') ?? '', /(^|\s)bo-profilo-name-row(\s|$)/, 'Modifica shares a row with the name');
+  const kids = row?.childNodes ?? [];
+  assert.equal(kids[0]?.textContent, 'Elena Rinaldi', 'the name comes first in the row');
+  assert.equal(kids[1], edit, 'Modifica sits beside the name, not between the name and the email');
+  const words = row?.parentNode;
+  assert.match(words?.getAttribute?.('class') ?? '', /(^|\s)bo-profilo-words(\s|$)/);
+  const order = (words?.childNodes ?? []).map((node) => node.getAttribute?.('class') ?? '');
+  const rowAt = order.findIndex((cls) => cls.split(/\s+/).includes('bo-profilo-name-row'));
+  const emailAt = order.findIndex((cls) => cls.split(/\s+/).includes('bo-profilo-meta'));
+  assert.ok(rowAt >= 0 && emailAt >= 0 && rowAt < emailAt, 'the name row stays above the email line');
+});

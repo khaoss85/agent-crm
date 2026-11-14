@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { isCustomAgentSourceKey } from './catalog.js';
 
 /**
  * Teammate agents — the automation engine (backlog:8986f4459f0f).
@@ -417,6 +418,67 @@ export function checkAgentInput(record) {
     role: boundedLine(input.role, 'role', 120),
     instructions: checkInstructions(input.instructions, 'instructions'),
     spendingCapCents: checkCostCents(input.spendingCapCents, 'spendingCapCents'),
+  };
+}
+
+/**
+ * Validate the agent update input (backlog:7d169a3b1dd2): partial fields of
+ * a hand-written agent — name, role, instructions, monthly cap — with at
+ * least one to write. An absent key is untouched; an explicit null clears
+ * the cap. Empty strings are refused, never stored.
+ */
+export function checkAgentUpdateInput(record) {
+  const input = record && typeof record === 'object' ? record : {};
+  const agentSourceKey = checkRecordKey(input.agentSourceKey, 'agentSourceKey');
+  if (!isCustomAgentSourceKey(agentSourceKey)) {
+    throw new ValidationError('only a hand-written agent can be updated', { field: 'agentSourceKey' });
+  }
+  const patch = {
+    spaceId: checkSpaceId(input.spaceId),
+    agentSourceKey,
+  };
+  let writes = 0;
+  if (input.name !== undefined) {
+    patch.name = boundedLine(input.name, 'name', 120);
+    writes += 1;
+  }
+  if (input.role !== undefined) {
+    patch.role = boundedLine(input.role, 'role', 120);
+    writes += 1;
+  }
+  if (input.instructions !== undefined) {
+    patch.instructions = checkInstructions(input.instructions, 'instructions');
+    writes += 1;
+  }
+  if (input.spendingCapCents !== undefined) {
+    patch.spendingCapCents = checkCostCents(input.spendingCapCents, 'spendingCapCents');
+    writes += 1;
+  }
+  if (writes === 0) {
+    throw new ValidationError('an agent update needs at least one field to write', { field: 'update' });
+  }
+  return patch;
+}
+
+/**
+ * Validate the agent status input (backlog:7d169a3b1dd2): active or paused,
+ * nothing else. A deployment that pauses the wrong agent pauses real work,
+ * so the value is closed-vocabulary, never a free string.
+ */
+export function checkAgentStatusInput(record) {
+  const input = record && typeof record === 'object' ? record : {};
+  const status = input.status;
+  if (status !== 'active' && status !== 'paused') {
+    throw new ValidationError('status must be active or paused', { field: 'status' });
+  }
+  const agentSourceKey = checkRecordKey(input.agentSourceKey, 'agentSourceKey');
+  if (!isCustomAgentSourceKey(agentSourceKey)) {
+    throw new ValidationError('only a hand-written agent can be paused or resumed', { field: 'agentSourceKey' });
+  }
+  return {
+    spaceId: checkSpaceId(input.spaceId),
+    agentSourceKey,
+    status,
   };
 }
 
