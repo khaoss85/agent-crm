@@ -4909,7 +4909,7 @@ export function createCustomerCardView(deps) {
    * «Elimina» waiting for its «Annulla» window, by `<resource>/<id>#<noteId>`.
    * The note is hidden at once; the withdrawal leaves when the window ends,
    * or at once when the scheda opens another customer.
-   * @type {Map<string, { resource: string, id: string, noteId: string, idempotencyKey?: string, state: 'waiting' | 'sending' | 'restored' }>}
+   * @type {Map<string, { resource: string, id: string, noteId: string, idempotencyKey?: string, restored?: boolean, state: 'waiting' | 'sending' | 'restored' }>}
    */
   const pendingWithdrawals = new Map();
   /**
@@ -4999,7 +4999,20 @@ export function createCustomerCardView(deps) {
       pendingWithdrawals.delete(pendingKey);
       // A refused withdrawal is not tried again by the next page.
       forgetStoredWithdrawal(noteId);
-      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
+      const code = typeof error?.code === 'string' ? error.code : '';
+      if (pending.restored === true && (code === 'WORK_NOTE_WITHDRAWN' || code === 'WORK_NOTE_NOT_FOUND')) {
+        // The withdrawal the previous page sent already landed: done, quietly.
+        if (lastShown !== null && lastShown.key === key && shownKey === key) {
+          await refreshParts(resource, id, ['timeline'], (loaded) => withoutNote(loaded, noteId));
+        }
+        return;
+      }
+      // backlog:4eceae80a5ca: a send again from the next page that fails for
+      // any other reason (the pilot refusing the same key, 502) never keeps
+      // the note hidden in silence: it comes back, and the toast says so.
+      toast(pending.restored === true
+        ? 'Non sono riuscito a eliminare la nota: riprova.'
+        : noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
       // The note comes back where it was, then the cronologia is read again.
       repaintIfShown(resource, id);
       if (lastShown !== null && lastShown.key === key && shownKey === key) {
@@ -5067,7 +5080,7 @@ export function createCustomerCardView(deps) {
       const pendingKey = `${resource}/${id}#${entry.noteId}`;
       if (pendingWithdrawals.has(pendingKey)) continue;
       pendingWithdrawals.set(pendingKey, {
-        resource, id, noteId: entry.noteId, idempotencyKey: entry.idempotencyKey,
+        resource, id, noteId: entry.noteId, idempotencyKey: entry.idempotencyKey, restored: true,
         state: /** @type {'waiting' | 'sending' | 'restored'} */ ('restored'),
       });
     }

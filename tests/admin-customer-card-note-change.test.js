@@ -666,3 +666,46 @@ test('4eceae80a5ca: after Aggiungi nota with Invio the cursor stays in the empty
     doc.restore();
   }
 });
+
+for (const [label, failure] of [
+  ['the pilot refusing the same key (502)', Object.assign(new Error('Scrittura del pannello rifiutata'), { status: 502, code: 'BO_CRM_CLAIM_MISMATCH' })],
+  ['a network failure', Object.assign(new Error('fetch failed'), { code: 'NETWORK_ERROR' })],
+]) {
+  test(`4eceae80a5ca: a failed send again after a reload (${label}) shows the note again, says so and forgets the entry`, async () => {
+    const session = memoryStore();
+    session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+      { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.0000000000000000000000000000000a', expiresAt: Date.now() + 60_000 },
+    ]));
+    const client = fakeClient({ refuse: { '/api/customer-hub/notes/withdraw': failure } });
+    const { mount, toasts } = await open(client, 'spazio-prova', { sessionStorage: session });
+    await flush();
+    assert.equal(client.writes.length, 1, 'sent again once');
+    assert.ok(noteRow(mount, 'Richiamare lunedì'), 'the note is back, never hidden in silence');
+    assert.deepEqual([toasts.at(-1).text, toasts.at(-1).error], ['Non sono riuscito a eliminare la nota: riprova.', true]);
+    assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null, 'the entry is forgotten');
+  });
+}
+
+test('4eceae80a5ca: a send again answered «already withdrawn» is done, quietly', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    { spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia', idempotencyKey: 'v1.20261114.0000000000000000000000000000000b', expiresAt: Date.now() + 60_000 },
+  ]));
+  const refused = Object.assign(new Error('withdrawn'), { status: 409, code: 'WORK_NOTE_WITHDRAWN' });
+  // The first page's withdrawal landed between the cronologia read and the send again.
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (path === '/api/customer-hub/notes/withdraw') {
+      client.writes.push({ path });
+      client.state.items = client.state.items.filter((item) => item.id !== 'n-mia');
+      throw refused;
+    }
+    return original(path, options);
+  };
+  const { mount, toasts } = await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.equal(noteRow(mount, 'Richiamare lunedì'), undefined, 'the note stays out');
+  assert.ok(!toasts.some((entry) => entry.error), 'no error toast');
+  assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null);
+});
