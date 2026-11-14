@@ -129,9 +129,8 @@ test('the five quick views render as tabs, with Tutti active first', async () =>
   const { mount } = await render(stubClient());
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
-  void active;
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
   assert.ok(mount.textContent.includes('Anna Bianchi'));
@@ -662,7 +661,25 @@ test('the fallback views keep the prototype order before the server answers', as
   const { mount } = await render(bare);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
+});
+
+test('5af848afdb63: a view without a server count still reads a number, 0', async () => {
+  const uncounted = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      return {
+        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+        views: [...MENUS.views, { id: 'da-leggere', label: 'Da leggere' }],
+      };
+    },
+  };
+  const { mount } = await render(uncounted);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  assert.ok(tabs.some((node) => node.textContent === 'Da leggere 0'), 'the uncounted view reads 0');
+  for (const tab of tabs) assert.match(tab.textContent, /\d+$/, 'every view carries a number');
 });
 
 test('changing the view or the page size returns to page 1', async () => {
@@ -1112,8 +1129,30 @@ test('ee1244a145c9: an empty search keeps the «corrisponde» hint', async () =>
   input.dispatch('input');
   clock.fire();
   await flush();
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'),
-    'an empty search result keeps the search hint');
+  assert.ok(mount.textContent.includes('Nessun cliente con ricerca «marco». Prova con un nome, una città o un canale.'),
+    'an empty search result names the search and keeps the hint');
+});
+
+test('5af848afdb63: an empty view with a filter names both', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the view alone names itself');
+  toolToggle(mount, 'Filtri').dispatch('click');
+  await flush();
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere» con canale WhatsApp.'),
+    'the empty page names the view and the excluding filter');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
