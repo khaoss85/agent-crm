@@ -421,7 +421,11 @@ async function readIdentity({ modules, subject, cluster }) {
     // computed here by the owning package, so the card, Oggi and Calendario
     // read it through the capability instead of re-deriving it.
     displayName: contact ? contactDisplayName(contact) : companyDisplayName(shownCompany),
-    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null }) : null,
+    // The core `placeholder` flag travels with the company (review giro 2
+    // P2): the scheda hides the placeholder through the flag, never the
+    // name. Passed through as-is — a legacy identity without the field
+    // keeps it missing, and the admin name fallback still applies there.
+    company: shownCompany ? Object.freeze({ id: shownCompany.id, name: shownCompany.name, domain: shownCompany.domain ?? null, placeholder: shownCompany.placeholder }) : null,
     contact: contact ? Object.freeze({
       id: contact.id, email: contact.email, firstName: contact.firstName, lastName: contact.lastName,
       companyId: typeof contact.companyId === 'string' && contact.companyId !== '' ? contact.companyId : null,

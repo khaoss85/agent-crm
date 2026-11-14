@@ -206,11 +206,14 @@ function createPortableCoreAdapters({ database, services, pipelines }) {
           id: String(row.id),
           name: String(row.name),
           domain: row.domain === null || row.domain === undefined ? null : String(row.domain),
+          // The «no company» flag (backlog:ac65e448fcb4): readers filter
+          // on this, never on the name — same contract as the v1 adapters.
+          placeholder: row.placeholder === true || row.placeholder === 1,
         }));
       return storageMany(database, {
         kind: 'select',
         table: 'companies',
-        columns: ['id', 'name', 'domain', 'created_at'],
+        columns: ['id', 'name', 'domain', 'placeholder', 'created_at'],
         orderBy: [
           { column: 'created_at', direction: 'asc' },
           { column: 'id', direction: 'asc' },
