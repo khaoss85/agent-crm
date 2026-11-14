@@ -132,6 +132,13 @@ test('803d127c4458 giro 5 P1: the Gmail stand-in never reads collegato Email', (
   });
   assert.equal(real.state, 'collegato', 'a real active Email row still links Email');
   assert.equal(real.account, 'posta@presti.it');
+  const keyOnly = channelState('email', {
+    rows: [{ connectionKey: 'profile:gmail', channel: 'email', status: 'active', account: 'dan@presti.it' }],
+    adapters: [],
+    profile: gmail,
+  });
+  assert.notEqual(keyOnly.state, 'collegato', 'a key-only profile Email row never reads collegato');
+  assert.equal(keyOnly.state, 'da-collegare');
 });
 
 test('review #782 P3: a composed adapter never routes Calendar or Stripe into the guided flow', () => {

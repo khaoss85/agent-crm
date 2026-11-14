@@ -164,10 +164,10 @@ export function mergeProfileConnections(rows, profile = null) {
 /**
  * Whether one row stands in for the space-profile Gmail rather than a
  * real channel connection (backlog:803d127c4458): the rows
- * `mergeProfileConnections` merges in, marked `source: 'profile'`. Only
- * that marker counts — a real row may carry a `profile:`-like key (the
- * stopped-import fixture does), and dropping it would hide a grant
- * refusal. The server refuses the send with 409
+ * `mergeProfileConnections` merges in, marked `source: 'profile'`, and the
+ * composer treats a `profile:` connectionKey as synthetic too (giro 7 P1:
+ * a key-only Email row read «collegato» but could not send). Both markers
+ * count here, like `isProfileRow`. The server refuses the send with 409
  * CHANNEL_CONNECTION_NOT_ACTIVE without a real connection, so these rows
  * never vote Email — on Oggi and on Stato sync alike, so the two screens
  * print one count.
@@ -176,7 +176,8 @@ export function mergeProfileConnections(rows, profile = null) {
 export function isProfileEmailStandin(row) {
   if (row == null || typeof row !== 'object') return false;
   if (String(row.channel ?? '').toLowerCase() !== 'email') return false;
-  return row.source === 'profile';
+  return row.source === 'profile'
+    || (typeof row.connectionKey === 'string' && row.connectionKey.startsWith('profile:'));
 }
 
 /**
