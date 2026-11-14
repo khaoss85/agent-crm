@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 // The real /bo pipeline page of bo:shots (shell, styles.css, demo board),
 // served the same way, in a real Chromium.
 import {
-  chromiumFlags, chromiumRuns, findChromium, harnessHtml, readProbe, startServer, VIRTUAL_BUDGET_MS,
+  harnessHtml, readProbe, runnableChromium, startServer, VIRTUAL_BUDGET_MS,
 } from '../scripts/bo-shots.js';
 
 /**
@@ -17,10 +17,15 @@ import {
  * colonna deve restare tutta a sinistra del pannello.
  */
 
-const CHROMIUM = findChromium();
-const BROWSER_SKIP = chromiumRuns(CHROMIUM)
+// backlog:d30d17880f63: the shared finder of bo:shots, with the flags its
+// probe proved (`--no-sandbox` on the Linux CI runner). Skip only where the
+// proof cannot run AND nobody gates on it: on CI (CI=true) a missing
+// Chromium fails the test instead of skipping it.
+const RUNNABLE = runnableChromium();
+const CHROMIUM = RUNNABLE?.binary ?? null;
+const BROWSER_SKIP = RUNNABLE !== null
   ? false
-  : 'no runnable Chromium here (set CHROMIUM_BIN); the Mac CI runner runs the browser proofs';
+  : (process.env.CI ? false : 'no runnable Chromium here (set CHROMIUM_BIN)');
 
 const PUBLIC_DIR = fileURLToPath(new URL('../apps/admin/public', import.meta.url));
 
@@ -82,7 +87,8 @@ function runChromium(args, timeoutMs) {
 }
 
 test('fd0adcded1c3: at 1024 and 1280 px the open card\'s column stays left of the offer panel', { skip: BROWSER_SKIP }, async () => {
-  const flags = chromiumFlags(CHROMIUM) ?? [];
+  assert.ok(RUNNABLE, 'CI runs this proof: no runnable Chromium here (set CHROMIUM_BIN)');
+  const flags = RUNNABLE.flags;
   const server = await startServer(PUBLIC_DIR, pageFor);
   try {
     const address = server.address();

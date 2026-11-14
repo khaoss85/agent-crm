@@ -13,15 +13,16 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { chromiumFlags, chromiumRuns, findChromium } from '../scripts/bo-shots.js';
+import { runnableChromium } from '../scripts/bo-shots.js';
 
-const CHROMIUM = findChromium();
-const CHROMIUM_RUNS = chromiumRuns(CHROMIUM);
+// The shared finder of bo:shots, with the flags its probe proved
+// (`--no-sandbox` on the Linux CI runner, backlog:d30d17880f63).
+const RUNNABLE = runnableChromium();
 // Skip only where the proof cannot run AND nobody gates on it (the rule of
 // admin-shell-identity-shots.test.js): on CI (GitHub Actions sets CI=true)
 // a missing Chromium fails the test instead of skipping it, so the layout
 // claim never passes unproven.
-const BROWSER_SKIP = CHROMIUM_RUNS
+const BROWSER_SKIP = RUNNABLE !== null
   ? false
   : (process.env.CI ? false : 'no runnable Chromium here (set CHROMIUM_BIN)');
 const PUBLIC_DIR = fileURLToPath(new URL('../apps/admin/public', import.meta.url));
@@ -99,10 +100,10 @@ function serve() {
   });
 }
 
-function dumpDom(binary, url, width, height) {
+function dumpDom({ binary, flags }, url, width, height) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, [
-      '--headless', ...chromiumFlags(binary), '--dump-dom',
+      '--headless', ...flags, '--dump-dom',
       `--window-size=${width},${height}`, '--virtual-time-budget=8000', '--hide-scrollbars',
       '--disable-background-networking', url,
     ]);
@@ -121,11 +122,11 @@ function dumpDom(binary, url, width, height) {
 // cure, the margin alone does not save it).
 for (const height of [773, 520]) {
   test(`backlog:d30d17880f63: at 1512×${height} «Rispondi su» shows whole under the composer header`, { skip: BROWSER_SKIP }, async () => {
-    assert.ok(CHROMIUM_RUNS, 'CI runs this proof: no runnable Chromium here (set CHROMIUM_BIN)');
+    assert.ok(RUNNABLE, 'CI runs this proof: no runnable Chromium here (set CHROMIUM_BIN)');
     const server = /** @type {import('node:http').Server} */ (await serve());
     try {
       const address = /** @type {import('node:net').AddressInfo} */ (server.address());
-      const dom = await dumpDom(CHROMIUM, `http://127.0.0.1:${address.port}/composer.html`, 1512, height);
+      const dom = await dumpDom(RUNNABLE, `http://127.0.0.1:${address.port}/composer.html`, 1512, height);
       const match = String(dom).match(/<div id="geo" hidden="">(.*?)<\/div>/s);
       assert.ok(match, 'the composer measured itself');
       const geo = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
