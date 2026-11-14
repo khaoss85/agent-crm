@@ -161,6 +161,20 @@ test('un campo mancante non scrive niente, dice cosa manca e lascia quello che h
   assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE);
 });
 
+test('776cf3469e64: Nome svuotato dopo la riga live — Crea dice che il nome manca, non scrive', async () => {
+  const { mount, client } = await paintedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  fillPanel(mount, { name: 'Riaggancio' });
+  assert.equal(mount.querySelector('.bo-seq-create-error').textContent, AGENT_NAME_TAKEN_NOTE, 'la riga live del nome preso');
+  type(mount, 'agent-name', '');
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client).length, 0, 'niente POST con il Nome vuoto');
+  assert.match(mount.querySelector('.bo-seq-create-error').textContent, /Dagli un nome/, 'Crea dice che il nome manca');
+  assert.ok(!mount.textContent.includes(AGENT_NAME_TAKEN_NOTE), 'la riga live vecchia non copre il nome mancante');
+  assert.equal(mount.querySelector('input[name="agent-name"]').getAttribute('aria-invalid'), 'true', 'il campo Nome resta segnato');
+});
+
 test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio clic; la card compare «in attesa del motore»', async () => {
   const { mount, client } = await paintedView();
   button(mount, 'new-agent').dispatch('click', {});

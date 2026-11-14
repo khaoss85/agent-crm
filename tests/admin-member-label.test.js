@@ -63,7 +63,7 @@ test('Oggi › Agenda: the chi line is the member name, never the raw id', () =>
   }
 });
 
-test('loadOggiData reads the roster for the agenda only when a slot names a member', async () => {
+test('loadOggiData reads the roster with the profile, even when no slot names a member (785aeb28bd18)', async () => {
   const seen = [];
   const client = (appointments) => ({
     request: async (path, options = {}) => {
@@ -82,8 +82,11 @@ test('loadOggiData reads the roster for the agenda only when a slot names a memb
   assert.equal(buildTodayAgenda(data.appointments, NOW, data.appointmentNames, data.members)[0].who, 'Giulia Verdi');
   seen.length = 0;
   const none = await loadOggiData(client([APPT]), NOW);
-  assert.deepEqual(none.members, []);
-  assert.ok(!seen.includes('/api/spine/memberships'), 'no member on any slot: no roster read');
+  // 785aeb28bd18: the roster rides the first wave beside the profile, so the
+  // member step settles with the wave (under 1 s on a warm server) instead of
+  // waiting for the module reads; no slot still gets an empty agenda line.
+  assert.deepEqual(none.members, [{ subject: BROKER, displayName: 'Giulia Verdi' }]);
+  assert.ok(seen.includes('/api/spine/memberships'), 'the roster launches with the profile, even with no named member');
 });
 
 test('Spazi e accessi lists members by name, never by broker mailbox', () => {
