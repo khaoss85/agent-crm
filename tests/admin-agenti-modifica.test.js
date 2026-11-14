@@ -459,3 +459,69 @@ test('f06d06f242d6: dopo Riattiva la riga usa le parole del badge', async () => 
     'la riga dice quello che dice il badge');
   assert.ok(mount.textContent.includes(AGENT_NO_ENGINE_LABEL), 'e il badge lo conferma');
 });
+
+// ---- Review Muse #895, giro 1 ------------------------------------------------
+
+test('review #895: scrivere il nome tocca solo l’errore del nome — quello del ruolo resta', async () => {
+  const { mount, view } = await focusedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  name.value = 'Auguri';
+  name.dispatch('input', {});
+  button(mount, 'create-agent').dispatch('click', {});
+  const roleError = () => mount.querySelector('input[name="agent-role"]').parentNode.childNodes
+    .find((node) => node.getAttribute?.('data-field-error') === 'true') ?? null;
+  assert.match(roleError()?.textContent ?? '', /Scrivi in poche parole/, 'Crea segna il ruolo');
+  assert.equal(view.state.newAgent.field, 'role');
+  const live = mount.querySelector('input[name="agent-name"]');
+  live.value = 'Auguri di Natale';
+  live.dispatch('input', {});
+  assert.equal(view.state.newAgent.field, 'role', 'nello stato l’errore del ruolo resta');
+  assert.match(view.state.newAgent.error, /Scrivi in poche parole/);
+  assert.match(roleError()?.textContent ?? '', /Scrivi in poche parole/, 'e anche sullo schermo');
+  live.value = 'riaggancio';
+  live.dispatch('input', {});
+  assert.equal(live.getAttribute('aria-invalid'), 'true', 'il nome doppione si segna sul nome');
+  assert.match(roleError()?.textContent ?? '', /Scrivi in poche parole/, 'senza cancellare il ruolo');
+  view.paint();
+  const errors = mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).map((node) => node.textContent);
+  assert.equal(errors.length, 2, 'dopo un ridisegno: due errori, uno per campo');
+  assert.ok(errors.includes(AGENT_NAME_TAKEN_NOTE));
+});
+
+test('review #895: il cursore torna nel pannello Modifica giusto anche con una chiave che contiene « " » e « ] »', async () => {
+  const odd = { ...MANO, id: 3, sourceKey: 'custom-agent:presti:a"b]c', name: 'Strano' };
+  const { doc, mount, view } = await focusedView({ agents: [RIAGGANCIO, MANO, odd] });
+  // Like a real Element: a selector with the raw key in it is not valid
+  // CSS (SyntaxError), and closest() finds the panel around a field.
+  const strict = mount.querySelector.bind(mount);
+  mount.querySelector = (selector) => {
+    if (String(selector).includes(odd.sourceKey)) throw new SyntaxError(`'${selector}' is not a valid selector`);
+    return strict(selector);
+  };
+  const make = doc.createElement;
+  doc.createElement = (tag) => {
+    const node = make(tag);
+    node.closest = (selector) => {
+      if (selector !== '[data-edit]') return null;
+      for (let at = node; at; at = at.parentNode) if (at.getAttribute?.('data-edit') != null) return at;
+      return null;
+    };
+    return node;
+  };
+  view.paint(); // the page again, with the browser-like nodes
+  const card = mount.findAll('article').find((node) => node.textContent.includes('Strano'))
+    ?? mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-agent-card') && node.textContent.includes('Strano'));
+  assert.ok(card, 'la card con la chiave strana c’è');
+  const edit = card.findAll('button').find((node) => node.getAttribute('data-action') === 'edit-agent');
+  edit.dispatch('click', {});
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-edit') === odd.sourceKey);
+  assert.ok(panel, 'il pannello Modifica si apre');
+  const field = panel.findAll('input').find((node) => node.getAttribute('name') === 'agent-edit-name');
+  assert.equal(doc.activeElement, field, 'aprendo Modifica il cursore è nel suo Nome');
+  assert.doesNotThrow(() => view.paint(), 'il ridisegno non lancia su una chiave con « " » e « ] »');
+  const freshPanel = mount.findAll('div').find((node) => node.getAttribute('data-edit') === odd.sourceKey);
+  const fresh = freshPanel.findAll('input').find((node) => node.getAttribute('name') === 'agent-edit-name');
+  assert.notEqual(fresh, field, 'la pagina è ridisegnata');
+  assert.equal(doc.activeElement, fresh, 'e il cursore è tornato nel Nome dello stesso pannello');
+});

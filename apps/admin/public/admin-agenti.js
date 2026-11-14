@@ -85,7 +85,10 @@ export function isHandAgentKey(key) {
   return typeof key === 'string' && key.startsWith('custom-agent:');
 }
 
-/** First named agent of a space, trimmed, or '' when the team has none. @param {Array<any>} agents */
+/**
+ * The first agent of a space that can work (not paused, with an engine), trimmed, or '' when none can.
+ * @param {Array<any>} agents @param {Array<any> | null} [catalog]
+ */
 export function firstTeamAgent(agents = [], catalog = null) {
   // backlog:f06d06f242d6: the example names an agent that can work — not
   // paused, and run by an engine (a catalogue agent; with no catalogue
@@ -695,6 +698,16 @@ export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Rip
 
 /** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
 export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
+
+/**
+ * The error one field of «Nuovo agente» shows: the live check of Nome
+ * first, else the error Crea left on that field.
+ * @param {{ error: string, field: string | null, nameError?: string }} form @param {string} field
+ */
+function fieldErrorOf(form, field) {
+  if (field === 'name' && typeof form.nameError === 'string' && form.nameError !== '') return form.nameError;
+  return form.error !== '' && form.field === field ? form.error : '';
+}
 
 /** «Pronto, in attesa…» → «pronto, in attesa…», for a line that continues a sentence. @param {string} value */
 function lowerFirst(value) {
@@ -1369,7 +1382,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       else editOf(card);
       paint();
       if (state.editing.has(card.sourceKey)) {
-        const panel = mount.querySelector(`div[data-edit="${card.sourceKey}"]`);
+        const panel = findNode(mount, (node) => node.getAttribute('data-edit') === card.sourceKey);
         focusFieldError(panel, 'agent-edit-name');
       }
     });
@@ -1617,7 +1630,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function openNewAgent() {
     // One caller key per open panel: a retry or a double click replays it.
-    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', field: null, busy: false, pending: null };
+    // `nameError`: the live check of Nome (review Muse #895), its own slot
+    // beside the error of Crea (`error`/`field`), so one never erases the other.
+    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', field: null, nameError: '', busy: false, pending: null };
     paint();
     focusIn('input[name="agent-name"]');
   }
@@ -1664,7 +1679,8 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // role="alert" for the screen reader — and the control carries
       // aria-invalid while it is the refused one. backlog:f06d06f242d6:
       // the error is tied to its field (aria-describedby, aria-errormessage).
-      if (form.error !== '' && form.field === fieldKey) showFieldError(row, control, form.error);
+      const own = fieldErrorOf(form, fieldKey);
+      if (own !== '') showFieldError(row, control, own);
       else control.removeAttribute?.('aria-invalid');
       if (hint !== null) row.appendChild(el(documentNode, 'p', 'bo-agent-new-hint', hint));
       return row;
@@ -1689,15 +1705,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       // An empty name is said at Crea, not while typing.
       if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') return;
       const checked = checkNewAgent({ name: form.name, role: 'x', instructions: 'x' }, state.agents);
-      if (checked.field === 'name') {
-        form.error = checked.error;
-        form.field = 'name';
-        showFieldError(nameRow, name, checked.error);
-      } else if (form.field === 'name') {
+      // Review Muse #895 (P2): only the name's own errors move here — an
+      // error of Crea on another field stays, in state and on screen.
+      form.nameError = checked.field === 'name' ? checked.error : '';
+      if (form.nameError === '' && form.field === 'name') {
         form.error = '';
         form.field = null;
-        clearFieldError(nameRow, name);
       }
+      const shown = fieldErrorOf(form, 'name');
+      if (shown !== '') showFieldError(nameRow, name, shown);
+      else clearFieldError(nameRow, name);
     };
     name.addEventListener('input', () => { form.name = String(name.value ?? ''); checkName(); });
     name.addEventListener('blur', checkName);
@@ -2201,19 +2218,43 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     if (!active || typeof active.getAttribute !== 'function' || typeof mount?.contains !== 'function' || !mount.contains(active)) return null;
     const name = active.getAttribute('name');
     if (!name) return null;
-    const panel = typeof active.closest === 'function' ? active.closest('[data-edit]') : null;
-    const scope = panel ? `[data-edit="${panel.getAttribute('data-edit')}"] ` : '';
-    return { selector: `${scope}[name="${name}"]`, start: active.selectionStart ?? null, end: active.selectionEnd ?? null };
-  }
-  /** @param {{ selector: string, start: number | null, end: number | null }} kept */
-  function restoreField(kept) {
-    if (typeof mount?.querySelector !== 'function') return;
-    const node = mount.querySelector(kept.selector);
-    if (!node || node === documentNode.activeElement || typeof node.focus !== 'function') return;
-    node.focus({ preventScroll: true });
-    if (Number.isInteger(kept.start) && Number.isInteger(kept.end) && typeof node.setSelectionRange === 'function') {
-      try { node.setSelectionRange(kept.start, kept.end); } catch { /* a field with no caret */ }
+    // Review Muse #895 (P2): the edit panel is found again by comparing its
+    // data-edit value (a server sourceKey), never through a selector.
+    let edit = null;
+    for (let node = active.parentNode ?? null; node && node !== mount; node = node.parentNode ?? null) {
+      const key = typeof node.getAttribute === 'function' ? node.getAttribute('data-edit') : null;
+      if (key !== null && key !== undefined) { edit = key; break; }
     }
+    return { name, edit, start: active.selectionStart ?? null, end: active.selectionEnd ?? null };
+  }
+  /** @param {{ name: string, edit: string | null, start: number | null, end: number | null }} kept */
+  function restoreField(kept) {
+    try {
+      const root = kept.edit === null ? mount : findNode(mount, (node) => node.getAttribute('data-edit') === kept.edit);
+      const node = root ? findNode(root, (candidate) => candidate.getAttribute('name') === kept.name) : null;
+      if (!node || node === documentNode.activeElement || typeof node.focus !== 'function') return;
+      node.focus({ preventScroll: true });
+      if (Number.isInteger(kept.start) && Number.isInteger(kept.end) && typeof node.setSelectionRange === 'function') {
+        node.setSelectionRange(kept.start, kept.end);
+      }
+    } catch {
+      // A field that cannot take the caret back is left as it is.
+    }
+  }
+  /**
+   * The first element under `root`, in document order, that `test` accepts
+   * — attribute values compared as values, never spliced into a selector.
+   * @param {any} root @param {(node: any) => boolean} test
+   */
+  function findNode(root, test) {
+    const kids = root?.children ?? root?.childNodes ?? [];
+    for (const child of Array.from(kids)) {
+      if (!child || typeof child.getAttribute !== 'function') continue;
+      if (test(child)) return child;
+      const found = findNode(child, test);
+      if (found) return found;
+    }
+    return null;
   }
 
   function paintPage() {
