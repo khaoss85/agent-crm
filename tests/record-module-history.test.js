@@ -58,6 +58,19 @@ const RECORDED_PG_CHECKSUM = 'cf29094ff4b655d4e5dcf9e1d236a89e6e44cc4c64400e6f15
 // The checksums databases at work-activity revision 2 recorded for the r2
 // evolution (the `seq` column). Revision 3 (#839) adds its own evolution after
 // it and must never re-render this one.
+//
+// Provenance: computed OUTSIDE this checkout, on commit 60c5fc51 (745f5f01^,
+// the parent of #839, where the manifest was still revision 2), in a detached
+// worktree of that commit, with that commit's own composer on that commit's
+// own manifest:
+//   recordModuleMigrations([{ name: 'work-activity', manifest }])[1]
+//   postgresRecordModuleMigrations([{ name: 'work-activity', manifest }])[1]
+// with manifest = packages/work/modules/work-activity.module.json, sha256 of
+// `.sql`. The same run reproduced the revision 1 checksums above. The four
+// composer files in packages/core/src — record-module-runtime.js,
+// record-module-history.js, module-evolution.js, module-manifest.js — are
+// unchanged from 745f5f01^ to main (empty `git diff`). These pins are the
+// identity proof: a change to how r2 renders fails against them.
 const RECORDED_R2_SQLITE_CHECKSUM = '44739a182116028ab5c0b6e4520c6dd98a65be558dd55c2374345f3f41c7414f';
 const RECORDED_R2_PG_CHECKSUM = 'b8168a49457ada0ea69e3f9653be72176b615d156b8e1ea47404ba1df605cc9e';
 // The revision 2 manifest as it shipped, now the second entry of the history.
@@ -99,9 +112,12 @@ test('work-activity revision 3 keeps the original SQLite migration and the r2 ev
   assert.equal(sha(migrations[0].sql), RECORDED_SQLITE_CHECKSUM);
   // The evolution is additive: the new column, nothing else.
   assert.match(migrations[1].sql, /ADD COLUMN seq INTEGER/);
-  // The r2 evolution is what revision 2 composed, byte for byte.
-  assert.equal(migrations[1].sql, recordModuleMigrations([revision2Entry()])[1].sql);
+  // The r2 evolution is what revision 2 databases recorded: the pin, computed
+  // on the commit before #839, is the identity proof.
   assert.equal(sha(migrations[1].sql), RECORDED_R2_SQLITE_CHECKSUM);
+  // Cross-check only, NOT the identity proof (composer against itself): the
+  // r3 chain and a revision-2 entry cut the r2 step at the same place.
+  assert.equal(migrations[1].sql, recordModuleMigrations([revision2Entry()])[1].sql);
   // Revision 3 is additive too: its two new columns, nothing else.
   assert.equal(
     migrations[2].sql,
@@ -122,13 +138,19 @@ test('work-activity revision 3 keeps the original Postgres bootstrap and the r2 
   assert.equal(sha(migrations[0].sql), RECORDED_PG_CHECKSUM);
   // The evolution is additive with a new name: the new column, nothing else.
   assert.match(migrations[1].sql, /ADD COLUMN "seq" BIGINT/);
-  // The r2 evolution is what revision 2 composed, byte for byte.
-  assert.equal(migrations[1].sql, postgresRecordModuleMigrations([revision2Entry()])[1].sql);
+  // The r2 evolution is what revision 2 databases recorded: the pin, computed
+  // on the commit before #839, is the identity proof.
   assert.equal(sha(migrations[1].sql), RECORDED_R2_PG_CHECKSUM);
-  // Revision 3 is additive too: its two new columns, nothing else.
-  assert.match(migrations[2].sql, /ADD COLUMN "revises_id" TEXT/);
-  assert.match(migrations[2].sql, /ADD COLUMN "withdrawn" BOOLEAN/);
-  assert.doesNotMatch(migrations[2].sql, /DROP|CREATE TABLE|ALTER COLUMN|RENAME/);
+  // Cross-check only, NOT the identity proof (composer against itself): the
+  // r3 chain and a revision-2 entry cut the r2 step at the same place.
+  assert.equal(migrations[1].sql, postgresRecordModuleMigrations([revision2Entry()])[1].sql);
+  // Revision 3 is additive too: its two new columns, in order, nothing else.
+  assert.equal(
+    migrations[2].sql,
+    'CREATE SCHEMA IF NOT EXISTS "accordo";\n\n'
+      + 'ALTER TABLE "accordo"."work_activities" ADD COLUMN "revises_id" TEXT;\n\n'
+      + 'ALTER TABLE "accordo"."work_activities" ADD COLUMN "withdrawn" BOOLEAN;\n',
+  );
 });
 
 test('the SQLite history upgrades a revision-1 database with its rows intact', () => {
@@ -379,9 +401,14 @@ test('history with a skipped revision fails closed instead of guessing', () => {
     }]),
     /must step by one \(2 → 3\); got 2 → 4/,
   );
-  // The production shape (no caller history) refuses the same hole.
+  // The production shape (no caller history) refuses the same hole, on both
+  // dialects.
   assert.throws(
     () => postgresRecordModuleMigrations([{ name: 'work-activity', manifest: rev4 }]),
+    /must step by one \(2 → 3\); got 2 → 4/,
+  );
+  assert.throws(
+    () => recordModuleMigrations([{ name: 'work-activity', manifest: rev4 }]),
     /must step by one \(2 → 3\); got 2 → 4/,
   );
 });
