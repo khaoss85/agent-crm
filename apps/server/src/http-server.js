@@ -463,6 +463,10 @@ export function buildRouter(app) {
     if (typeof app.readAppointmentTeamWeek !== 'function') {
       throw new NotFoundError('Operation', 'team week');
     }
+    // Owner holds arrive server-side only, through the composed
+    // calendar-sync handle inside the appointments operations — never
+    // through the query, so no private commitment title lands in URLs,
+    // logs or browser history (backlog:af190faf).
     return await app.readAppointmentTeamWeek({
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
@@ -484,6 +488,7 @@ export function buildRouter(app) {
       ...(slotMinutes === undefined ? {} : { slotMinutes }),
       // A proposal must be bookable (backlog:d1e4d90e): the server names its
       // own now, so steps already begun are cut, never offered as free.
+      // Owner holds arrive server-side only (see the team-week route above).
       nowIso: new Date().toISOString(),
     });
   });
