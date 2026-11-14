@@ -81,6 +81,7 @@ async function board(records) {
   const view = createPipelineBoard({
     doc, mount, client,
     toast: (message, error, options) => toasts.push({ message: String(message), error: Boolean(error), options }),
+    hideToast: () => toasts.push({ message: '<hidden>', error: false }),
     navigate: () => {},
     wait: () => new Promise(() => {}),
   });
@@ -139,17 +140,19 @@ test('2f72000d4a4d: «Annulla» pressed while the move is being written undoes i
   assert.equal(cardOf(mount, 'a').parentNode.getAttribute('data-stage'), 'discovery');
 });
 
-test('2f72000d4a4d + fd0adcded1c3: a failed move replaces the waiting toast with the reason, never «Spostata», and «Annulla» then does nothing', async () => {
+test('2f72000d4a4d + fd0adcded1c3 + 85630aa14a4f: a failed move takes the waiting toast down, says why on the card, never «Spostata», and «Annulla» then does nothing', async () => {
   const { mount, client, toasts } = await board([record('a', 'discovery')]);
   drop(mount, 'a', 'demo');
   await tick();
   const moved = toasts.find((item) => item.message === 'Spostamento in Prova…');
   client.posts[0].fail();
   await tick();
-  const last = toasts[toasts.length - 1];
-  assert.equal(last.message, 'Spostamento non riuscito. Riprova più tardi.');
-  assert.equal(last.error, true);
-  assert.equal(toasts.filter((item) => item.message === 'Spostamento non riuscito. Riprova più tardi.').length, 1, 'said once');
+  // backlog:85630aa14a4f: one message, on the card beside its Riprova; the
+  // waiting toast goes away instead of turning into a red copy.
+  assert.equal(toasts[toasts.length - 1].message, '<hidden>', 'the waiting toast is taken down');
+  assert.ok(!toasts.some((item) => item.error), 'no red toast repeating the card');
+  const error = cardOf(mount, 'a').childNodes.find((n) => classes(n).includes('field-error'));
+  assert.equal(error.textContent, 'Spostamento non riuscito.');
   assert.ok(!toasts.some((item) => item.message.startsWith('Spostata')), 'the screen never said the move was saved');
   moved.options.action.run();
   await tick();
