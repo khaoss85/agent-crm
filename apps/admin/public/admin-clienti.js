@@ -1007,8 +1007,17 @@ export function createCustomerListView(deps) {
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = frame?.status ?? null;
     if (statusLine) {
+      // backlog:ee1244a145c9: a view emptied by no search reads as itself —
+      // «Nessun cliente corrisponde…» only answers an actual search or filter.
+      const searching = state.q !== '' || state.canale !== 'all' || state.stato !== 'all' || state.campo !== '';
+      const views = data?.views ?? FALLBACK_VIEWS;
+      const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
       statusLine.textContent = total === 0
-        ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+        ? (searching
+          ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+          : (state.vista === 'tutti' || viewLabel === null
+            ? 'Nessun cliente ancora.'
+            : `Nessun cliente in «${viewLabel}».`))
         : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }

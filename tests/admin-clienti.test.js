@@ -325,7 +325,7 @@ test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible col
 test('BO-F6-08 fetta 1: an empty page reads the prototype text and 0 di 0 with page controls', async () => {
   const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
   const { mount } = await render(empty);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
   assert.ok(mount.textContent.includes('0 di 0'), 'the pager keeps its 0 di 0 interval');
   assert.ok(mount.textContent.includes('Righe per pagina'), 'the page-size group stays labelled');
   assert.ok(byAttr(mount, 'button', 'aria-label', 'Pagina precedente'), 'previous keeps its accessible label');
@@ -1054,7 +1054,39 @@ test('754918ad8da7: the status line sits under the bar, so an empty page never p
   const at = (cls) => kids.findIndex((value) => value.split(/\s+/).includes(cls));
   assert.ok(at('bo-clienti-status') > at('bo-clienti-search'), `status after the search: ${kids}`);
   assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
+});
+
+test('ee1244a145c9: an empty «Da rispondere» view without search reads as the view', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), '«Tutti» without search reads as the view');
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the empty view names itself');
+  assert.ok(!mount.textContent.includes('Nessun cliente corrisponde'), 'no search hint without a search');
+});
+
+test('ee1244a145c9: an empty search keeps the «corrisponde» hint', async () => {
+  const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); this.calls.push(path); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
+  const clock = timers();
+  const { mount } = await render(empty, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), 'no search yet: the view reads as itself');
+  const input = mount.findAll('input')[0];
+  input.value = 'marco';
+  input.dispatch('input');
+  clock.fire();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'),
+    'an empty search result keeps the search hint');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {

@@ -1728,7 +1728,7 @@ export function createCustomerCardView(deps) {
     // even when its own channel is off, and the composer says so there.
     const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
     if (writable.length === 0) {
-      row.appendChild(el('span', 'bo-scheda-disabled', 'nessun canale scrivibile'));
+      row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
     } else {
       for (const channel of ['whatsapp', 'email']) {
         const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
@@ -3017,7 +3017,7 @@ export function createCustomerCardView(deps) {
     const count = merged.channelCount;
     box.appendChild(el('p', 'bo-muted',
       merged.rows.length === 0
-        ? 'nessun canale osservato'
+        ? 'Nessun canale osservato'
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
@@ -3999,11 +3999,11 @@ export function createCustomerCardView(deps) {
         if (channelFilter === 'all') {
           if (movesPending) return;
           list.appendChild(el('p', 'bo-scheda-empty-title', 'Ancora nessun contatto'));
-          list.appendChild(el('p', 'bo-muted', 'Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
+          list.appendChild(el('p', 'bo-muted', 'Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'));
           return;
         }
         list.appendChild(el('p', 'bo-scheda-empty-title', 'Nessun messaggio su questo canale'));
-        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivi al cliente con «Scrivi».'));
+        list.appendChild(el('p', 'bo-muted', 'Prova un altro canale, oppure scrivigli con «WhatsApp» o «Email».'));
         return;
       }
       const todayKey = romeDayKey(Date.now());
@@ -4946,7 +4946,7 @@ export function createCustomerCardView(deps) {
       const outcome = typeof last?.sync === 'string' && last.sync !== '' ? syncLabel(last.sync).toLowerCase() : null;
       box.appendChild(el('p', 'bo-scheda-call-head',
         ['ultima chiamata', direction, when, outcome].filter(Boolean).join(' · ')));
-      box.appendChild(el('p', 'bo-muted', 'nessuna registrazione per questa chiamata'));
+      box.appendChild(el('p', 'bo-muted', 'Nessuna registrazione per questa chiamata'));
       if (before.length > 0) box.appendChild(el('p', 'bo-muted', `+ ${before.length} chiamate precedenti`));
       return;
     }
@@ -4954,7 +4954,7 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted',
         calls === null || calls === undefined
           ? 'Nessun dato di chiamata registrato per questo cliente'
-          : 'nessuna chiamata registrata per questo cliente'));
+          : 'Nessuna chiamata registrata per questo cliente'));
       return;
     }
     const [first] = items;
@@ -4987,7 +4987,7 @@ export function createCustomerCardView(deps) {
       }
       box.appendChild(list);
     } else {
-      box.appendChild(el('p', 'bo-muted', 'nessun segnale registrato per questa chiamata'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun segnale registrato per questa chiamata'));
     }
     const transcript = first?.transcript;
     if (transcript?.available === true) {
@@ -5038,7 +5038,7 @@ export function createCustomerCardView(deps) {
     const items = [...messageItemsOf(timeline)].sort(
       (a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
     if (items.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun messaggio registrato per questo cliente'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun messaggio registrato per questo cliente'));
       return;
     }
     for (const item of items.slice(0, 5)) {
@@ -5066,7 +5066,7 @@ export function createCustomerCardView(deps) {
     }
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
+      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
       return;
     }
     appointmentBody(box, upcoming[0]);

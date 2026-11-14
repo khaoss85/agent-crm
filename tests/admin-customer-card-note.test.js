@@ -169,11 +169,16 @@ test('2883ef12f233: a note naming its author reads that name even when the roste
   assert.ok(!mount.textContent.includes('google|999'));
 });
 
-test('82235e46e3e9: the empty state names «Scrivi» for messages and the note field below', async () => {
+test('82235e46e3e9: the empty state names the quick-action buttons and the note field below', async () => {
   const { mount } = await open(fakeClient({ timeline: entries([]) }));
   assert.ok(mount.textContent.includes('Ancora nessun contatto'));
-  assert.ok(mount.textContent.includes('Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'));
+  assert.ok(mount.textContent.includes('Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'));
   assert.ok(!mount.textContent.includes('primo messaggio qui sotto'));
+});
+
+test('ee1244a145c9: the empty states name only buttons that exist, with a capital', async () => {
+  const { mount } = await open(fakeClient({ timeline: entries([]) }));
+  assert.ok(!mount.textContent.includes('«Scrivi»'), 'no phantom «Scrivi» button is named');
 });
 
 test('82235e46e3e9: «Tutti i contatti» shows the offer created and its stage moves, signed by name', async () => {

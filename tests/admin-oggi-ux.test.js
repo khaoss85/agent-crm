@@ -840,6 +840,30 @@ test('bab63e32acdb: a slow «Da rispondere» view never holds the day back, and 
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
 });
 
+test('ee1244a145c9: a pending «Da rispondere» names its wait instead of drawing rows', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc, mount, spaceName: 'Spazio', now: NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections: [],
+      availability: { work: true, appointments: true, channels: true },
+      recapPending: true,
+      inbox: { available: true, pending: true, total: 0, rows: [], notifications: { total: 0, rows: [] } },
+      events: {},
+    },
+  });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section, 'the inbox section renders while pending');
+  assert.deepEqual(section.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-oggi-inbox-row')), [],
+    'no row-shaped skeleton promises conversations');
+  assert.ok(section.textContent.includes('Leggo i messaggi da rispondere…'), 'the wait names itself');
+  assert.ok(section.querySelector('span[data-skeleton="true"]'), 'the wait still reads in grey');
+  for (const claim of ['Nessuna conversazione', 'Nessun messaggio aspetta una risposta', '0 in attesa']) {
+    assert.ok(!section.textContent.includes(claim), `no claim before the count: ${claim}`);
+  }
+});
+
 test('bab63e32acdb: the verification rows — «Namecheap Support» and «Ahrefs Site Audit» go to Notifiche with their names', () => {
   const conversations = [
     { id: 'n1', status: 'open', subjectLabel: 'Namecheap Support', remoteHandle: null, ...host, subjectId: 'nc' },

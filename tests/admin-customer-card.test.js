@@ -503,7 +503,7 @@ test('2c1c0e149cf9: with no upcoming booking the appointment card hides, the rec
   const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
   assert.ok(vista, 'the recap keeps its Appuntamenti vista');
   vista.dispatch('click');
-  assert.ok(mount.textContent.includes('nessun appuntamento prenotato'), 'the vista still reads as none booked');
+  assert.ok(mount.textContent.includes('Nessun appuntamento prenotato'), 'the vista still reads as none booked');
 });
 
 // Voce 2c1c0e149cf9, review Codex #854 (P2): the timeline arrives
@@ -979,7 +979,7 @@ test('BO-F1-08: without a space or without intelligence composed the card stays 
   assert.ok(uncomposed.textContent.includes('✦ Recap per'), 'the recap still renders');
   assert.ok(uncomposed.textContent.includes('ultima chiamata'),
     'without intelligence composed the cronologia call is still named');
-  assert.ok(uncomposed.textContent.includes('nessuna registrazione per questa chiamata'),
+  assert.ok(uncomposed.textContent.includes('Nessuna registrazione per questa chiamata'),
     'with its missing transcript said');
 });
 
@@ -993,7 +993,7 @@ test('BO-F1-08: a failing calls read is an error, never a quiet "no calls"', asy
   assert.ok(!mount.textContent.includes('Scheda non disponibile'), 'the card stays');
   assert.ok(mount.textContent.includes('Il riepilogo non si è potuto leggere. Riprova più tardi.'),
     'the AI summary names the failure');
-  assert.ok(!mount.textContent.includes('nessuna chiamata registrata'),
+  assert.ok(!mount.textContent.includes('Nessuna chiamata registrata'),
     'a 500 never reads as no calls');
 });
 
@@ -1362,7 +1362,7 @@ test('59def6cb805d: an empty timeline reads the exact prototype empty state (C27
   // backlog:82235e46e3e9: the field below writes a note, not a message —
   // the empty state names «Scrivi» for messages and the note below.
   assert.ok(text.includes('Ancora nessun contatto'), 'the empty title is exact');
-  assert.ok(text.includes('Scrivi al cliente con «Scrivi», oppure aggiungi una nota qui sotto.'),
+  assert.ok(text.includes('Scrivigli con «WhatsApp» o «Email», oppure aggiungi una nota qui sotto.'),
     'the empty hint is exact');
   assert.ok(!text.includes('primo messaggio qui sotto'), 'never a message «qui sotto»: below is the note');
   assert.ok(!text.includes('nessun passaggio'), 'no technical empty sentence remains');
@@ -1677,7 +1677,7 @@ test('59def6cb805d: unlabelled systems and UUID handles never reach the screen (
   assert.ok(!text.includes('google-contacts'), 'no raw system key on screen');
   assert.ok(!text.includes('people/c123'), 'no enrichment-only handle on screen');
   assert.ok(!text.includes('d394d386-4a1b-4c2d-8e3f-267581100b32'), 'no UUID on screen');
-  assert.ok(text.includes('nessun canale osservato'), 'the empty channel list stays honest');
+  assert.ok(text.includes('Nessun canale osservato'), 'the empty channel list stays honest');
 });
 
 // Voce 59def6cb805d (C11): la nota viola ✦ riporta la motivazione registrata;
@@ -1701,7 +1701,7 @@ test('59def6cb805d: no union note is invented without a linked union (C11)', asy
     [],
     'an unlinked record shows no union note',
   );
-  assert.ok(mount.textContent.includes('nessun canale osservato'), 'and no channel is claimed');
+  assert.ok(mount.textContent.includes('Nessun canale osservato'), 'and no channel is claimed');
 });
 
 // Voce 826e377c: Ada Rossi ha messaggi WhatsApp (+39 000 000 001) e
@@ -1845,7 +1845,7 @@ test('826e377c: held identities are not listed in the read-only section', async 
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('nessun canale osservato'), 'held rows alone name no observed channel');
+  assert.ok(text.includes('Nessun canale osservato'), 'held rows alone name no observed channel');
   assert.ok(!text.includes('+39 000 000 001'), 'no held handle leaks into the section');
   const buttons = mount.findAll('button')
     .filter((node) => ['Collega', 'Scollega', 'Conferma'].includes(node.textContent));
