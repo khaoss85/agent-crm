@@ -7,7 +7,7 @@ import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
-import { openOfferPanel } from './admin-offer-panel.js';
+import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
@@ -1245,6 +1245,8 @@ export function createCustomerCardView(deps) {
   // again at every re-read, so a draft was lost on the way back from
   // another screen or after any save that re-reads the card.
   const composerDrafts = new Map();
+  /** backlog:7fa422415232: minted offer links by quote, so a second «Invia offerta» press on the scheda reuses the same URL the server keeps. */
+  const schedaShareLinks = new Map();
   // AI drafts still queued on the pilot (504 BO_DRAFT_PENDING), keyed by
   // space, customer, channel and words → requestId (review #664): a close
   // and reopen of the composer reads the same request back, never a new POST.
@@ -4654,6 +4656,96 @@ export function createCustomerCardView(deps) {
       wrap.appendChild(stageStatus);
       wrap.appendChild(stageError);
       box.appendChild(wrap);
+    }
+    // backlog:7fa422415232: «Invia offerta» on the scheda offer line — only
+    // when the line is an approved quote, the one state the server shares
+    // through `share-link`. One press mints the public link (the server
+    // reuses the live link of the same version, so a second press shows the
+    // same URL), stages the ready Italian message as the composer draft so it
+    // is already in the message field when the operator opens «Scrivi», and
+    // fills the open composer at once when one is already open. The send
+    // stays the operator's Invia; the sent message then lands in the
+    // cronologia through the normal send flow.
+    if (fromQuote && first?.status === 'approved' && typeof first?.id === 'string' && first.id !== ''
+      && offerCtx && typeof offerCtx.resource === 'string' && typeof offerCtx.id === 'string') {
+      const shareWrap = el('div', 'bo-scheda-share');
+      const shareButton = el('button', undefined, 'Invia offerta');
+      shareButton.setAttribute('type', 'button');
+      shareButton.setAttribute('data-action', 'scheda-share-link');
+      const shareLine = el('p', 'bo-muted', '');
+      shareLine.setAttribute('role', 'status');
+      const shareSend = () => uiBusy(shareButton, 'Creo il link…', async () => {
+        shareLine.setAttribute('class', 'bo-muted');
+        shareLine.textContent = 'Creo il link…';
+        try {
+          const answer = await client.request(
+            `/api/modules/quote/records/${encodeURIComponent(first.id)}/actions/share-link`,
+            { method: 'POST', idempotencyKey: submissions.issueKey(), body: JSON.stringify({}) },
+          );
+          const result = answer?.result ?? answer ?? {};
+          const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+          let staged = null;
+          if (fresh !== null) {
+            const origin = typeof deps.origin === 'string' && deps.origin !== ''
+              ? deps.origin
+              : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
+            const url = offerShareUrl(origin, fresh);
+            if (url === null) {
+              shareLine.setAttribute('class', 'field-error');
+              shareLine.textContent = 'Link non creato: indirizzo non valido. Riprova più tardi.';
+              return;
+            }
+            const share = result.share ?? null;
+            staged = {
+              url,
+              expiresAt: typeof share?.expiresAt === 'string' ? share.expiresAt : null,
+            };
+            schedaShareLinks.set(first.id, staged);
+          } else {
+            staged = schedaShareLinks.get(first.id) ?? null;
+          }
+          if (staged === null) {
+            shareLine.setAttribute('class', 'field-error');
+            shareLine.textContent = result.alreadyExisted === true
+              ? 'Il link esiste già: aprilo dalla pagina offerta.'
+              : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+            return;
+          }
+          const message = offerShareMessage({ offerName: name, url: staged.url, expiresAt: staged.expiresAt }) ?? staged.url;
+          const spaceId = activeSpaceId();
+          if (spaceId !== null) {
+            const key = `${spaceId}:${offerCtx.resource}:${offerCtx.id}`;
+            const draft = composerDrafts.get(key) ?? { text: '', subject: '', aiBefore: null };
+            draft.text = message;
+            composerDrafts.set(key, draft);
+          }
+          const area = mount.querySelector('.bo-scheda-composer-text');
+          if (area) area.value = message;
+          shareLine.setAttribute('class', 'bo-muted');
+          shareLine.textContent = fresh === null ? 'Link già pronto nel composer: è lo stesso di prima.' : 'Link pronto nel composer.';
+          shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
+          const open = el('a', 'offer-share-link-open', 'Apri il link');
+          open.setAttribute('href', staged.url);
+          shareLine.appendChild(open);
+          toast('Link pronto: aprilo con Scrivi e invialo tu.');
+        } catch (error) {
+          shareLine.setAttribute('class', 'field-error');
+          shareLine.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
+        }
+      });
+      shareButton.addEventListener('click', () => { void shareSend(); });
+      shareWrap.appendChild(shareButton);
+      shareWrap.appendChild(shareLine);
+      shareWrap.__shareOffer = shareSend;
+      const known = schedaShareLinks.get(first.id);
+      if (known) {
+        shareLine.textContent = 'Link già pronto nel composer.';
+        shareLine.appendChild(el('span', 'bo-scheda-sep', ' '));
+        const open = el('a', 'offer-share-link-open', 'Apri il link');
+        open.setAttribute('href', known.url);
+        shareLine.appendChild(open);
+      }
+      box.appendChild(shareWrap);
     }
     paintStateHistory(box, historyTarget(first, fromQuote), profile, pipelines);
     return true;
