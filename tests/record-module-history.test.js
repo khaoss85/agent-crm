@@ -55,6 +55,13 @@ const historyEntry = () => ({
 // exactly what those databases hold.
 const RECORDED_SQLITE_CHECKSUM = '01f618d415ec03a215d8303c973558a3fc3f7c8005b433794cc0b4ba408ba4f0';
 const RECORDED_PG_CHECKSUM = 'cf29094ff4b655d4e5dcf9e1d236a89e6e44cc4c64400e6f15acaace82d996c0';
+// The checksums databases at work-activity revision 2 recorded for the r2
+// evolution (the `seq` column). Revision 3 (#839) adds its own evolution after
+// it and must never re-render this one.
+const RECORDED_R2_SQLITE_CHECKSUM = '44739a182116028ab5c0b6e4520c6dd98a65be558dd55c2374345f3f41c7414f';
+const RECORDED_R2_PG_CHECKSUM = 'b8168a49457ada0ea69e3f9653be72176b615d156b8e1ea47404ba1df605cc9e';
+// The revision 2 manifest as it shipped, now the second entry of the history.
+const revision2Entry = () => ({ name: 'work-activity', manifest: historyFile().previousManifests[1] });
 // The checksum presti-group's database recorded for data-quality-issue
 // revision 1 (`pg_bootstrap_data_quality_issues`, named by the supervisor's
 // diagnosis job on release 1b1b879). Commit b8266ea widened the `kind` enum
@@ -80,29 +87,48 @@ const RECORDED_DQI_PG_CHECKSUM = '6d601a00c1bd40d3c3618f0a204cf9c16c35e024b05182
  * history exactly.
  */
 
-test('work-activity revision 2 keeps the original SQLite migration identical and adds one evolution', () => {
+test('work-activity revision 3 keeps the original SQLite migration and the r2 evolution identical and adds one evolution', () => {
+  assert.equal(currentManifest().revision, 3);
   const migrations = recordModuleMigrations([historyEntry()]);
-  assert.equal(migrations.length, 2);
+  assert.equal(migrations.length, 3);
   assert.equal(migrations[0].name, 'create_work_activities');
   assert.equal(migrations[1].name, 'evolve_work_activities_r2');
+  assert.equal(migrations[2].name, 'evolve_work_activities_r3');
   // The original migration is what revision 1 generated, byte for byte.
   assert.equal(migrations[0].sql, generateModuleMigration(historyFile().previousManifests[0]).sql);
   assert.equal(sha(migrations[0].sql), RECORDED_SQLITE_CHECKSUM);
   // The evolution is additive: the new column, nothing else.
   assert.match(migrations[1].sql, /ADD COLUMN seq INTEGER/);
+  // The r2 evolution is what revision 2 composed, byte for byte.
+  assert.equal(migrations[1].sql, recordModuleMigrations([revision2Entry()])[1].sql);
+  assert.equal(sha(migrations[1].sql), RECORDED_R2_SQLITE_CHECKSUM);
+  // Revision 3 is additive too: its two new columns, nothing else.
+  assert.equal(
+    migrations[2].sql,
+    'ALTER TABLE work_activities ADD COLUMN revises_id TEXT;\n'
+      + 'ALTER TABLE work_activities ADD COLUMN withdrawn INTEGER CHECK(withdrawn IN (0, 1));\n',
+  );
 });
 
-test('work-activity revision 2 keeps the original Postgres bootstrap identical and adds one evolution', () => {
+test('work-activity revision 3 keeps the original Postgres bootstrap and the r2 evolution identical and adds one evolution', () => {
   const migrations = postgresRecordModuleMigrations([historyEntry()]);
-  assert.equal(migrations.length, 2);
+  assert.equal(migrations.length, 3);
   assert.equal(migrations[0].name, 'pg_bootstrap_work_activities');
   assert.equal(migrations[1].name, 'pg_evolve_work_activities_r2');
+  assert.equal(migrations[2].name, 'pg_evolve_work_activities_r3');
   // The original migration is what revision 1 generated, byte for byte: a
   // database that recorded it recomposes without a checksum mismatch.
   assert.equal(migrations[0].sql, generatePostgresModuleBootstrap(historyFile().previousManifests[0]).sql);
   assert.equal(sha(migrations[0].sql), RECORDED_PG_CHECKSUM);
   // The evolution is additive with a new name: the new column, nothing else.
   assert.match(migrations[1].sql, /ADD COLUMN "seq" BIGINT/);
+  // The r2 evolution is what revision 2 composed, byte for byte.
+  assert.equal(migrations[1].sql, postgresRecordModuleMigrations([revision2Entry()])[1].sql);
+  assert.equal(sha(migrations[1].sql), RECORDED_R2_PG_CHECKSUM);
+  // Revision 3 is additive too: its two new columns, nothing else.
+  assert.match(migrations[2].sql, /ADD COLUMN "revises_id" TEXT/);
+  assert.match(migrations[2].sql, /ADD COLUMN "withdrawn" BOOLEAN/);
+  assert.doesNotMatch(migrations[2].sql, /DROP|CREATE TABLE|ALTER COLUMN|RENAME/);
 });
 
 test('the SQLite history upgrades a revision-1 database with its rows intact', () => {
@@ -118,6 +144,13 @@ test('the SQLite history upgrades a revision-1 database with its rows intact', (
   assert.equal(row.seq, null);
   db.prepare('UPDATE work_activities SET seq = ? WHERE id = ?').run(1, 'a1');
   assert.equal(db.prepare('SELECT seq FROM work_activities WHERE id = ?').get('a1').seq, 1);
+  // Revision 3 lands on the revision-2 database, rows still intact.
+  db.exec(migrations[2].sql);
+  const upgraded = db.prepare('SELECT source_key, seq, revises_id, withdrawn FROM work_activities WHERE id = ?').get('a1');
+  assert.equal(upgraded.source_key, 'legacy:1');
+  assert.equal(upgraded.seq, 1);
+  assert.equal(upgraded.revises_id, null);
+  assert.equal(upgraded.withdrawn, null);
   db.close();
 });
 
@@ -129,9 +162,9 @@ test('preflight carries the history through to the composed Postgres migrations'
     modules: [historyEntry()],
   });
   const names = accepted.postgresRecordMigrations.map((migration) => migration.name);
-  assert.deepEqual(names, ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2']);
+  assert.deepEqual(names, ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2', 'pg_evolve_work_activities_r3']);
   const sqliteNames = accepted.recordMigrations.map((migration) => migration.name);
-  assert.deepEqual(sqliteNames, ['create_work_activities', 'evolve_work_activities_r2']);
+  assert.deepEqual(sqliteNames, ['create_work_activities', 'evolve_work_activities_r2', 'evolve_work_activities_r3']);
 });
 
 test('a manifest-only entry for a revised module composes the checked-in history without caller help', () => {
@@ -140,11 +173,26 @@ test('a manifest-only entry for a revised module composes the checked-in history
   // async factory, pilot writer) renders the same migrations.
   const entry = { name: 'work-activity', manifest: currentManifest() };
   const sqlite = recordModuleMigrations([entry]);
+  assert.deepEqual(sqlite.map((migration) => migration.name), ['create_work_activities', 'evolve_work_activities_r2', 'evolve_work_activities_r3']);
+  assert.equal(sha(sqlite[0].sql), RECORDED_SQLITE_CHECKSUM);
+  assert.equal(sha(sqlite[1].sql), RECORDED_R2_SQLITE_CHECKSUM);
+  const postgres = postgresRecordModuleMigrations([entry]);
+  assert.deepEqual(postgres.map((migration) => migration.name), ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2', 'pg_evolve_work_activities_r3']);
+  assert.equal(sha(postgres[0].sql), RECORDED_PG_CHECKSUM);
+  assert.equal(sha(postgres[1].sql), RECORDED_R2_PG_CHECKSUM);
+});
+
+test('a manifest-only entry at revision 2 composes exactly what the revision 2 framework composed', () => {
+  // A database migrated before revision 3 was composed from the revision 2
+  // manifest: replaying that entry renders the same two migrations.
+  const sqlite = recordModuleMigrations([revision2Entry()]);
   assert.deepEqual(sqlite.map((migration) => migration.name), ['create_work_activities', 'evolve_work_activities_r2']);
   assert.equal(sha(sqlite[0].sql), RECORDED_SQLITE_CHECKSUM);
-  const postgres = postgresRecordModuleMigrations([entry]);
+  assert.equal(sha(sqlite[1].sql), RECORDED_R2_SQLITE_CHECKSUM);
+  const postgres = postgresRecordModuleMigrations([revision2Entry()]);
   assert.deepEqual(postgres.map((migration) => migration.name), ['pg_bootstrap_work_activities', 'pg_evolve_work_activities_r2']);
   assert.equal(sha(postgres[0].sql), RECORDED_PG_CHECKSUM);
+  assert.equal(sha(postgres[1].sql), RECORDED_R2_PG_CHECKSUM);
 });
 
 test('a manifest-only entry at the old revision composes exactly what the old framework composed', () => {
@@ -306,18 +354,35 @@ test('history that does not describe this module fails closed', () => {
 });
 
 test('history with a skipped revision fails closed instead of guessing', () => {
-  const rev3 = {
+  // A real hole: the checked-in history ends at revision 2 and the manifest
+  // claims revision 4, so nobody knows what revision 3 generated.
+  assert.equal(currentManifest().revision, 3);
+  assert.equal(historyFile().previousManifests.length, 2);
+  const rev4 = {
     ...currentManifest(),
-    revision: 3,
+    revision: 4,
     fields: [...currentManifest().fields, { name: 'extra', type: 'string', writable: 'managed' }],
   };
   assert.throws(
     () => postgresRecordModuleMigrations([{
       name: 'work-activity',
-      manifest: rev3,
+      manifest: rev4,
       previousManifests: historyFile().previousManifests,
     }]),
-    /must step by one \(1 → 2\); got 1 → 3/,
+    /must step by one \(2 → 3\); got 2 → 4/,
+  );
+  assert.throws(
+    () => recordModuleMigrations([{
+      name: 'work-activity',
+      manifest: rev4,
+      previousManifests: historyFile().previousManifests,
+    }]),
+    /must step by one \(2 → 3\); got 2 → 4/,
+  );
+  // The production shape (no caller history) refuses the same hole.
+  assert.throws(
+    () => postgresRecordModuleMigrations([{ name: 'work-activity', manifest: rev4 }]),
+    /must step by one \(2 → 3\); got 2 → 4/,
   );
 });
 
