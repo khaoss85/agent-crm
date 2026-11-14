@@ -113,7 +113,8 @@ test('82235e46e3e9: Invio adds the note, Maiusc+Invio goes to a new line', async
   await flush();
   assert.equal(enter.prevented, true);
   assert.deepEqual(client.writes.map((write) => [write.path, write.body.body]), [['/api/customer-hub/notes', 'Prima riga\nSeconda riga']]);
-  assert.deepEqual(toasts, ['Nota aggiunta']);
+  // backlog:92829060f8ff: the notice says where the note went (top of the cronologia).
+  assert.deepEqual(toasts, ['Nota aggiunta in cima alla cronologia']);
   assert.equal(noteField(mount).value, '', 'the field is empty again');
   assert.ok(mount.textContent.includes('Invio aggiunge la nota, Maiusc+Invio va a capo.'), 'the help says how');
 });

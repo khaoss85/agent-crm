@@ -4354,7 +4354,10 @@ export function createCustomerCardView(deps) {
           // the toast says so; then only the cronologia is read again.
           const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
             (loaded) => withNote(loaded, saved, written));
-          toast('Nota aggiunta');
+          // backlog:92829060f8ff (production 14/11: at 500 px the new note
+          // lands at the top of the cronologia, ~1.650 px above the box, out
+          // of view): the notice says where it went.
+          toast('Nota aggiunta in cima alla cronologia');
           // backlog:4eceae80a5ca (production 14/11: after Invio the focus
           // was on the page body, and a second note typed at once lost its
           // letters): the cursor stays in the empty field, through the

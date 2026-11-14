@@ -2413,7 +2413,7 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
   assert.deepEqual(client.writes[0].body,
     { resource: 'contact', id: 'c1', body: 'Richiamare giovedì' },
     'the note carries its subject and plain-text body');
-  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }], 'the note toasts in Italian');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta in cima alla cronologia', error: false }], 'the note toasts in Italian');
 });
 
 // Voce 714433c2: lo stato si cambia da un menu. The menu moves the shown
@@ -3721,7 +3721,8 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
   await flushClicks();
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
-  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
+  // backlog:92829060f8ff: the notice says where the note went (top of the cronologia).
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta in cima alla cronologia', error: false }]);
 });
 
 // Composer stile Gmail (Dan 04/11): ✕ and Esc close the window but never

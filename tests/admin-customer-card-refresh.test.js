@@ -138,7 +138,8 @@ test('2a214b66fe12: a note shows in the cronologia with its toast, and only the 
   client.hold();
   const saving = byAction(mount, 'add-note').listeners.click[0]();
   await flush();
-  assert.deepEqual(toasts, ['Nota aggiunta']);
+  // backlog:92829060f8ff: the notice says where the note went (top of the cronologia).
+  assert.deepEqual(toasts, ['Nota aggiunta in cima alla cronologia']);
   assert.ok(atToast[0].includes('Richiamare lunedì'), 'the note is on screen when the toast speaks');
   assert.ok(mount.textContent.includes('Richiamare lunedì'), 'before the re-read answers');
   assert.equal(mount.findAll('textarea').find((node) => node.getAttribute('name') === 'noteBody').value, '', 'the field is empty');
