@@ -797,7 +797,7 @@ export function createPipelineBoard(deps) {
       }
       moveLocks.delete(id);
       seatedStages.delete(id);
-      const message = moveFailureText(error);
+      const message = moveFailureText(error, pipeline);
       const lost = lostToAnotherWrite(error);
       if (lost) {
         // Review Muse #852 (P2): the column changed under this drop. On the
@@ -1915,7 +1915,7 @@ export function createPipelineBoard(deps) {
     return record.code === 'BO_CRM_PENDING';
   }
 
-  function moveFailureText(error) {
+  function moveFailureText(error, pipeline = null) {
     const record = error !== null && typeof error === 'object' ? error : {};
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
@@ -1928,7 +1928,14 @@ export function createPipelineBoard(deps) {
     if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
     if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
-    if (code === 'STALE_STAGE') return "Questa offerta è stata spostata altrove nel frattempo: la pipeline si aggiorna.";
+    // backlog:5af848afdb63: the server names where the offer is now
+    // (details.actual) — say the arrival column, not just «elsewhere».
+    if (code === 'STALE_STAGE') {
+      const actual = record.details && typeof record.details.actual === 'string' ? record.details.actual : '';
+      const target = Array.isArray(pipeline?.stages) ? pipeline.stages.find((stage) => stage?.key === actual) : null;
+      if (target) return `Questa offerta è già in «${target.label}»: la pipeline si aggiorna.`;
+      return "Questa offerta è stata spostata altrove nel frattempo: la pipeline si aggiorna.";
+    }
     // Review Muse #893 (P2): a lost write offers no Riprova, so its words never ask for one.
     if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna.';
     if (isTransientConflict(error)) return 'Questa offerta è stata spostata nel frattempo: la pipeline si aggiorna.';

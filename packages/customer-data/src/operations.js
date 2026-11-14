@@ -957,6 +957,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // Evidence after opportunities: an evidence row may name the opportunity
   // rather than the customer, and that hop is explicit, never guessed.
   const evidenceReads = {};
+  // backlog:5af848afdb63: a space without the subscription module composed
+  // holds no subscription records at all, so «rinnovi» is exactly zero —
+  // never a floor dressed as a total. A composed-but-unreadable (or
+  // partial) dependency stays honest: no count, and the view refuses.
+  const subscriptionsAbsent = optional(modules, 'subscription') == null;
   for (const [sectionKey, moduleName] of [['orders', 'order'], ['contracts', 'commercial-contract'], ['subscriptions', 'subscription']]) {
     evidenceReads[sectionKey] = await batched(moduleName, [
       { companyId: [...refs.companyIds] },
@@ -1139,12 +1144,14 @@ export async function listCustomerRecords({ modules, core, names, interactions =
 
   // A derived view over an unreadable dependency refuses with its reason,
   // never with an exact-looking empty page: the two derived views need the
-  // work and subscription packages, and without them "no renewals" would be
-  // a claim the application cannot make. A truncated dependency read
+  // work and subscription packages, and without a readable subscription read
+  // "no renewals" would be a claim the application cannot make (a space
+  // without the subscription module composed holds no such records, so that
+  // zero is exact — backlog:5af848afdb63). A truncated dependency read
   // (complete:false from a list-only fallback or a bound the scan hit)
   // refuses the same way: it would silently omit renewals or callbacks
   // while totalIsExact stays true.
-  if (query.view?.id === 'rinnovi-30-giorni'
+  if (query.view?.id === 'rinnovi-30-giorni' && !subscriptionsAbsent
     && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) {
     throw new AppError('the rinnovi-30-giorni view needs the subscription records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
@@ -1317,7 +1324,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
     if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
     if (view.id === 'da-rispondere' && !repliesReadable) return entry;
-    if (view.id === 'rinnovi-30-giorni'
+    if (view.id === 'rinnovi-30-giorni' && !subscriptionsAbsent
       && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
     return { ...entry, count: filterCustomerRows(rows, query, view, today).length };
   });

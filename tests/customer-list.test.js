@@ -337,7 +337,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], omit = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], subscriptions = null, omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -354,6 +354,7 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['interaction-call', { service: exact(calls) }],
     ['conversation-read', { service: exact(reads) }],
   ]);
+  if (subscriptions !== null) map.set('subscription', { service: subscriptions });
   for (const name of omit) map.delete(name);
   return {
     get: (name) => {
@@ -481,8 +482,10 @@ test('evidence through another customer\u2019s opportunity never promotes this c
 
 test('a derived view over an unreadable dependency refuses, never an empty page', async () => {
   const { contacts, companies, identities } = SCENE();
-  // No subscription package composed: the renewal view cannot know.
-  const noSubs = fakeModules({ contacts, companies, identities });
+  // A composed subscription package that reads nothing: the renewal view
+  // cannot know (backlog:5af848afdb63: only a missing module is exactly
+  // zero — a present one may hide renewals, so it still refuses).
+  const noSubs = fakeModules({ contacts, companies, identities, subscriptions: {} });
   await assert.rejects(
     listCustomerRecords(
       { modules: noSubs, core: {}, names: { identity: 'external-identity' } },
@@ -648,9 +651,11 @@ test('the list names a finite count per view it can know, omitting the rest', as
   for (const id of ['nuovi-lead', 'clienti-attivi', 'ricontattare-oggi']) {
     assert.equal(byId[id].count, (await run({ vista: id })).total, `${id} counts what opening it shows`);
   }
-  // No subscription module composed: the renewal count stays absent, never a
-  // floor dressed as a total.
-  assert.ok(!('count' in byId['rinnovi-30-giorni']), 'an unknowable view names no count');
+  // backlog:5af848afdb63: no subscription module composed, so no
+  // subscription record can exist here — the renewal count is exactly 0,
+  // and it agrees with opening the view.
+  assert.equal(byId['rinnovi-30-giorni'].count, 0, 'a space without subscriptions counts zero renewals');
+  assert.equal((await run({ vista: 'rinnovi-30-giorni' })).total, 0, 'opening rinnovi agrees with its pill');
 });
 
 test('a view whose dependency is unreadable still answers without its count', async () => {
@@ -660,6 +665,16 @@ test('a view whose dependency is unreadable still answers without its count', as
     { modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'tutti' });
   const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
   assert.ok(!('count' in byId['ricontattare-oggi']), 'no work-task read, no callback count');
+  assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
+});
+
+test('backlog:5af848afdb63: a composed-but-unreadable subscription read names no renewal count', async () => {
+  const { contacts, companies, identities } = SCENE();
+  const modules = fakeModules({ contacts, companies, identities, subscriptions: {} });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } }, { vista: 'tutti' });
+  const byId = Object.fromEntries(page.views.map((view) => [view.id, view]));
+  assert.ok(!('count' in byId['rinnovi-30-giorni']), 'a present module may hide renewals: no count');
   assert.equal(byId.tutti.count, 2, 'the views the server can know still count');
 });
 

@@ -169,6 +169,35 @@ test('1541408e8144 + 85630aa14a4f: a STALE_STAGE move says the card moved elsewh
   assert.ok(!mount.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
 });
 
+test('backlog:5af848afdb63: a STALE_STAGE move names the arrival column the server reports', async () => {
+  const records = [record('a', 'discovery')];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(records, {
+    failMove: {
+      message: 'Stale move: expected "discovery" but the record is in "demo"',
+      status: 409,
+      code: 'STALE_STAGE',
+      details: { expected: 'discovery', actual: 'demo' },
+    },
+  });
+  const toasts = [];
+  const board = createPipelineBoard({ doc, mount, client, toast: (message, error, options) => toasts.push({ message: String(message), error, options }) });
+  await board.renderBoard('b2b-sales');
+
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  card.__select.value = 'lost';
+  await card.__move();
+  // Lost moves post only from the Conferma panel, with the mandatory reason.
+  card.__reason.value = 'Nessun budget';
+  await card.__confirm();
+  const said = toasts.filter((item) => item.error);
+  assert.equal(said.length, 1, 'said once, in the toast');
+  assert.ok(said[0].message.includes('Demo'), `the arrival column is named (${said[0].message})`);
+  assert.ok(!said[0].message.includes('STALE_STAGE'), 'no error code in the line');
+  assert.ok(!mount.textContent.includes('Stale move'), 'no raw server message in the DOM');
+});
+
 test('move toasts name the stage label and failures stay friendly (C25)', async () => {
   const stages = [
     { key: 'richiesta', label: 'Richiesta', order: 10, type: 'open', probability: 10 },
