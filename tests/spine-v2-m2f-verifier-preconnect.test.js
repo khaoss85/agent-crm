@@ -12,6 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { assertSyncChildExited, hangGuardMs } from './helpers/child-exit.js';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -417,6 +418,7 @@ test('M2-22 symlink, traversal, absolute, NUL, FIFO and world-readable files ref
 
   const fifoPath = join(projectRoot, 'providers', 'fifo.mjs');
   mkfifo(fifoPath, 0o600);
+  const fifoGuardMs = hangGuardMs();
   const started = Date.now();
   await assertCodeAsync(() => resolveIdentityVerifier({
     relativePath: './providers/fifo.mjs',
@@ -424,7 +426,7 @@ test('M2-22 symlink, traversal, absolute, NUL, FIFO and world-readable files ref
     mode: 'production',
     timeoutMs: 250,
   }), 'IDENTITY_VERIFIER_UNTRUSTED', [...extras, fifoPath]);
-  assert.ok(Date.now() - started < 500, 'verifier FIFO open hung');
+  assert.ok(Date.now() - started < fifoGuardMs, 'verifier FIFO open hung');
 
   writeModule(projectRoot, 'providers/world.mjs', VALID_VERIFIER, { mode: 0o644 });
   await assertCodeAsync(() => resolveIdentityVerifier({
@@ -475,18 +477,21 @@ function writeHangRunner(root, relativePath, timeoutMs) {
   return runner;
 }
 
+// The child must end on its own with IDENTITY_VERIFIER_TIMEOUT from its own
+// 150 ms deadline, however slow the loaded runner spawns it: the spawn timeout
+// is the file's hang-guard remainder, never a speed budget, and no assertion
+// measures how fast the child lived (backlog:1967694a).
 function runHangChild(root, relativePath, timeoutMs = 150) {
   const runner = writeHangRunner(root, relativePath, timeoutMs);
-  const started = Date.now();
   const child = spawnSync(process.execPath, ['--no-warnings', runner], {
     encoding: 'utf8',
-    timeout: timeoutMs + 2000,
+    timeout: hangGuardMs(),
     cwd: root,
     env: { ...process.env, ACCORDO_HANG_SENTINEL: SENTINEL_PASSWORD },
   });
-  const elapsed = Date.now() - started;
+  assertSyncChildExited(child, 'M2-22 hang child');
+  assert.equal(child.signal, null, 'the hang child exits on its own, no signal from the test');
   assert.notEqual(child.status, 0, child.stdout + child.stderr);
-  assert.ok(elapsed < timeoutMs + 1000, `hang child lived ${elapsed}ms`);
   const parsed = JSON.parse((child.stdout || '').trim().split('\n').at(-1) || '{}');
   assert.equal(parsed.code, 'IDENTITY_VERIFIER_TIMEOUT');
   assert.notEqual(parsed.code, 'WATCHDOG');
@@ -497,7 +502,7 @@ function runHangChild(root, relativePath, timeoutMs = 150) {
   return parsed;
 }
 
-test('M2-22 hanging factory times out without a listener or credential echo', { timeout: 5000 }, () => {
+test('M2-22 hanging factory times out without a listener or credential echo', () => {
   const root = scratch();
   writeModule(root, 'hang-factory.mjs', [
     'export const identityVerifierContract = 2;',
@@ -510,7 +515,7 @@ test('M2-22 hanging factory times out without a listener or credential echo', { 
   runHangChild(root, './hang-factory.mjs');
 });
 
-test('M2-22 top-level await that never settles times out in a child process', { timeout: 5000 }, () => {
+test('M2-22 top-level await that never settles times out in a child process', () => {
   const root = scratch();
   writeModule(root, 'hang-toplevel.mjs', 'await new Promise(() => {});\n');
   runHangChild(root, './hang-toplevel.mjs');
