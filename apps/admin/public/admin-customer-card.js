@@ -22,6 +22,7 @@ import {
   formatCustomValue,
   saveFieldValue,
 } from './admin-custom-fields.js';
+import { readBookingServices } from './admin-calendario.js';
 
 /**
  * **The customer scheda (BO-F1-06): one customer, three columns.**
@@ -1293,7 +1294,7 @@ export function createCustomerCardView(deps) {
   });
 
   /** Every read of the scheda, none landed yet (backlog:1a96094db71d). */
-  const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines']);
+  const PART_NAMES_PENDING = () => new Set(['card', 'timeline', 'profile', 'enrichment', 'calls', 'fieldDefs', 'fieldValues', 'pipelines', 'services']);
 
   /**
    * The scheda's reads in two waves. backlog:1a96094db71d: with `onPart`
@@ -1320,6 +1321,7 @@ export function createCustomerCardView(deps) {
       profile: null, profileError: null, enrichment: null, enrichmentError: null,
       calls: null, callsError: null, fieldDefs: null, fieldDefsError: null,
       fieldValues: null, fieldValuesError: null, pipelines: [],
+      services: null, servicesError: null,
     };
     const pending = PART_NAMES_PENDING();
     // Voce 908f2eb9bbfb, review round 2: a 404/NOT_FOUND is not a failure to
@@ -1409,6 +1411,27 @@ export function createCustomerCardView(deps) {
       // exactly like the Pipeline board (the shell shares one schema read).
       // Without them the offer line falls back to the core stage.
       settle(() => client.request('/api/schema')).then((read) => take('pipelines', read, false)),
+      // backlog:0d68c387: the listino names the booked service — the same
+      // bookable list the «Nuovo appuntamento» menu reads, so the scheda
+      // and the menu never disagree. A failed read keeps the slug words
+      // (the screen it replaces), never a failed scheda.
+      // Review rev-agent-crm-889-4db30273 (P2): a non-404 failure is
+      // diagnosable — one warn line with the cause only (name/code/status
+      // and the space, never a payload), mirroring the calendario's
+      // «bo-calendario services unreadable». A 404 stays silent: it only
+      // means an older server without the listino.
+      settle(() => readBookingServices(client)).then((read) => {
+        if (read.error && !isNotComposedFailure(read.error)
+          && typeof console !== 'undefined' && typeof console.warn === 'function') {
+          console.warn(
+            'bo-scheda services unreadable:',
+            read.error instanceof Error ? read.error.name : (read.error?.code ?? 'unknown'),
+            `status=${typeof read.error?.status === 'number' ? read.error.status : 'none'}`,
+            `spaceId=${spaceId ?? 'none'}`,
+          );
+        }
+        take('services', read);
+      }),
     ]));
     await Promise.all([wave1, wave2]);
     return { ...loaded };
@@ -3509,7 +3532,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3524,7 +3547,8 @@ export function createCustomerCardView(deps) {
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
-      ...cancelledAppointmentEntries(timeline),
+      ...bookedAppointmentEntries(timeline, serviceNames),
+      ...cancelledAppointmentEntries(timeline, serviceNames),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
@@ -3749,6 +3773,19 @@ export function createCustomerCardView(deps) {
         }
         const row = el('div', 'bo-scheda-entry');
         row.setAttribute('data-entry', String(item?.id ?? ''));
+        if (item?.entry === 'appointment-booked') {
+          // backlog:0d68c387: the booking's own row — the note card shape,
+          // with a ✓ mark. No reason line: a booking carries none.
+          row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note bo-scheda-entry-booked');
+          const mark = el('span', 'bo-scheda-chan bo-tile-booked', '✓');
+          mark.setAttribute('aria-hidden', 'true');
+          row.appendChild(mark);
+          const paper = el('div', 'bo-scheda-note-paper');
+          paper.appendChild(el('p', 'bo-scheda-entry-head', item.title));
+          row.appendChild(paper);
+          list.appendChild(row);
+          continue;
+        }
         if (item?.entry === 'appointment-cancelled') {
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note bo-scheda-entry-cancelled');
           const mark = el('span', 'bo-scheda-chan bo-tile-cancelled', '×');
@@ -4454,7 +4491,7 @@ export function createCustomerCardView(deps) {
   // file, so it names the set instead of importing it).
   const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
 
-  function nextAppointment(box, timeline, timelineError = null) {
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
@@ -4491,7 +4528,7 @@ export function createCustomerCardView(deps) {
     // made readable) with the team member when the handle reads as a name;
     // the row names the long Rome day. No place and no Google sync line:
     // the booking records neither, so none is written.
-    const service = serviceTitle(next?.serviceKey);
+    const service = serviceTitle(next?.serviceKey, serviceNames);
     const member = teamName(next?.teamMemberId);
     box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
     const day = dayParts(next?.startsAt);
@@ -4510,7 +4547,7 @@ export function createCustomerCardView(deps) {
    * row records none), with the reason the operator gave. Never an id.
    * @param {any} timeline
    */
-  function cancelledAppointmentEntries(timeline) {
+  function cancelledAppointmentEntries(timeline, serviceNames = null) {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     return items
       .filter((item) => String(item?.status ?? '') === 'cancelled')
@@ -4521,15 +4558,66 @@ export function createCustomerCardView(deps) {
           id: `appointment-cancelled:${String(item?.id ?? '')}`,
           entry: 'appointment-cancelled',
           occurredAt: typeof item?.decidedAt === 'string' && item.decidedAt !== '' ? item.decidedAt : item?.startsAt,
-          title: ['Appuntamento annullato', serviceTitle(item?.serviceKey), slot].filter(Boolean).join(' · '),
+          title: ['Appuntamento annullato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
           reason: reason !== '' ? reason : null,
         };
       });
   }
 
-  /** A listino key made readable («lezione-prova» → «Lezione prova»), never the raw slug. */
-  function serviceTitle(serviceKey) {
-    const words = typeof serviceKey === 'string' ? serviceKey.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  /**
+   * backlog:0d68c387 — a confirmed booking reads in the cronologia as its
+   * own row («Appuntamento fissato · servizio · data»), at the slot it
+   * fixes: the booking used to leave no row, only its cancellation. A
+   * decided cancellation (decidedAt) then sorts after it, newest first.
+   * @param {any} timeline
+   * @param {Map<string, string> | null} serviceNames
+   */
+  function bookedAppointmentEntries(timeline, serviceNames = null) {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    return items
+      .filter((item) => ['booked', 'confirmed'].includes(String(item?.status ?? '')))
+      .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
+      .map((item) => {
+        const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
+        return {
+          id: `appointment-booked:${String(item?.id ?? '')}`,
+          entry: 'appointment-booked',
+          occurredAt: item?.startsAt,
+          title: ['Appuntamento fissato', serviceTitle(item?.serviceKey, serviceNames), slot].filter(Boolean).join(' · '),
+          reason: null,
+        };
+      });
+  }
+
+  /**
+   * The listino names behind the booked keys (`serviceKey` or `key` →
+   * `name`), from the same bookable list the booking menu reads. Unknown
+   * keys stay unknown: serviceTitle falls back to the slug words.
+   * @param {any} services the `readBookingServices` answer, or null
+   */
+  function serviceNamesOf(services) {
+    /** @type {Map<string, string>} */
+    const names = new Map();
+    for (const entry of Array.isArray(services) ? services : []) {
+      const key = typeof entry?.serviceKey === 'string' && entry.serviceKey !== ''
+        ? entry.serviceKey
+        : (typeof entry?.key === 'string' ? entry.key : '');
+      const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+      if (key !== '' && name !== '' && !names.has(key)) names.set(key, name);
+    }
+    return names;
+  }
+
+  /**
+   * The booked service as the listino names it («Lezione di prova»), never
+   * the raw slug. A key the listino does not name reads as slug words
+   * («lezione-prova» → «Lezione prova»), like before.
+   */
+  function serviceTitle(serviceKey, serviceNames = null) {
+    const key = typeof serviceKey === 'string' ? serviceKey : '';
+    const named = serviceNames instanceof Map ? serviceNames.get(key) : null;
+    if (typeof named === 'string' && named !== '') return named;
+    const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
     return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
   }
 
@@ -4861,6 +4949,7 @@ export function createCustomerCardView(deps) {
       card, timeline, timelineError, profile, profileError,
       enrichment, enrichmentError, calls, callsError,
       fieldDefs, fieldDefsError, fieldValues, fieldValuesError, pipelines,
+      services,
     } = loaded;
     const reloadEnrichment = enrichmentReloader(key, resource, id);
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
@@ -4875,6 +4964,7 @@ export function createCustomerCardView(deps) {
         card, timeline, timelineError, profile, profileError,
         enrichment, enrichmentError, calls, callsError,
         fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+        services,
       });
     } finally {
       pendingDrafts = null;
@@ -5390,8 +5480,12 @@ export function createCustomerCardView(deps) {
     card, timeline, timelineError, profile, profileError,
     enrichment, enrichmentError, calls, callsError,
     fieldDefs, fieldDefsError, fieldValues, fieldValuesError, reloadEnrichment, pipelines,
+    services = null,
     pending = null,
   }) {
+    // backlog:0d68c387: the listino names behind the booked service keys —
+    // the booking menu's list, or an empty map (slug words) while it loads.
+    const serviceNames = serviceNamesOf(services);
     const panel = el('div', 'bo-scheda');
     if (pending !== null && pending.size > 0) {
       panel.setAttribute('aria-busy', 'true');
@@ -5467,7 +5561,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'));
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames);
     }
     if (waits('calls')) {
       skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');
@@ -5490,7 +5584,7 @@ export function createCustomerCardView(deps) {
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
-    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError);
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

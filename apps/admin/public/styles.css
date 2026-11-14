@@ -2682,6 +2682,9 @@ button.bo-profilo-edit-open { flex: none; align-self: center; }
 /* backlog:5346ab531538: a cancelled appointment in the cronologia — the
    note card shape, in the neutral tone, with an × mark. */
 .bo-scheda-chan.bo-tile-cancelled { background: var(--surface-soft); color: var(--muted); font-family: inherit; font-size: 15px; }
+/* backlog:0d68c387: a confirmed booking in the cronologia — the note card
+   shape, with a ✓ mark in the accent tone. */
+.bo-scheda-chan.bo-tile-booked { background: var(--accent-soft); color: var(--accent); font-family: inherit; font-size: 15px; }
 .bo-scheda-entry-cancelled .bo-scheda-note-paper { border-color: var(--line-soft); background: var(--surface-soft); }
 .bo-scheda-entry .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head, .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head { color: var(--ink); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
