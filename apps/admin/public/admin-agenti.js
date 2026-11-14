@@ -86,10 +86,21 @@ export function isHandAgentKey(key) {
 }
 
 /** First named agent of a space, trimmed, or '' when the team has none. @param {Array<any>} agents */
-export function firstTeamAgent(agents = []) {
-  const named = (Array.isArray(agents) ? agents : []).find((row) => text(row?.name) !== null);
+export function firstTeamAgent(agents = [], catalog = null) {
+  // backlog:f06d06f242d6: the example names an agent that can work — not
+  // paused, and run by an engine (a catalogue agent; with no catalogue
+  // read the screen cannot tell, as on the cards) — never one that waits.
+  const engines = Array.isArray(catalog)
+    ? new Set(catalog.map((entry) => entry?.agentSourceKey).filter((key) => typeof key === 'string'))
+    : null;
+  const named = (Array.isArray(agents) ? agents : []).find((row) => text(row?.name) !== null
+    && row?.status !== 'paused'
+    && (engines === null || engines.has(String(row?.sourceKey ?? ''))));
   return named ? String(named.name).trim() : '';
 }
+
+/** backlog:f06d06f242d6: the AI bar on Agenti when no agent of the team can work. */
+export const AGENT_MENTION_NEUTRAL = 'Scrivi @ e il nome di un agente, poi cosa deve fare';
 
 /**
  * The AI-bar placeholder for the Agenti screen names an agent of this team,
@@ -97,9 +108,9 @@ export function firstTeamAgent(agents = []) {
  * when the team has no named agent yet.
  * @param {Array<any>} agents
  */
-export function agentMentionPlaceholder(agents = []) {
-  const name = firstTeamAgent(agents);
-  if (name === '') return 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»';
+export function agentMentionPlaceholder(agents = [], catalog = null) {
+  const name = firstTeamAgent(agents, catalog);
+  if (name === '') return AGENT_MENTION_NEUTRAL;
   return `Scrivi: «@${name} …»`;
 }
 
@@ -685,6 +696,11 @@ export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Rip
 /** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
 export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
 
+/** «Pronto, in attesa…» → «pronto, in attesa…», for a line that continues a sentence. @param {string} value */
+function lowerFirst(value) {
+  return value === '' ? value : value.charAt(0).toLocaleLowerCase('it-IT') + value.slice(1);
+}
+
 /** @param {unknown} error */
 function isNameTaken(error) {
   return Boolean(error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_NAME_TAKEN');
@@ -970,7 +986,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.unavailable = data.unavailable;
     state.loaded = true;
     forgetSettledQueue();
-    tellTeam(firstTeamAgent(state.agents));
+    tellTeam(firstTeamAgent(state.agents, state.catalog));
   }
 
   async function reload() {
@@ -1402,12 +1418,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       control.setAttribute('id', id);
       rowEl.appendChild(label);
       rowEl.appendChild(control);
-      if (form.error !== '' && form.field === fieldKey) {
-        control.setAttribute('aria-invalid', 'true');
-        const error = el(documentNode, 'p', 'bo-seq-create-error bo-agent-field-error', form.error);
-        error.setAttribute('role', 'alert');
-        rowEl.appendChild(error);
-      }
+      if (form.error !== '' && form.field === fieldKey) showFieldError(rowEl, control, form.error);
       return rowEl;
     };
     const control = (tag, name, value, max, placeholder) => {
@@ -1439,14 +1450,15 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       panel.appendChild(note);
     }
     const saveRow = el(documentNode, 'div', 'bo-seq-btns');
-    const save = uiButton(documentNode, { variant: 'cta', small: true, label: form.busy ? 'Salvo…' : 'Salva', attrs: { type: 'button', 'data-action': 'save-agent-edit' } });
+    // backlog:f06d06f242d6: the same Salva/Annulla as «Nuovo agente» (size included).
+    const save = uiButton(documentNode, { variant: 'cta', label: form.busy ? 'Salvo…' : 'Salva', attrs: { type: 'button', 'data-action': 'save-agent-edit' } });
     save.disabled = form.busy;
     save.addEventListener('click', () => {
       const release = uiHold(save, 'Salvo…');
       void saveAgentEdit(card).finally(() => release());
     });
     saveRow.appendChild(save);
-    const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent-edit' } });
+    const cancel = uiButton(documentNode, { variant: 'secondary', label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent-edit' } });
     cancel.disabled = form.busy;
     cancel.addEventListener('click', () => {
       state.editing.delete(card.sourceKey);
@@ -1531,6 +1543,43 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     return item;
   }
 
+  /** Space kept between the top bar (or the window's bottom) and a refused field. */
+  const FIELD_SCROLL_GAP = 12;
+
+  /**
+   * backlog:f06d06f242d6: the error of one field, next to it and tied to it
+   * (aria-describedby and aria-errormessage name the error line, role=alert
+   * reads it). Updates in place: typing never repaints the panel.
+   * @param {any} row @param {any} control @param {string} message
+   */
+  function showFieldError(row, control, message) {
+    const id = `${control.getAttribute('id') ?? control.getAttribute('name')}-error`;
+    let error = row.childNodes ? [...row.childNodes].find((node) => node?.getAttribute?.('data-field-error') === 'true') ?? null : null;
+    if (!error) {
+      error = el(documentNode, 'p', 'bo-seq-create-error bo-agent-field-error', message);
+      error.setAttribute('role', 'alert');
+      error.setAttribute('data-field-error', 'true');
+      // Right under its control, before any hint.
+      const next = control.nextSibling ?? null;
+      if (next && typeof row.insertBefore === 'function') row.insertBefore(error, next);
+      else row.appendChild(error);
+    } else if (error.textContent !== message) {
+      error.textContent = message;
+    }
+    error.setAttribute('id', id);
+    control.setAttribute('aria-invalid', 'true');
+    control.setAttribute('aria-describedby', id);
+    control.setAttribute('aria-errormessage', id);
+  }
+  /** @param {any} row @param {any} control */
+  function clearFieldError(row, control) {
+    const error = row.childNodes ? [...row.childNodes].find((node) => node?.getAttribute?.('data-field-error') === 'true') ?? null : null;
+    if (error && typeof row.removeChild === 'function') row.removeChild(error);
+    control.removeAttribute?.('aria-invalid');
+    control.removeAttribute?.('aria-describedby');
+    control.removeAttribute?.('aria-errormessage');
+  }
+
   /** Focus the first match of `selector` in the mount, when the DOM can. @param {string} selector */
   function focusIn(selector) {
     if (!mount || typeof mount.querySelector !== 'function') return;
@@ -1550,12 +1599,20 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const root = scope && typeof scope.querySelector === 'function' ? scope : mount;
     const node = root.querySelector(`[name="${name}"]`);
     if (!node) return;
+    if (typeof node.focus === 'function') node.focus({ preventScroll: true });
+    // backlog:f06d06f242d6: field and error (their row) come into view below
+    // the sticky top bar, never under it — the bar's own height, measured,
+    // is the scroll margin (desktop and phone bars differ).
+    const row = typeof node.closest === 'function' ? node.closest('.ui-field-row') ?? node : node;
     try {
-      node.scrollIntoView?.({ block: 'nearest' });
+      const bar = typeof documentNode?.querySelector === 'function' ? documentNode.querySelector('.bo-topbar') : null;
+      const barHeight = bar && typeof bar.getBoundingClientRect === 'function' ? Number(bar.getBoundingClientRect().height) : 0;
+      const top = Math.ceil((Number.isFinite(barHeight) ? barHeight : 0) + FIELD_SCROLL_GAP);
+      row.setAttribute?.('style', `scroll-margin-top: ${top}px; scroll-margin-bottom: ${FIELD_SCROLL_GAP}px`);
+      row.scrollIntoView?.({ block: 'nearest' });
     } catch {
-      // A control that cannot scroll still takes focus below.
+      // A control that cannot scroll still has the focus.
     }
-    if (typeof node.focus === 'function') node.focus();
   }
 
   function openNewAgent() {
@@ -1605,15 +1662,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       row.appendChild(control);
       // Backlog 7d169a3b1dd2: the refusal sits next to its field —
       // role="alert" for the screen reader — and the control carries
-      // aria-invalid while it is the refused one.
-      if (form.error !== '' && form.field === fieldKey) {
-        control.setAttribute('aria-invalid', 'true');
-        const error = el(documentNode, 'p', 'bo-seq-create-error bo-agent-field-error', form.error);
-        error.setAttribute('role', 'alert');
-        row.appendChild(error);
-      } else {
-        control.removeAttribute?.('aria-invalid');
-      }
+      // aria-invalid while it is the refused one. backlog:f06d06f242d6:
+      // the error is tied to its field (aria-describedby, aria-errormessage).
+      if (form.error !== '' && form.field === fieldKey) showFieldError(row, control, form.error);
+      else control.removeAttribute?.('aria-invalid');
       if (hint !== null) row.appendChild(el(documentNode, 'p', 'bo-agent-new-hint', hint));
       return row;
     };
@@ -1630,8 +1682,26 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       return node;
     };
     const name = field('input', 'agent-name', form.name, NEW_AGENT_LIMITS.name, 'Es. Auguri');
-    name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
-    panel.appendChild(fieldRow('name', 'Nome', 'bo-agent-new-name', name, 'È il nome che scrivi dopo la @ per dargli un incarico.'));
+    const nameRow = fieldRow('name', 'Nome', 'bo-agent-new-name', name, 'È il nome che scrivi dopo la @ per dargli un incarico.');
+    // backlog:f06d06f242d6: a name already in the team shows at once, while
+    // typing — not after the other fields — and goes as soon as it changes.
+    const checkName = () => {
+      // An empty name is said at Crea, not while typing.
+      if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') return;
+      const checked = checkNewAgent({ name: form.name, role: 'x', instructions: 'x' }, state.agents);
+      if (checked.field === 'name') {
+        form.error = checked.error;
+        form.field = 'name';
+        showFieldError(nameRow, name, checked.error);
+      } else if (form.field === 'name') {
+        form.error = '';
+        form.field = null;
+        clearFieldError(nameRow, name);
+      }
+    };
+    name.addEventListener('input', () => { form.name = String(name.value ?? ''); checkName(); });
+    name.addEventListener('blur', checkName);
+    panel.appendChild(nameRow);
     const role = field('input', 'agent-role', form.role, NEW_AGENT_LIMITS.role, 'Es. Fa gli auguri ai clienti');
     role.addEventListener('input', () => { form.role = String(role.value ?? ''); });
     panel.appendChild(fieldRow('role', 'Di cosa si occupa', 'bo-agent-new-role', role));
@@ -1885,9 +1955,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.retiring.delete(card.sourceKey);
       state.notice = pause
         ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
-        : `${card.name} di nuovo attivo.`;
-      if (await reload()) paint();
-      else paint();
+        : `${card.name} riattivato.`;
+      const fresh = await reload();
+      // backlog:f06d06f242d6: the line uses the badge's own words — an agent
+      // with no engine is «Pronto, in attesa del motore», never «attivo».
+      if (!pause && fresh) {
+        const back = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso: now(), catalog: state.catalog })
+          .find((item) => item.sourceKey === card.sourceKey);
+        if (back) state.notice = `${card.name} riattivato: ${lowerFirst(back.statusLabel)}.`;
+      }
+      paint();
     } catch (error) {
       entry.busy = false;
       if (isDecisionUnavailable(error)) {
@@ -2110,6 +2187,39 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function paint() {
     if (!documentNode) return;
+    const kept = focusedField();
+    paintPage();
+    if (kept) restoreField(kept);
+  }
+
+  /**
+   * The form field that has the focus inside this view — by name, inside
+   * its own edit panel — with the caret, or null.
+   */
+  function focusedField() {
+    const active = documentNode?.activeElement ?? null;
+    if (!active || typeof active.getAttribute !== 'function' || typeof mount?.contains !== 'function' || !mount.contains(active)) return null;
+    const name = active.getAttribute('name');
+    if (!name) return null;
+    const panel = typeof active.closest === 'function' ? active.closest('[data-edit]') : null;
+    const scope = panel ? `[data-edit="${panel.getAttribute('data-edit')}"] ` : '';
+    return { selector: `${scope}[name="${name}"]`, start: active.selectionStart ?? null, end: active.selectionEnd ?? null };
+  }
+  /** @param {{ selector: string, start: number | null, end: number | null }} kept */
+  function restoreField(kept) {
+    if (typeof mount?.querySelector !== 'function') return;
+    const node = mount.querySelector(kept.selector);
+    if (!node || node === documentNode.activeElement || typeof node.focus !== 'function') return;
+    node.focus({ preventScroll: true });
+    if (Number.isInteger(kept.start) && Number.isInteger(kept.end) && typeof node.setSelectionRange === 'function') {
+      try { node.setSelectionRange(kept.start, kept.end); } catch { /* a field with no caret */ }
+    }
+  }
+
+  function paintPage() {
+    // backlog:f06d06f242d6: a repaint (the periodic read, a follow-up)
+    // rebuilds the page: the field being typed in keeps the cursor and its
+    // place in the text — opening «Nuovo agente» lands in Nome and stays.
     while (mount.firstChild) mount.removeChild(mount.firstChild);
     const page = el(documentNode, 'div', 'bo-seq bo-agenti');
     mount.appendChild(page);

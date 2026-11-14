@@ -12,6 +12,7 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
   AGENT_NAME_TAKEN_NOTE,
+  AGENT_NO_ENGINE_LABEL,
   AGENT_NO_ENGINE_NOTE,
   AGENT_PAUSED_DONE,
   AGENT_WAIT_ENGINE_DONE,
@@ -22,6 +23,11 @@ import {
   firstTeamAgent,
 } from '../apps/admin/public/admin-agenti.js';
 import { aiPlaceholder } from '../apps/admin/public/admin-shell.js';
+// Namespace import for the f06d06f242d6 names: on main the file still
+// loads, so each new test fails on its own assertion.
+import * as agentiModule from '../apps/admin/public/admin-agenti.js';
+
+const AGENT_MENTION_NEUTRAL = agentiModule.AGENT_MENTION_NEUTRAL ?? 'Scrivi @ e il nome di un agente, poi cosa deve fare';
 
 const NOW = '2026-11-13T10:00:00.000Z';
 const RIAGGANCIO = { id: 1, sourceKey: 'agent:presti:riaggancio', spaceId: 'presti', name: 'Riaggancio', role: 'Ricontatta i clienti', status: 'active' };
@@ -135,10 +141,20 @@ test('7d169a3b1dd2: il segnaposto della barra cita un agente del team', () => {
   assert.equal(firstTeamAgent([]), '');
   assert.equal(firstTeamAgent([RIAGGANCIO, MANO]), 'Riaggancio');
   assert.match(agentMentionPlaceholder([MANO]), /@Mano/);
-  assert.match(agentMentionPlaceholder([]), /@Riaggancio/, 'senza team, l’esempio del catalogo');
+  // backlog:f06d06f242d6: no agent that can work → a neutral line, never an @name that reaches nobody.
+  assert.equal(agentMentionPlaceholder([]), AGENT_MENTION_NEUTRAL, 'senza team, un testo neutro');
   assert.match(aiPlaceholder('agenti', 'Mano'), /@Mano/, 'la barra Agenti nomina il team');
-  assert.match(aiPlaceholder('agenti'), /@Riaggancio/, 'senza nome resta il segnaposto statico');
-  assert.doesNotMatch(aiPlaceholder('agenti'), /@Mano/);
+  assert.equal(aiPlaceholder('agenti'), AGENT_MENTION_NEUTRAL, 'senza nome, il testo neutro');
+  assert.doesNotMatch(aiPlaceholder('agenti'), /@\p{L}/u, 'nessun @nome');
+});
+
+test('f06d06f242d6: il segnaposto nomina solo un agente che può lavorare (attivo e con motore)', () => {
+  // Mano is hand-written: no engine in this space (the catalogue has only Riaggancio).
+  assert.equal(firstTeamAgent([MANO, RIAGGANCIO], CATALOG), 'Riaggancio', 'salta l’agente senza motore');
+  assert.equal(firstTeamAgent([MANO], CATALOG), '', 'solo agenti senza motore: nessun nome');
+  assert.equal(agentMentionPlaceholder([MANO], CATALOG), AGENT_MENTION_NEUTRAL, 'e la barra resta neutra');
+  assert.equal(firstTeamAgent([{ ...RIAGGANCIO, status: 'paused' }, MANO], CATALOG), '', 'un agente ritirato non lavora');
+  assert.match(agentMentionPlaceholder([MANO, RIAGGANCIO], CATALOG), /@Riaggancio/);
 });
 
 test('7d169a3b1dd2: la card di un agente scritto a mano porta id e custom; il catalogo no', () => {
@@ -339,4 +355,107 @@ test('7d169a3b1dd2: al rientro la lista è subito quella buona, poi si rilegge',
   await pending;
   await flush();
   assert.ok(mount.textContent.includes('Manona'), 'la rilettura sostituisce la cache');
+});
+
+// ---- backlog:f06d06f242d6 (verifica 14/11 05:49Z, pilota 1e10e62) ----------
+
+/** A fake document that, like the real one, knows where the focus is. */
+function focusingDocument() {
+  const doc = createFakeDocument();
+  const make = doc.createElement;
+  doc.activeElement = null;
+  doc.createElement = (tag) => {
+    const node = make(tag);
+    node.focus = (options) => { doc.activeElement = node; node.__focused = true; node.focusOptions = options ?? null; };
+    return node;
+  };
+  return doc;
+}
+
+async function focusedView(options) {
+  const doc = focusingDocument();
+  const mount = createMount();
+  const client = driveClient(options);
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer: () => null, clearTimer: () => {} });
+  await view.render();
+  await flush();
+  return { doc, mount, client, view };
+}
+
+test('f06d06f242d6: aprendo «Nuovo agente» il cursore è in Nome, e una rilettura non lo porta via', async () => {
+  const { doc, mount, view } = await focusedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  assert.equal(doc.activeElement, name, 'il cursore è nel campo Nome');
+  name.value = 'Aug';
+  name.dispatch('input', {});
+  name.selectionStart = 3;
+  name.selectionEnd = 3;
+  // The periodic read lands while the operator types: the page repaints.
+  view.paint();
+  const fresh = mount.querySelector('input[name="agent-name"]');
+  assert.notEqual(fresh, name, 'la pagina è ridisegnata');
+  assert.equal(fresh.value, 'Aug', 'quello che ha scritto resta');
+  assert.equal(doc.activeElement, fresh, 'e il cursore resta in Nome');
+});
+
+test('f06d06f242d6: un nome già nel team si vede subito, accanto al campo e legato a lui', async () => {
+  const { mount, client } = await focusedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  name.value = 'riaggancio';
+  name.dispatch('input', {});
+  // No other field filled, no Crea pressed.
+  const error = mount.findAll('p').find((node) => node.classList.contains('bo-agent-field-error'));
+  assert.ok(error, 'l’errore compare mentre scrive');
+  assert.equal(error.textContent, AGENT_NAME_TAKEN_NOTE);
+  assert.equal(error.parentNode, name.parentNode, 'accanto al campo');
+  const id = error.getAttribute('id');
+  assert.ok(id, 'l’errore ha un id');
+  assert.equal(name.getAttribute('aria-describedby'), id, 'il campo lo nomina (aria-describedby)');
+  assert.equal(name.getAttribute('aria-errormessage'), id, 'e come messaggio d’errore (aria-errormessage)');
+  assert.equal(name.getAttribute('aria-invalid'), 'true');
+  assert.equal(mount.querySelector('input[name="agent-name"]'), name, 'nessun ridisegno: il campo è lo stesso');
+  assert.equal(posts(client).length, 0, 'nessuna scrittura');
+  name.value = 'Riaggancio 2';
+  name.dispatch('input', {});
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).length, 0, 'cambiando nome l’errore va via');
+  assert.equal(name.getAttribute('aria-describedby'), null);
+  assert.equal(name.getAttribute('aria-invalid'), null);
+});
+
+test('f06d06f242d6: anche l’errore di Crea è legato al suo campo', async () => {
+  const { mount } = await focusedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  button(mount, 'create-agent').dispatch('click', {});
+  const name = mount.querySelector('input[name="agent-name"]');
+  const error = mount.findAll('p').find((node) => node.classList.contains('bo-agent-field-error'));
+  assert.match(error.textContent, /Dagli un nome/);
+  assert.equal(name.getAttribute('aria-describedby'), error.getAttribute('id'));
+  assert.equal(name.getAttribute('aria-errormessage'), error.getAttribute('id'));
+  assert.equal(name.focusOptions?.preventScroll, true, 'il fuoco non salta: lo scroll lo fa la riga, sotto la barra');
+});
+
+test('f06d06f242d6: in Modifica, Salva e Annulla sono gli stessi del form nuovo', async () => {
+  const { mount } = await focusedView();
+  button(mount, 'new-agent').dispatch('click', {});
+  const create = button(mount, 'create-agent');
+  const cancelNew = button(mount, 'cancel-agent');
+  const createClass = create.getAttribute('class');
+  const cancelNewClass = cancelNew.getAttribute('class');
+  cancelNew.dispatch('click', {});
+  button(mount, 'edit-agent').dispatch('click', {});
+  assert.equal(button(mount, 'save-agent-edit').getAttribute('class'), createClass, 'Salva come «Crea l’agente»');
+  assert.equal(button(mount, 'cancel-agent-edit').getAttribute('class'), cancelNewClass, 'Annulla come nel form nuovo');
+});
+
+test('f06d06f242d6: dopo Riattiva la riga usa le parole del badge', async () => {
+  const { mount } = await focusedView({ agents: [RIAGGANCIO, { ...MANO, status: 'paused' }] });
+  button(mount, 'retire-agent').dispatch('click', {});
+  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  await flush();
+  assert.ok(!mount.textContent.includes('di nuovo attivo'), 'mai «attivo» per un agente che aspetta il motore');
+  assert.ok(mount.textContent.includes(`Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`),
+    'la riga dice quello che dice il badge');
+  assert.ok(mount.textContent.includes(AGENT_NO_ENGINE_LABEL), 'e il badge lo conferma');
 });

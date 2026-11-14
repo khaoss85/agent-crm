@@ -3,7 +3,7 @@
 import { sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
-import { agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -101,7 +101,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   pipeline: 'Chiedi: «quanto posso chiudere questo mese?»',
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
-  agenti: 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»',
+  // backlog:f06d06f242d6: no agent of the team can work yet (or the team is
+  // still unknown): no example @name that would reach nobody.
+  agenti: AGENT_MENTION_NEUTRAL,
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
   'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
@@ -113,8 +115,8 @@ export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
  * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
- * agent of this team (so «@Nome» always reaches somebody), falling back
- * to the static example when the team is still unknown.
+ * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
+ * always reaches somebody; otherwise a neutral line.
  * @param {string} screenId
  * @param {string} [agentName]
  */
