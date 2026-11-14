@@ -1696,7 +1696,10 @@ export async function cancelAppointment(context, request) {
         throw error;
       }
       const fresh = await lookup();
-      return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: fresh.status === CANCELLED_STATE };
+      // The loser answers the winner's row (never a 409 on the operator's
+      // own intent) but reports cancelled:false: it wrote nothing, the
+      // winner's single write is the cancellation.
+      return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: false };
     }
   };
   const settled = [];

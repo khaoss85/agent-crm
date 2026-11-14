@@ -206,6 +206,7 @@ test('Nuovo appuntamento: Conferma books the Calendario claim for the chosen cus
     startsAt: '2026-11-12T09:00:00.000Z',
     endsAt: '2026-11-12T09:30:00.000Z',
     notes: null,
+    recurrence: null,
     sourceKey: 'calendario:google|sara:2026-11-12T09:00:00.000Z:c1',
     source: { package: 'host', action: 'calendar-book' },
     confirmed: true,
