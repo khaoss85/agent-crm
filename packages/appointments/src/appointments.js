@@ -1572,11 +1572,22 @@ export async function rescheduleAppointment(context, request) {
   // the moved row is already committed and the caller would observe a
   // failure for a move that happened — so it is answered as data. Only the
   // provider's code is surfaced, never its text.
+  // A series converges through its head: the head carries the Google RRULE,
+  // so the push names the head's key — never a later occurrence, which would
+  // leave no link on Google and be exported as a new standalone single event
+  // duplicating the series. When the head moved its push carries the new
+  // slot; when it did not move the push is a noop.
+  let pushKey = appointment.sourceKey;
+  if (first.seriesKey) {
+    const siblings = await appointments.listWhere({ seriesKey: first.seriesKey });
+    const head = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
+    if (head) pushKey = head.sourceKey;
+  }
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
     try {
-      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
+      push = await calendarPush(calendarId, pushKey, { spaceId, actor: who });
     } catch (error) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code
@@ -1702,6 +1713,24 @@ export async function cancelAppointment(context, request) {
       return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: false };
     }
   };
+  // A scoped cancellation proves every in-scope row cancellable before the
+  // first write — exactly like the reschedule path: a terminal row in scope
+  // refuses the whole scope with 409 instead of leaving a half-cancelled
+  // series behind. The race handler inside advanceOne stays for rows that
+  // turn terminal between this read and their write.
+  for (const target of targets) {
+    if (target.status === CANCELLED_STATE) continue;
+    if (APPOINTMENT_TERMINAL.includes(target.status)) {
+      throw new AppError(
+        `An appointment in state "${target.status}" cannot be cancelled; it is terminal and keeps its history`,
+        {
+          code: 'APPOINTMENTS_INVALID_STATE',
+          status: 409,
+          details: { from: target.status, to: CANCELLED_STATE, occurrenceStartsAt: target.startsAt },
+        },
+      );
+    }
+  }
   const settled = [];
   for (const target of targets) settled.push(await advanceOne(target));
   const namedEntry = settled.find((entry) => entry.row.id === first.id) ?? settled[0];
@@ -2149,6 +2178,7 @@ function publicDraft(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    recurrence: input.recurrence,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
@@ -2188,6 +2218,7 @@ function proposalActionKey(input) {
     input.startsAt, input.endsAt, input.notes,
     input.remindAt, input.reminderChannel,
     input.source.package, input.source.action,
+    JSON.stringify(input.recurrence),
   ]);
   const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
   return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
@@ -2344,24 +2375,36 @@ export async function confirmBooking(context, request) {
   const booked = await bookAppointment(context, request);
   const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
   const appointments = flowAppointments(context, names);
-  let appointment = booked.appointment;
-  if (appointment && appointment.status === 'booked') {
+  // A series confirms every occurrence, never only its head: Conferma on a
+  // rule books N booked rows, and all N become confirmed — a mixed series
+  // would show half-booked in the grid and confuse the scoped paths.
+  const bookedRows = Array.isArray(booked.occurrences) && booked.occurrences.length > 0
+    ? booked.occurrences
+    : [booked.appointment];
+  const confirmedRows = [];
+  for (const row of bookedRows) {
+    if (!row || row.status !== 'booked') {
+      confirmedRows.push(row);
+      continue;
+    }
     try {
-      appointment = await advanceAppointment(
+      confirmedRows.push(await advanceAppointment(
         { appointments, actor, now: context?.now },
-        appointment,
+        row,
         'confirmed',
-      );
+      ));
     } catch (error) {
       // A concurrent confirm of the same source key may have advanced the
       // row between the booking replay and this advance: re-read, and only a
       // row that is still not confirmed keeps the refusal.
       if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
-      const fresh = await readAppointment({ appointments }, appointment.id);
+      const fresh = await readAppointment({ appointments }, row.id);
       if (!fresh || fresh.status !== 'confirmed') throw error;
-      appointment = fresh;
+      confirmedRows.push(fresh);
     }
   }
+  const appointment = confirmedRows.find((row) => row && booked.appointment && row.id === booked.appointment.id)
+    ?? confirmedRows[0] ?? booked.appointment;
   // The calendar edge was validated above, before any row existed: the
   // push rides the idempotent path. A runtime push failure must not throw —
   // the confirmed row is already committed and the caller would observe a
@@ -2383,6 +2426,7 @@ export async function confirmBooking(context, request) {
   return Object.freeze({
     decision: 'booked',
     appointment,
+    occurrences: Object.freeze(confirmedRows),
     reminder: booked.reminder ?? null,
     push,
     pushError,

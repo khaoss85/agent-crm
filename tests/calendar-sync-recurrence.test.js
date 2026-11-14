@@ -57,6 +57,21 @@ test('la riga segue la regola: giorni feriali e fine in una data', () => {
   );
 });
 
+test('mensile personalizzato: BYDAY del giorno della settimana, come la griglia', () => {
+  // Martedì 17 novembre 2026 è il 3° martedì: la griglia locale apre i 3°
+  // martedì (nth-weekday), quindi la riga spinta deve portare BYDAY=3TU —
+  // una MONTHLY nuda ripeterebbe il giorno del mese su Google.
+  assert.deepEqual(
+    seriesRecurrence({
+      ...HEAD,
+      recurrenceRule: JSON.stringify({
+        kind: 'custom', unit: 'month', interval: 2, days: null, count: 4, until: null,
+      }),
+    }),
+    ['RRULE:FREQ=MONTHLY;INTERVAL=2;BYDAY=3TU;COUNT=4'],
+  );
+});
+
 test('il finto Google tiene la ricorrenza sulla riga come il vero', async () => {
   const calendar = createFakeGoogleCalendar();
   const created = await calendar.insertEvent({

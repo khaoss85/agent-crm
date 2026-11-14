@@ -232,7 +232,7 @@ export function seriesRecurrence(row) {
       ? [...rule.days].sort((a, b) => a - b)
       : null;
   if (freq === 'WEEKLY' && days !== null) parts.push(`BYDAY=${days.map((day) => SERIES_ISO_BYDAY[day]).join(',')}`);
-  if (freq === 'MONTHLY' && rule.kind === 'monthly') {
+  if (freq === 'MONTHLY' && (rule.kind === 'monthly' || (rule.kind === 'custom' && rule.unit === 'month'))) {
     try {
       const seen = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit' })
         .format(new Date(row.startsAt));

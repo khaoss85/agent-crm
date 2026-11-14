@@ -19,6 +19,8 @@ import {
 import {
   bookAppointment,
   cancelAppointment,
+  confirmBooking,
+  proposeBooking,
   rescheduleAppointment,
   validateAppointmentRequest,
 } from '../packages/appointments/src/appointments.js';
@@ -259,4 +261,124 @@ test('la richiesta di prenotazione porta la ricorrenza alla proposta: un conflit
   const input = validateAppointmentRequest(booking({ recurrence: { kind: 'weekly', count: 2 } }));
   assert.deepEqual(input.recurrence, { kind: 'weekly', unit: 'week', interval: 1, days: null, count: 2, until: null });
   assert.equal(validateAppointmentRequest(booking()).recurrence, null);
+});
+
+/** Il gate dei permessi per i percorsi di proposta e conferma. */
+const allowGate = (seen = null) => ({
+  async gate() { return { decision: 'allow' }; },
+  async propose(input) {
+    if (seen) seen.push(input);
+    return { proposalId: `p-${(seen ?? []).length + 1}`, replayed: false };
+  },
+});
+
+test('Conferma di una serie conferma tutte le occorrenze, non solo la testa', async () => {
+  const service = fakeAppointments();
+  const context = { ...contextFor(service), permissionGate: allowGate() };
+  const result = await confirmBooking(context, {
+    ...booking({ recurrence: { kind: 'weekly', count: 3 } }),
+    spaceId: 'spazio-1',
+    confirmed: true,
+  });
+  assert.equal(result.decision, 'booked');
+  assert.equal(result.occurrences.length, 3);
+  assert.ok(result.occurrences.every((row) => row.status === 'confirmed'), 'ogni occorrenza è confermata');
+  assert.deepEqual(service.rows.map((row) => row.status), ['confirmed', 'confirmed', 'confirmed']);
+});
+
+test('singolo e serie sulla stessa testa hanno identità e bozze diverse', async () => {
+  const service = fakeAppointments();
+  const seen = [];
+  const agent = {
+    ...contextFor(service),
+    actor: { type: 'agent', id: 'agent-1' },
+    permissionGate: { async gate() { return { decision: 'deny' }; }, async propose(input) { seen.push(input); return { proposalId: `p-${seen.length}`, replayed: false }; } },
+  };
+  const base = { ...booking(), spaceId: 'spazio-1' };
+  await proposeBooking(agent, base);
+  await proposeBooking(agent, { ...base, recurrence: { kind: 'weekly', count: 4 } });
+  assert.equal(seen.length, 2);
+  assert.notEqual(seen[0].actionKey, seen[1].actionKey, 'la ricorrenza cambia la chiave della proposta');
+  // La bozza umana porta la ricorrenza: la conferma sa cosa sta per creare.
+  const human = { ...contextFor(service), permissionGate: allowGate() };
+  const draftSingle = await proposeBooking(human, base);
+  const draftSeries = await proposeBooking(human, { ...base, recurrence: { kind: 'weekly', count: 4 } });
+  assert.equal(draftSingle.decision, 'confirm-required');
+  assert.equal(draftSingle.draft.recurrence, null);
+  assert.deepEqual(draftSeries.draft.recurrence, { kind: 'weekly', unit: 'week', interval: 1, days: null, count: 4, until: null });
+});
+
+test('mensile personalizzato: griglia ed RRULE dicono lo stesso giorno', () => {
+  // Martedì 17 novembre 2026 è il 3° martedì: la griglia apre i 3° martedì,
+  // quindi la riga RRULE deve portare BYDAY=3TU ogni due mesi.
+  const rule = { kind: 'custom', unit: 'month', interval: 2, count: 4 };
+  assert.equal(
+    recurrenceToRRule(rule, '2026-11-17T16:00:00.000Z'),
+    'RRULE:FREQ=MONTHLY;INTERVAL=2;BYDAY=3TU;COUNT=4',
+  );
+  const slots = expandRecurrence({
+    startsAtMs: Date.parse('2026-11-17T16:00:00.000Z'),
+    endsAtMs: Date.parse('2026-11-17T17:00:00.000Z'),
+    recurrence: rule,
+  });
+  assert.deepEqual(slots.map((slot) => slot.startsAt.slice(0, 10)), [
+    '2026-11-17', '2027-01-19', '2027-03-16', '2027-05-18',
+  ]);
+});
+
+test('annullare con una riga terminale nello scope rifiuta tutto senza scrivere niente', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  // Una visita già avvenuta: stato terminale dentro lo scope «tutti».
+  await service.applyManaged(booked.occurrences[1].id, { status: 'done' });
+  await assert.rejects(
+    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', reason: 'serie finita' }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_INVALID_STATE');
+      assert.equal(error.status, 409);
+      return true;
+    },
+  );
+  assert.deepEqual(
+    service.rows.map((row) => row.status),
+    ['booked', 'done', 'booked'],
+    'nessuna cancellazione parziale: il rifiuto arriva prima della prima scrittura',
+  );
+});
+
+test('spostare una serie con calendario spinge la chiave della testa, mai una occorrenza sola', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(sourceKey);
+      return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const headKey = booked.occurrences[0].sourceKey;
+  // «Questo e i successivi» dalla seconda: la testa si muove, la push la nomina.
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-25T16:00:00.000Z',
+    endsAt: '2026-11-25T17:00:00.000Z',
+    scope: 'following',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.deepEqual(pushes, [headKey]);
+  // «Solo questo» su una occorrenza non testa: la push nomina comunque la
+  // testa, mai la riga sola (che su Google diventerebbe un evento doppio).
+  pushes.length = 0;
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.deepEqual(pushes, [headKey]);
 });

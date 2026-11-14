@@ -352,7 +352,7 @@ export function recurrenceToRRule(rule, startsAtIso = null) {
         : valid.days;
     if (days !== null) parts.push(`BYDAY=${days.map((d) => ISO_TO_BYDAY[d]).join(',')}`);
   }
-  if (freq === 'MONTHLY' && valid.kind === 'monthly' && Number.isFinite(startMs)) {
+  if (freq === 'MONTHLY' && (valid.kind === 'monthly' || (valid.kind === 'custom' && valid.unit === 'month')) && Number.isFinite(startMs)) {
     const seen = romeParts(startMs);
     if (seen !== null) {
       const nth = nthOfMonth(seen.date, seen.weekday, new Date(Date.UTC(seen.year, seen.month - 1, 1)).getUTCDay());
