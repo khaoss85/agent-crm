@@ -1413,14 +1413,15 @@ async function readModulePage(client, module, filters = {}) {
 /**
  * Connections of one space, for the channel invite (backlog:803d127c4458).
  * The read carries `filter.spaceId`, so an active connection in space A
- * never hides the invite to connect the channel in space B. One row past
- * the page, like the Agenti read (review #661 P3): `capped` carries the
- * evidence that something was left out, so exactly OGGI_READ_LIMIT rows
- * is not capped.
- * Rows stored before spaces existed carry no spaceId and the server can
- * only match equality, so a second unfiltered page is read and only the
- * rows without spaceId are kept: they count for the active space, like on
- * main. Other spaces' rows from that page are dropped, never rendered.
+ * never hides the invite to connect the channel in space B, and no row of
+ * another space ever reaches the browser (review giro 10, P1 :1438: the
+ * second unfiltered channel-connection page is gone, so there is no
+ * client-side drop of other spaces' rows). One row past the page, like the
+ * Agenti read (review #661 P3): `capped` carries the evidence that
+ * something was left out, so exactly OGGI_READ_LIMIT rows is not capped.
+ * Rows stored before spaces existed carry no spaceId and the server only
+ * matches equality: they are NOT read here (no unfiltered page), they stay
+ * a server-side follow-up; the scoped page alone decides `capped`.
  * @param {{ request: (path: string) => Promise<any> }} client
  * @param {string} space
  * @returns {Promise<{ rows: Array<any>, capped: boolean }>}
@@ -1430,27 +1431,9 @@ async function readSpaceConnections(client, space) {
   scopedQuery.set('filter.spaceId', space);
   const scopedAnswer = await client.request(`/api/modules/channel-connection/records?${scopedQuery.toString()}`);
   const scopedItems = Array.isArray(scopedAnswer?.items) ? scopedAnswer.items : [];
-  let legacyItems = [];
-  let legacyPageFull = false;
-  let legacyFailed = false;
-  try {
-    const legacyQuery = new URLSearchParams({ limit: String(OGGI_READ_LIMIT + 1) });
-    const legacyAnswer = await client.request(`/api/modules/channel-connection/records?${legacyQuery.toString()}`);
-    const legacyPage = Array.isArray(legacyAnswer?.items) ? legacyAnswer.items : [];
-    legacyPageFull = legacyPage.length > OGGI_READ_LIMIT;
-    legacyItems = legacyPage.filter((row) => row != null
-      && (row.spaceId === undefined || row.spaceId === null || String(row.spaceId).trim() === ''));
-  } catch (error) {
-    // A refused legacy page never hides the scoped rows, but the strip may
-    // undercount old connections: the failure marks the read partial, so the
-    // partial note discloses it, and the cause is named on the console.
-    legacyFailed = true;
-    noteReadFailure('channel-connection-legacy', error);
-  }
-  const merged = [...scopedItems, ...legacyItems];
   return {
-    rows: merged.slice(0, OGGI_READ_LIMIT),
-    capped: scopedItems.length > OGGI_READ_LIMIT || legacyPageFull || merged.length > OGGI_READ_LIMIT || legacyFailed,
+    rows: scopedItems.slice(0, OGGI_READ_LIMIT),
+    capped: scopedItems.length > OGGI_READ_LIMIT,
   };
 }
 

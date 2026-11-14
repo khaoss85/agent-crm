@@ -1088,11 +1088,9 @@ test('Oggi view scopes the connections read to the live space (backlog:803d127c4
   assert.ok(mount.textContent.includes('Collega WhatsApp'), "space A's WhatsApp still invites in space B");
 });
 
-test('Oggi counts legacy connections without spaceId in the active space (backlog:803d127c4458)', async () => {
-  const rows = [
-    { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' },
-    { channel: 'email', status: 'active' },
-  ];
+test('Oggi never reads channel-connection without the space filter (backlog:803d127c4458)', async () => {
+  const legacy = { channel: 'email', status: 'active' };
+  const other = { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' };
   const seen = [];
   const data = await loadOggiData({
     request: async (path, options = {}) => {
@@ -1101,60 +1099,19 @@ test('Oggi counts legacy connections without spaceId in the active space (backlo
       if (path === '/api/schema') return { domains: { channels: {} } };
       if (path === '/api/profile') return null;
       if (path.startsWith('/api/modules/channel-connection/records')) {
-        if (path.includes('filter.spaceId=')) {
-          return { items: rows.filter((row) => path.includes(`filter.spaceId=${row.spaceId}`)) };
-        }
-        return { items: rows };
+        if (!path.includes('filter.spaceId=spazio-b')) return { items: [legacy, other] };
+        return { items: [] };
       }
       throw new Error(`unexpected read: ${path}`);
     },
   }, OGGI_NOW, { spaceId: 'spazio-b' });
-  assert.equal(
-    seen.filter((path) => path.startsWith('/api/modules/channel-connection/records')).length,
-    2,
-    'the scoped read plus the legacy page',
+  const connectionReads = seen.filter((path) => path.startsWith('/api/modules/channel-connection/records'));
+  assert.ok(connectionReads.length > 0, 'Oggi reads the connections');
+  assert.ok(
+    connectionReads.every((path) => path.includes('filter.spaceId=spazio-b')),
+    'no request without spaceId leaves Oggi, even with legacy rows on the server',
   );
-  assert.equal(data.channelsAvailable, true, 'the scoped read counts as available');
-  assert.equal(data.channelsPartial, false, 'two rows are no cap');
-  const missing = missingLeadChannels(data.connections, data.profile);
-  assert.ok(!missing.some((entry) => entry.channel === 'email'), 'a legacy Email row counts, like on main');
-  assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), "space A's WhatsApp still invites in space B");
-});
-
-test('Oggi keeps only the legacy row from the unfiltered page in the outcome (backlog:803d127c4458)', async () => {
-  const legacy = { channel: 'email', status: 'active' };
-  const other = { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' };
-  const data = await loadOggiData({
-    request: async (path, options = {}) => {
-      enforceAdminWriteGate(path, options);
-      if (path === '/api/schema') return { domains: { channels: {} } };
-      if (path === '/api/profile') return null;
-      if (path.startsWith('/api/modules/channel-connection/records')) {
-        if (path.includes('filter.spaceId=')) return { items: [] };
-        return { items: [legacy, other] };
-      }
-      throw new Error(`unexpected read: ${path}`);
-    },
-  }, OGGI_NOW, { spaceId: 'spazio-b' });
-  assert.deepEqual(data.connections, [legacy], 'the other space row never enters this space outcome');
-  assert.equal(data.channelsPartial, false, 'two rows are no cap');
-});
-
-test('Oggi marks channels partial when the legacy page is refused (backlog:803d127c4458)', async () => {
-  const data = await loadOggiData({
-    request: async (path, options = {}) => {
-      enforceAdminWriteGate(path, options);
-      if (path === '/api/schema') return { domains: { channels: {} } };
-      if (path === '/api/profile') return null;
-      if (path.startsWith('/api/modules/channel-connection/records')) {
-        if (path.includes('filter.spaceId=')) return { items: [{ channel: 'email', status: 'active', spaceId: 'spazio-b' }] };
-        throw Object.assign(new Error('legacy refused'), { status: 403 });
-      }
-      throw new Error(`unexpected read: ${path}`);
-    },
-  }, OGGI_NOW, { spaceId: 'spazio-b' });
-  assert.equal(data.channelsPartial, true, 'a refused legacy page is partial, never a silent undercount');
-  assert.equal(data.connections.length, 1, 'the scoped rows still show');
+  assert.deepEqual(data.connections, [], 'the scoped read decides alone, no legacy merge');
 });
 
 test('Oggi with unreadable channels still links Connettori (backlog:803d127c4458)', () => {
