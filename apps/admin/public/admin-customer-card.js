@@ -4790,14 +4790,16 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    // Voce 59def6cb805d (C26): the prototype card — a title, then
-    // `<giorno> · <orari>`. The title is the booked service (its listino key
-    // made readable) with the team member when the handle reads as a name;
-    // the row names the long Rome day. No place and no Google sync line:
-    // the booking records neither, so none is written.
+    // Voce 59def6cb805d (C26, backlog:c51dca86dc66): the prototype card — a
+    // title, then `<giorno> · <orari>`. The title names the same contact
+    // Oggi names for this appointment — the booked service (its listino key
+    // made readable) with the contact's name — so the booking reads as one
+    // person in both places; without a readable contact name it falls back
+    // to the service alone. The row names the long Rome day. No place and
+    // no Google sync line: the booking records neither, so none is written.
+    const contact = typeof customerName === 'string' && customerName.trim() !== '' ? customerName.trim() : null;
     const service = serviceTitle(next?.serviceKey, serviceNames);
-    const member = teamName(next?.teamMemberId);
-    box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
+    box.appendChild(el('p', 'bo-scheda-appt-title', contact ? `${service} · con ${contact}` : service));
     const day = dayParts(next?.startsAt);
     const startTime = timeParts(next?.startsAt);
     const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;
@@ -4807,7 +4809,8 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-appt', when));
   }
 
-  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
+  // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
     if (timelineError) {
@@ -5057,7 +5060,8 @@ export function createCustomerCardView(deps) {
   }
 
   /** The Appuntamenti vista body: the next booking that can still happen. */
-  function appointmentVistaBody(box, timeline, timelineError = null) {
+  // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // vista too, instead of vanishing as "none booked".
     if (timelineError) {
@@ -5069,7 +5073,12 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
       return;
     }
-    appointmentBody(box, upcoming[0]);
+    // backlog:26afd13657c5: the listino names the service here too — like
+    // the cronologia «Appuntamento fissato» row and «Prossimo appuntamento»,
+    // never slug words once the listino has landed. The row paints at once
+    // (slug words while the listino loads) and the listino repaint upgrades
+    // it. backlog:c51dca86dc66: with a contact name the title matches Oggi.
+    appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
       box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
     }
@@ -5096,7 +5105,9 @@ export function createCustomerCardView(deps) {
     const painters = {
       chiamate: (target) => callVistaBody(target, calls, callsError, timeline),
       messaggi: (target) => messageVistaBody(target, timeline, timelineError),
-      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError),
+      // backlog:26afd13657c5: the listino names the service under the vista title.
+      // backlog:c51dca86dc66: the contact's name, so the title matches Oggi.
+      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError, serviceNames, name),
     };
     const order = [['chiamate', 'Chiamate'], ['messaggi', 'Messaggi'], ['appuntamenti', 'Appuntamenti']];
     let current = 'chiamate';
@@ -6061,7 +6072,8 @@ export function createCustomerCardView(deps) {
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
-    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames);
+    // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

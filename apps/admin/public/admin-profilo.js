@@ -312,7 +312,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, onN
     // button keeps its text measure beside the name instead of stretching
     // like an empty field between the name and the email.
     const nameRow = el(doc, 'div', 'bo-profilo-name-row');
-    nameRow.appendChild(el(doc, 'h2', 'bo-profilo-name', shown));
+    // backlog:c51dca86dc66: the person's name is the page's h1 — every
+    // screen names its subject once, at the top level.
+    nameRow.appendChild(el(doc, 'h1', 'bo-profilo-name', shown));
     if (!editing) {
       const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
         attrs: { type: 'button', 'data-action': 'modifica-nome' } });

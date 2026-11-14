@@ -5184,12 +5184,12 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
-test('59def6cb805d: the next appointment reads title then day and hours (C26)', async () => {
+test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'service made readable, member by name');
+  assert.equal(title.textContent, 'Pt single · con Guido Presti', 'the service with the contact name Oggi shows for this appointment');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');

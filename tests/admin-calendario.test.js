@@ -59,7 +59,8 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  *
  * DOM tests pin `now` to Friday 2026-10-23 06:00Z: the painted week is the
  * Oct 19–25 fixture week, and 08:00 Rome stays outside the painted hours so
- * no now-line appears (backlog:df55cf25: Sunday no longer opens this week).
+ * no now-line appears (backlog:c51dca86dc66: the opening week holds today
+ * even on the weekend, so Sunday opens this same week).
  */
 
 const WEEK = {
@@ -246,22 +247,40 @@ test('week keys are Monday..Sunday in Rome and the window covers the week', () =
   assert.match(weekLabel(keys) ?? '', /ott/);
 });
 
-// backlog:df55cf25 — on Sunday 2026-11-01 the calendar opened the past
-// work week (Oct 26–30). The opening week is the containing one on work
-// days and the following one on Saturday/Sunday.
-test('opening week is the next one on Saturday and Sunday', () => {
-  // Sunday 2026-11-01 (Rome): the coming Mon..Sun opens, not Oct 26 – Nov 1.
+// backlog:c51dca86dc66 (was df55cf25) — on Sunday 2026-11-01 the calendar
+// used to open the coming week (Nov 2–8). The opening week is the
+// containing one every day, and the painted columns show the current day
+// even on the weekend, so today never vanishes from its own week.
+test('opening week is the containing one on Saturday and Sunday too', () => {
+  // Sunday 2026-11-01 (Rome): Oct 26 – Nov 1 opens, holding today.
   assert.deepEqual(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), [
-    '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05',
-    '2026-11-06', '2026-11-07', '2026-11-08',
+    '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29',
+    '2026-10-30', '2026-10-31', '2026-11-01',
   ]);
-  // The painted work days are the coming ones, never the past ones.
+  // The painted days are the work days plus today (Sunday).
   assert.deepEqual(
-    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z'))),
-    ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'],
+    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), new Date('2026-11-01T10:00:00Z')),
+    ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-11-01'],
   );
-  // Saturday 2026-10-31 (Rome): same — the Oct 26–30 work days are over.
-  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-11-02');
+  // Saturday 2026-10-31 (Rome): same — the week holds today, not the next one.
+  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-10-26');
+  assert.deepEqual(
+    displayKeys(openingWeekKeys(new Date('2026-10-31T10:00:00Z')), new Date('2026-10-31T10:00:00Z'))[5],
+    '2026-10-31',
+  );
+});
+
+test('backlog:c51dca86dc66: displayKeys paints Mon..Fri, plus today on the weekend only', () => {
+  const week = ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  // A Wednesday paints the five work days, no weekend.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-28T10:00:00Z')), week.slice(0, 5));
+  // Saturday paints Mon..Fri plus Saturday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-31T10:00:00Z')), [...week.slice(0, 5), '2026-10-31']);
+  // Sunday paints Mon..Fri plus Sunday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-01T10:00:00Z')), [...week.slice(0, 5), '2026-11-01']);
+  // Today outside the loaded week adds nothing.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-04T10:00:00Z')), week.slice(0, 5));
+  assert.deepEqual(displayKeys(null, new Date('2026-11-01T10:00:00Z')), []);
 });
 
 test('opening week is the containing one on work days', () => {
@@ -1279,7 +1298,8 @@ test('the calendario view renders no raw control', async () => {
 // Mon..Fri work week against an 09:00–18:00 hour axis.
 test('the time grid shows five work days against the 09:00–18:00 axis', async () => {
   assert.deepEqual(
-    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']),
+    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25'],
+      new Date('2026-10-21T10:00:00Z')),
     ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23'],
   );
   assert.equal(dayHead('2026-10-19'), 'lun 19');

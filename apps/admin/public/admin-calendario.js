@@ -128,22 +128,15 @@ export function eventPopoverPlacement(input) {
 }
 
 /**
- * The week the calendar opens on (backlog:df55cf25): the Rome Mon..Sun week
- * containing `now`, except on Saturday/Sunday — when the painted Mon..Fri
- * work days would already be over — when the following Mon..Sun opens
- * instead, so the grid shows the coming days, never the past ones. Pure and
- * DOM-free so it is unit-tested without a browser.
+ * The week the calendar opens on (backlog:c51dca86dc66, was df55cf25): the
+ * Rome Mon..Sun week containing `now`, Saturday and Sunday included — the
+ * painted week shows the current day even on the weekend, never the coming
+ * days while today still holds bookings. Pure and DOM-free so it is
+ * unit-tested without a browser.
  */
 export function openingWeekKeys(now = new Date()) {
   const instant = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  const todayKey = romeDayKey(instant);
-  if (!todayKey) return romeWeekKeys(instant);
-  // Noon UTC of the Rome day is afternoon in Rome on the same calendar
-  // day, so its UTC weekday is the Rome weekday — no DST arithmetic.
-  const dayIndex = (new Date(`${todayKey}T12:00:00Z`).getUTCDay() + 6) % 7;
-  if (dayIndex < 5) return romeWeekKeys(instant);
-  const monday = new Date(Date.parse(`${todayKey}T12:00:00Z`) + (7 - dayIndex) * 24 * 3600 * 1000);
-  return romeWeekKeys(monday);
+  return romeWeekKeys(instant);
 }
 
 /** Rome week (Monday..Sunday) containing `now`, as YYYY-MM-DD keys. */
@@ -229,14 +222,21 @@ export function weekLabel(weekKeys) {
 }
 
 /**
- * BO-F6-11 fetta 4 (specs/calendario.md C13): the prototype shows a work
- * week — Monday..Friday against an 09:00–18:00 hour axis. The loaded week
- * stays Monday..Sunday (the pager and the window do not move); only the
- * painted columns are the first five keys.
+ * BO-F6-11 fetta 4 (specs/calendario.md C13, backlog:c51dca86dc66): the
+ * prototype shows a work week — Monday..Friday against an 09:00–18:00 hour
+ * axis — plus the current Rome day when it falls on the weekend, so the
+ * grid shows today even on Saturday and Sunday. The loaded week stays
+ * Monday..Sunday (the pager and the window do not move); only the painted
+ * columns are the first five keys and, on the weekend, today's key.
  * @param {Array<string>} weekKeys
+ * @param {Date} [now]
  */
-export function displayKeys(weekKeys) {
-  return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
+export function displayKeys(weekKeys, now = new Date()) {
+  if (!Array.isArray(weekKeys)) return [];
+  const painted = weekKeys.slice(0, 5);
+  const todayKey = romeDayKey(now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date());
+  if (todayKey !== null && !painted.includes(todayKey) && weekKeys.includes(todayKey)) painted.push(todayKey);
+  return painted;
 }
 
 /**
@@ -2240,11 +2240,11 @@ export function createCalendarioView(deps) {
     // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
     // eyebrow and title never carry data. The lede stays because the
     // bo:shots probe reads the pinned week from it (`.cal-wrap .lede`).
-    // Fetta 4: the label names the painted work week (Mon..Fri), not the
-    // loaded seven days.
+    // Fetta 4 (backlog:c51dca86dc66): the label names the painted work week
+    // (Mon..Fri, plus today on the weekend), not the loaded seven days.
     titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
     titleBox.appendChild(el(doc, 'h2', { className: 'cal-page-title', text: 'Agenda del team' }));
-    const label = weekLabel(displayKeys(state.weekKeys));
+    const label = weekLabel(displayKeys(state.weekKeys, clock()));
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
     const nav = el(doc, 'div', { className: 'actions' });
@@ -2329,7 +2329,7 @@ export function createCalendarioView(deps) {
         if (day !== null) held.add(day);
       }
     }
-    const painted = [...displayKeys(state.weekKeys)];
+    const painted = [...displayKeys(state.weekKeys, clock())];
     for (const key of state.weekKeys ?? []) {
       if (!painted.includes(key) && held.has(key)) painted.push(key);
     }
