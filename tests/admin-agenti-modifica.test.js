@@ -460,6 +460,27 @@ test('f06d06f242d6: dopo Riattiva la riga usa le parole del badge', async () => 
   assert.ok(mount.textContent.includes(AGENT_NO_ENGINE_LABEL), 'e il badge lo conferma');
 });
 
+test('92829060f8ff: dopo Riattiva le parole del badge restano anche se la rilettura non conferma', async () => {
+  // La scrittura riesce ma gli agenti non si rileggono: la riga dice
+  // comunque quello che dirà il badge, dalla card che già c’è.
+  const { mount, client } = await paintedView({ agents: [RIAGGANCIO, { ...MANO, status: 'paused' }] });
+  const real = client.request.bind(client);
+  client.request = (path, options = {}) => {
+    if (String(path).startsWith('/api/modules/teammate-agent/records?')) {
+      throw Object.assign(new Error('unreadable'), { status: 500 });
+    }
+    return real(path, options);
+  };
+  button(mount, 'retire-agent').dispatch('click', {});
+  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  await flush();
+  const expected = `Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`;
+  assert.ok(mount.textContent.includes(expected), 'la riga dice quello che dice il badge');
+  const note = mount.querySelector('.bo-agent-done');
+  assert.ok(note, 'la nota resta in pagina');
+  assert.equal(note.getAttribute('role'), 'status', 'è un avviso');
+});
+
 // ---- Review Muse #895, giro 1 ------------------------------------------------
 
 test('review #895: scrivere il nome tocca solo l’errore del nome — quello del ruolo resta', async () => {

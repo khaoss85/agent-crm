@@ -1650,6 +1650,28 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
   }
 
+  /**
+   * Backlog 92829060f8ff: after a team write (Nuovo agente, Ritira/Riattiva)
+   * the new line lands at the top of the page, far from the box the
+   * operator acted on — on a narrow screen (500 px) it is out of view and
+   * reads as lost. Bring it under the sticky top bar and into view, so the
+   * operator sees where it ended up. No-ops when the DOM cannot scroll.
+   */
+  function revealNotice() {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const note = mount.querySelector('.bo-agent-done');
+    if (!note || typeof note.setAttribute !== 'function') return;
+    try {
+      const bar = typeof documentNode?.querySelector === 'function' ? documentNode.querySelector('.bo-topbar') : null;
+      const barHeight = bar && typeof bar.getBoundingClientRect === 'function' ? Number(bar.getBoundingClientRect().height) : 0;
+      const top = Math.ceil((Number.isFinite(barHeight) ? barHeight : 0) + FIELD_SCROLL_GAP);
+      note.setAttribute('style', `scroll-margin-top: ${top}px; scroll-margin-bottom: ${FIELD_SCROLL_GAP}px`);
+      if (typeof note.scrollIntoView === 'function') note.scrollIntoView({ block: 'nearest' });
+    } catch {
+      // A note that cannot scroll is still painted: the line stays.
+    }
+  }
+
   function openNewAgent() {
     // One caller key per open panel: a retry or a double click replays it.
     // `nameError`: the live check of Nome (review Muse #895), its own slot
@@ -1823,6 +1845,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (await reload()) paint();
       else paint();
       focusIn('button[data-action="new-agent"]');
+      // backlog:92829060f8ff: the line lands at the top, far from the new
+      // box — bring it into view so it reads as found, at 500 px too.
+      revealNotice();
     } catch (error) {
       form.busy = false;
       form.error = newAgentErrorText(error);
@@ -2005,18 +2030,24 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (entry.key === null) entry.key = issueAdminKey();
       await setHandAgentStatus(card, pause ? 'paused' : 'active', entry.key);
       state.retiring.delete(card.sourceKey);
+      // backlog:92829060f8ff: after Riattiva the line uses the badge's own
+      // words from the start — an agent with no engine is «Pronto, in
+      // attesa del motore», never «attivo» — even when the follow-up read
+      // cannot confirm it (the card already knows its engine).
       state.notice = pause
         ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
-        : `${card.name} riattivato.`;
+        : `${card.name} riattivato: ${lowerFirst(card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL)}.`;
       const fresh = await reload();
-      // backlog:f06d06f242d6: the line uses the badge's own words — an agent
-      // with no engine is «Pronto, in attesa del motore», never «attivo».
+      // backlog:f06d06f242d6: reconciled against the fresh read, so a
+      // changed catalogue still wins over the expected label above.
       if (!pause && fresh) {
         const back = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso: now(), catalog: state.catalog })
           .find((item) => item.sourceKey === card.sourceKey);
         if (back) state.notice = `${card.name} riattivato: ${lowerFirst(back.statusLabel)}.`;
       }
       paint();
+      // backlog:92829060f8ff: the line lands at the top, far from the card.
+      revealNotice();
     } catch (error) {
       entry.busy = false;
       if (isDecisionUnavailable(error)) {
@@ -2313,7 +2344,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         'Gli agenti non sono attivi in questo spazio: niente da mostrare, e niente di finto al loro posto.'));
       return;
     }
-    if (state.notice !== '') page.appendChild(el(documentNode, 'p', 'bo-agent-done', state.notice));
+    // backlog:92829060f8ff: the line is an avviso — the screen reader
+    // announces it where it landed.
+    if (state.notice !== '') {
+      const done = el(documentNode, 'p', 'bo-agent-done', state.notice);
+      done.setAttribute('role', 'status');
+      page.appendChild(done);
+    }
     if (state.unavailable.length > 0) {
       page.appendChild(el(documentNode, 'p', 'bo-seq-error',
         `Non riesco a leggere adesso: ${state.unavailable.join(', ')}. Mostro solo quello che ho letto davvero.`));
