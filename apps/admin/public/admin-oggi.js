@@ -2148,20 +2148,18 @@ export function renderOggi({
       return row;
     };
     if (home.inbox.pending === true) {
-      // backlog:bab63e32acdb: the server view is reading — grey rows, no
-      // word that could pass for «nobody waits».
-      const list = el(doc, 'div', 'bo-oggi-actions');
-      list.setAttribute('aria-busy', 'true');
-      for (const width of ['35%', '45%', '30%']) {
-        const row = el(doc, 'div', 'bo-oggi-row bo-oggi-inbox-row');
-        row.appendChild(el(doc, 'span', 'bo-oggi-mono'));
-        const body = el(doc, 'div', 'bo-oggi-body');
-        body.appendChild(pendingText(doc, 'p', 'bo-oggi-title', '', true, width));
-        body.appendChild(pendingText(doc, 'p', 'bo-oggi-why', '', true, '75%'));
-        row.appendChild(body);
-        list.appendChild(row);
-      }
-      inbox.appendChild(list);
+      // backlog:bab63e32acdb: the server view is reading — no word that
+      // could pass for «nobody waits». backlog:ee1244a145c9: the count is
+      // still reading too, so the wait names itself instead of drawing
+      // rows — a row-shaped skeleton promises conversations the count may
+      // then deny.
+      const wait = el(doc, 'p', 'bo-muted');
+      wait.setAttribute('data-pending', 'true');
+      wait.setAttribute('role', 'status');
+      wait.setAttribute('aria-busy', 'true');
+      wait.appendChild(el(doc, 'span', undefined, 'Leggo i messaggi da rispondere…'));
+      wait.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+      inbox.appendChild(wait);
     } else if (home.inbox.available === false) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'I messaggi non si sono potuti leggere. Riprova più tardi.'));
     } else if (inboxRows.length === 0 && countFloor) {

@@ -987,7 +987,9 @@ export function apiFailure(status, payload) {
   const error = new Error(payload?.error?.message || `Request failed (${status})`);
   Object.assign(error, {
     status,
-    code: payload?.error?.code ?? 'UNKNOWN',
+    // backlog:3a9bee845cc4: a 429 without a body code is still a rate limit —
+    // the log names TOO_MANY_REQUESTS instead of UNKNOWN.
+    code: payload?.error?.code ?? (status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN'),
     details: payload?.error?.details ?? null,
   });
   if (typeof payload?.requestId === 'string' && payload.requestId !== '') Object.assign(error, { requestId: payload.requestId });

@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCommandRows } from '../apps/admin/public/admin-cmdk.js';
+import { buildCommandRows, readCommandAgents } from '../apps/admin/public/admin-cmdk.js';
 import { buildShellNav, createShellView } from '../apps/admin/public/admin-shell.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 
@@ -143,4 +143,22 @@ test('la lettura agenti gira una volta mentre si digita, e il suo errore non blo
   assert.ok(failing.list().textContent.includes('Non riesco a leggere gli agenti adesso'), failing.list().textContent);
   failing.key('Enter');
   assert.deepEqual(failing.seen.asked, ['@Prov'], 'senza agenti la @ va comunque all’assistente');
+});
+
+test('fd1c564a21d9: la barra legge gli agenti dello spazio senza la voce di navigazione', async () => {
+  const seen = [];
+  const request = async (path) => {
+    seen.push(path);
+    assert.ok(path.includes('filter.spaceId='), `la lettura è dello spazio: ${path}`);
+    return { items: [CUSTOM_AGENT, CATALOG_AGENT] };
+  };
+  const agents = await readCommandAgents(request, 'prova');
+  assert.equal(agents.length, 2);
+  const rows = buildCommandRows({ query: '@Pul', agents });
+  assert.equal(rows[0].kind, 'agent');
+  assert.equal(rows[0].label, '@Pulizia contatti', 'filtra per nome');
+  assert.equal(await readCommandAgents(request, ''), null, 'senza spazio niente lettura');
+  assert.deepEqual(await readCommandAgents(async () => ({ items: null }), 'prova'), [], 'una risposta vuota è una lista vuota');
+  assert.equal(await readCommandAgents(async () => { throw Object.assign(new Error('no'), { status: 404, code: 'NOT_FOUND' }); }, 'prova'), null, 'il 404 è «non composto», non un errore');
+  await assert.rejects(readCommandAgents(async () => { throw Object.assign(new Error('no'), { status: 502 }); }, 'prova'), 'gli altri errori si vedono nella barra');
 });

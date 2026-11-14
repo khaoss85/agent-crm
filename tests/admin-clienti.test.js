@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers, statoTooltip } from '../apps/admin/public/admin-clienti.js';
 import { CLIENTI_NUOVO_ROUTE } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -325,7 +325,7 @@ test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible col
 test('BO-F6-08 fetta 1: an empty page reads the prototype text and 0 di 0 with page controls', async () => {
   const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
   const { mount } = await render(empty);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
   assert.ok(mount.textContent.includes('0 di 0'), 'the pager keeps its 0 di 0 interval');
   assert.ok(mount.textContent.includes('Righe per pagina'), 'the page-size group stays labelled');
   assert.ok(byAttr(mount, 'button', 'aria-label', 'Pagina precedente'), 'previous keeps its accessible label');
@@ -1054,7 +1054,39 @@ test('754918ad8da7: the status line sits under the bar, so an empty page never p
   const at = (cls) => kids.findIndex((value) => value.split(/\s+/).includes(cls));
   assert.ok(at('bo-clienti-status') > at('bo-clienti-search'), `status after the search: ${kids}`);
   assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
+});
+
+test('ee1244a145c9: an empty «Da rispondere» view without search reads as the view', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), '«Tutti» without search reads as the view');
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the empty view names itself');
+  assert.ok(!mount.textContent.includes('Nessun cliente corrisponde'), 'no search hint without a search');
+});
+
+test('ee1244a145c9: an empty search keeps the «corrisponde» hint', async () => {
+  const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); this.calls.push(path); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
+  const clock = timers();
+  const { mount } = await render(empty, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), 'no search yet: the view reads as itself');
+  const input = mount.findAll('input')[0];
+  input.value = 'marco';
+  input.dispatch('input');
+  clock.fire();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'),
+    'an empty search result keeps the search hint');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
@@ -1182,7 +1214,7 @@ test('4968615de0a4: one way to clear the search — the field’s Azzera; no bro
   assert.equal(input.value, 'milano');
 });
 
-test('4968615de0a4: back on Clienti from another page the search starts empty, filters stay', async () => {
+test('2067a415405c: back on Clienti from a scheda the search and the filters stay', async () => {
   const client = stubClient();
   const { mount, view } = await render(client);
   const input = mount.findAll('input')[0];
@@ -1195,9 +1227,9 @@ test('4968615de0a4: back on Clienti from another page the search starts empty, f
   view.invalidate();
   await view.render();
   const again = mount.findAll('input')[0];
-  assert.equal(again.value, '', 'the field is empty');
+  assert.equal(again.value, 'milano', 'the field keeps the typed search');
   const last = client.calls[client.calls.length - 1];
-  assert.ok(!last.includes('q='), `the list reads without the old search: ${last}`);
+  assert.ok(last.includes('q=milano'), `the list re-reads with the search: ${last}`);
   assert.ok(last.includes('stato=cliente'), 'the filters stay, shown as chips');
   assert.ok(byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Cliente'));
 });
@@ -1219,4 +1251,41 @@ test('a762c28a646c: the Clienti list remembers the names it shows', async () => 
   await render(stubClient(), { knownNames: names });
   assert.equal(names.get('contact', 'c1'), 'Marco Rossi');
   assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
+});
+
+// backlog:7471d0bd718f: the Stato pill never shows the server's raw
+// technical-English reason («no signed business found in the composed
+// packages (orders: not readable here; …)»). The tooltip says in plain
+// Italian why the customer is in that state, with no package names or
+// diagnostics.
+test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw server reason', async () => {
+  const technical = {
+    ...ROW_ANNA,
+    status: {
+      value: 'contatto',
+      reason: 'no signed business found in the composed packages (orders: not readable here; contracts: none on record; subscriptions: partially readable) — the evidence packages are not all readable here, so this is not a claim none exist',
+    },
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [technical, ROW_MARCO], total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const pills = mount.findAll('span').filter((node) =>
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-pill'));
+  assert.equal(pills.length, 2, 'both rows render their Stato pill');
+  const byText = (text) => pills.find((node) => node.textContent === text);
+  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(byText('Cliente')?.getAttribute('title'), 'È un cliente perché ha almeno un acquisto confermato.');
+  for (const pill of pills) {
+    const title = String(pill.getAttribute('title') ?? '');
+    for (const leaked of ['package', 'orders', 'contracts', 'subscriptions', 'signed business', 'readable']) {
+      assert.ok(!title.toLowerCase().includes(leaked), `no package name or diagnostic leaks into «${title}»`);
+    }
+  }
+  assert.ok(!mount.textContent.includes('no signed business found'), 'the raw server reason never renders as text');
+  assert.equal(statoTooltip('contatto'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
+  assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
 });
