@@ -11,8 +11,9 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
  * On the code before the cure this file is red — the builders do not exist
  * and no «Invia offerta» button paints — and green after it: the offer page
  * mints the public link through `share-link`, shows the ready Italian
- * message, writes «Offerta inviata» in the cronologia, and a second press
- * reuses the same URL instead of minting a new one.
+ * message, never paints a mint as «Offerta inviata» inside the server-audit
+ * cronologia (review Muse #905 P1), and a second press reuses the same URL
+ * instead of minting a new one.
  */
 
 const ORIGIN = 'https://spazio.example';
@@ -131,6 +132,11 @@ async function openOfferPage({ quotes }) {
 const shareButton = (mount) => mount.findAll('button')
   .find((node) => node.getAttribute('data-action') === 'offer-share-link');
 
+const historyPanel = (mount) => mount.findAll('div')
+  .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-history'));
+const shareBox = (mount) => mount.findAll('div')
+  .find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('offer-share'));
+
 test('7fa422415232: «Invia offerta» mints the public link and reuses it on second press', async () => {
   const { mount, client, toasts } = await openOfferPage({ quotes: [approvedQuote()] });
   const button = shareButton(mount);
@@ -143,9 +149,16 @@ test('7fa422415232: «Invia offerta» mints the public link and reuses it on sec
   assert.equal(posts.length, 1, 'one press mints through the share-link action');
   assert.ok(posts[0].key, 'the mint rides the submission controller key');
   assert.ok(mount.textContent.includes(URL), 'the ready message shows the link');
-  assert.ok(mount.textContent.includes('Offerta inviata'), 'an «Offerta inviata» row lands in the cronologia');
+  assert.ok(shareBox(mount)?.textContent.includes('Link pronto, da inviare.'),
+    'the mint state reads in the share box, outside the audit list');
+  assert.ok(!mount.textContent.includes('Offerta inviata'),
+    'a mint is never an «Offerta inviata» send (red before the review cure)');
+  const history = historyPanel(mount);
+  assert.ok(history, 'the server-audit cronologia still paints');
+  assert.ok(!history.findAll('a').some((node) => node.getAttribute('href') === URL),
+    'no minted link leaks into the cronologia');
   const open = mount.findAll('a').find((node) => node.getAttribute('href') === URL);
-  assert.ok(open, 'the history row links the public URL');
+  assert.ok(open, 'the share box links the public URL');
   assert.ok(!/[^/]a{64}/.test(mount.textContent.replace(URL, '')), 'the raw token never leaks outside its URL');
 
   shareButton(mount).dispatch('click');
@@ -158,6 +171,9 @@ test('7fa422415232: «Invia offerta» mints the public link and reuses it on sec
     .map((node) => node.getAttribute('href'));
   assert.ok(urls.length > 0, 'links still on screen');
   assert.ok(urls.every((href) => href === URL), 'the second press reuses the same URL, never a new one');
+  assert.ok(shareBox(mount)?.textContent.includes('Link già pronto, da inviare'),
+    'a reuse reads as a mint, never as a send');
+  assert.ok(!historyPanel(mount).textContent.includes('Offerta inviata'), 'still no fake send row after reuse');
   assert.ok(toasts.some((toast) => /stesso/.test(toast.text)), 'the operator is told it is the same link');
 });
 

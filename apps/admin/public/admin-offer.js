@@ -201,10 +201,6 @@ export function createOfferDetail(deps) {
   let renderToken = 0;
   /** backlog:7fa422415232: minted links by quote, so a second «Invia offerta» press reuses the same URL the server keeps. */
   const shareLinks = new Map();
-  /** The history panel of the current render, or null before it paints. */
-  let shareHistoryBox = null;
-  /** «Offerta inviata» rows written before the history panel painted, in order. */
-  let shareHistoryQueued = [];
   /** The offer name the share message uses; set when the record lands. */
   let shareOfferName = '';
   /** Record id with the edit form open. */
@@ -444,8 +440,6 @@ export function createOfferDetail(deps) {
     if (entry !== undefined) origin = entry?.from ?? null;
     const token = ++renderToken;
     editing = false;
-    shareHistoryBox = null;
-    shareHistoryQueued = [];
     shareOfferName = '';
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
@@ -661,11 +655,10 @@ export function createOfferDetail(deps) {
       row.appendChild(el('span', 'history-what', line.what));
       historyPanel.appendChild(row);
     }
-    // backlog:7fa422415232: links minted before the panel painted land here
-    // now, in the order they were pressed; later ones go straight in.
-    shareHistoryBox = historyPanel;
-    for (const entry of shareHistoryQueued) appendShareHistoryRow(shareHistoryBox, entry);
-    shareHistoryQueued = [];
+    // backlog:7fa422415232, review Muse #905 (P1): the Cronologia paints
+    // only server audit — a minted link never lands here as «Offerta
+    // inviata». The link state stays in the share box below, where the
+    // operator pressed.
     page.appendChild(historyPanel);
     // The page is complete when every place has filled (the shell's badges
     // wait for this, backlog:94eabbd4762f).
@@ -1050,47 +1043,15 @@ export function createOfferDetail(deps) {
   }
 
   /**
-   * backlog:7fa422415232: one «Offerta inviata» row of the offer cronologia
-   * for a minted (or reused) public link. The link rides along as its own
-   * anchor so it stays tappable; the message the operator sends lives in the
-   * scheda composer, never here.
-   */
-  function appendShareHistoryRow(box, entry) {
-    const row = el('p', 'history-event');
-    row.appendChild(el('span', 'history-when', entry.when));
-    const what = el('span', 'history-what', entry.what);
-    if (typeof entry.href === 'string' && entry.href !== '') {
-      what.appendChild(el('span', 'bo-scheda-sep', ' · '));
-      const open = el('a', 'offer-share-history-link', 'Apri il link');
-      open.setAttribute('href', entry.href);
-      what.appendChild(open);
-    }
-    row.appendChild(what);
-    box.appendChild(row);
-  }
-
-  /**
-   * backlog:7fa422415232: remember an «Offerta inviata» row for the current
-   * render — straight into the history panel when it already painted, queued
-   * in press order when the share landed first.
-   */
-  function noteOfferShared(entry, token) {
-    if (token !== renderToken) return;
-    if (shareHistoryBox !== null) {
-      appendShareHistoryRow(shareHistoryBox, entry);
-      return;
-    }
-    shareHistoryQueued.push(entry);
-  }
-
-  /**
    * backlog:7fa422415232: «Invia offerta» on an approved quote — the /bo end
    * of the offer link. One press mints the public acceptance link through the
    * quote `share-link` action; the server reuses the live link of the same
    * version, so a second press shows the same URL instead of a new one. The
    * ready Italian message stays on screen for the operator to send from the
-   * scheda composer, and an «Offerta inviata» row lands in the cronologia.
-   * The send itself stays the operator's gesture: this button never sends.
+   * scheda composer. Review Muse #905 (P1): a mint is never an «Offerta
+   * inviata» row in the server-audit Cronologia — this button never sends,
+   * so the link state stays here as an explicit local decoration outside
+   * the audit list. The send itself stays the operator's gesture.
    * What it does not cover: a link minted before this page opened is not
    * listed (the server keeps it, the page never read it), and the public page
    * behind the URL is the pilot's own route (its own PR with a contract test).
@@ -1102,6 +1063,7 @@ export function createOfferDetail(deps) {
     button.setAttribute('data-action', 'offer-share-link');
     const line = el('p', 'bo-muted offer-share-line', '');
     line.setAttribute('role', 'status');
+    const state = el('p', 'bo-muted offer-share-state', '');
     /** @type {null | {key: string}} */
     let pending = null;
     let busy = false;
@@ -1109,10 +1071,15 @@ export function createOfferDetail(deps) {
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
       line.appendChild(el('span', 'bo-scheda-sep', ' '));
-      const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già inviato' : 'Apri il link');
+      const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già pronto' : 'Apri il link');
       open.setAttribute('href', url);
       open.setAttribute('data-action', 'offer-share-open');
       line.appendChild(open);
+      // Review Muse #905 (P1): the mint state reads here, outside the
+      // server-audit Cronologia — a mint is «pronto, da inviare», never
+      // «inviata», and a reuse is a mint, never a send.
+      state.setAttribute('class', 'bo-muted offer-share-state');
+      state.textContent = reused ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.';
     };
     const send = async () => {
       if (busy) return;
@@ -1151,7 +1118,6 @@ export function createOfferDetail(deps) {
           return;
         }
         showLink(url, expiresAt, fresh === null);
-        noteOfferShared({ when: italianDateTime(new Date().toISOString()) ?? 'adesso', what: 'Offerta inviata', href: url }, token);
         toast(fresh === null ? 'Link già pronto: è lo stesso di prima.' : 'Link pronto: invialo dal composer della scheda.');
       } catch (error) {
         const status = typeof error?.status === 'number' ? error.status : 0;
@@ -1168,6 +1134,7 @@ export function createOfferDetail(deps) {
     button.addEventListener('click', () => { void send(); });
     box.appendChild(button);
     box.appendChild(line);
+    box.appendChild(state);
     box.__share = send;
     const known = shareLinks.get(quote.id);
     if (known) showLink(known.url, known.expiresAt, true);

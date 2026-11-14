@@ -4675,6 +4675,14 @@ export function createCustomerCardView(deps) {
       const shareLine = el('p', 'bo-muted', '');
       shareLine.setAttribute('role', 'status');
       const shareSend = () => uiBusy(shareButton, 'Creo il link…', async () => {
+        // Review Muse #905 (P1): a slow share-link answer must never land
+        // on another customer's composer. The scheda and the space are
+        // captured before the POST; the draft and the link map keep the
+        // pressed values, while the live composer and the status line
+        // update only when the same scheda is still on screen.
+        const pressShown = shownKey;
+        const pressSpaceId = activeSpaceId();
+        const pressKey = pressSpaceId !== null ? `${pressSpaceId}:${offerCtx.resource}:${offerCtx.id}` : null;
         shareLine.setAttribute('class', 'bo-muted');
         shareLine.textContent = 'Creo il link…';
         try {
@@ -4691,8 +4699,10 @@ export function createCustomerCardView(deps) {
               : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
             const url = offerShareUrl(origin, fresh);
             if (url === null) {
-              shareLine.setAttribute('class', 'field-error');
-              shareLine.textContent = 'Link non creato: indirizzo non valido. Riprova più tardi.';
+              if (mount.contains(shareLine)) {
+                shareLine.setAttribute('class', 'field-error');
+                shareLine.textContent = 'Link non creato: indirizzo non valido. Riprova più tardi.';
+              }
               return;
             }
             const share = result.share ?? null;
@@ -4705,19 +4715,25 @@ export function createCustomerCardView(deps) {
             staged = schedaShareLinks.get(first.id) ?? null;
           }
           if (staged === null) {
-            shareLine.setAttribute('class', 'field-error');
-            shareLine.textContent = result.alreadyExisted === true
-              ? 'Il link esiste già: aprilo dalla pagina offerta.'
-              : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+            if (mount.contains(shareLine)) {
+              shareLine.setAttribute('class', 'field-error');
+              shareLine.textContent = result.alreadyExisted === true
+                ? 'Il link esiste già: aprilo dalla pagina offerta.'
+                : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+            }
             return;
           }
           const message = offerShareMessage({ offerName: name, url: staged.url, expiresAt: staged.expiresAt }) ?? staged.url;
-          const spaceId = activeSpaceId();
-          if (spaceId !== null) {
-            const key = `${spaceId}:${offerCtx.resource}:${offerCtx.id}`;
-            const draft = composerDrafts.get(key) ?? { text: '', subject: '', aiBefore: null };
+          if (pressKey !== null) {
+            const draft = composerDrafts.get(pressKey) ?? { text: '', subject: '', aiBefore: null };
             draft.text = message;
-            composerDrafts.set(key, draft);
+            composerDrafts.set(pressKey, draft);
+          }
+          // The live composer belongs to whoever is on screen now: only
+          // the pressed scheda, still shown in the same space, receives it.
+          if (shownKey !== pressShown || activeSpaceId() !== pressSpaceId || !mount.contains(shareLine)) {
+            toast('Link pronto per la scheda precedente: riaprila per inviarlo.');
+            return;
           }
           const area = mount.querySelector('.bo-scheda-composer-text');
           if (area) area.value = message;
