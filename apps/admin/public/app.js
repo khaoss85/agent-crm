@@ -546,6 +546,7 @@ import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createAgentiView } from './admin-agenti.js';
+import { readCommandAgents } from './admin-cmdk.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
@@ -1128,17 +1129,15 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
-      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
-      // agents from the same teammate-agent module read the Agenti screen
-      // makes — the hand-written agent suggests like the catalogue ones.
+      // backlog:1f7cb20d3c30 + backlog:fd1c564a21d9: the «@» rows of
+      // the ⌘K bar read the space's agents from the same teammate-agent
+      // module read the Agenti screen makes — never gated on the
+      // navigation voice, so the bar suggests an agent whenever the
+      // screen itself could list one. The hand-written agent suggests
+      // like the catalogue ones.
       async agents() {
-        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
-        const params = new URLSearchParams({ limit: '201' });
         const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
-        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
-        else return null;
-        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
-        return Array.isArray(answer?.items) ? answer.items : [];
+        return readCommandAgents((path) => moduleClient.request(path), spaceId);
       },
     },
     onPickSpace: (id) => {
