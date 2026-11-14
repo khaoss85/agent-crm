@@ -225,6 +225,27 @@ test('7d169a3b1dd2: Modifica salva con update-agent, con la chiave del chiamante
   assert.ok(mount.textContent.includes('Manona aggiornato.'));
 });
 
+test('26afd13657c5: dopo Salva la conferma sta sulla card modificata, non in cima alla pagina', async () => {
+  const { mount } = await paintedView();
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = 'Manona';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.equal(mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`), null, 'il pannello si è chiuso');
+  const card = mount.findAll('article')
+    .find((node) => node.getAttribute('data-agent') === MANO.sourceKey);
+  assert.ok(card, 'la card modificata c’è ancora');
+  const saved = card.querySelector('.bo-agent-done');
+  assert.ok(saved, 'la conferma sta dentro la card');
+  assert.equal(saved.textContent, 'Manona aggiornato.');
+  assert.equal(saved.getAttribute('role'), 'status');
+  // Una sola conferma: quella sulla card, mai anche in cima alla pagina.
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-done')).length, 1);
+});
+
 test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnare un campo', async () => {
   // Review #879 giro 2 P2: il rifiuto non eredita il marcatore di campo.
   const boom = Object.assign(new Error('down'), { status: 500 });

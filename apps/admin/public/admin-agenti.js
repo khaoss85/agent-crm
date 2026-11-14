@@ -945,6 +945,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addError: '',
     notice: '',
     /**
+     * backlog:26afd13657c5: the «Modifica» save confirmation, on the card
+     * it belongs to (by source key) — the edit panel closes on save, so a
+     * page-top notice is out of sight; the card itself keeps the line until
+     * the panel opens again or the space changes.
+     * @type {{ key: string, text: string } | null}
+     */
+    editSaved: null,
+    /**
      * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
      * `pending` is the body of a create whose answer was lost: the panel
      * is locked and «Riprova» sends exactly that body under its key
@@ -1288,6 +1296,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const status = el(documentNode, 'span', `bo-agent-status bo-agent-status-${card.status}`, card.statusLabel);
     head.appendChild(status);
     box.appendChild(head);
+    // backlog:26afd13657c5: the save confirmation lives on the edited card,
+    // where the eye already is — the panel just closed above it.
+    if (state.editSaved !== null && state.editSaved.key === card.sourceKey) {
+      const saved = el(documentNode, 'p', 'bo-agent-done', state.editSaved.text);
+      saved.setAttribute('role', 'status');
+      box.appendChild(saved);
+    }
 
     const facts = el(documentNode, 'dl', 'bo-agent-facts');
     const factRows = [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]];
@@ -1400,6 +1415,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       attrs: { type: 'button', 'data-action': 'edit-agent', 'aria-expanded': editOpen ? 'true' : 'false' },
     });
     edit.addEventListener('click', () => {
+      if (state.editSaved !== null && state.editSaved.key === card.sourceKey) state.editSaved = null;
       if (state.editing.has(card.sourceKey)) state.editing.delete(card.sourceKey);
       else editOf(card);
       paint();
@@ -1973,7 +1989,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     try {
       await updateHandAgent(card, body, form.key);
       state.editing.delete(card.sourceKey);
-      state.notice = `${checked.body.name} aggiornato.`;
+      state.editSaved = { key: card.sourceKey, text: `${checked.body.name} aggiornato.` };
       if (await reload()) paint();
       else paint();
     } catch (error) {
@@ -2389,6 +2405,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.editing.clear();
       state.retiring.clear();
       state.notice = '';
+      state.editSaved = null;
       state.addError = '';
     }
     // A fresh read is the truth for the row state; a decision still queued
