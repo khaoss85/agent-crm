@@ -737,6 +737,45 @@ test('the operation previews the latest message body, never a call', async () =>
   assert.equal(hostile.lastContactText, 'ciao', 'markup is stripped from the preview, the words stay');
 });
 
+test('an empty message previews the same fallback as Oggi, a call previews nothing', async () => {
+  // backlog:1740985ba18c: mail imported before the cure with an empty body
+  // (Widiba, MuscleWiki) read a blank row in Clienti and «Messaggio senza
+  // testo» in Oggi. The row now carries the subject when there is one, the
+  // one fallback otherwise — like the Oggi inbox. A latest call still
+  // previews as nothing, never an invented excerpt.
+  const { contacts, companies, identities } = SCENE();
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities, ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const widiba = (await run({
+    messages: [{
+      id: 'm-w', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email',
+      body: '', mailSubject: 'Il tuo estratto conto è pronto',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(widiba.lastContactText, 'Il tuo estratto conto è pronto', 'the subject when the body is empty');
+  const noSubject = (await run({
+    messages: [{
+      id: 'm-n', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(noSubject.lastContactText, 'Messaggio senza testo', 'the one fallback, like Oggi');
+  const callAfter = (await run({
+    messages: [{
+      id: 'm-n', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+    }],
+    calls: [{
+      id: 'k1', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T11:00:00.000Z', channel: 'phone',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(callAfter.lastContactText, null, 'a newer call still names no excerpt');
+});
+
 test('826e377c: the CANALI column unions held identities with observed message channels', () => {
   // CANALI unions every held identity system with the observed channels in
   // the filter vocabulary (not the scheda section's wider display

@@ -1,7 +1,7 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { messagePreview } from '../../core/message-preview.js';
+import { MESSAGE_NO_TEXT, messagePreview } from '../../core/message-preview.js';
 import { isNotificationMessage, teamCorrespondents, teamWroteTo } from '../../core/sender-kind.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
@@ -675,7 +675,13 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
-    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
+    // backlog:1740985ba18c: an empty message reads the same fallback as Oggi
+    // (the subject when there is one, MESSAGE_NO_TEXT otherwise) instead of a
+    // blank cell. A latest call still previews as nothing — the fallback is
+    // for messages only, and attachments stay uncovered (the row carries no
+    // attachment flag, so an attachment-only mail reads the text fallback).
+    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
+      ?? (activity?.isMessage === true ? MESSAGE_NO_TEXT : null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     awaitingReplyCount: awaiting === null ? null : awaiting.count,

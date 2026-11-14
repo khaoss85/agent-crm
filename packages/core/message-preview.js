@@ -9,6 +9,7 @@
  * the source (apps/admin/public/admin-message-preview.js).
  */
 export {
+  MESSAGE_NO_TEXT,
   MESSAGE_PREVIEW_CHARS,
   cleanMessageBody,
   cleanPreviewText,

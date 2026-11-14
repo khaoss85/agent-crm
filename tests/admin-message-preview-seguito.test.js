@@ -57,6 +57,29 @@ test('2. table cells, line breaks and closing blocks never glue words', () => {
   assert.equal(previewLastContactText(html), 'Danielepelleri 400 internal URLs Ciao Mario prima seconda Totale 12');
 });
 
+test('2b. inline elements without a space never glue words (backlog:1740985ba18c)', () => {
+  // The live Ahrefs preview kept «Danielepelleri400…»: the stored body holds
+  // the words in adjacent inline elements with no space between them. Blocks
+  // already break (test 2 above); the inline tags removed here broke nothing.
+  for (const html of [
+    '<span>Danielepelleri</span><span>400 internal URLs</span>',
+    '<a href="https://example.com/a">Danielepelleri</a><a href="https://example.com/b">400 internal URLs</a>',
+    '<strong>Danielepelleri</strong>400 internal URLs',
+    'Danielepelleri<img src="https://example.com/p.png">400 internal URLs',
+    'Totale</span> <span>12',
+  ]) {
+    assert.doesNotMatch(preview.cleanPreviewText(html), /Danielepelleri400|Totale12/, JSON.stringify(html));
+  }
+  assert.equal(preview.cleanPreviewText('<span>Danielepelleri</span><span>400 internal URLs</span>'),
+    'Danielepelleri 400 internal URLs');
+  assert.equal(previewLastContactText('<strong>Danielepelleri</strong>400 internal URLs'),
+    'Danielepelleri 400 internal URLs', 'Clienti');
+  assert.equal(card.passagePreview({ body: 'Danielepelleri<img src="https://example.com/p.png">400 internal URLs', subject: null }),
+    'Danielepelleri 400 internal URLs', 'cronologia');
+  // A tag before punctuation adds no space: the comma stays with its word.
+  assert.equal(preview.cleanPreviewText('Ciao <b>Mario</b>, come va?'), 'Ciao Mario, come va?');
+});
+
 test('2. a Gmail HTML body with table cells stores separated words', () => {
   const b64 = (text) => Buffer.from(text, 'utf8').toString('base64url');
   const event = normalizeGmailRestMessage({
