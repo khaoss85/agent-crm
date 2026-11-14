@@ -31,7 +31,7 @@ import { createAgentOperations } from './operations.js';
  */
 
 export const AGENTS_RESOURCES = Object.freeze([
-  'teammate-agent', 'teammate-assignment', 'teammate-run',
+  'teammate-agent', 'teammate-assignment', 'teammate-run', 'teammate-squad',
 ]);
 
 /**
@@ -61,7 +61,13 @@ export function createAgentsPackage(options = {}) {
     // approval-gated proposals, versioned artifacts, spending caps.
     // 2: backlog:fd36da512b0e — «Da fare» decisions on a proposed run:
     // reject-run (outcome `rejected`) and revise-run (edit one proposal).
-    version: 2,
+    // 3: backlog:1f7cb20d3c30 — hand-written agents: one @name per space
+    // (AGENT_NAME_TAKEN) and run-due's `runnable` seam (engine-less agents wait).
+    // 4: backlog:7d169a3b1dd2 — a hand-written agent is edited and paused or
+    // resumed through update-agent and set-agent-status.
+    // 5: backlog:0d2d8f2e — squads: create-squad (template, brief or plan)
+    // and the per-squad overview (backlog A, routines, backlog B, metrics).
+    version: 5,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
@@ -115,12 +121,53 @@ export function createAgentsPackage(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'update-agent',
+        appMethod: 'updateTeammateAgent',
+        label: 'Update a teammate agent',
+        description:
+          'Update a hand-written agent of one space: name, role, working instructions and optional monthly '
+          + 'spending cap (an explicit null clears it). The @name stays unique in the space, excluding the '
+          + 'agent itself. Idempotent by absolute values: reapplying the same fields is a no-op.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'agentSourceKey', type: 'string', hint: 'The agent to update, of that space.' },
+          { name: 'name', type: 'string', hint: 'Optional new display name.' },
+          { name: 'role', type: 'string', hint: 'Optional new role.' },
+          { name: 'instructions', type: 'string', hint: 'Optional new working instructions.' },
+          { name: 'spendingCapCents', type: 'integer', hint: 'Optional new monthly cap in cents; null clears it.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.updateAgent(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'set-agent-status',
+        appMethod: 'setTeammateAgentStatus',
+        label: 'Pause or resume a teammate agent',
+        description:
+          'Pause a hand-written agent of one space so it receives no more assignments, or resume it. '
+          + 'Status only: active or paused. Writing the status it already carries replays.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'agentSourceKey', type: 'string', hint: 'The agent to pause or resume, of that space.' },
+          { name: 'status', type: 'string', hint: 'active or paused.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.setAgentStatus(request);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'run-due',
         appMethod: 'runDueTeammateAssignments',
         label: 'Run due assignments',
         description:
           'Run every due active assignment through the execute seam and record each execution with cost '
-          + 'and outcome. Agents over their monthly cap record a capped run and never execute.',
+          + 'and outcome. Agents over their monthly cap record a capped run and never execute. '
+          + 'Agents the deployment cannot run (the runnable seam) wait: no run, no failure.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'Optional: run one space only.' },
         ],
@@ -183,6 +230,47 @@ export function createAgentsPackage(options = {}) {
           return (request) => ops.reviseRun(request);
         },
       },
+      {
+        operationContract: 1,
+        name: 'create-squad',
+        appMethod: 'createTeammateSquad',
+        label: 'Create an agent squad',
+        description:
+          'Create a squad from a ready-made template, from a free-text brief matched to a template, or from an '
+          + 'explicit plan: objective with metric, member agents with roles, phases with an approval mode, sources '
+          + 'with a time, outputs and an optional monthly spending cap. Members and routines are created through '
+          + 'the existing agent operations. Idempotent by the caller-supplied source key.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'sourceKey', type: 'string', hint: 'Caller-supplied idempotency identity for the squad.' },
+          { name: 'templateSlug', type: 'string', hint: 'Optional: one of lead-generation, social-posting, sales-outreach, discovery, contenuti.' },
+          { name: 'brief', type: 'string', hint: 'Optional: free-text description matched to a template by keywords.' },
+          { name: 'plan', type: 'json', hint: 'Optional: the explicit squad spec (the fake-AI seam).' },
+          { name: 'name', type: 'string', hint: 'Optional: overrides the template name.' },
+          { name: 'spendingCapCents', type: 'integer', hint: 'Optional monthly cap in cents.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.createSquad(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-squad-overview',
+        appMethod: 'readTeammateSquadOverview',
+        label: 'Read the per-squad view',
+        description:
+          'Backlog A (active assignments of the member agents), routines, backlog B (proposed runs waiting for '
+          + 'a human decision) and the advisor metric against the objective. Counts come from rows, never stored.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'squadSourceKey', type: 'string', hint: 'The squad to read.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.readSquadOverview(request);
+        },
+      },
     ],
   });
   return graph;
@@ -191,3 +279,9 @@ export function createAgentsPackage(options = {}) {
 export { AGENT_APPLY_PERMISSION };
 // backlog:33782ba68747: the ready-made agents the backoffice «Catalogo» offers.
 export { AGENT_CATALOG, catalogAgentSourceKey } from './catalog.js';
+// backlog:1f7cb20d3c30: hand-written agents («Nuovo agente») and the one
+// @mention name rule both the backoffice and create-agent use.
+export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey, isCustomAgentSourceKey } from './catalog.js';
+// backlog:0d2d8f2e: the squad templates the «Squadre» screen offers, and the
+// squad source-key rule the create route uses.
+export { PHASE_APPROVAL_LABEL, PHASE_APPROVALS, SQUAD_TEMPLATES, squadSourceKey } from './squads.js';

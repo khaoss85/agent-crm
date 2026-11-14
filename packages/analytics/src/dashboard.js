@@ -178,7 +178,7 @@ export function dashboardSpecs(query) {
       }),
       schedule: Object.freeze({
         metric: 'pipeline_close_schedule_by_pipeline',
-        dimensions: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate']),
+        dimensions: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate', 'opportunity.closedAt']),
         filters: scoped,
       }),
     });
@@ -191,7 +191,7 @@ export function dashboardSpecs(query) {
     }),
     schedule: Object.freeze({
       metric: 'pipeline_close_schedule',
-      dimensions: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate']),
+      dimensions: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate', 'opportunity.closedAt']),
       filters: Object.freeze({ ...filters }),
     }),
   });
@@ -212,6 +212,15 @@ export function dashboardCompilations(query) {
   });
 }
 
+/**
+ * A count with its Italian noun: only exactly one takes the singular
+ * («1 persa», «2 perse»), like admin-labels plural() on the client.
+ * @param {number} count @param {string} one @param {string} many
+ */
+function plural(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 /** @param {number} minor @param {string} currency */
 export function formatMinor(minor, currency) {
   // Explicit support check: Intl.NumberFormat formats unknown 3-letter codes
@@ -221,7 +230,10 @@ export function formatMinor(minor, currency) {
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
   }
   try {
-    return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+    // Thousands always grouped («1.080,00 €», never «1080,00 €»): it-IT's
+    // default minimum-grouping leaves four-digit amounts bare, which is how
+    // the Reporting cards read (backlog:9236684c96a7, review #761).
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency, useGrouping: 'always' }).format(minor / 100);
   } catch {
     // A runtime that cannot format an enumerated code still refuses as a 400.
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
@@ -357,6 +369,27 @@ function isOpenStage(value) {
 }
 
 /**
+ * backlog:48993bed7294 (review lead #896): the historical close rate needs
+ * at least this many decided offers (won, paid or lost) before it drives
+ * the forecast; below it the declared fallback rate is used.
+ */
+export const FORECAST_MIN_DECIDED = 5;
+/** The declared fallback close rate (the board's historical 60%). */
+export const FORECAST_FALLBACK_RATE = 0.6;
+
+/**
+ * The forecast rule in words, the same sentence the Pipeline prints.
+ * @param {number | null} steadyRate the historical rate when it is steady, else null
+ * @param {number} decided decided offers behind it
+ */
+export function forecastMethod(steadyRate, decided) {
+  const rate = steadyRate === null
+    ? `${Math.round(FORECAST_FALLBACK_RATE * 100)}% (stima: poche offerte chiuse, ${decided} su almeno ${FORECAST_MIN_DECIDED})`
+    : `${Math.round(steadyRate * 100)}% (tasso di chiusura storico)`;
+  return `Chiuse nel mese, più il ${rate} delle aperte attese nel mese o senza data. Non è una promessa.`;
+}
+
+/**
  * Build the frozen dashboard model from executed registry reports.
  *
  * Backlog 099c41c32355 (Reporting like the Pipeline board): when `query`
@@ -433,13 +466,31 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
 
   const inPeriod = (/** @type {Record<string, any>} */ row) =>
     monthOf(row['opportunity.expectedCloseDate']) === query.period;
+  // backlog:48993bed7294 (verifica 13/11: «Vinte in novembre 0,00 €» with
+  // an offer paid on 7 nov, while the Pipeline counted it): a closed sale
+  // belongs to the month it closed (`closedAt`), the expected date only
+  // when the close date is missing. One rule with the Pipeline forecast.
+  const closeMonthOf = (/** @type {Record<string, any>} */ row) =>
+    monthOf(row['opportunity.closedAt']) ?? monthOf(row['opportunity.expectedCloseDate']);
+  const closedInPeriod = (/** @type {Record<string, any>} */ row) => closeMonthOf(row) === query.period;
   const isOpen = (/** @type {Record<string, any>} */ row) => isOpenValue(row['opportunity.stage']);
   const openInPeriod = sumRows(dated, (row) => isOpen(row) && inPeriod(row));
-  const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && inPeriod(row));
+  const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && closedInPeriod(row));
+  // The open value the month may still close: expected in the month, or
+  // with no expected date at all (it can close any day). Past-dated rows
+  // are stale, never «in attesa». Same window as the Pipeline forecast.
+  const waitingInPeriod = sumRows(dated, (row) => {
+    if (!isOpen(row)) return false;
+    const month = monthOf(row['opportunity.expectedCloseDate']);
+    return month === null || month === query.period;
+  });
+  // Review Muse #896: undated open rows are inside the forecast window
+  // (they can close any day); only a date already past keeps an open offer
+  // out of it, so only those are the forecast's stale rows.
   const staleOpen = sumRows(dated, (row) => {
     if (!isOpen(row)) return false;
     const month = monthOf(row['opportunity.expectedCloseDate']);
-    return month === null || month < query.period;
+    return month !== null && month < query.period;
   });
   const undatedOpen = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === null);
 
@@ -448,7 +499,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'open-value', label: 'Valore pipeline aperto',
       display: formatMinor(open.minor, query.currency),
-      sub: `${open.count} preventivi aperti`,
+      sub: plural(open.count, 'preventivo aperto', 'preventivi aperti'),
     }),
     Object.freeze({
       id: 'open-count', label: 'Preventivi aperti',
@@ -458,19 +509,19 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'won-period', label: `Vinte in ${periodLabel}`,
       display: formatMinor(wonInPeriod.minor, query.currency),
-      sub: `${wonInPeriod.count} chiusure`,
+      sub: plural(wonInPeriod.count, 'chiusura', 'chiusure'),
     }),
     Object.freeze({
       id: 'win-rate', label: 'Tasso di chiusura',
       display: winRate === null ? 'n.d.' : `${Math.round(winRate * 100)}%`,
-      sub: `${won.count} vinte, ${lost.count} perse`,
+      sub: `${plural(won.count, 'vinta', 'vinte')}, ${plural(lost.count, 'persa', 'perse')}`,
     }),
     Object.freeze({
       id: 'closing-period', label: `In chiusura in ${periodLabel}`,
       display: formatMinor(openInPeriod.minor, query.currency),
       sub: undatedOpen.count > 0
-        ? `${openInPeriod.count} preventivi, ${undatedOpen.count} senza data attesa`
-        : `${openInPeriod.count} preventivi`,
+        ? `${plural(openInPeriod.count, 'preventivo', 'preventivi')}, ${undatedOpen.count} senza data attesa`
+        : plural(openInPeriod.count, 'preventivo', 'preventivi'),
     }),
   ]);
 
@@ -499,7 +550,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index))
       .map((month) => {
         const expected = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === month);
-        const closedRows = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && monthOf(row['opportunity.expectedCloseDate']) === month);
+        const closedRows = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && closeMonthOf(row) === month);
         return Object.freeze({
           month, label: formatMonth(month),
           openCount: expected.count, expectedMinor: expected.minor,
@@ -508,41 +559,37 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       }),
   );
 
-  // The table is titled with the queried month (`Team e vendite · <mese>`),
-  // so open/won/lost accumulate only rows expected IN that month: the
-  // periodo pill recalculates the table instead of showing lifetime totals
-  // under a period title. Stale stays lifetime (past or undated open rows):
-  // it is the redistribution backlog, visible from every period, and entries
-  // exist for every owner in the filtered rows so that backlog never hides
-  // its holder.
+  // backlog:48993bed7294 (verifica 13/11: «0 · 0,00 €» for everyone while
+  // the Pipeline showed a referente with three open offers): the open value
+  // follows the referente like the board — every open offer they hold —
+  // and won and lost count in the month they closed. Offers without a
+  // referente gather in one row (`owner: ''`, «senza referente»), never
+  // dropped. Stale stays the redistribution backlog (past or undated open
+  // rows), visible from every period.
   const byOwner = new Map();
   for (const row of dated) {
-    const owner = typeof row['opportunity.owner'] === 'string' ? row['opportunity.owner'] : '';
-    if (owner === '') continue;
+    const owner = typeof row['opportunity.owner'] === 'string' ? row['opportunity.owner'].trim() : '';
     let entry = byOwner.get(owner);
     if (!entry) {
       entry = { owner, openCount: 0, openMinor: 0, wonCount: 0, wonMinor: 0, lostCount: 0, staleCount: 0 };
       byOwner.set(owner, entry);
     }
     const expected = monthOf(row['opportunity.expectedCloseDate']);
-    const expectedInPeriod = expected === query.period;
     if (isOpen(row)) {
-      if (expectedInPeriod) {
-        entry.openCount += row.count;
-        entry.openMinor += row.totalMinor;
-      }
+      entry.openCount += row.count;
+      entry.openMinor += row.totalMinor;
       // Stale for redistribution: no expected date, or one already past.
       // Rows expected in a FUTURE period are somebody's plan, not neglect.
       if (expected === null || expected < query.period) {
         entry.staleCount += row.count;
       }
     } else if (isWonValue(row['opportunity.stage'])) {
-      if (expectedInPeriod) {
+      if (closedInPeriod(row)) {
         entry.wonCount += row.count;
         entry.wonMinor += row.totalMinor;
       }
     } else if (isLostValue(row['opportunity.stage'])) {
-      if (expectedInPeriod) {
+      if (closedInPeriod(row)) {
         entry.lostCount += row.count;
       }
     }
@@ -557,23 +604,33 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
         winRateDisplay: rate === null ? 'n.d.' : `${Math.round(rate * 100)}%`,
       });
     })
-    .sort((a, b) => b.openMinor - a.openMinor || (a.owner < b.owner ? -1 : 1)));
-  const owners = Object.freeze(team.map((entry) => entry.owner));
+    // The «senza referente» row closes the table.
+    .sort((a, b) => Number(a.owner === '') - Number(b.owner === '') || b.openMinor - a.openMinor || (a.owner < b.owner ? -1 : 1)));
+  // The persona pills filter by referente: the «senza referente» row is no
+  // person to filter by.
+  const owners = Object.freeze(team.map((entry) => entry.owner).filter((owner) => owner !== ''));
 
   // Forecast: closed in the period plus a heuristic band over the open rows
   // expected in the period. `heuristic: true` is the contract the screen
   // must render — the number is arithmetic over history, never a promise.
-  const probableMinor = winRate === null ? 0 : Math.round(openInPeriod.minor * winRate);
+  // Review lead #896: with fewer than FORECAST_MIN_DECIDED decided offers a
+  // historical rate is noise (one sale reads 100%): the forecast uses the
+  // declared fallback rate and says so.
+  const steadyRate = winRate !== null && closed >= FORECAST_MIN_DECIDED;
+  const forecastRate = steadyRate ? winRate : FORECAST_FALLBACK_RATE;
+  const probableMinor = Math.round(waitingInPeriod.minor * forecastRate);
   const target = pickTarget(bundleRows, query);
   const forecast = Object.freeze({
     currency: query.currency,
     closedMinor: wonInPeriod.minor,
     probableMinor,
-    bestMinor: openInPeriod.minor,
+    bestMinor: waitingInPeriod.minor,
+    winRate: forecastRate,
+    rateSource: steadyRate ? 'history' : 'fallback',
     targetMinor: target === null ? null : target.valueMinor,
     heuristic: true,
     label: 'Stima',
-    method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
+    method: forecastMethod(steadyRate ? winRate : null, closed),
     note: target === null
       ? 'Obiettivo non impostato: aggiungi una riga obiettivo nel report.'
       : `Obiettivo ${formatMinor(target.valueMinor, query.currency)}.`,
@@ -588,13 +645,16 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     // rates are accumulated for the queried month, so the baseline they are
     // measured against is the month's own close rate — never a lifetime rate
     // that would flag an owner who merely matches the period.
-    const lostInPeriod = sumRows(dated, (row) => isLostValue(row['opportunity.stage']) && inPeriod(row));
+    const lostInPeriod = sumRows(dated, (row) => isLostValue(row['opportunity.stage']) && closedInPeriod(row));
     const periodDecided = wonInPeriod.count + lostInPeriod.count;
     const periodOverall = periodDecided === 0 ? null : wonInPeriod.count / periodDecided;
-    const candidate = [...team]
+    // Review Muse #896: the «senza referente» row is nobody — never a
+    // redistribution source or target.
+    const people = team.filter((entry) => entry.owner !== '');
+    const candidate = [...people]
       .filter((entry) => entry.openCount >= 2 && entry.winRate !== null && periodOverall !== null && entry.winRate < periodOverall && entry.staleCount > 0)
       .sort((a, b) => /** @type {number} */ (a.winRate) - /** @type {number} */ (b.winRate))[0];
-    const recipient = [...team]
+    const recipient = [...people]
       .filter((entry) => entry.wonCount > 0 && (!candidate || entry.owner !== candidate.owner))
       .sort((a, b) => /** @type {number} */ (b.winRate ?? -1) - /** @type {number} */ (a.winRate ?? -1))[0];
     if (candidate && recipient) {
@@ -616,13 +676,14 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     if (lost.count > 0 && closed > 0 && lost.count / closed >= 0.3) {
       insights.push({
         id: 'lost-rate',
-        text: `${lost.count} preventivi persi su ${closed} chiusi (${Math.round((lost.count / closed) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
+        // backlog:48993bed7294: «1 preventivo perso», never «1 preventivi persi».
+        text: `${plural(lost.count, 'preventivo perso', 'preventivi persi')} su ${plural(closed, 'chiuso', 'chiusi')} (${Math.round((lost.count / closed) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
       });
     }
     if (staleOpen.count > 0) {
       insights.push({
         id: 'stale',
-        text: `${staleOpen.count} preventivi aperti senza data di chiusura attesa nel periodo: assegna una data o escono dalle previsioni.`,
+        text: `${plural(staleOpen.count, 'preventivo aperto', 'preventivi aperti')} con la data di chiusura attesa già passata: aggiornala, così la previsione li conta di nuovo.`,
       });
     }
     if (insights.length === 0) {

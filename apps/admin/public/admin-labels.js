@@ -482,6 +482,16 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
+    // backlog:a060a4aa65b6: a placed offer whose pipelines are not readable
+    // here (the schema read failed or timed out) still reads its column,
+    // from the stage key — never the core stage, which the board does not
+    // show for it.
+    // Review Muse #887: only when no pipeline is readable here — with the
+    // pipelines read, a stage they do not define reads the core stage.
+    if (ordered.length === 0 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
+      const words = placed.replace(/-/g, ' ');
+      return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
+    }
   }
   return offerStateLabel(offer.stage);
 }
@@ -561,6 +571,29 @@ function orderedPipelines(pipelines, name) {
  * @param {any} entry one `/api/audit` item
  * @returns {{ kind: 'pipeline' | 'core', from: string, to: string } | null}
  */
+/**
+ * Whether an audit row only records where the card sits on the board — an
+ * order inside its column, written beside a drag move — and so is no event
+ * of the offer's history (backlog:a060a4aa65b6).
+ * @param {any} entry one `/api/audit` item
+ * @returns {boolean}
+ */
+export function isBoardPlacement(entry) {
+  if (!entry || typeof entry !== 'object' || entry.action !== 'opportunity.updated') return false;
+  const data = entry.data;
+  if (!data || typeof data !== 'object') return false;
+  const keys = Object.keys(data);
+  return keys.length > 0 && keys.every((key) => BOARD_PLACEMENT_KEYS.has(key));
+}
+
+/**
+ * backlog:a060a4aa65b6 (pilota 14/11: «Offerta aggiornata · da …» beside
+ * every state move, 4 rows out of 11): the keys of the audit row a board
+ * placement writes (positionOnBoard in the opportunity service) — the card's
+ * order in its column, never a change of the offer.
+ */
+const BOARD_PLACEMENT_KEYS = new Set(['boardPosition', 'afterId', 'first', 'renumbered']);
+
 export function stageMoveOf(entry) {
   if (!entry || typeof entry !== 'object') return null;
   if (entry.action === 'opportunity.stage_changed') {
@@ -637,4 +670,179 @@ export function auditActorLabel(entry, known = [], roster = []) {
   // stays «utente»); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
   return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
+}
+
+/**
+ * Who an offer's audit entry names (its creation, a stage move): the
+ * offer's owner reads their profile name when they are the actor, anyone
+ * else through auditActorLabel. One rule for the offer page («Creata da»)
+ * and the scheda cronologia («Offerta creata · da …», backlog:6c40dcfaeb3f).
+ * @param {any} entry the audit entry @param {any} record the offer @param {unknown} [people] the roster
+ */
+export function offerActorLabel(entry, record, people = []) {
+  // A team member reads their profile name (famiglia F5): the roster first,
+  // then the deal's own display values — never a slug like «coach-guido».
+  const owner = personLabel(record?.owner, people);
+  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
+  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+}
+
+/** How many audit entries an offer's trail reads (the offer page and the scheda). */
+export const OFFER_AUDIT_LIMIT = 100;
+
+/**
+ * Who created an offer, read from its audit trail — the offer page's
+ * «Creata da» and the scheda's «Offerta creata · da …» (backlog:6c40dcfaeb3f).
+ * A full page may hide the creation entry past its end (review Muse #894):
+ * then, like a trail that could not be read, nobody is named — null.
+ * @param {unknown} items the trail's entries @param {any} record the offer
+ * @param {unknown} [people] the roster @param {number} [limit] the page size read
+ * @returns {string | null}
+ */
+export function offerCreatorLabel(items, record, people = [], limit = OFFER_AUDIT_LIMIT) {
+  if (!Array.isArray(items) || items.length >= limit) return null;
+  const created = items.find((entry) => entry?.action === 'opportunity.created') ?? null;
+  return created === null ? null : offerActorLabel(created, record, people);
+}
+
+// ---------------------------------------------------------------------------
+// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
+// screen names in Italian, from one place. Every view that writes money, a
+// count or a module name reads it here, so a fix lands on every screen.
+// Dates: italianDateTime above («7 nov, 14:30»), italianDay in admin-core
+// («20 nov 2026») and romeDayPhrase in admin-oggi («di domani», «del 12
+// novembre», agent-crm#746) — never a raw ISO stamp on screen.
+// ---------------------------------------------------------------------------
+
+/** One formatter per currency code, built once. */
+const MONEY_FORMATS = new Map();
+
+/**
+ * Money for the Italian screens, minor units (cents) in: «1.080,00 €»,
+ * «26.000,00 €», «0,00 USD». `useGrouping: 'always'` is the point: it-IT
+ * leaves four-digit numbers ungrouped by default, so Reporting read
+ * «1080,00 €» (backlog:9236684c96a7). Null when the amount is not a whole
+ * number of cents — never a guessed figure.
+ * @param {unknown} minor amount in 1/100 units
+ * @param {unknown} [currency] ISO 4217 code, EUR when missing
+ * @returns {string | null}
+ */
+export function euro(minor, currency = 'EUR') {
+  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
+  // null/undefined/'' are a missing code; any other non-string is malformed.
+  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : (currency == null ? '' : '?');
+  // Missing currency reads as EUR; a code that is malformed, unknown to
+  // this runtime or not formattable fails closed (review #761 P1): the
+  // grouped amount with no symbol, never a thrown error nor a presumed €.
+  const code = raw === '' ? 'EUR' : raw;
+  if (!isKnownCurrency(code)) return plainAmount(minor);
+  let format = MONEY_FORMATS.get(code);
+  if (format === undefined) {
+    try {
+      format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
+    } catch {
+      return plainAmount(minor);
+    }
+    MONEY_FORMATS.set(code, format);
+  }
+  return format.format(minor / 100);
+}
+
+/**
+ * Whether a currency code is a well-formed ISO code this runtime lists
+ * (Intl.supportedValuesOf when present; the shape alone on older ones).
+ * @param {string} code
+ */
+let KNOWN_CURRENCIES;
+function isKnownCurrency(code) {
+  if (!/^[A-Z]{3}$/.test(code)) return false;
+  if (KNOWN_CURRENCIES === undefined) {
+    try {
+      KNOWN_CURRENCIES = typeof Intl.supportedValuesOf === 'function' ? new Set(Intl.supportedValuesOf('currency')) : null;
+    } catch {
+      KNOWN_CURRENCIES = null;
+    }
+  }
+  return KNOWN_CURRENCIES === null || KNOWN_CURRENCIES.has(code);
+}
+
+/** Grouped amount with no currency symbol, built once. */
+const PLAIN_AMOUNT = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+
+/**
+ * An amount whose currency is not known, minor units in: «1.200,00», no
+ * symbol — never a presumed € (review #761). Null when not whole cents.
+ * @param {unknown} minor amount in 1/100 units
+ * @returns {string | null}
+ */
+export function plainAmount(minor) {
+  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
+  return PLAIN_AMOUNT.format(minor / 100);
+}
+
+/**
+ * A count with its noun: «1 appuntamento», «3 appuntamenti», «0 righe».
+ * Only exactly one takes the singular.
+ * @param {unknown} count
+ * @param {string} one
+ * @param {string} many
+ */
+export function plural(count, one, many) {
+  return `${count} ${Number(count) === 1 ? one : many}`;
+}
+
+/**
+ * Italian names of the core modules, for the breadcrumb and the kickers
+ * (uppercased by CSS: a raw key read «OPPORTUNITY» on Nuova offerta,
+ * backlog:1d99c8207f90). `one`/`many` name the record and the list,
+ * `create` the creation screen.
+ */
+export const MODULE_NAMES = Object.freeze({
+  opportunity: Object.freeze({ one: 'Offerta', many: 'Offerte', create: 'Nuova offerta' }),
+  company: Object.freeze({ one: 'Azienda', many: 'Aziende', create: 'Nuova azienda' }),
+  contact: Object.freeze({ one: 'Contatto', many: 'Contatti', create: 'Nuovo contatto' }),
+  quote: Object.freeze({ one: 'Preventivo', many: 'Preventivi', create: 'Nuovo preventivo' }),
+  appointment: Object.freeze({ one: 'Appuntamento', many: 'Appuntamenti', create: 'Nuovo appuntamento' }),
+  product: Object.freeze({ one: 'Prodotto', many: 'Prodotti', create: 'Nuovo prodotto' }),
+  order: Object.freeze({ one: 'Ordine', many: 'Ordini', create: 'Nuovo ordine' }),
+  contract: Object.freeze({ one: 'Contratto', many: 'Contratti', create: 'Nuovo contratto' }),
+  task: Object.freeze({ one: 'Attività', many: 'Attività', create: 'Nuova attività' }),
+  lead: Object.freeze({ one: 'Lead', many: 'Lead', create: 'Nuovo lead' }),
+});
+
+/**
+ * The screen name of one module route for the breadcrumb: «Nuova offerta»
+ * for `new`, «Offerta» for `detail`, «Offerte» for `list`. A module the
+ * table does not know (one the operator generated) reads its own name with
+ * spaces for dashes and a capital first letter — its key is the name the
+ * operator gave it.
+ * @param {'list' | 'new' | 'detail' | string} view
+ * @param {unknown} moduleName
+ */
+export function moduleScreenLabel(view, moduleName) {
+  const key = typeof moduleName === 'string' ? moduleName.trim().toLowerCase() : '';
+  if (key === '') return 'Modulo';
+  const known = Object.hasOwn(MODULE_NAMES, key) ? MODULE_NAMES[key] : null;
+  if (known !== null) return view === 'new' ? known.create : view === 'detail' ? known.one : known.many;
+  const words = key.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * backlog:a3d3b99c738e: a price book as a person reads it in a menu. The
+ * manual book the catalog creates is named after its currency («Manuale
+ * EUR»), so «Manuale EUR (EUR)» said the currency twice: the trailing code
+ * leaves the name, the manual book reads «Listino manuale», and the
+ * currency rides once, as € for euro. «Listino (€)», «Stripe (USD)».
+ * @param {{ name?: unknown, currency?: unknown } | null | undefined} book
+ * @returns {string}
+ */
+export function priceBookLabel(book) {
+  const currency = typeof book?.currency === 'string' ? book.currency.trim().toUpperCase() : '';
+  let name = typeof book?.name === 'string' ? book.name.trim() : '';
+  if (currency !== '' && name.toUpperCase().endsWith(` ${currency}`)) name = name.slice(0, -(currency.length + 1)).trim();
+  if (name === '' || name.toLowerCase() === 'manuale') name = name === '' ? 'Listino' : 'Listino manuale';
+  const unit = currency === 'EUR' ? '€' : currency;
+  return unit === '' ? name : `${name} (${unit})`;
 }

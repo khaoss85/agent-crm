@@ -11,6 +11,7 @@ import {
   ATTACHMENT, BEHAVIOUR_BEARING_SOURCE, COMMERCIAL_SOURCE, unownedCommercialSource,
 } from './commercial-harness.mjs';
 import { generateBaseline, sourceFingerprints } from './run-commercial-characterization.mjs';
+import { classifySourceDrift, formatBlockingDrift, formatDriftAdvisory } from './source-drift.mjs';
 
 /**
  * LA0-Commercial — the Commercial Operations characterization gate.
@@ -61,14 +62,47 @@ test('the current commercial behaviour matches the frozen baseline', () => {
   assert.equal(fresh.fingerprint, BASELINE.fingerprint);
 });
 
-test('the commercial baseline is stale when behaviour-bearing source changes', () => {
-  assert.deepEqual(sourceFingerprints(repoRoot), BASELINE.source,
-    'a source file that decides Commercial behaviour changed — regenerate the baseline deliberately '
-    + 'with `npm run characterize:commercial` and review the diff');
+test('source-hash drift is advisory when behaviour is unchanged, blocking when it moved', () => {
+  // Backlog e0347551, forma (a) like `repo:truth --check --drift-advisory --base`:
+  // the hashes are a warning against the base, not the gate. A PR that
+  // touches a digested source without changing any observed value passes
+  // with a loud advisory and regenerates nothing; a behaviour change
+  // without a regenerated baseline still fails below.
   for (const [file, digest] of Object.entries(BASELINE.source)) {
     assert.notEqual(digest, 'absent', `${file} is recorded as absent; the baseline was generated against a different tree`);
     assert.match(digest, /^[0-9a-f]{64}$/);
   }
+  const verdict = classifySourceDrift({
+    baselineSource: BASELINE.source,
+    current: sourceFingerprints(repoRoot),
+    comparison: compareToBaseline(BASELINE, fresh.observations),
+  });
+  if (verdict.blocking) {
+    assert.fail(formatBlockingDrift({
+      domain: 'Commercial Operations', verdict, regenerate: 'npm run characterize:commercial',
+    }));
+  }
+  if (verdict.advisory) {
+    process.stderr.write(`${formatDriftAdvisory({
+      domain: 'commercial-operations', drifted: verdict.drifted, regenerate: 'npm run characterize:commercial',
+    })}\n`);
+  }
+});
+
+test('a behaviour change without a regenerated baseline still fails the gate', () => {
+  // The acceptance direction that must never go quiet (backlog e0347551):
+  // the advisory above must not mask a moved value. Proved on the live
+  // fresh run, not on a fixture.
+  const target = fresh.observations.find((entry) => ASSERTED.includes(entry.classification));
+  assert.ok(target, 'no asserted observation to move');
+  const mutated = fresh.observations.map((entry) => (entry.id === target.id
+    ? { ...entry, observed: { ...entry.observed, __gate: 'moved' } } : entry));
+  const verdict = classifySourceDrift({
+    baselineSource: BASELINE.source,
+    current: sourceFingerprints(repoRoot),
+    comparison: compareToBaseline(BASELINE, mutated),
+  });
+  assert.equal(verdict.blocking, true);
 });
 
 test('commercial generation is separate from verification, and never runs during verify', () => {
@@ -289,7 +323,10 @@ test('LA0-Commercial fails when a case silently stops running or is reclassified
 
 test('the commercial baseline file is byte-reproducible, so its diff is the change', () => {
   const serialize = (value) => `${JSON.stringify(sortKeysDeep(value), null, 2)}\n`;
-  assert.equal(serialize(fresh), readFileSync(join(repoRoot, 'tests/characterization/commercial-baseline.json'), 'utf8'));
+  // Source hashes are advisory metadata (the drift test above), not
+  // behaviour: a hash-only drift must not fail this file-equality check.
+  assert.equal(serialize({ ...fresh, source: BASELINE.source }),
+    readFileSync(join(repoRoot, 'tests/characterization/commercial-baseline.json'), 'utf8'));
 });
 
 test('the commercial comparison is order-independent and key-order-independent', () => {

@@ -153,6 +153,7 @@ const RECORDED = Object.freeze({
   "teammate-agent": { revision: 1, sqlite: "31aa25373be0f9117ffcdff50599f3f4c3b26757f37dcde804893c1824c3a7d4", pg: "20f02cf966f4de2d19c37b3f00a2f169ac7e6ebde3787126ce8c1be4a61964d0" },
   "teammate-assignment": { revision: 1, sqlite: "9dd4b30fd23bb4b1612e2f5e6281741e2bbf9b9f0432f0f47a79b3a13b645b97", pg: "ac2bed31a9ca809265c93c109d11b62d4eea5c1c0bb1d09e4296ff0c98595827" },
   "teammate-run": { revision: 2, sqlite: "10a3fcb92b20632f846408f8b284b7d57eeb6d8992fe53d6ce05884acb4f24e7", pg: "0644167169451bbce7e746fe446560705c21d619190fb95062430d33e69b62b4" },
+  "teammate-squad": { revision: 1, sqlite: "8e828eae6b8e0d412f4ee0ad92d4a84309a85a73d5a4679c6d18217d93ee3617", pg: "eea393d4a09890f412ec2729f30af0967003c632da392b4835096181c1c1f093" },
   "order-component": { revision: 1, sqlite: "8f8dfcac4f6a8e65ac8dd36bdfaa54ed2f5806fdea83b9800f1a5d4e7785f465", pg: "ed3084f7ec7cd6a619a73525b07107e3fe994c545ae0e647cc75eb3f4b9edc61" },
   "order-line": { revision: 1, sqlite: "2b19ae821b035132af504c3ebea773b0a787edfb68d95eb8cd694636bf963b97", pg: "1ba1eb36667449ab92ae25aa10b1457f9b0463d11aa4465b9e2ba62269320430" },
   "order-term": { revision: 1, sqlite: "566e5d825eee926708b87bbd9b5fc9f30d287219864d89c4fc5226ff38cf98fe", pg: "1b61dc8cb26411eb9d4e43bcef3b0e10e50840fb73aa13a364f6c4b3b821f6d3" },
@@ -171,7 +172,7 @@ const RECORDED = Object.freeze({
   "space-ai-proposal": { revision: 1, sqlite: "d18e8ceb73e207974215fae3fcb5190e48b68dcca130f183e927cde6feef16d3", pg: "97887405896a53fd187b8e647fbecd09aaaae10bc39f51fed8c23e97baac8e0e" },
   "space-package": { revision: 1, sqlite: "386e216d5a4410b264a32f73b6fc61a642a850b00ed27563b12af710628415ef", pg: "814768de0269ccf4b0bfcf98e07b393e16b67846f0a7d754e315947061cda04b" },
   "space-permission-override": { revision: 1, sqlite: "162686fdf7779342733fcfe0e921e223f11ee22906f76bbc4411f4341745c45b", pg: "a34bf6b440900c52f149b72a36164fc6d280dbdc1e8b85ccf121d0466d453f41" },
-  "work-activity": { revision: 2, sqlite: "42270f60cda19a00a619e349b9139484d6f7422dfb530806a253b6cb020d0fe2", pg: "105d69c5ce69c1f200ed4317d33112f5f3d3be9bc4bc79520100518e64279895" },
+  "work-activity": { revision: 3, sqlite: "aa509c31e538c28f2579fd3475c57d31df99fef68c301fd42658b38e2e474c36", pg: "776da1b75bd448e829e297c80431f0ec0938e4bd9145711b7cb9be5ac5e494bd" },
   "work-task": { revision: 1, sqlite: "42f2f15c58bfebce0e745d9090e23461202d0aba60df85446688f7a99b1085a3", pg: "3c3114ed031a0208c2c1abeb12026ef8502086923d88f87ef8d27bbc3e88c887" },
 });
 
@@ -304,12 +305,12 @@ test('a revision bump without history fails the history contract', () => {
   assertRevisionHistoryContract('guard-probe-module', 1);
   // Modules with real history stay covered by it.
   assertRevisionHistoryContract('data-quality-issue', 2);
-  assertRevisionHistoryContract('work-activity', 2);
+  assertRevisionHistoryContract('work-activity', 3);
   assertRevisionHistoryContract('calendar-sync-state', 2);
   // A covering history that is short for the revision fails too.
   assert.throws(
-    () => assertRevisionHistoryContract('work-activity', 3),
-    /ships 1 revision\(s\) of history; expected 2/,
+    () => assertRevisionHistoryContract('work-activity', 4),
+    /ships 2 revision\(s\) of history; expected 3/,
   );
 });
 

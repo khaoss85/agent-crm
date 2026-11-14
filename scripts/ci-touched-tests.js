@@ -78,10 +78,14 @@
  * The fallback never drops the remainder quietly: every selected test the
  * core suite leaves out drains behind it in the same shared queue, nearest
  * first (`bonusQueue`), while the run bound allows — backlog:3335fd28, an
- * oversized selection whose ~198 dropped tests never ran. A bound that
+ * oversized selection whose ~198 dropped tests never ran. The bonus has a
+ * ceiling of one file-budget past the core (backlog:d9d3336cf5b0): a wider
+ * selection leaves its tail to the full suite on `main`, named in the
+ * remainder note, instead of eating the whole bound first. A bound that
  * expires with only bonus files unrun (the core green, nothing failed)
  * warns naming them instead of failing red over coverage the step could
- * not fit; an unfinished core file, or any failure, still fails red. The
+ * not fit; an unfinished core file, any failure, or a timeout with nothing
+ * left to name still fails red. The
  * full suite on `main` stays the safety net behind whatever the bound does
  * not reach: the 540 s gate this phase shares (`scripts/ci-fast.sh`) could
  * never run a core-wide fan-in whole.
@@ -95,7 +99,10 @@
  * from one shared queue, so a core-wide fan-in still fits the bound. Fixed
  * round-robin slices did not: #621 then timed out again with "2 of 4
  * parts" done — two slices held most of the slow files while the other
- * two parts had finished and sat idle. A timeout with core files unfinished
+ * two parts had finished and sat idle. A timeout kills what still runs but
+ * settles only after every in-flight close has reported, so a suite that
+ * failed just before the bound is recorded as failed instead of warning
+ * green over the missing close; a timeout with core files unfinished
  * still fails red — never green without the core having run — and names
  * the core and bonus files that remained; each file's, each part's and the
  * run's elapsed time are logged, so the cause reads from the log.
@@ -290,6 +297,13 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // the fast gate stayed green while the nightly full suite failed on
   // «no literal colour outside :root» (main run 41956161675, cure in #593).
   'tests/admin-authority-tokens.test.js',
+  // Scans every apps/admin/public/*.js write button with readFileSync for
+  // the missing wait state (uiBusy/uiHold), never importing the screens: a
+  // PR touching one screen selects that screen's own tests through the
+  // import mapping and not this scan, so the fast stayed green while main
+  // went red three times in two days (#836 Agenti 13/11, #849 Profilo
+  // 13/11, #879 Agenti retire/confirm 14/11).
+  'tests/admin-cta-busy.test.js',
   // This gate's own audit (the unlisted-guard test walks tests/ itself):
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
@@ -519,17 +533,23 @@ export function fillNearest(
  * nearest-first order instead of being dropped (backlog:3335fd28: an
  * oversized selection fell back to the PR-owned changed tests and the ~198
  * dropped selected tests never ran — skipped, against "mai saltata"). The
- * run queue holds the whole mapped selection — the core first, this bonus
- * behind it — so the run bound, not the plan, decides how far an oversized
+ * run queue holds the mapped selection — the core first, this bonus behind
+ * it — so the run bound, not the plan, decides how far an oversized
  * selection drains, and every file the bound does not reach is named at
  * timeout instead of going quiet. Pure: unit-tested.
+ *
+ * The bonus has a ceiling (`maxBonus`, backlog:d9d3336cf5b0): an unbounded
+ * bonus ate the whole run bound before the warn could name anything, so a
+ * mapped selection wider than core-plus-budget leaves its tail to the full
+ * suite on `main` — named in `main()`'s remainder note, never quiet.
  */
 export function bonusQueue(
   /** @type {Map<string, number>} */ distances,
   /** @type {string[]} */ planned,
+  /** @type {number} */ maxBonus = DEFAULT_MAX_SELECTED,
 ) {
   const queued = new Set(planned);
-  return nearestFirst(distances).filter((test) => !queued.has(test));
+  return nearestFirst(distances).filter((test) => !queued.has(test)).slice(0, Math.max(0, maxBonus));
 }
 
 /**
@@ -538,7 +558,11 @@ export function bonusQueue(
  * would hide it); `warn` when only bonus files the bound did not reach
  * remain and everything that ran passed — the core suite is green, the
  * remainder is named, and the full suite on `main` stays the safety net
- * behind it. Pure: unit-tested.
+ * behind it. An empty `remaining` on a timeout is `fail`, never green
+ * (backlog:d9d3336cf5b0): the bound fired with nothing left to name, so
+ * either the drain raced the bound or bookkeeping lost a file, and only a
+ * red step plus the full suite on `main` is a safe answer. Pure:
+ * unit-tested.
  */
 export function timeoutVerdict(
   /** @type {string[]} */ coreTests,
@@ -546,6 +570,7 @@ export function timeoutVerdict(
   /** @type {string[]} */ failedFiles,
 ) {
   if (failedFiles.length > 0) return 'fail';
+  if (remaining.length === 0) return 'fail';
   const core = new Set(coreTests);
   return remaining.some((file) => core.has(file)) ? 'fail' : 'warn';
 }
@@ -808,8 +833,10 @@ export function withPackageDeclarationFreezeTests(
 /**
  * The characterization staleness suites: each `tests/characterization/*-baseline.json`
  * freezes the behaviour of the source files its `source` map digests, and the
- * paired `*-characterization.test.js` fails red when a digested file moves
- * without a deliberate baseline regeneration. The import mapping above never
+ * paired `*-characterization.test.js` fails red when an asserted observed
+ * value moves without a deliberate baseline regeneration. A digested file
+ * that moves without changing any observed value only warns (advisory,
+ * backlog:e0347551): no regeneration, no hash-line conflicts. The import mapping above never
  * selects them — a characterization suite relatively imports almost none of
  * the files it digests — so twice `main` turned red within a day after
  * green-alone PRs (S99, S116) that changed a digested file.
@@ -927,7 +954,8 @@ const DIGEST_RELEVANT_ADDED = /\.[cm]?js$|\.module\.json$/;
  * Add the characterization staleness suite(s) (`CHARACTERIZATION_SUITES`) on
  * top of a mapped or fallback selection when the diff touches a file their
  * baselines digest — or adds a digest-relevant source file under a directory
- * their baselines digest (a brand-new file is never a digest key yet).
+ * their baselines digest (a brand-new file is never a digest key yet) — or
+ * changes a baseline itself, which selects that baseline's own suite.
  *
  * - a diff touching no digested path (docs-only included) returns the
  *   selection unchanged — but only after the missing check below, so a PR
@@ -957,9 +985,15 @@ export function withCharacterizationTests(
     );
   }
   const matched = new Set();
+  // A changed baseline selects its own suite (backlog:e03475513020): the
+  // source-hash realignment PR touches only `*-baseline.json`, which no
+  // digest map records and no test imports, and that PR's gate is what
+  // proves the realignment moved no observed value.
+  const ownSuite = new Map(suites.map((suite) => [suite.baseline, suite.test]));
   for (const file of changedFiles) {
     const key = normalize(file).replace(/\\/g, '/');
     for (const suite of digestIndex.get(key) ?? []) matched.add(suite);
+    if (ownSuite.has(key)) matched.add(/** @type {string} */ (ownSuite.get(key)));
   }
   if (addedFiles.length > 0) {
     const ownedDirs = digestDirectorySuites(digestIndex);
@@ -1010,6 +1044,13 @@ export const SINGLE_SHARD_UP_TO = 12;
 export const MAX_SHARDS = 4;
 
 /**
+ * How long the run waits past its bound for in-flight children to report
+ * their close before settling anyway: long enough for SIGKILL reaping even
+ * on a loaded runner, short enough to keep the red step inside its lane.
+ */
+const TIMEOUT_DRAIN_GRACE_MS = 10_000;
+
+/**
  * How many parallel parts a run of `fileCount` files splits into: one up
  * to `SINGLE_SHARD_UP_TO`, then about one part per dozen files, capped at
  * `MAX_SHARDS`. Pure: unit-tested.
@@ -1056,7 +1097,14 @@ export function testJobs(
  * the log. Past `timeoutSec` the running processes die by SIGKILL and the
  * run resolves timed out naming every file not finished — the caller fails
  * red unless only the bonus remainder is unrun with everything green (see
- * `timeoutVerdict`), never green without the core having run.
+ * `timeoutVerdict`), never green without the core having run. Past the bound
+ * no outcome is lost: the timeout kills the running processes but settles
+ * only once every in-flight child has reported (or a short grace expires),
+ * so a suite that failed just before the bound is recorded as failed instead
+ * of warning green over the missing close event (backlog:d9d3336cf5b0). A
+ * child the bound itself killed (SIGKILL, no exit code of its own) counts as
+ * unfinished, never as failed; a child that exited on its own — even one
+ * whose close arrives after the bound fired — records its genuine outcome.
  *
  * Resolves (never rejects) to `{ status, timedOut, remaining,
  * completedShards, elapsedSec, partSec, failedFiles }`: `status` is the
@@ -1109,23 +1157,20 @@ export function runTestShards(
       if (settled) return;
       settled = true;
       cancelTimer();
+      if (grace !== null) {
+        clearTimeout(grace);
+        grace = null;
+      }
       resolve(result);
     };
-    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
-    // when the bound fires — e.g. once a given file has finished — instead
-    // of racing a wall-clock second against the machine's load.
-    const startTimer = options.startTimer ?? ((fire, ms) => {
-      const handle = setTimeout(fire, ms);
-      return () => clearTimeout(handle);
-    });
-    const cancel = startTimer(() => {
-      for (const child of children) {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          // Already gone.
-        }
-      }
+    // Past the bound the run settles only after every in-flight child has
+    // reported, so a failure just before the bound is recorded instead of
+    // lost (backlog:d9d3336cf5b0). A SIGKILLed child always reports its
+    // close, but a grace bounds the wait if one never does: the step fails
+    // red inside its lane instead of hanging the shared lock.
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let grace = null;
+    const settleTimeout = () => {
       settle({
         status: 1,
         timedOut: true,
@@ -1135,6 +1180,37 @@ export function runTestShards(
         partSec: partSec.map((sec) => Math.round(sec * 10) / 10),
         failedFiles: [...failedFiles],
       });
+    };
+    // The bound's clock is injectable (backlog:3d560518f3e2): a test decides
+    // when the bound fires — e.g. once a given file has finished — instead
+    // of racing a wall-clock second against the machine's load.
+    const startTimer = options.startTimer ?? ((fire, ms) => {
+      const handle = setTimeout(fire, ms);
+      return () => clearTimeout(handle);
+    });
+    // The bound kills what is still running but never settles on a snapshot:
+    // a child that failed just before the bound may not have reported its
+    // close yet, and settling now would lose the failure (warn-green over a
+    // red suite). Instead the close handlers below record every genuine
+    // outcome past the bound and settle once the last in-flight child has
+    // reported; only a missing close (which SIGKILL should make impossible)
+    // falls back to the grace below.
+    let timedOut = false;
+    const cancel = startTimer(() => {
+      if (settled || timedOut) return;
+      timedOut = true;
+      for (const child of children) {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // Already gone: its close is on the way with the genuine outcome.
+        }
+      }
+      if (children.size === 0) {
+        settleTimeout();
+        return;
+      }
+      grace = setTimeout(settleTimeout, TIMEOUT_DRAIN_GRACE_MS);
     }, options.timeoutSec * 1000);
     // Fired already (settled): nothing left to cancel later, cancel now.
     if (settled) cancel(); else cancelTimer = cancel;
@@ -1191,25 +1267,40 @@ export function runTestShards(
         // A spawn failure carries no exit code: the close handler below
         // counts the job as failed.
       });
-      child.on('close', (code) => {
+      child.on('close', (code, signal) => {
         children.delete(child);
-        if (settled) return;
-        if (tail !== '') process.stdout.write(`[${tag}] ${tail}\n`);
-        tail = '';
-        jobDone[index] = true;
-        const sec = (Date.now() - jobStarted) / 1000;
-        partSec[part] += sec;
-        const status = code ?? 1;
-        if (status !== 0 && firstFailure === 0) firstFailure = status;
-        if (status !== 0) failedFiles.push(...files);
-        const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
-        process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
-        try {
-          options.onJobDone?.(files, status);
-        } catch (error) {
-          // An observer must never stall its part: log and keep draining.
-          process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+        // A child the bound itself killed (SIGKILL, no exit code of its own)
+        // is unfinished, never failed: its job stays open so the timeout
+        // names it in `remaining`. Any other close is a genuine outcome and
+        // is recorded even past the bound — a failure just before the bound
+        // whose close arrives late still fails the step red instead of
+        // warning green over it.
+        const killedByBound = timedOut && code === null && signal === 'SIGKILL';
+        if (!killedByBound) {
+          if (tail !== '') process.stdout.write(`[${tag}] ${tail}\n`);
+          tail = '';
+          jobDone[index] = true;
+          const sec = (Date.now() - jobStarted) / 1000;
+          partSec[part] += sec;
+          const status = code ?? 1;
+          if (status !== 0 && firstFailure === 0) firstFailure = status;
+          if (status !== 0) failedFiles.push(...files);
+          const what = files.length === 1 ? files[0] : `${files.length} file(s)`;
+          process.stdout.write(`ci-touched-tests: part ${tag} ran ${what} in ${sec.toFixed(1)}s (exit ${status}).\n`);
+          try {
+            options.onJobDone?.(files, status);
+          } catch (error) {
+            // An observer must never stall its part: log and keep draining.
+            process.stdout.write(`ci-touched-tests: onJobDone threw for ${what}: ${error instanceof Error ? error.message : error}\n`);
+          }
         }
+        if (timedOut) {
+          // Past the bound no new job starts; the run settles once the last
+          // in-flight child has reported (or the grace fires first).
+          if (children.size === 0 && !settled) settleTimeout();
+          return;
+        }
+        if (settled) return;
         startNext(part);
       });
     };
@@ -1591,13 +1682,20 @@ async function main() {
   // The dropped remainder drains behind the core suite in the same shared
   // queue, nearest first (`bonusQueue`): an oversized selection no longer
   // leaves selected tests unrun and unnamed — the bound decides how far the
-  // queue drains, and a timeout names whatever it did not reach. The refusal
-  // queues nothing: fail-closed, there is no evidence this step can run.
-  const bonus = plan.kind === 'refuse' ? [] : bonusQueue(distances, plan.tests);
+  // queue drains, and a timeout names whatever it did not reach. The bonus
+  // has a ceiling (one file-budget past the core, backlog:d9d3336cf5b0): a
+  // wider selection leaves its tail to the full suite on `main`, named in
+  // the remainder note below instead of eating the whole bound first. The
+  // refusal queues nothing: fail-closed, there is no evidence this step can
+  // run.
+  const bonus = plan.kind === 'refuse' ? [] : bonusQueue(distances, plan.tests, options.maxSelected);
+  const queuedBonus = new Set(bonus);
+  const cappedOut = mapped.filter((test) => !plan.tests.includes(test) && !queuedBonus.has(test));
   const queue = [...plan.tests, ...bonus];
   const bonusNote = bonus.length === 0
     ? null
-    : `queuing ${bonus.length} bonus test(s) behind the ${plan.tests.length} core file(s), nearest first: ${bonus.join(', ')} — every file the run bound does not reach is named at timeout, and the full suite on \`main\` stays the safety net`;
+    : `queuing ${bonus.length} bonus test(s) behind the ${plan.tests.length} core file(s), nearest first: ${bonus.join(', ')} — every file the run bound does not reach is named at timeout, and the full suite on \`main\` stays the safety net`
+      + `${cappedOut.length === 0 ? '' : `; ${cappedOut.length} further selected test(s) exceed this step's ${options.maxSelected}-file bonus budget and stay on \`main\`: ${cappedOut.join(', ')}`}`;
   const addedGuards = plan.kind === 'refuse'
     ? []
     : plan.tests.filter((test) => !preGuardTests.includes(test));
@@ -1622,8 +1720,11 @@ async function main() {
   // plus a summary line naming them — including on the skip path, so a
   // discarded mapped set can never go quiet. Outside the refusal they drain
   // as the bonus queue above instead of being dropped; the note then names
-  // what is queued rather than what is skipped.
-  const droppedTests = (plan.dropped ?? []).filter((test) => !plan.tests.includes(test));
+  // what is queued rather than what is skipped. The bonus ceiling's tail
+  // (`cappedOut`) joins this set, so a selection wider than core-plus-budget
+  // is named on every path, even where no bonus is queued.
+  const droppedTests = [...new Set([...(plan.dropped ?? []), ...cappedOut])]
+    .filter((test) => !plan.tests.includes(test) && !queuedBonus.has(test));
   const droppedNote = droppedTests.length === 0
     ? null
     : `dropping ${droppedTests.length} selected test(s) this step does not run: ${droppedTests.join(', ')}`;
@@ -1661,16 +1762,19 @@ async function main() {
     );
     process.exit(1);
   }
-  if (plan.tests.length === 0) {
+  if (plan.tests.length === 0 && bonus.length === 0) {
     // Only an empty diff reaches here with nothing to run: any real
     // change — code or not, deleted or not — runs at least the repo-wide
     // guards (a docs-only change can still flip tests/scenario-document.test.js).
+    // The remainder note is reported even here (backlog:d9d3336cf5b0): a
+    // discarded mapped set can never go quiet, and a queued bonus never
+    // exits 0 unrun — it falls through to the run below instead.
     process.stdout.write(
       `ci-touched-tests: ${allChanged.length} changed file(s), no test file reaches them — nothing to run.\n`,
     );
-    if (droppedNote !== null) {
-      process.stdout.write(`ci-touched-tests: warning: ${droppedNote}.\n`);
-      process.stdout.write(`::warning::ci-touched-tests: ${droppedNote}.\n`);
+    if (remainderNote !== null) {
+      process.stdout.write(`ci-touched-tests: warning: ${remainderNote}.\n`);
+      process.stdout.write(`::warning::ci-touched-tests: ${remainderNote}.\n`);
     }
     process.exit(0);
   }

@@ -47,7 +47,7 @@ const MODEL = {
     { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000,00 €', sub: '6 preventivi aperti' },
     { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000,00 €' },
     { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000,00 €', sub: '2 chiusure' },
-    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 perse' },
+    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
     { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000,00 €', sub: '2 preventivi' },
   ],
   funnel: [
@@ -434,7 +434,8 @@ test('the channel card renders title, period total, week totals and legend (C6, 
     ...mount.findAll('h3'), ...mount.findAll('p'), ...mount.findAll('span'),
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/, 'C6: card title');
-  assert.match(text, /28 nel periodo/, 'C6: <n> nel periodo');
+  // backlog:48993bed7294: the total says what it counts and over which weeks.
+  assert.match(text, /28 primi contatti da un canale nelle 4 settimane dal 28 set al 25 ott · un cliente con più canali conta una volta per canale/, 'C6: what the total counts');
   assert.match(text, /Instagram 18/, 'C7: legend <nome canale> <n>');
   assert.match(text, /WhatsApp 10/, 'C7: legend <nome canale> <n>');
   for (const label of ['28 set', '5 ott', '12 ott', '19 ott']) {
@@ -468,7 +469,7 @@ test('an empty channel breakdown renders title, zero and empty bars, never blank
     ...mount.findAll('h3'), ...mount.findAll('p'), ...mount.findAll('span'),
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/);
-  assert.match(text, /0 nel periodo/);
+  assert.match(text, /0 primi contatti da un canale/);
 });
 
 test('forecastStatus is on track at and past the obiettivo, honest below it (C13)', () => {
@@ -768,4 +769,18 @@ test('c3e66b36ddb7: the loading state speaks Italian', async () => {
   assert.equal(mount.textContent, 'Sto preparando il report…');
   release();
   await pending;
+});
+
+// backlog:48993bed7294 (verifica 13/11): the «senza referente» row and the
+// columns' meaning on the team table.
+test('48993bed7294: offers without a referente read «Senza referente», never «Membro del team»', async () => {
+  const { withPersonNames, channelsLede } = await import('../apps/admin/public/admin-reporting.js');
+  const named = withPersonNames({
+    owners: ['alice'],
+    team: [{ owner: 'alice', openCount: 3, openMinor: 38000 }, { owner: '', openCount: 2, openMinor: 2500 }],
+    insights: [],
+  }, []);
+  assert.deepEqual(named.team.map((entry) => entry.owner).slice(1), ['Senza referente']);
+  assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
+    '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · un cliente con più canali conta una volta per canale');
 });
