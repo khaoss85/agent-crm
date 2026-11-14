@@ -784,3 +784,17 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
   assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · un cliente con più canali conta una volta per canale');
 });
+
+// 35c3c897d696: a malformed first or last week reads the count only, never throws.
+test('channelsLede with a malformed week never throws', async () => {
+  const { channelsLede } = await import('../apps/admin/public/admin-reporting.js');
+  assert.equal(
+    channelsLede({ total: 3, weeks: [{ week: '2026-10-26' }, { week: 'non-una-data' }] }),
+    '3 primi contatti da un canale',
+  );
+  assert.equal(
+    channelsLede({ total: 1, weeks: [{ week: 'nope' }, { week: '2026-11-02' }] }),
+    '1 primo contatto da un canale',
+  );
+  assert.equal(channelsLede({ total: 0, weeks: [] }), '0 primi contatti da un canale');
+});

@@ -59,7 +59,11 @@ export function channelsLede(breakdown) {
   const first = typeof weeks[0]?.week === 'string' ? weeks[0].week : null;
   const lastStart = typeof weeks.at(-1)?.week === 'string' ? weeks.at(-1).week : null;
   const count = `${total} ${total === 1 ? 'primo contatto' : 'primi contatti'} da un canale`;
-  if (first === null || lastStart === null || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))) return count;
+  // 35c3c897d696: either end malformed reads the count only — an Invalid
+  // Date below would throw RangeError out of the card.
+  if (first === null || lastStart === null
+    || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))
+    || Number.isNaN(Date.parse(`${lastStart}T00:00:00.000Z`))) return count;
   const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · un cliente con più canali conta una volta per canale`;
 }
