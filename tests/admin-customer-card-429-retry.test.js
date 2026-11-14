@@ -137,6 +137,28 @@ test('3a9bee845cc4: one 429 logs once per failed request, every failed section o
   }
 });
 
+test('3a9bee845cc4: Riprova shows its wait while the re-read runs, and a failed re-read offers Riprova again', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = fakeClient();
+  client.fail(true);
+  const view = createCustomerCardView({ doc, mount, client, navigate: () => {}, spaceId: 'spazio-1' });
+  await view.renderCard('contact', 'c1');
+  await flush();
+  const retry = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'scheda-retry');
+  assert.ok(retry, 'a failed section offers Riprova');
+  const press = retry.listeners.click[0]();
+  assert.equal(retry.textContent, 'Riprovo…', 'the retry says it is retrying, in Italian');
+  assert.equal(retry.getAttribute('aria-busy'), 'true', 'the retry is marked busy for assistive tech');
+  assert.equal(retry.disabled, true, 'a second tap presses nothing new');
+  await retry.listeners.click[0]();
+  await press;
+  await flush();
+  const again = mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'scheda-retry');
+  assert.ok(again.length > 0, 'the limit still on: Riprova is offered again');
+  assert.ok(again.every((node) => node.textContent === 'Riprova'), 'no retry stays stuck on «Riprovo…»');
+});
+
 test('3a9bee845cc4: Riprova re-reads the scheda and paints once the limit has passed', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiAddOption, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
@@ -5149,7 +5149,11 @@ export function createCustomerCardView(deps) {
     retry.addEventListener('click', () => {
       // A double tap under a rate limit only crowds the server: the first tap
       // owns the re-read (renderCard keeps only the newest answer anyway).
-      retry.setAttribute('disabled', '');
+      // cta-loading: the shared waiting state — off, aria-busy, «Riprovo…» —
+      // so the guard in tests/admin-cta-busy.test.js sees this retry like
+      // every other /bo write button.
+      if (retry.getAttribute('aria-busy') === 'true') return;
+      uiMarkBusy(retry, 'Riprovo…');
       if (target !== null) void renderCard(target.resource, target.id);
     });
     return retry;
