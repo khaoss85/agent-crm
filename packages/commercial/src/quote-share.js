@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash, randomBytes } from 'node:crypto';
-import { AppError, ValidationError, nowIso } from '../../core/index.js';
+import { AppError, ConflictError, ValidationError, nowIso } from '../../core/index.js';
 
 /**
  * Public quote links (A5 offerta via link, accettazione e prezzo congelato).
@@ -252,6 +252,29 @@ function expiredLink() {
 }
 
 /**
+ * Same-process exclusion for concurrent share-link mints: two mints for one
+ * approved version must never both insert — the loser reuses the winner's
+ * link. Each action already runs in its own SERIALIZABLE PostgreSQL
+ * transaction (whose transient-conflict retry re-reads), so cross-process
+ * racers still converge on one row; this lock keeps same-process racers from
+ * both reaching the insert, so the common case reuses without an abort. Held
+ * across the re-check and the insert only — never across the commit, which
+ * the framework owns. One version per lock, never nested, so it cannot
+ * deadlock; entries are removed when their mint settles.
+ */
+const inflightShareMints = new Map();
+function withVersionMintLock(versionId, fn) {
+  const prior = inflightShareMints.get(versionId) ?? Promise.resolve();
+  let releaseCurrent = () => {};
+  const current = new Promise((resolve) => { releaseCurrent = resolve; });
+  inflightShareMints.set(versionId, current);
+  return prior.catch(() => {}).then(fn).finally(() => {
+    releaseCurrent();
+    if (inflightShareMints.get(versionId) === current) inflightShareMints.delete(versionId);
+  });
+}
+
+/**
  * One source of truth for what a quote version already has: an accepted share
  * is terminal and wins over a live one, a live (unexpired, active) share is
  * reused, otherwise there is nothing to reuse. Every share-link decision —
@@ -320,35 +343,50 @@ export function buildShareLinkAction(config) {
         throw new ValidationError('expiresInDays must be an integer between 1 and 90', { field: 'expiresInDays' });
       }
       const at = now();
-      const existing = await resolveVersionShare(shares, quote, at);
-      if (existing) {
+      // Per-version exclusion: two concurrent mints for one version must
+      // never both insert. The loser reuses the winner's link — even when
+      // the winner committed between our re-check and our insert: on a
+      // conflict we re-read and reuse instead of minting a second live row.
+      const minted = await withVersionMintLock(quote.currentVersionId, async () => {
+        const existing = await resolveVersionShare(shares, quote, at);
+        if (existing) return { reused: existing.share };
+        const token = generateShareToken();
+        const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
+        try {
+          const share = await shares.createManaged(
+            {
+              quoteId: quote.id,
+              quoteVersionId: quote.currentVersionId,
+              versionNumber: quote.currentVersionNumber,
+              tokenHash: hashShareToken(token),
+              status: 'active',
+              expiresAt,
+              acceptCount: 0,
+              createdBy,
+            },
+            { actor },
+          );
+          return { share, token };
+        } catch (error) {
+          if (!(error instanceof ConflictError)) throw error;
+          const winner = await resolveVersionShare(shares, quote, at);
+          if (!winner) throw error;
+          return { reused: winner.share };
+        }
+      });
+      if (minted.reused) {
         // The bearer is not recoverable from the hash, so a reused link
         // returns no token: resend the original link the first share made.
         // An accepted share is terminal for its version — reusing it here,
         // instead of minting a fresh token, is what makes double acceptance
         // of one version impossible.
-        step('quote.link-reused', { quoteId: quote.id, versionNumber: existing.share.versionNumber });
-        return { alreadyExisted: true, share: shareSummary(existing.share), token: null };
+        step('quote.link-reused', { quoteId: quote.id, versionNumber: minted.reused.versionNumber });
+        return { alreadyExisted: true, share: shareSummary(minted.reused), token: null };
       }
-      const token = generateShareToken();
-      const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
-      const share = await shares.createManaged(
-        {
-          quoteId: quote.id,
-          quoteVersionId: quote.currentVersionId,
-          versionNumber: quote.currentVersionNumber,
-          tokenHash: hashShareToken(token),
-          status: 'active',
-          expiresAt,
-          acceptCount: 0,
-          createdBy,
-        },
-        { actor },
-      );
-      step('quote.link-shared', { quoteId: quote.id, versionNumber: share.versionNumber });
+      step('quote.link-shared', { quoteId: quote.id, versionNumber: minted.share.versionNumber });
       // The only result that ever carries the raw bearer: the operator
       // copies it into the message once, then it lives only in the link.
-      return { alreadyExisted: false, share: shareSummary(share), token };
+      return { alreadyExisted: false, share: shareSummary(minted.share), token: minted.token };
     },
   };
 }
