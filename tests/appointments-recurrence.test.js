@@ -569,6 +569,100 @@ test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nomina
   assert.ok(service.rows.every((row) => row.status === 'cancelled'));
 });
 
+test('spostare «tutti» con una durata diversa è 400 field endsAt e niente si muove', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const before = service.rows.map((row) => ({ startsAt: row.startsAt, endsAt: row.endsAt }));
+  // Stesso inizio, 30 minuti in più: la durata richiesta non è quella
+  // prenotata.
+  await assert.rejects(
+    rescheduleAppointment(context, {
+      id: booked.occurrences[0].id,
+      startsAt: '2026-11-17T16:00:00.000Z',
+      endsAt: '2026-11-17T17:30:00.000Z',
+      scope: 'all',
+    }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.details?.field, 'endsAt');
+      return true;
+    },
+  );
+  assert.deepEqual(
+    service.rows.map((row) => ({ startsAt: row.startsAt, endsAt: row.endsAt })),
+    before,
+    'il rifiuto arriva prima della prima scrittura',
+  );
+});
+
+test('«questo e i successivi» tiene la durata di ogni riga, mai quella della nominata', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 2 } }));
+  // Allungo solo la seconda con «solo questo»: da qui in poi le durate
+  // divergono (60 min la prima, 90 la seconda).
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-24T16:00:00.000Z',
+    endsAt: '2026-11-24T17:30:00.000Z',
+    scope: 'single',
+  });
+  assert.equal(service.rows[1].endsAt, '2026-11-24T17:30:00.000Z');
+  // Sposto «tutti» di un giorno con la durata della testa: la seconda resta
+  // da 90 minuti, non viene normalizzata a 60.
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[0].id,
+    startsAt: '2026-11-18T16:00:00.000Z',
+    endsAt: '2026-11-18T17:00:00.000Z',
+    scope: 'all',
+  });
+  assert.equal(service.rows[0].endsAt, '2026-11-18T17:00:00.000Z');
+  assert.equal(service.rows[1].startsAt, '2026-11-25T16:00:00.000Z');
+  assert.equal(service.rows[1].endsAt, '2026-11-25T17:30:00.000Z', 'ogni riga tiene la sua durata');
+});
+
+test('la conferma di una serie è atomica: una conferma a metà fallita lascia tutto prenotato', async () => {
+  const service = fakeAppointments();
+  // Transazione finta con rollback, come nel test dell’annullo.
+  const snapshot = () => service.rows.map((row) => ({ ...row }));
+  service.database = {
+    storage: { activeTransaction: () => null },
+    async transactionAsync(critical) {
+      const before = snapshot();
+      try {
+        return await critical();
+      } catch (error) {
+        service.rows.length = 0;
+        for (const row of before) service.rows.push(row);
+        throw error;
+      }
+    },
+  };
+  const context = { ...contextFor(service), permissionGate: allowGate() };
+  const request = {
+    ...booking({ recurrence: { kind: 'weekly', count: 3 } }),
+    spaceId: 'spazio-1',
+    confirmed: true,
+  };
+  // La prenota fallisce dentro la conferma, alla seconda occorrenza.
+  let advances = 0;
+  const realApply = service.applyManaged;
+  service.applyManaged = async (id, patch, options) => {
+    if (patch?.status === 'confirmed') {
+      advances += 1;
+      if (advances === 2) throw new Error('injected confirm failure');
+    }
+    return realApply(id, patch, options);
+  };
+  await assert.rejects(confirmBooking(context, request), /injected confirm failure/);
+  assert.deepEqual(
+    service.rows.map((row) => row.status),
+    ['booked', 'booked', 'booked'],
+    'la serie resta intera quando una conferma fallisce a metà giro',
+  );
+});
+
 test('annullare «tutti» con la seconda scrittura che fallisce non lascia niente annullato', async () => {
   const service = fakeAppointments();
   // Transazione finta con rollback: fotografa le righe e le ripristina se il

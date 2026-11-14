@@ -1732,6 +1732,20 @@ export async function rescheduleAppointment(context, request) {
       );
     }
     const targets = await seriesScopeRows(appointments, current, scope);
+    // A scoped move shifts the series, never restretches it: the request
+    // duration must equal the stored one, or the grid would keep the old
+    // length while the caller believes the new endsAt was stored. A new
+    // duration is a «solo questo» move, one row at a time.
+    if (scope !== 'single') {
+      const storedDurationMs = Date.parse(current.endsAt) - Date.parse(current.startsAt);
+      if (endsAt.ms - startsAt.ms !== storedDurationMs) {
+        throw new ValidationError(
+          '«Questo e i successivi» e «tutti» spostano la serie senza cambiarne la durata: '
+          + 'per cambiare la durata sposta con «solo questo»',
+          { field: 'endsAt' },
+        );
+      }
+    }
     if (scope === 'single') {
       if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
         return { appointment: current, moved: false, occurrences: Object.freeze([]) };
@@ -1754,18 +1768,21 @@ export async function rescheduleAppointment(context, request) {
       };
     }
     const deltaMs = startsAt.ms - Date.parse(current.startsAt);
-    const durationMs = Date.parse(current.endsAt) - Date.parse(current.startsAt);
     const inScopeIds = new Set(targets.map((row) => row.id));
     const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
+    // Each row keeps its own duration: an earlier «solo questo» stretch is
+    // never silently normalized to the named row's length by a later scoped
+    // move.
     const plans = targets.map((row, position) => {
       const fromMs = Date.parse(row.startsAt);
+      const rowDurationMs = Date.parse(row.endsAt) - Date.parse(row.startsAt);
       const nextStartMs = fromMs + deltaMs;
       const next = {
         row,
         nextStartsAt: new Date(nextStartMs).toISOString(),
-        nextEndsAt: new Date(nextStartMs + durationMs).toISOString(),
+        nextEndsAt: new Date(nextStartMs + rowDurationMs).toISOString(),
         nextStartMs,
-        nextEndMs: nextStartMs + durationMs,
+        nextEndMs: nextStartMs + rowDurationMs,
         position,
       };
       return next;
@@ -2743,28 +2760,42 @@ export async function confirmBooking(context, request) {
   const bookedRows = Array.isArray(booked.occurrences) && booked.occurrences.length > 0
     ? booked.occurrences
     : [booked.appointment];
-  const confirmedRows = [];
-  for (const row of bookedRows) {
-    if (!row || row.status !== 'booked') {
-      confirmedRows.push(row);
-      continue;
+  // A series confirms every occurrence, never half of it: the advances run
+  // inside one storage transaction when one is available, so a storage
+  // failure or a concurrent terminal write mid-loop rolls back to
+  // all-booked instead of half-confirmed. Each advance still serializes on
+  // its own appointment chain, and joins this envelope instead of opening
+  // its own (bookingTransaction is null inside a caller transaction).
+  const runInTransaction = bookingTransaction(appointments);
+  const confirmAll = async () => {
+    const confirmedRows = [];
+    for (const row of bookedRows) {
+      if (!row || row.status !== 'booked') {
+        confirmedRows.push(row);
+        continue;
+      }
+      try {
+        confirmedRows.push(await advanceAppointment(
+          { appointments, actor, now: context?.now },
+          row,
+          'confirmed',
+        ));
+      } catch (error) {
+        // A concurrent confirm of the same source key may have advanced the
+        // row between the booking replay and this advance: re-read, and only a
+        // row that is still not confirmed keeps the refusal.
+        if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
+        const fresh = await readAppointment({ appointments }, row.id);
+        if (!fresh || fresh.status !== 'confirmed') throw error;
+        confirmedRows.push(fresh);
+      }
     }
-    try {
-      confirmedRows.push(await advanceAppointment(
-        { appointments, actor, now: context?.now },
-        row,
-        'confirmed',
-      ));
-    } catch (error) {
-      // A concurrent confirm of the same source key may have advanced the
-      // row between the booking replay and this advance: re-read, and only a
-      // row that is still not confirmed keeps the refusal.
-      if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE') throw error;
-      const fresh = await readAppointment({ appointments }, row.id);
-      if (!fresh || fresh.status !== 'confirmed') throw error;
-      confirmedRows.push(fresh);
-    }
-  }
+    return confirmedRows;
+  };
+  const confirmedRows = await withMemberBooking(
+    booked.appointment.teamMemberId ?? input.teamMemberId,
+    runInTransaction ? () => runInTransaction(confirmAll) : confirmAll,
+  );
   const appointment = confirmedRows.find((row) => row && booked.appointment && row.id === booked.appointment.id)
     ?? confirmedRows[0] ?? booked.appointment;
   // The calendar edge was validated above, before any row existed: the
