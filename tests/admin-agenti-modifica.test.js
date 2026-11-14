@@ -34,12 +34,22 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** A server like apps/server for the agents routes, plus the hand-agent PATCH. */
-function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreate = [] } = {}) {
+/**
+ * A server like apps/server for the agents routes: Modifica through
+ * POST /api/agents/update and Ritira through POST /api/agents/set-status
+ * (the teammate-agent module exposes get,list only, so no PATCH exists —
+ * review #879 giro 2). `failWrite` refuses the next update/set-status;
+ * `noWriteRoutes` answers them like a deployment whose framework has no
+ * agents writes yet (404 naming the missing operation).
+ */
+function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreate = [], failWrite = [], noWriteRoutes = false } = {}) {
   const calls = [];
   const rows = agents.map((row) => ({ ...row }));
   const assignments = [];
   const failures = [...failCreate];
+  const writeFailures = [...failWrite];
+  const fold = (value) => String(value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const findRow = (body) => rows.find((entry) => entry.sourceKey === body.agentSourceKey && entry.spaceId === body.spaceId);
   return {
     calls,
     rows,
@@ -55,7 +65,6 @@ function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreat
       if (path === '/api/agents/create' && method === 'POST') {
         const failure = failures.shift();
         if (failure) throw failure;
-        const fold = (value) => String(value).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
         if (rows.some((row) => fold(row.name) === fold(body.name))) {
           throw Object.assign(new Error('name taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
         }
@@ -68,12 +77,29 @@ function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreat
         assignments.push(assignment);
         return { duplicate: false, assignment };
       }
-      if (path.startsWith('/api/modules/teammate-agent/records/') && method === 'PATCH') {
-        const id = decodeURIComponent(String(path.split('/').pop()));
-        const row = rows.find((entry) => String(entry.id) === id);
-        if (!row) throw Object.assign(new Error('missing'), { status: 404 });
-        Object.assign(row, body);
-        return { item: { ...row } };
+      if ((path === '/api/agents/update' || path === '/api/agents/set-status') && method === 'POST') {
+        if (noWriteRoutes) {
+          throw Object.assign(new Error('Operation not found: teammate agents'), { code: 'NOT_FOUND', status: 404 });
+        }
+        const failure = writeFailures.shift();
+        if (failure) throw failure;
+        const row = findRow(body);
+        if (!row) throw Object.assign(new Error('Unknown agent in this space'), { code: 'AGENT_UNKNOWN', status: 404 });
+        if (path === '/api/agents/update') {
+          if (body.name !== undefined && rows.some((entry) => entry !== row && fold(entry.name) === fold(body.name))) {
+            throw Object.assign(new Error('name taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
+          }
+          for (const field of ['name', 'role', 'instructions', 'spendingCapCents']) {
+            if (body[field] !== undefined) row[field] = body[field];
+          }
+          return { agent: { ...row } };
+        }
+        if (body.status !== 'active' && body.status !== 'paused') {
+          throw Object.assign(new Error('bad status'), { code: 'VALIDATION_ERROR', status: 400 });
+        }
+        const duplicate = row.status === body.status;
+        row.status = body.status;
+        return { agent: { ...row }, duplicate };
       }
       throw new Error(`unexpected ${method} ${path}`);
     },
@@ -81,7 +107,6 @@ function driveClient({ agents = [RIAGGANCIO, MANO], catalog = CATALOG, failCreat
 }
 
 const posts = (client, path) => client.calls.filter((call) => call.method === 'POST' && (!path || call.path === path));
-const patches = (client) => client.calls.filter((call) => call.method === 'PATCH');
 
 async function paintedView(options) {
   const doc = createFakeDocument();
@@ -119,7 +144,8 @@ test('7d169a3b1dd2: il segnaposto della barra cita un agente del team', () => {
 test('7d169a3b1dd2: la card di un agente scritto a mano porta id e custom; il catalogo no', () => {
   const [hand, catalog] = buildAgentCards({ agents: [MANO, RIAGGANCIO], assignments: [], runs: [], nowIso: NOW, catalog: CATALOG });
   assert.equal(hand.custom, true);
-  assert.equal(hand.id, '2', 'il PATCH di Modifica/Ritira punta alla riga');
+  // Modifica/Ritira scrivono con la sourceKey, mai con l'id di riga.
+  assert.equal(hand.sourceKey, MANO.sourceKey);
   assert.equal(hand.engine, false, 'scritto a mano: nessun motore in questo spazio');
   assert.equal(catalog.custom, false);
 });
@@ -164,7 +190,7 @@ test('7d169a3b1dd2: un nome già preso resta un rifiuto in cima, non del campo',
   assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).length, 0, 'il server non punta a un campo');
 });
 
-test('7d169a3b1dd2: Modifica salva con un PATCH sulla riga', async () => {
+test('7d169a3b1dd2: Modifica salva con update-agent, con la chiave del chiamante', async () => {
   const { mount, client } = await paintedView();
   button(mount, 'edit-agent').dispatch('click', {});
   const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
@@ -174,22 +200,90 @@ test('7d169a3b1dd2: Modifica salva con un PATCH sulla riga', async () => {
   name.dispatch('input', {});
   panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
   await flush();
-  assert.equal(patches(client).length, 1);
-  assert.equal(patches(client)[0].path, '/api/modules/teammate-agent/records/2');
-  assert.equal(patches(client)[0].body.name, 'Manona');
+  const updates = posts(client, '/api/agents/update');
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].body.spaceId, 'presti');
+  assert.equal(updates[0].body.agentSourceKey, MANO.sourceKey, 'la riga si punta per sourceKey, mai per id');
+  assert.equal(updates[0].body.name, 'Manona');
+  assert.ok(typeof updates[0].key === 'string' && updates[0].key.length > 0, 'Idempotency-Key del chiamante');
   assert.ok(mount.textContent.includes('Manona aggiornato.'));
+});
+
+test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnare un campo', async () => {
+  // Review #879 giro 2 P2: il rifiuto non eredita il marcatore di campo.
+  const boom = Object.assign(new Error('down'), { status: 500 });
+  const { mount, client } = await paintedView({ failWrite: [boom] });
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = '';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.match(mount.querySelector('input[name="agent-edit-name"]').getAttribute('aria-invalid'), /true/, 'il controllo locale resta segnato');
+  const fixed = mount.querySelector('input[name="agent-edit-name"]');
+  fixed.value = 'Manona';
+  fixed.dispatch('input', {});
+  mount.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client, '/api/agents/update').length, 1);
+  const top = mount.findAll('p').filter((node) => node.classList.contains('bo-seq-create-error'));
+  assert.equal(top.length, 1, 'un solo errore, in cima al pannello');
+  assert.equal(top[0].getAttribute('role'), 'alert');
+  assert.match(top[0].textContent, /riprova tra poco/);
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).length, 0, 'nessun errore accanto a un campo');
+  assert.equal(mount.querySelector('input[name="agent-edit-name"]').getAttribute('aria-invalid'), null);
+});
+
+test('7d169a3b1dd2: la Modifica su un nome preso resta in cima con la nota del nome', async () => {
+  const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
+  const { mount } = await paintedView({ failWrite: [taken] });
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = 'Riaggancio';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.ok(mount.textContent.includes(AGENT_NAME_TAKEN_NOTE));
+  assert.equal(mount.querySelectorAll('p.bo-agent-field-error').length, 0, 'in cima, non del campo');
+});
+
+test('7d169a3b1dd2: su un deploy senza le scritture agenti la Modifica legge neutra', async () => {
+  // Review #879 giro 2 P1: il 404 che nomina l'operazione mancante non è
+  // un errore e non dice «non sono attivi».
+  const { mount, client } = await paintedView({ noWriteRoutes: true });
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.equal(posts(client, '/api/agents/update').length, 0, 'una sola POST rifiutata dal deploy senza scritture');
+  const live = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  assert.ok(live && live.querySelector('p.bo-agent-edit-unavailable'), 'nota neutra nel pannello');
+  assert.ok(!mount.textContent.includes('non sono attivi'), 'mai la riga del non attivo');
 });
 
 test('7d169a3b1dd2: Ritira chiede Conferma in linea e mette in pausa, mai un dialog nativo', async () => {
   const { mount, client } = await paintedView();
   button(mount, 'retire-agent').dispatch('click', {});
   assert.ok(mount.querySelector('button[data-action="confirm-retire-agent"]'), 'prima chiede, in linea');
-  assert.equal(patches(client).length, 0, 'niente scrittura prima della conferma');
+  assert.equal(posts(client, '/api/agents/set-status').length, 0, 'niente scrittura prima della conferma');
   mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
   await flush();
-  assert.equal(patches(client).length, 1);
-  assert.deepEqual(patches(client)[0].body, { status: 'paused' });
+  const pauses = posts(client, '/api/agents/set-status');
+  assert.equal(pauses.length, 1);
+  assert.deepEqual(pauses[0].body, { spaceId: 'presti', agentSourceKey: MANO.sourceKey, status: 'paused' });
+  assert.ok(typeof pauses[0].key === 'string' && pauses[0].key.length > 0, 'Idempotency-Key del chiamante');
   assert.ok(mount.textContent.includes('Mano ritirato: resta nel team ma non riceve più incarichi.'));
+});
+
+test('7d169a3b1dd2: Ritira su un deploy senza le scritture agenti legge neutra', async () => {
+  const { mount } = await paintedView({ noWriteRoutes: true });
+  button(mount, 'retire-agent').dispatch('click', {});
+  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  await flush();
+  const live = mount.querySelector('div.bo-agent-retire');
+  assert.ok(live && live.querySelector('p.bo-agent-retire-unavailable'), 'nota neutra nella conferma');
 });
 
 test('7d169a3b1dd2: Affida dice che l’incarico aspetta il motore, o che è spento', async () => {

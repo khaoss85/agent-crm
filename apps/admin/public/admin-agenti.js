@@ -263,9 +263,10 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
-      // The module row id addresses the PATCH this card's Modifica/Ritira
-      // send; `custom` gates them to hand-written agents (the catalogue
-      // owns its own rows).
+      // The module row id keeps the card keyed to its row; Modifica/Ritira
+      // write through the agents package routes by sourceKey, never by id.
+      // `custom` gates them to hand-written agents (the catalogue owns its
+      // own rows).
       id: agent?.id == null || String(agent.id).trim() === '' ? null : String(agent.id).trim(),
       custom: isHandAgentKey(key),
       sourceKey: key,
@@ -418,13 +419,20 @@ function editableField(proposal) {
 export function isDecisionUnavailable(error) {
   const record = error && typeof error === 'object' ? /** @type {any} */ (error) : {};
   const code = typeof record.code === 'string' ? record.code : '';
+  const message = typeof record.message === 'string' ? record.message : '';
   const missing = code === '' || code === 'BO_AGENT_ROUTE_UNKNOWN' || code === 'BO_AGENT_DECISION_UNAVAILABLE';
   // Review #688 giro 2: a 405 is a missing route only with a routing code,
   // never with a domain refusal.
   if (record.status === 405) return missing || code === 'ADMIN_METHOD_NOT_ALLOWED' || code === 'NOT_FOUND';
   if (record.status !== 404) return false;
   if (missing) return true;
-  return code === 'NOT_FOUND' && record.message === 'Route not found';
+  if (code === 'NOT_FOUND' && message === 'Route not found') return true;
+  // Review #879 giro 2: a deployment whose framework has no agents writes
+  // yet answers the update/set-status POST with NotFoundError('Operation',
+  // 'teammate agents'). That reads neutral, like any other unserved route —
+  // while AGENT_UNKNOWN (the agent is gone) stays a real answer, never
+  // hidden: its code is not NOT_FOUND-shaped like this one.
+  return code === 'NOT_FOUND' && message.startsWith('Operation not found');
 }
 
 /**
@@ -1373,6 +1381,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const panel = el(documentNode, 'div', 'bo-agent-edit');
     panel.setAttribute('data-edit', card.sourceKey);
     panel.appendChild(el(documentNode, 'h4', undefined, `Modifica ${card.name}`));
+    // A refusal the server answered carries no field: like «Nuovo agente»,
+    // it stays on top of the panel — only the checked field errors move
+    // next to their control (review #879 giro 2 P2).
+    if (form.error !== '' && form.field === null && !form.unavailable) {
+      const top = el(documentNode, 'p', 'bo-seq-create-error', form.error);
+      top.setAttribute('role', 'alert');
+      panel.appendChild(top);
+    }
     const fieldRow = (fieldKey, labelText, id, control) => {
       const rowEl = el(documentNode, 'div', 'ui-field-row bo-seq-field');
       const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', labelText);
@@ -1421,7 +1437,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     save.disabled = form.busy;
     save.addEventListener('click', () => {
       const release = uiHold(save, 'Salvo…');
-      void saveAgentEdit(card, panel).finally(() => release());
+      void saveAgentEdit(card).finally(() => release());
     });
     saveRow.appendChild(save);
     const cancel = uiButton(documentNode, { variant: 'secondary', small: true, label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent-edit' } });
@@ -1693,25 +1709,44 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
   }
 
-  /** Italian text for a refused hand-agent PATCH (Modifica/Ritira). @param {unknown} error */
+  /**
+   * Italian text for a refused hand-agent write (Modifica/Ritira).
+   * Review #879 giro 2: no `notComposed` — an unserved route reads
+   * neutral through isDecisionUnavailable, so a 404 here is a real
+   * answer (the agent is gone), never «non sono attivi».
+   * @param {unknown} error
+   */
   function agentPatchErrorText(error, what) {
     return humanWriteError(error, {
       failed: `Non riesco a ${what} adesso: riprova tra poco. Quello che hai scritto resta qui.`,
-      notComposed: 'Gli agenti non sono attivi in questo spazio.',
     });
   }
 
   /**
-   * Backlog 7d169a3b1dd2: one PATCH on a hand-written agent's own row —
-   * name, role, instructions, cap or paused/resumed — under one
+   * Backlog 7d169a3b1dd2: a hand-written agent's own Modifica — name,
+   * role, instructions, cap — through update-agent, under one
    * Idempotency-Key from the bound client. A deployment that does not
    * serve it yet (404/405) reads neutral, never an error.
    * @param {any} card @param {Record<string, unknown>} patch @param {string} key
    */
-  async function patchHandAgent(card, patch, key) {
-    return bound.request(`/api/modules/teammate-agent/records/${encodeURIComponent(String(card.id))}`, {
-      method: 'PATCH',
-      body: patch,
+  async function updateHandAgent(card, patch, key) {
+    return bound.request('/api/agents/update', {
+      method: 'POST',
+      body: { spaceId: state.space, agentSourceKey: card.sourceKey, ...patch },
+      idempotencyKey: key,
+    });
+  }
+
+  /**
+   * Backlog 7d169a3b1dd2: a hand-written agent's own Ritira/Riattiva —
+   * paused/resumed — through set-agent-status, under one Idempotency-Key
+   * from the bound client. Writing the status it already carries replays.
+   * @param {any} card @param {string} status @param {string} key
+   */
+  async function setHandAgentStatus(card, status, key) {
+    return bound.request('/api/agents/set-status', {
+      method: 'POST',
+      body: { spaceId: state.space, agentSourceKey: card.sourceKey, status },
       idempotencyKey: key,
     });
   }
@@ -1741,7 +1776,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   /** Save the open Modifica panel of one hand-written agent. @param {any} card */
-  async function saveAgentEdit(card, scope) {
+  async function saveAgentEdit(card) {
     const form = editOf(card);
     if (!form || form.busy) return;
     if (readSpace() !== state.space) {
@@ -1761,11 +1796,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       form.field = checked.field ?? null;
       form.unavailable = false;
       paint();
-      focusFieldError(scope ?? null, form.field === null ? null : `agent-edit-${form.field}`);
+      // Review #879 giro 2 P2: paint() detaches the pre-paint panel, so
+      // the focus runs from the live mount — like the «Nuovo agente» path.
+      focusFieldError(null, form.field === null ? null : `agent-edit-${form.field}`);
       return;
     }
     form.busy = true;
     form.error = '';
+    // Review #879 giro 2 P2: a server refusal carries no field — it stays
+    // on top of the panel, never next to a stale field marker.
+    form.field = null;
     form.unavailable = false;
     paint();
     const body = { ...checked.body };
@@ -1773,7 +1813,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // the panel always opens with the current one written in.
     if (form.cap.trim() === '') body.spendingCapCents = null;
     try {
-      await patchHandAgent(card, body, form.key);
+      await updateHandAgent(card, body, form.key);
       state.editing.delete(card.sourceKey);
       state.notice = `${checked.body.name} aggiornato.`;
       if (await reload()) paint();
@@ -1783,7 +1823,16 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (isDecisionUnavailable(error)) {
         form.unavailable = true;
       } else {
-        form.error = agentPatchErrorText(error, 'salvare la modifica');
+        // A refused Modifica names no field: like «Nuovo agente», a taken
+        // name stays on top of the panel, and any other refusal reads as
+        // a failure — never «non sono attivi» (an unknown agent is gone,
+        // not uncomposed).
+        form.error = isNameTaken(error)
+          ? AGENT_NAME_TAKEN_NOTE
+          : humanWriteError(error, {
+            failed: 'Non riesco a salvare la modifica adesso: riprova tra poco. Quello che hai scritto resta qui.',
+          });
+        form.field = null;
         const status = /** @type {any} */ (error)?.status;
         if (Number.isInteger(status) && status >= 400 && status < 500) form.key = issueAdminKey();
       }
@@ -1794,7 +1843,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   /**
    * Backlog 7d169a3b1dd2: Ritira (or Riattiva) a hand-written agent — an
    * inline Conferma/Annulla two-step, never a native confirm(). A refused
-   * PATCH rotates the key; an unserved route reads neutral.
+   * write rotates the key; an unserved route reads neutral.
    * @param {any} card @param {boolean} pause
    */
   async function retireAgent(card, pause) {
@@ -1821,7 +1870,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     paint();
     try {
       if (entry.key === null) entry.key = issueAdminKey();
-      await patchHandAgent(card, { status: pause ? 'paused' : 'active' }, entry.key);
+      await setHandAgentStatus(card, pause ? 'paused' : 'active', entry.key);
       state.retiring.delete(card.sourceKey);
       state.notice = pause
         ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
