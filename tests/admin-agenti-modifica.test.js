@@ -235,6 +235,21 @@ test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnar
   assert.equal(mount.querySelector('input[name="agent-edit-name"]').getAttribute('aria-invalid'), null);
 });
 
+test('7d169a3b1dd2: la Modifica rifiutata mette il fuoco sul campo vivo', async () => {
+  // Review #879 giro 2 P2: dopo paint() il fuoco corre sul mount vivo.
+  const { mount } = await paintedView();
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = '';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  const live = mount.querySelector('input[name="agent-edit-name"]');
+  assert.equal(live.getAttribute('aria-invalid'), 'true', 'il campo rifiutato si segna');
+  assert.ok(live.__focused, 'il fuoco va sul controllo vivo del pannello Modifica');
+});
+
 test('7d169a3b1dd2: la Modifica su un nome preso resta in cima con la nota del nome', async () => {
   const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
   const { mount } = await paintedView({ agents: [MANO], failWrite: [taken] });
