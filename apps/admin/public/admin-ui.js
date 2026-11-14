@@ -281,6 +281,43 @@ export function uiButton(doc, options = {}) {
   return node;
 }
 
+/** The tones a channel state reads in, on every screen (backlog:8618ad3f72db). */
+export const UI_CHANNEL_STATE_TONES = Object.freeze(['ok', 'warn', 'muted', 'data', 'human']);
+
+/**
+ * The state of one channel connection — «Collegato», «Da collegare»,
+ * «Da completare», «Importazione»… — as ONE component on every screen that
+ * lists channels: Profilo «I tuoi collegamenti», Stato sync > Canali and
+ * Personalizzazione > Connettori (backlog:8618ad3f72db: three places, three
+ * styles). `extra` keeps a screen's own hook class, never its look.
+ * @param {any} doc
+ * @param {{ text: string, tone?: string, extra?: string }} options
+ */
+export function uiChannelState(doc, { text, tone = 'muted', extra = '' }) {
+  const node = doc.createElement('span');
+  const known = UI_CHANNEL_STATE_TONES.includes(tone) ? tone : 'muted';
+  node.setAttribute('class', `ui-channel-state ui-channel-state-${known}${extra ? ` ${extra}` : ''}`);
+  node.textContent = String(text);
+  return node;
+}
+
+/**
+ * The «Collega» action of a channel, the same green small button on every
+ * screen (backlog:8618ad3f72db: an underlined pill on Stato sync). A link
+ * when it leads somewhere (`href`), a button otherwise.
+ * @param {any} doc
+ * @param {{ href?: string | null, action?: string, extra?: string, label?: string }} [options]
+ */
+export function uiConnect(doc, { href = null, action = 'collega', extra = '', label = 'Collega' } = {}) {
+  const node = doc.createElement(href !== null ? 'a' : 'button');
+  node.setAttribute('class', `ui-btn ui-btn-cta ui-btn-small ui-connect${extra ? ` ${extra}` : ''}`);
+  if (href !== null) node.setAttribute('href', href);
+  else node.setAttribute('type', 'button');
+  node.setAttribute('data-action', action);
+  node.textContent = label;
+  return node;
+}
+
 /**
  * One voice of an "add" menu, the prototype's single pattern for every
  * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,

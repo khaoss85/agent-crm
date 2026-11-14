@@ -1037,7 +1037,10 @@ export function buildServerReplies(answer, now = new Date()) {
       channel,
       subjectKey: `${resource}:${id}`,
       namePending: false,
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: il badge è il cliente (iniziali come
+      // Clienti e la scheda), mai la mattonella del canale. Il canale
+      // resta in `channel` e nella riga «da … · Email».
+      mono: badgeInitials(name),
       name,
       preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
       when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
@@ -1191,7 +1194,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       // notification keeps its stored label, never a grey bar for good.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
-      mono: channelTile(channel) ?? badgeInitials(name),
+      // backlog:0f78353438c5: le righe Da rispondere mostrano le
+      // iniziali del cliente come Clienti e la scheda; le Notifiche
+      // automatiche (gruppo a parte) tengono la mattonella del canale.
+      mono: machine ? (channelTile(channel) ?? badgeInitials(name)) : badgeInitials(name),
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
       // residue or hidden preheaders; the subject alone when the body cleans away.

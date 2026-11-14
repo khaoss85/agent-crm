@@ -13,7 +13,7 @@
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
-import { auditActorLabel, isBoardPlacement, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -100,7 +100,7 @@ const LIST_LIMIT = 200;
  * Backlog 8dc6d4a456e1: the audit trail is read through this cap; a page
  * that fills it is truncated, and nothing is derived from a partial page.
  */
-const AUDIT_LIMIT = 100;
+const AUDIT_LIMIT = OFFER_AUDIT_LIMIT;
 
 /**
  * Display name of an audit actor: the shared vocabulary in admin-labels.js
@@ -108,12 +108,8 @@ const AUDIT_LIMIT = 100;
  * referente, the contact or the company the deal stores).
  */
 function actorLabel(entry, record, people = []) {
-  // A team member reads their profile name (famiglia F5): the roster first,
-  // then the deal's own display values — never a slug like «coach-guido».
-  const owner = personLabel(record?.owner, people);
-  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
-  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+  // One rule with the scheda cronologia (backlog:6c40dcfaeb3f).
+  return offerActorLabel(entry, record, people);
 }
 
 /**
@@ -556,15 +552,15 @@ export function createOfferDetail(deps) {
     // Who created the deal: the actor of its creation event, read through the
     // same rule as the history (never a technical id); no event — or a
     // truncated page that may hide it — a dash.
-    const createdEvent = !auditTruncated
-      ? (auditItems.find((entry) => entry?.action === 'opportunity.created') ?? null)
-      : null;
+    // One rule with the scheda cronologia (backlog:6c40dcfaeb3f): a full
+    // page may hide the creation, so it names nobody.
+    const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
     for (const [label, value] of [
       ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Stato', stageLabel(schema, record)],
       ['Chiusura prevista', close ?? '—'],
-      ['Creata da', createdEvent !== null ? actorLabel(createdEvent, record, people) : '—'],
+      ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
     ]) {

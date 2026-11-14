@@ -224,6 +224,8 @@ test('2a214b66fe12: a new offer shows on the scheda with its toast and re-reads 
   });
   const { mount, toasts, atToast } = await open(client);
   byAction(mount, 'new-offer').listeners.click[0]();
+  // Voce 2c1c0e149cf9: Offerta is a menu — the manual voice opens the window.
+  mount.findAll('button').find((node) => node.getAttribute('data-voice') === 'manual').listeners.click[0]();
   await flush();
   const panel = mount.findAll('div').find((node) => node.getAttribute('data-offer-panel') === 'open');
   panel.findAll('input').find((node) => node.getAttribute('name') === 'offer-title').value = 'Pacchetto estate';

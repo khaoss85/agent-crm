@@ -3,7 +3,8 @@
 import { sessionRoleLabel } from './admin-session.js';
 import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
-import { agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
+import { moduleScreenLabel } from './admin-labels.js';
+import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -86,6 +87,9 @@ export const SETTINGS_AREAS = Object.freeze([
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/stato-sync', story: 'BO-F1-03' },
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: '#/spazi-accessi', story: 'BO-F0-06' },
+  // backlog:8618ad3f72db: Profilo is a settings tab too, not only the name
+  // at the foot of the sidebar.
+  { id: 'profilo', label: 'Profilo', route: '#/profilo', story: 'BO-F6 (profilo)' },
 ]);
 
 /**
@@ -101,7 +105,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   pipeline: 'Chiedi: «quanto posso chiudere questo mese?»',
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
-  agenti: 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»',
+  // backlog:f06d06f242d6: no agent of the team can work yet (or the team is
+  // still unknown): no example @name that would reach nobody.
+  agenti: AGENT_MENTION_NEUTRAL,
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
   'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
@@ -113,8 +119,8 @@ export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
  * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
- * agent of this team (so «@Nome» always reaches somebody), falling back
- * to the static example when the team is still unknown.
+ * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
+ * always reaches somebody; otherwise a neutral line.
  * @param {string} screenId
  * @param {string} [agentName]
  */
@@ -828,7 +834,6 @@ export function createShellView({
       pages.push({ label: area.label, href: area.route, sub: 'Impostazioni' });
     }
     pages.push({ label: 'Connettori', href: '#/connettori', sub: 'Impostazioni' });
-    pages.push({ label: 'Profilo', href: '#/profilo' });
     return pages;
   }
 
@@ -1136,6 +1141,7 @@ export const SETTINGS_VIEW_AREAS = Object.freeze({
   catalog: 'catalogo',
   sync: 'stato-sync',
   'spazi-accessi': 'spazi-accessi',
+  profilo: 'profilo',
 });
 
 /**
@@ -1196,3 +1202,61 @@ export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = null, na
   wrap.appendChild(bar);
   return wrap;
 }
+
+/**
+ * The sidebar voice and topbar crumb of one routed view (moved here from
+ * app.js so the mapping is testable). backlog:8618ad3f72db: every view
+ * under the Impostazioni tab row — Catalogo prodotti and Profilo included —
+ * keeps «Impostazioni» highlighted in the sidebar.
+ * @param {{ view?: string, moduleName?: string, from?: unknown }} target
+ */
+export function shellScreenFor(target) {
+  switch (target.view) {
+    case 'dashboard': return { id: 'oggi', label: 'Oggi' };
+    case 'customer-data':
+    case 'customer-card': return { id: 'clienti', label: 'Clienti' };
+    case 'customer-import': return { id: 'clienti', label: 'Importa clienti' };
+    case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
+    case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
+    case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
+    case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
+    case 'list':
+    case 'new':
+    case 'detail':
+      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
+      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
+      // Italian, never the raw module key.
+      return target.moduleName
+        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
+        : { id: null, label: 'Modulo' };
+    // Admin views outside the backoffice prototype: an honest crumb with no
+    // sidebar highlight, never the previous screen left stale.
+    case 'spine': return { id: null, label: 'Identità e accessi' };
+    case 'work': return { id: null, label: 'Lavoro' };
+    case 'work-task': return { id: null, label: 'Attività' };
+    case 'marketing': return { id: null, label: 'Proposte' };
+    case 'marketing-proposal': return { id: null, label: 'Proposta' };
+    case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
+    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
+    case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
+    case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
+    case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
+    // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
+    // asks about sync (its own placeholder), not the generic settings one.
+    case 'sync': return { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' };
+    case 'reporting': return { id: 'reporting', label: 'Reporting' };
+    case 'calendario': return { id: 'calendario', label: 'Calendario' };
+    case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
+    case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
+    case 'skill-detail': return { id: 'impostazioni', label: 'Dettaglio skill' };
+    case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
+    case 'profilo': return { id: 'impostazioni', label: 'Profilo' };
+    case 'componenti': return { id: null, label: 'Componenti' };
+    case 'invalid': return { id: null, label: 'Percorso non valido' };
+    default: return { id: null, label: 'Vista' };
+  }
+}
+

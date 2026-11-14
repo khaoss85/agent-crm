@@ -1303,7 +1303,7 @@ test('Da rispondere: one row per conversation waiting on the team, newest first 
   const inbox = buildInbox({ messages, conversations, now });
   assert.equal(inbox.total, 2, 'the answered and the closed conversations are not waiting');
   assert.deepEqual(inbox.rows.map((row) => row.name), ['Lia Marroni', 'Fio Neri'], 'newest first');
-  assert.equal(inbox.rows[0].mono, 'IG');
+  assert.equal(inbox.rows[0].mono, 'LM', 'backlog:0f78353438c5: the badge is the client initials, never the channel tile');
   assert.equal(inbox.rows[0].when, 'da 30 min · Instagram');
   assert.equal(inbox.rows[1].href, '#/customer-card/contact/p1', 'Rispondi opens the scheda');
   assert.equal(waitedFor('2026-11-03T15:00:00Z', now), 'da ieri');
@@ -1318,7 +1318,7 @@ test('Da rispondere renders its rows, the empty line and the unreadable line', a
     renderOggi({ doc, mount, userName: 'Dan', navigate: (h) => navigated.push(h), home: { actions: [], agenda: [], inbox } });
     return { mount, navigated };
   };
-  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'WA', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
+  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'FN', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
   assert.ok(full.mount.textContent.includes('Da rispondere'));
   assert.ok(full.mount.textContent.includes('1 in attesa'));
   assert.ok(full.mount.textContent.includes('Fio Neri') && full.mount.textContent.includes('Quanto costa?'));

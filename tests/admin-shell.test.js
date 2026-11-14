@@ -12,6 +12,7 @@ import {
   clientBadge,
   settingsBadge,
   settingsTabs,
+  shellScreenFor,
   countFixes,
   loadClientCount,
   loadFixCount,
@@ -371,8 +372,9 @@ test('settings tabs list the four areas with the open one underlined', () => {
   const navigated = [];
   const bar = settingsTabs(doc, { activeId: 'stato-sync', fixCount: 2, navigate: (hash) => navigated.push(hash) });
   const tabs = bar.findAll('button');
-  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi']);
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync2', 'Spazi e accessi']);
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi', 'profilo']);
+  // backlog:8618ad3f72db: Profilo is a settings tab too.
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync2', 'Spazi e accessi', 'Profilo']);
   assert.equal(tabs.find((tab) => tab.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
   // Every tab keeps a ui-* class (BO-F6-02 enforcement covers this screen).
   for (const tab of tabs) {
@@ -610,9 +612,9 @@ test('settings panel lists the four areas with honest availability', () => {
   // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05),
   // Stato sync (BO-F1-03) and Spazi e accessi (BO-F0-06) all link, in area
   // order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -692,19 +694,19 @@ test('Stato sync links its own screen once customer-data is composed', () => {
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
   // Personalizzazione, Catalogo prodotti and Spazi e accessi link; Stato sync
   // stays an honest note until the customer-data package is composed.
-  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
+  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi', '#/profilo']);
   assert.ok(off.textContent.includes('Stato sync'));
   assert.ok(off.textContent.includes('non composto'));
 
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
+  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi', '#/profilo']);
 
   const on = createMount();
   renderSettingsPanel({ doc, mount: on, fixCount: 2, customerDataAvailable: true });
   // With the package composed Stato sync links its own screen (BO-F1-03),
   // in area order beside Spazi e accessi.
-  assert.deepEqual(on.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(on.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
   assert.ok(on.textContent.includes('Stato sync'));
   assert.ok(!on.textContent.includes('non composto'));
 });
@@ -942,4 +944,19 @@ test('Agenti link their screen only when the agents package publishes create-age
   const off = buildShellNav(without).find((item) => item.id === 'agenti');
   assert.equal(off.available, false);
   assert.equal(off.route, null);
+});
+
+// backlog:8618ad3f72db (verifica 13-14/11): on Catalogo prodotti the sidebar
+// «Impostazioni» lost its highlight. Every view under the Impostazioni tab
+// row keeps it, Profilo included.
+test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in the sidebar', () => {
+  for (const [view, label] of [
+    ['personalizzazione', 'Personalizzazione'], ['catalog', 'Catalogo prodotti'], ['sync', 'Stato sync'],
+    ['spazi-accessi', 'Spazi e accessi'], ['profilo', 'Profilo'],
+  ]) {
+    const screen = shellScreenFor({ view });
+    assert.equal(screen.id, 'impostazioni', `${view}: the sidebar highlights Impostazioni`);
+    assert.equal(screen.label, label);
+  }
+  assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
 });

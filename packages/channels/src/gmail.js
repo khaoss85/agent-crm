@@ -159,6 +159,19 @@ const MAX_SUBJECT_LINE = 256;
 /** Email bodies run longer than chat bubbles but stay under the 32 KiB outbox bound. */
 export const GMAIL_MAX_TEXT = 30000;
 /**
+ * The same bound in bytes (backlog:1500e788): `GMAIL_MAX_TEXT` counts
+ * characters, so 30000 CJK/emoji characters are up to 120000 bytes and
+ * would overflow the 32 KiB outbox envelope (`assertOutboundMessage` in
+ * `operations.js`). A text at the limit stays storable only when it also
+ * fits this byte cap: 30000 bytes of text plus the bounded envelope
+ * (`to`, `threadId`, `subject`) stays under 32768 bytes.
+ */
+export const GMAIL_MAX_TEXT_BYTES = 30000;
+/** A text both bounds accept: non-empty, at most 30000 chars and 30000 bytes. */
+function gmailTextFitsBounds(text) {
+  return text !== '' && text.length <= GMAIL_MAX_TEXT && Buffer.byteLength(text, 'utf8') <= GMAIL_MAX_TEXT_BYTES;
+}
+/**
  * A received email subject stays a display snapshot (backlog:3055d50330b5):
  * bounded single-line text. Longer text truncates instead of refusing the
  * whole message over a cosmetic field — the same rule `splitGmailDisplayName`
@@ -774,7 +787,9 @@ function normalizeKitEvent(parsed) {
  * Normalize one outbound reply. Email has no service window: a reply sends
  * at any time. `threadId` keeps the reply in the thread the inbound opened
  * (the card reads it back out of the inbox subject); without one the
- * provider opens a new thread.
+ * provider opens a new thread. The text bound is bytes as well as chars
+ * (backlog:1500e788): 30000 multibyte characters would overflow the 32 KiB
+ * outbox envelope, so they refuse here instead of at enqueue time.
  */
 function normalizeGmailOutbound(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -787,8 +802,8 @@ function normalizeGmailOutbound(message) {
     malformedMessage('message needs a bounded "to" address');
   }
   const text = typeof message.text === 'string' ? message.text : '';
-  if (text === '' || text.length > GMAIL_MAX_TEXT) {
-    malformedMessage(`message needs non-empty "text" (at most ${GMAIL_MAX_TEXT} chars)`);
+  if (!gmailTextFitsBounds(text)) {
+    malformedMessage(`message needs non-empty "text" (at most ${GMAIL_MAX_TEXT} chars and ${GMAIL_MAX_TEXT_BYTES} bytes)`);
   }
   const subjectLine = message.subject === undefined ? undefined
     : typeof message.subject === 'string' ? message.subject : null;
@@ -802,17 +817,38 @@ function normalizeGmailOutbound(message) {
     : { to, text, threadId, ...(subjectLine === undefined ? {} : { subject: subjectLine }) };
 }
 
-function mimeLines({ from, to, subjectLine, text }) {
+/**
+ * The RFC 2822 threading hint for a reply (backlog:1500e788): Gmail threads
+ * by the `threadId` send parameter, but mail clients nest the reply only
+ * with `In-Reply-To`/`References`. The pure builder cannot fetch the
+ * parent's real Message-ID (no history lookup at send time), so both
+ * headers carry the stable per-thread reference below, scoped to the bound
+ * mailbox domain. The thread id is reduced to the Message-ID-safe alphabet
+ * (`THREAD` also allows `<`, `>` and `@`), so no thread id can break the
+ * header syntax; control/whitespace characters are already impossible.
+ */
+function gmailThreadReference(threadId, mailbox) {
+  const safe = String(threadId).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'thread';
+  const domain = typeof mailbox === 'string' && /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(mailbox)
+    ? mailbox.split('@')[1].toLowerCase()
+    : 'gmail';
+  return `<${safe}@${domain}>`;
+}
+
+function mimeLines({ from, to, subjectLine, text, threadRef }) {
   const lines = [`From: ${from}`, `To: ${to}`];
   if (subjectLine !== undefined) lines.push(`Subject: ${subjectLine}`);
+  if (threadRef !== undefined) lines.push(`In-Reply-To: ${threadRef}`, `References: ${threadRef}`);
   lines.push('Content-Type: text/plain; charset=utf-8', '', text);
   return lines.join('\r\n');
 }
 
 /**
  * The Gmail REST mapping as a pure function: URL, Bearer [REDACTED] from the
- * call-time secret (never stored), and the send body with the thread id for
- * replies. Unit-proven here; the fake records exactly this shape per send.
+ * call-time secret (never stored), the send body with the thread id for
+ * replies, and the `In-Reply-To`/`References` threading hint in the MIME
+ * for the same replies (a first message carries neither). Unit-proven here;
+ * the fake records exactly this shape per send.
  */
 export function buildGmailSendRequest({ message, config, secret }) {
   if (!message || typeof message !== 'object') {
@@ -827,7 +863,7 @@ export function buildGmailSendRequest({ message, config, secret }) {
   } catch {
     throw new AppError('Gmail send needs a bounded "to" address', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
   }
-  if (typeof message.text !== 'string' || message.text === '') {
+  if (typeof message.text !== 'string' || !gmailTextFitsBounds(message.text)) {
     throw new AppError('Gmail send needs text', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
   }
   const threadId = message.threadId === undefined ? undefined : message.threadId;
@@ -839,6 +875,7 @@ export function buildGmailSendRequest({ message, config, secret }) {
     to,
     subjectLine: typeof message.subject === 'string' ? message.subject : undefined,
     text: message.text,
+    ...(threadId === undefined ? {} : { threadRef: gmailThreadReference(threadId, config.mailbox) }),
   }));
   return {
     method: 'POST',
