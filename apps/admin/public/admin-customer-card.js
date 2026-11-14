@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -1367,6 +1367,22 @@ export function createCustomerCardView(deps) {
       PART_READS.card(encoded).then((read) => firstTake('card', read, false)),
       PART_READS.timeline(encoded).then((read) => firstTake('timeline', read)),
     ]);
+    // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
+    // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
+    // nothing, and the offer the person came from is already known — both
+    // leave as soon as the first wave is done (or its budget ends), ahead of
+    // the profile and without waiting for it. Review Muse #887 (P1): never
+    // beside card and timeline, which keep the first wave to themselves.
+    // The profile's own paint reuses them (historyReads, rosterRead).
+    if (typeof onPart === 'function') {
+      void wave2gate.then(() => {
+        void readRoster();
+        const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
+        if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
+      // A client that throws at once fails the card on its own read; this
+      // early start never adds a second, unhandled failure.
+      }).catch(() => {});
+    }
     // Voce 4cd1bbb646d0: second wave — everything else, after the first
     // paint of card/timeline (or the budget). take() never throws (settle
     // catches), so this await always runs: a failed card still reads the
@@ -4143,7 +4159,10 @@ export function createCustomerCardView(deps) {
     // status is its approval («approvata» meant the price was cleared, not
     // the sale): it reads only for a quote with no readable opportunity,
     // and in full on #/quotes/<id>, where the line links.
-    const offerStatus = shownOfferState(first, fromQuote, opportunities, pipelines);
+    // backlog:a060a4aa65b6 (verifica 14/11: «qualificazione» on an offer
+    // outside any board): the state reads as the Pipeline names it, with a
+    // capital — «Qualificazione», «Prova» — never the bare lower-case word.
+    const offerStatus = upperFirst(shownOfferState(first, fromQuote, opportunities, pipelines));
     // Name and state read as one line for assistive tech and tests («nome · stato»); on screen the state is the prototype's pill.
     const line = el('p', 'bo-scheda-offer');
     line.appendChild(el('span', 'bo-scheda-offer-name', name));
