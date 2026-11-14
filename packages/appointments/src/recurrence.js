@@ -1,4 +1,5 @@
 // @ts-check
+import { ValidationError } from '../../core/index.js';
 /**
  * **Recurrence (backlog:0f2ae629e09b): Google-Calendar-style series.**
  *
