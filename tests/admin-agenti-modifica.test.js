@@ -237,7 +237,7 @@ test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnar
 
 test('7d169a3b1dd2: la Modifica su un nome preso resta in cima con la nota del nome', async () => {
   const taken = Object.assign(new Error('taken'), { code: 'AGENT_NAME_TAKEN', status: 409 });
-  const { mount } = await paintedView({ failWrite: [taken] });
+  const { mount } = await paintedView({ agents: [MANO], failWrite: [taken] });
   button(mount, 'edit-agent').dispatch('click', {});
   const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
   const name = panel.querySelector('input[name="agent-edit-name"]');
@@ -246,7 +246,7 @@ test('7d169a3b1dd2: la Modifica su un nome preso resta in cima con la nota del n
   panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
   await flush();
   assert.ok(mount.textContent.includes(AGENT_NAME_TAKEN_NOTE));
-  assert.equal(mount.querySelectorAll('p.bo-agent-field-error').length, 0, 'in cima, non del campo');
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-field-error')).length, 0, 'in cima, non del campo');
 });
 
 test('7d169a3b1dd2: su un deploy senza le scritture agenti la Modifica legge neutra', async () => {
@@ -257,9 +257,9 @@ test('7d169a3b1dd2: su un deploy senza le scritture agenti la Modifica legge neu
   const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
   panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
   await flush();
-  assert.equal(posts(client, '/api/agents/update').length, 0, 'una sola POST rifiutata dal deploy senza scritture');
+  assert.equal(posts(client, '/api/agents/update').length, 1, 'una sola POST rifiutata dal deploy senza scritture');
   const live = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
-  assert.ok(live && live.querySelector('p.bo-agent-edit-unavailable'), 'nota neutra nel pannello');
+  assert.ok(live && live.findAll('p').some((node) => node.classList.contains('bo-agent-edit-unavailable')), 'nota neutra nel pannello');
   assert.ok(!mount.textContent.includes('non sono attivi'), 'mai la riga del non attivo');
 });
 
@@ -282,8 +282,8 @@ test('7d169a3b1dd2: Ritira su un deploy senza le scritture agenti legge neutra',
   button(mount, 'retire-agent').dispatch('click', {});
   mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
   await flush();
-  const live = mount.querySelector('div.bo-agent-retire');
-  assert.ok(live && live.querySelector('p.bo-agent-retire-unavailable'), 'nota neutra nella conferma');
+  const live = mount.findAll('div').find((node) => node.classList.contains('bo-agent-retire'));
+  assert.ok(live && live.findAll('p').some((node) => node.classList.contains('bo-agent-retire-unavailable')), 'nota neutra nella conferma');
 });
 
 test('7d169a3b1dd2: Affida dice che l’incarico aspetta il motore, o che è spento', async () => {
