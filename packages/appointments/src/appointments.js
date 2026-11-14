@@ -467,6 +467,31 @@ async function ownerBlocksFor(calendarSync, teamMemberId, fromIso, toIso) {
   return proveOwnerBlocks(found).filter((block) => block.teamMemberId === teamMemberId);
 }
 
+/**
+ * Refuse a held slot before the space switch (backlog:af190faf, review giro
+ * 5): propose, confirm and link read the owner-hold store up front, so a
+ * confirm or link over a held slot refuses 409 instead of opening a
+ * proposal for an impossible slot. A retry behind the same source key
+ * skips this read: the booking below replays the winner (or refuses a
+ * divergent claim), it never 409s its own row.
+ *
+ * @param {any} context the flow context (modules, actor, calendarSync)
+ * @param {{teamMemberId: string, startsAt: string, endsAt: string, startMs: number, endMs: number, sourceKey: string}} input the validated request
+ */
+async function refuseHeldSlot(context, input) {
+  const names = { appointment: context?.moduleNames?.appointment ?? 'appointment' };
+  const appointments = flowAppointments(context, names);
+  const same = (await appointments.listWhere({ sourceKey: input.sourceKey }))[0] ?? null;
+  if (same) return;
+  const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
+  const blocks = await ownerBlocksFor(context.calendarSync, input.teamMemberId, input.startsAt, input.endsAt);
+  const conflict = findOverlap({ teamMemberId: input.teamMemberId, startMs: input.startMs, endMs: input.endMs },
+    [...held, ...blocks]);
+  if (conflict) {
+    throw overlapRefusal(input.teamMemberId, conflict);
+  }
+}
+
 /** The tag an owner block carries from construction: the only discriminator. */
 const OWNER_BLOCK_KIND = 'owner-block';
 
@@ -1680,7 +1705,7 @@ function projectTeamWeekRow(row) {
  * what the booking path refuses. The blocks are proven up front like on
  * every other path: a malformed store entry fails the read closed (400),
  * exactly like the booking and suggestion paths, so grid and booking agree.
- * The `busy` list is required on every member group (version 3): an empty
+ * The `busy` list is required on every member group (version 5): an empty
  * week reads `busy: []`, never an absent key.
  *
  * @param {{appointments: any, calendarSync?: any}} storage
@@ -2124,6 +2149,10 @@ export async function confirmBooking(context, request) {
   }
   const spaceId = record.spaceId;
   const input = validateAppointmentRequest(request);
+  // Review giro 5 (backlog:af190faf): holds close the slot before the
+  // switch, like proposeBooking — a confirm over a held slot refuses 409
+  // instead of opening a proposal for an impossible slot.
+  await refuseHeldSlot(context, input);
   // A named calendar is validated before any row exists: a statically
   // preventable miscomposition fails here, never after a committed
   // confirmed booking the caller received an error for.
@@ -2278,6 +2307,10 @@ export async function bookFromLink(context, request) {
     startsAt,
     sourceKey: LINK_SOURCE_PREFIX + linkToken + ':' + startsAt,
   });
+  // Review giro 5 (backlog:af190faf): holds close the slot before the
+  // switch, like proposeBooking — a link over a held slot refuses 409
+  // instead of opening a proposal for an impossible slot.
+  await refuseHeldSlot(context, input);
   // The switch is read before any row exists: with the switch off the
   // link stays a proposal a human approves, like the confirm path — the
   // proposal action key binds the whole derived claim, so a resubmitted

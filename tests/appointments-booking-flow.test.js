@@ -504,6 +504,39 @@ test('confirm, link and reschedule read the same store: a held slot refuses on e
   );
 });
 
+// Review giro 5 (backlog:af190faf): with the switch off, confirm and link
+// over a held slot refuse 409 like propose does — never a proposal for an
+// impossible slot the approver can only 409 on later.
+test('switch off over a held slot: confirm and link refuse 409, never a proposal (backlog:af190faf)', async () => {
+  const calendarSync = storeWith(HELD);
+  const heldAt = { startsAt: '2026-10-20T17:00:00.000Z', endsAt: '2026-10-20T18:00:00.000Z' };
+  const offGate = () => fakeGate({
+    overrides: [{ spaceId: SPACE, permission: 'book-appointments', enabled: false }],
+  }).gate;
+  const service = fakeAppointments();
+  const cap = capabilityFor({ service, gate: offGate(), calendarSync, actor: AGENT });
+  await assert.rejects(
+    cap.confirmBooking({ ...booking(), spaceId: SPACE, confirmed: true }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(error.status, 409);
+      assert.doesNotMatch(error.message, /test accordo/);
+      return true;
+    },
+    'agent confirm over a held slot with the switch off refuses',
+  );
+  await assert.rejects(
+    cap.bookFromLink({ ...booking(), spaceId: SPACE, linkToken: TOKEN, ...heldAt }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+      assert.equal(error.status, 409);
+      return true;
+    },
+    'link booking over a held slot with the switch off refuses',
+  );
+  assert.equal(service.rows.length, 0, 'no appointment row for the held slot');
+});
+
 test('a block of another member never closes this member’s slot', async () => {
   const service = fakeAppointments();
   const week = await suggestWith(service, storeWith([{
