@@ -4933,16 +4933,22 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    // Voce 59def6cb805d (C26, backlog:c51dca86dc66): the prototype card — a
-    // title, then `<giorno> · <orari>`. The title names the same contact
-    // Oggi names for this appointment — the booked service (its listino key
-    // made readable) with the contact's name — so the booking reads as one
-    // person in both places; without a readable contact name it falls back
-    // to the service alone. The row names the long Rome day. No place and
-    // no Google sync line: the booking records neither, so none is written.
+    // Voce 59def6cb805d (C26, backlog:c51dca86dc66, review #908 P2): the
+    // prototype card — a title, then `<giorno> · <orari>`. The title keeps
+    // the team member suffix (`con …`, chi tiene l'appuntamento) and names
+    // the same contact Oggi names for this appointment (`per …`), so the
+    // booking reads as one person in both places and the operator still
+    // sees who holds it. Each name falls back silently when unreadable,
+    // down to the service alone. The row names the long Rome day. No place
+    // and no Google sync line: the booking records neither, so none is written.
     const contact = typeof customerName === 'string' && customerName.trim() !== '' ? customerName.trim() : null;
     const service = serviceTitle(next?.serviceKey, serviceNames);
-    box.appendChild(el('p', 'bo-scheda-appt-title', contact ? `${service} · con ${contact}` : service));
+    const member = teamName(next?.teamMemberId);
+    const title = contact && member ? `${service} · con ${member} · per ${contact}`
+      : contact ? `${service} · con ${contact}`
+      : member ? `${service} · con ${member}`
+      : service;
+    box.appendChild(el('p', 'bo-scheda-appt-title', title));
     const day = dayParts(next?.startsAt);
     const startTime = timeParts(next?.startsAt);
     const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;

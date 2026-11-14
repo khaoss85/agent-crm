@@ -5335,10 +5335,18 @@ test('backlog:c51dca86dc66: the next appointment reads the contact name like Ogg
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Guido Presti', 'the service with the contact name Oggi shows for this appointment');
+  assert.equal(title.textContent, 'Pt single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
+});
+
+test('backlog:c51dca86dc66 review P2: the appointment title keeps the member when the contact has no name (C26)', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: '' } }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
