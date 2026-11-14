@@ -408,7 +408,10 @@ test('a762c28a646c: without a known name the header stays grey until the card la
 // for 3,0-4,1 s from «Per <cliente>»): the roster needs nothing and the
 // offer the person came from is known — both leave behind card and
 // timeline, before the profile.
-test('a060a4aa65b6: from an offer, the team and that offer’s history leave with the first reads', async () => {
+// Review Muse #887 giro 2 (P1): card and timeline keep the first wave to
+// themselves; the roster and the known offer's history leave the moment it
+// ends — ahead of the profile, never waiting for it.
+test('a060a4aa65b6: from an offer, the team and that offer’s history leave right after the first wave, before the profile ends', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = deferredClient();
@@ -417,15 +420,19 @@ test('a060a4aa65b6: from an offer, the team and that offer’s history leave wit
   const view = createCustomerCardView({ doc, mount, client, knownNames: names });
   const shown = view.renderCard('contact', 'c-ada');
   await flush(3);
-  assert.ok(client.reads.includes('/api/spine/memberships'), 'the roster leaves at once');
-  assert.ok(client.reads.some((path) => path.startsWith('/api/audit') && path.includes('entityId=o1')), 'the offer history too');
-  assert.ok(!client.reads.some((path) => path.startsWith('/api/customer-data/profile/')), 'before the profile');
+  const kind = (path) => (path.startsWith('/api/customer-hub/card/') ? 'card' : path.startsWith('/api/customer-hub/timeline/') ? 'timeline' : 'other');
+  assert.deepEqual(client.reads.map(kind).sort(), ['card', 'timeline'], 'the first wave is card and timeline alone');
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
   const order = client.reads.map((path) => path.split('?')[0]);
-  assert.ok(order.indexOf('/api/spine/memberships') > order.findIndex((path) => path.startsWith('/api/customer-hub/timeline/')), 'behind card and timeline');
+  const profileAt = order.findIndex((path) => path.startsWith('/api/customer-data/profile/'));
+  assert.ok(profileAt > 0, 'the profile is asked');
+  assert.ok(order.indexOf('/api/spine/memberships') > -1 && order.indexOf('/api/spine/memberships') < profileAt, 'the roster ahead of the profile');
+  const auditAt = client.reads.findIndex((path) => path.startsWith('/api/audit') && path.includes('entityId=o1'));
+  assert.ok(auditAt > -1 && auditAt < profileAt, 'the offer history ahead of the profile, while the profile still reads');
   client.gates.get('roster').release.resolve({ items: [] });
   client.gates.get('audit').release.resolve({ items: [MOVE] });
   client.gates.get('card').release.resolve(CARD);
-  client.gates.get('timeline').release.resolve(TIMELINE);
   await flush(3);
   client.gates.get('profile').release.resolve(OFFER_PROFILE);
   await shown;
@@ -436,10 +443,13 @@ test('a060a4aa65b6: from an offer, the team and that offer’s history leave wit
   assert.equal(client.reads.filter((path) => path === '/api/spine/memberships').length, 1, 'one roster read, reused');
 });
 
-test('a060a4aa65b6: without a known offer the first reads stay card and timeline, the roster with them', async () => {
+test('a060a4aa65b6: without a known offer no history is guessed; the roster still leaves after the first wave', async () => {
   const client = deferredClient();
   const view = createCustomerCardView({ doc: createFakeDocument(), mount: createMount(), client, knownNames: createKnownNames({ space: () => null }) });
   void view.renderCard('contact', 'c-ada');
+  await flush(3);
+  assert.ok(!client.reads.includes('/api/spine/memberships'), 'not beside card and timeline');
+  client.gates.get('card').release.resolve(CARD);
   await flush(3);
   assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no guess at which offer');
   assert.ok(client.reads.includes('/api/spine/memberships'));

@@ -1370,11 +1370,12 @@ export function createCustomerCardView(deps) {
     // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
     // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
     // nothing, and the offer the person came from is already known — both
-    // leave right behind card and timeline instead of after the profile.
+    // leave as soon as the first wave is done (or its budget ends), ahead of
+    // the profile and without waiting for it. Review Muse #887 (P1): never
+    // beside card and timeline, which keep the first wave to themselves.
     // The profile's own paint reuses them (historyReads, rosterRead).
-    // One microtask later, like settle(): card and timeline are asked first.
     if (typeof onPart === 'function') {
-      void Promise.resolve().then(() => {
+      void wave2gate.then(() => {
         void readRoster();
         const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
         if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
