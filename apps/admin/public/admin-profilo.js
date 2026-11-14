@@ -401,8 +401,11 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
             if (fresh && typeof fresh === 'object' && fresh.member && typeof fresh.member === 'object') {
               try {
                 onMember(fresh.member);
-              } catch {
-                // The page already shows the new name; the shell keeps its own.
+              } catch (error) {
+                // The page already shows the new name; the shell keeps its
+                // own — but the split stays diagnosable, never silent: cause
+                // only, never the person just saved.
+                log('bo-profilo shell member push failed:', error instanceof Error ? error.name : 'unknown');
               }
             }
           },

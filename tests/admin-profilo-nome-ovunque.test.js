@@ -93,3 +93,46 @@ test('3136d15da7bd no onMember without a save, and none on a failed re-read', as
   await flush(20);
   assert.deepEqual(seen, [], 'a failed re-read reports nothing instead of a stale name');
 });
+
+test('3136d15da7bd a failed shell member push logs its cause and keeps the saved name', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let storedName = 'Elena Rinaldi';
+  const raw = {
+    async request(path, options = {}) {
+      if (path === '/api/profile' && String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        const parsed = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        storedName = parsed.name;
+        return { member: { name: storedName }, connections: { available: true, reason: null, items: [] } };
+      }
+      assert.equal(path, '/api/profile');
+      return { member: { name: storedName, email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      return raw.request(path, options);
+    },
+  };
+  const logged = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createProfiloView({
+    doc,
+    mount,
+    client,
+    member: () => ({ name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' }),
+    log: (...args) => logged.push(args.map(String).join(' ')),
+    onMember: () => { throw new TypeError('shell view gone'); },
+  });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
+  mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
+  await flush(20);
+  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti');
+  assert.ok(logged.some((line) => /shell member push failed/.test(line) && /TypeError/.test(line)),
+    'the swallowed push leaves a cause in the log');
+  assert.ok(logged.every((line) => !/Elena Presti/.test(line)), 'the log names no person');
+});

@@ -390,6 +390,22 @@ test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', (
   assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
 });
 
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
+});
+
 test('settings tabs list the four areas with the open one underlined', () => {
   const doc = createFakeDocument();
   const navigated = [];

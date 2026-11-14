@@ -1055,10 +1055,10 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
-  // backlog 3136d15da7bd: the new space starts with the AI on (the package
-  // default) until its own master is read — the bar never wears the old
-  // space's off words, not even briefly.
-  if (shellView) shellView.update({ aiSpaceOff: false });
+  // backlog 3136d15da7bd: the bar keeps the last words until the new
+  // space's own master is read — no optimistic aiSpaceOff:false, which
+  // would flash an inviting question for a space whose AI is off (or
+  // unknown when the read fails). The sequenced refresh below paints.
   void refreshSpaceAi();
   // The open card shows space-scoped calls (BO-F1-08): re-render it on
   // the new space instead of leaving the previous space's summaries.
@@ -1244,9 +1244,15 @@ async function refreshSpaceAi() {
     if (mine !== spaceAiSeq) return;
     const rows = Array.isArray(answer?.overrides) ? answer.overrides : [];
     shellView.update({ aiSpaceOff: !masterEnabled(spaceId, rows) });
-  } catch {
+  } catch (error) {
     // Unknown keeps the last words; the Spazi e accessi panel says its own.
     if (mine !== spaceAiSeq) return;
+    // backlog 3136d15da7bd: a failed master read never silences its cause —
+    // name and code with the space, never body, token or personal data.
+    const cause = error instanceof Error ? error.name : (/** @type {any} */ (error)?.code ?? 'unknown');
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('bo-ai space master unreadable:', cause, /** @type {any} */ (error)?.code ?? null, `spaceId=${spaceId}`);
+    }
   }
 }
 
