@@ -1574,7 +1574,20 @@ export function harnessHtml(name, publicDir, options = {}) {
  * the whole budget, and timers, frames and webfonts keep moving. At the
  * ready title the beat stops and the budget runs out at once, as before.
  */
-export const VIRTUAL_BUDGET_MS = 8000;
+export const VIRTUAL_BUDGET_MS = 600_000;
+/**
+ * backlog:c7e97de6cf1f — the budget above is no deadline. In CI under load
+ * a harness did not reach its ready title (or the PNG came out almost
+ * blank, 11631 bytes) because 8 s of virtual time is ~16 s of real time at
+ * the pacer's rate: a module graph that took longer to compile on a busy
+ * runner simply ran out of clock. Now the run ends on the page's own
+ * signals: at the ready title the beat stops and the clock jumps to the end
+ * at once (a large budget costs nothing then), and a harness that stops
+ * making progress — no asset fetched, no DOM change, no new resource for
+ * STALL_MS of real time — is stopped by the shot server, which tells the
+ * page to stop its beat. A slow machine that keeps working keeps going.
+ */
+export const STALL_MS = 30_000;
 /** Real time of one beat. */
 export const PACE_MS = 20;
 /** Virtual time one beat may let pass. */
@@ -1584,9 +1597,30 @@ export const PACE_PRELUDE = `<script>
 (() => {
   const later = window.setTimeout.bind(window);
   let done = false;
+  // backlog:c7e97de6cf1f: each beat carries how far the page got (DOM
+  // changes, resources loaded, ready state); the shot server answers 205
+  // once nothing moved for STALL_MS of real time, and the beat stops.
+  // Structure and text only: a blinking or pulsing attribute is no progress.
+  let changes = 0;
+  new MutationObserver(() => { changes += 1; })
+    .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  // Resources seen by an observer (the timing buffer fills with beats), the
+  // beats themselves left out.
+  let loaded = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) if (!entry.name.includes('/__bo-pace')) loaded += 1;
+    }).observe({ type: 'resource', buffered: true });
+  } catch {}
+  const progress = () => \`\${changes}.\${loaded}.\${document.readyState}\`;
   const beat = () => {
     if (done) return;
-    fetch('/__bo-pace').catch(() => {}).then(() => {
+    fetch('/__bo-pace?p=' + encodeURIComponent(progress())).then((answer) => {
+      if (answer.status === 205) {
+        document.documentElement.setAttribute('data-bo-stalled', 'true');
+        finish();
+      }
+    }, () => {}).then(() => {
       if (!done) later(beat, ${PACE_STEP_MS});
     });
   };
@@ -1611,18 +1645,31 @@ export const PACE_PRELUDE = `<script>
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-export function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor, { stallMs = STALL_MS, now = () => Date.now() } = {}) {
   /** Beats not answered yet: closing the server answers them. */
   const beats = new Set();
+  // backlog:c7e97de6cf1f: the last real moment a page moved (an asset
+  // fetched, a new progress signature on a beat) and the last request of
+  // any kind — the browser run's idle guard reads it.
+  let progressAt = now();
+  let activityAt = now();
+  let lastSignature = null;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    activityAt = now();
     // backlog:30dc70e6b076: one beat of the page pacer (see PACE_PRELUDE).
     if (url.pathname === '/__bo-pace') {
+      const signature = url.searchParams.get('p');
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        progressAt = now();
+      }
+      const stalled = now() - progressAt > stallMs;
       const answer = () => {
         clearTimeout(timer);
         beats.delete(answer);
         if (res.writableEnded) return;
-        res.writeHead(204, { 'cache-control': 'no-store' });
+        res.writeHead(stalled ? 205 : 204, { 'cache-control': 'no-store' });
         res.end();
       };
       const timer = setTimeout(answer, PACE_MS);
@@ -1630,6 +1677,9 @@ export function startServer(publicDir, pageFor) {
       res.on('close', answer);
       return;
     }
+    // Anything else the page asks for is progress (a module, a font).
+    progressAt = now();
+    lastSignature = null;
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1666,6 +1716,8 @@ export function startServer(publicDir, pageFor) {
   server.on('close', () => {
     for (const answer of [...beats]) answer();
   });
+  /** The last real moment the server heard from a page (the browser run's idle guard). */
+  server.boActivityAt = () => activityAt;
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => resolve(server));
@@ -1792,7 +1844,8 @@ export function harnessStage(dom) {
   const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
   const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
   const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
-  return `title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
+  const stalled = /<html[^>]*data-bo-stalled="true"/.test(out) ? `stalled (no progress for ${STALL_MS / 1000}s), ` : '';
+  return `${stalled}title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
     + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
     + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
 }
@@ -1803,26 +1856,37 @@ export function harnessStage(dom) {
  * the page could never load. Async spawn keeps the loop free to serve.
  * @param {string} binary
  * @param {Array<string>} args
- * @param {number} timeoutMs
+ * @param {{ activityAt?: () => number, idleMs?: number }} [options]
  */
-function runChromium(binary, args, timeoutMs) {
+function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BROWSER_IDLE_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const timer = setTimeout(() => {
+    const startedAt = Date.now();
+    // backlog:c7e97de6cf1f: no total deadline — a browser is stopped only
+    // when neither it nor its page made any sign of life (output, a request
+    // to the shot server) for idleMs. A slow run that keeps working goes on.
+    let lifeAt = startedAt;
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); lifeAt = Date.now(); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); lifeAt = Date.now(); });
+    const guard = setInterval(() => {
+      const last = Math.max(lifeAt, activityAt());
+      if (Date.now() - last <= idleMs) return;
+      clearInterval(guard);
       child.kill('SIGKILL');
-      reject(new Error(`chromium timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+      reject(new Error(`chromium showed no sign of life for ${idleMs}ms`));
+    }, 1000);
+    child.on('error', (error) => { clearInterval(guard); reject(error); });
     child.on('close', (status) => {
-      clearTimeout(timer);
+      clearInterval(guard);
       resolve({ status, stdout, stderr });
     });
   });
 }
+
+/** How long a browser run may show no sign of life before it is stopped. */
+export const BROWSER_IDLE_MS = 2 * STALL_MS;
 
 /**
  * Reads the #probe JSON out of a `--dump-dom` stdout. The probe is the only
@@ -2073,7 +2137,7 @@ export function assertProbe(name, probe) {
  * (backlog:418b90704674).
  * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string, theme?: string, tag?: string }} options
  */
-async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '' }) {
+async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '', activityAt = () => Date.now() }) {
   // backlog:c0726d0f6d13: dark renders with Chromium --force-dark-mode.
   const themeFlags = theme === 'dark' ? ['--force-dark-mode'] : [];
   const page = screen.name === 'login'
@@ -2098,7 +2162,7 @@ async function renderScreen({ binary, flags, port, screen, outDir, theme = 'ligh
       '--force-prefers-reduced-motion',
       '--disable-background-networking',
       page,
-    ], 120000);
+    ], { activityAt });
     if (dom.status !== 0) {
       throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status} (stderr: ${(dom.stderr ?? '').slice(-500)})`);
     }
@@ -2150,7 +2214,7 @@ async function renderScreen({ binary, flags, port, screen, outDir, theme = 'ligh
       '--hide-scrollbars',
       '--disable-background-networking',
       page,
-    ], 120000);
+    ], { activityAt });
     const floor = shotFloor(kind);
     let shot = null;
     for (let attempt = 1; attempt <= SHOT_MAX_ATTEMPTS; attempt += 1) {
@@ -2218,7 +2282,10 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir, theme: args.theme, tag });
+      const shots = await renderScreen({
+        binary, flags, port: address.port, screen, outDir, theme: args.theme, tag,
+        activityAt: () => server.boActivityAt(),
+      });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

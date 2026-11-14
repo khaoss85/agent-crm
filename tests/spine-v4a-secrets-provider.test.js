@@ -188,9 +188,41 @@ export function createSecretProvider() { throw new Error('unreachable'); }
     );
   }
 
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(descriptorCount() <= before + 1, `trusted descriptors leaked: before=${before}, after=${descriptorCount()}`);
+  // backlog:c7e97de6cf1f: the trusted descriptor closes at the timeout,
+  // synchronously; what can still be open a tick later are the ESM loader's
+  // own reads of the provider source (open → read → close on the libuv
+  // pool), which a loaded runner finishes later (CI: before=24, after=26).
+  // So the count is awaited until it is back — and only a count that stops
+  // moving for DESCRIPTOR_STALL_MS fails: a trusted descriptor left open
+  // never closes, a loader read always does.
+  const after = await descriptorsSettled(descriptorCount, before + 1);
+  assert.ok(after <= before + 1, `trusted descriptors leaked: before=${before}, after=${after}`);
 });
+
+/** How long the descriptor count may stand still above its limit before it is a leak. */
+const DESCRIPTOR_STALL_MS = 10_000;
+
+/**
+ * The descriptor count once it is back under `limit`, or once it stopped
+ * moving for DESCRIPTOR_STALL_MS (a leak): a cap on no progress, never on
+ * total time — a slow machine that keeps closing keeps waiting.
+ * @param {() => number} count @param {number} limit
+ */
+async function descriptorsSettled(count, limit) {
+  let last = count();
+  let movedAt = Date.now();
+  while (last > limit) {
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    const now = count();
+    if (now !== last) {
+      last = now;
+      movedAt = Date.now();
+    } else if (Date.now() - movedAt > DESCRIPTOR_STALL_MS) {
+      break;
+    }
+  }
+  return last;
+}
 
 test('fixture and environment providers return opaque single-use disposable leases', async () => {
   for (const provider of [
