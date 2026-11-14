@@ -71,8 +71,13 @@ async function render({ timeline, calls }) {
   return mount;
 }
 
+/**
+ * Voce 2c1c0e149cf9: the «Chiamate» card is gone — the recap panel's
+ * «Vista per» tabs paint its content instead (default vista: chiamate).
+ * The box below is that recap section; the facts asserted stay the same.
+ */
 const callsSection = (mount) => mount.findAll('section')
-  .find((node) => node.findAll('h4').some((h) => h.textContent === 'Chiamate'));
+  .find((node) => node.findAll('h4').some((h) => h.textContent.startsWith('✦ Recap')));
 
 test('619b477c0464: a missed call in the cronologia is a call in the Chiamate box, never «nessuna chiamata»', async () => {
   const mount = await render({ timeline: timelineWith([MISSED, EARLIER]), calls: { calls: [] } });

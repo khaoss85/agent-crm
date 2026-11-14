@@ -339,6 +339,13 @@ async function readOneSection(section, { modules, references, subject, opportuni
       // never status) still carry a renderable state for the scheda offer
       // line — the card labels it in Italian, never raw English.
       id: row.id, status: row.status ?? row.stage ?? null, name: row.name ?? row.title ?? row.customerName ?? null,
+      // Voce 2c1c0e149cf9: who opened a work task (user|agent|system) rides
+      // the profile item, so the scheda can mark the agent-suggested steps
+      // («✦ suggeriti») — the record's own field, never an inference.
+      ...(section.key === 'workTasks' ? {
+        openedByType: row.openedByType === 'agent' || row.openedByType === 'user' || row.openedByType === 'system'
+          ? row.openedByType : null,
+      } : {}),
       // Quotes only: the explicit hop this profile followed, kept on the
       // item so the scheda can name the quote after its opportunity and a
       // reader can see which opportunity each quote belongs to. Other
