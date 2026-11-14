@@ -1918,6 +1918,9 @@ export function createCustomerCardView(deps) {
     go.setAttribute('data-action', 'composer-ai-generate');
     const line = el('p', 'bo-composer-ai-line', '');
     line.setAttribute('aria-live', 'polite');
+    // The request field is described by this line (backlog:d30d17880f63):
+    // with the AI off a screen reader hears why the field takes no words.
+    line.setAttribute('id', `bo-composer-ai-line-${composerGeneration}`);
     // The three versions live in their own row, so a pick or a message in
     // `line` never wipes them (production 10/11: after «Diretta» the other
     // two were gone and only Rigenera — a new AI call — brought them back).
@@ -1958,8 +1961,9 @@ export function createCustomerCardView(deps) {
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
     // Genera switched off with its reason beside it (backlog:f48593bb06d4).
-    // The field and the words typed in it stay — read-only, still there to
-    // copy — never a row wiped after a refusal.
+    // The request field and the words typed in it stay, read-only and out
+    // of the Tab order, still selectable to copy (backlog:d30d17880f63) —
+    // never a row wiped after a refusal.
     const switchOff = () => {
       go.setAttribute('disabled', 'disabled');
       go.setAttribute('aria-disabled', 'true');
@@ -1973,20 +1977,30 @@ export function createCustomerCardView(deps) {
     const paintOff = () => {
       if (offState === null) return;
       const { code, status } = offState;
+      // backlog:d30d17880f63: the AI reason always leads — with the AI off
+      // Genera stays off even once a channel is linked — and the missing
+      // channel follows it. «Scrivi il messaggio qui sotto» only where the
+      // message can leave (a usable channel).
+      const canWrite = channel() !== null;
+      const hand = canWrite ? ': scrivi il messaggio qui sotto' : '';
       say('');
       if (code === 'LLM_SPACE_DISABLED') {
         // Who turns it on: the titolare gets the way there, one click; the
         // others are told whom to ask (the Assistente idiom).
         if (readRole() === 'owner') {
-          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto, o '));
+          line.appendChild(el('span', undefined, `L’AI non è attiva in questo spazio${canWrite ? `${hand}, o ` : ': '}`));
           line.appendChild(link('#/spazi-accessi', 'accendila da Spazi e accessi', 'composer-ai-settings'));
         } else {
-          line.appendChild(el('span', undefined, 'L’AI non è attiva in questo spazio: scrivi il messaggio qui sotto. Per accenderla chiedi al titolare.'));
+          line.appendChild(el('span', undefined, `L’AI non è attiva in questo spazio${hand}. Per accenderla chiedi al titolare.`));
         }
       } else if (code === 'LLM_SECRET_UNAVAILABLE') {
-        line.appendChild(el('span', undefined, 'L’AI non è ancora configurata: scrivi il messaggio qui sotto.'));
+        line.appendChild(el('span', undefined, `L’AI non è ancora configurata${hand}.`));
       } else if (status === 404 || status === 405) {
-        line.appendChild(el('span', undefined, 'La scrittura con l’AI non è ancora disponibile qui: scrivi il messaggio qui sotto.'));
+        line.appendChild(el('span', undefined, `La scrittura con l’AI non è ancora disponibile qui${hand}.`));
+      }
+      if (!canWrite) {
+        line.appendChild(el('span', undefined, ' · Manca anche un canale collegato: '));
+        line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
       }
       const kept = baseline();
       if (kept !== null && (kept.text.trim() !== '' || kept.subject.trim() !== '')) appendUndo();
@@ -1994,11 +2008,38 @@ export function createCustomerCardView(deps) {
     const off = (code, status = null) => {
       row.setAttribute('data-off', 'true');
       switchOff();
+      // backlog:d30d17880f63 (review #880): read-only, so the words typed
+      // stay selectable and copyable; out of the Tab order; described by
+      // the reason line; the keys that would write are swallowed below, so
+      // a press never scrolls the page under a field that ignores it.
       prompt.setAttribute('readonly', 'readonly');
+      prompt.setAttribute('aria-disabled', 'true');
+      prompt.setAttribute('tabindex', '-1');
+      prompt.setAttribute('aria-describedby', line.getAttribute('id'));
       prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
+      // Focus inside the request field (an off state that lands while the
+      // person is in it) moves to the message field, where words go now.
+      const active = doc?.activeElement ?? null;
+      if (active === prompt && typeof text.focus === 'function') text.focus({ preventScroll: true });
       offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
       paintOff();
     };
+    // A press on the off row with nothing to copy goes to the message field;
+    // with words in the request it is left alone, so they can be selected.
+    field.addEventListener?.('mousedown', (event) => {
+      if (row.getAttribute('data-off') !== 'true' || prompt.value !== '') return;
+      event.preventDefault?.();
+      if (typeof text.focus === 'function') text.focus({ preventScroll: true });
+    });
+    // Keys in the off request field: selection and copy keep working (Tab,
+    // arrows, Home/End, Shift, Cmd/Ctrl combinations); any key that would
+    // write or scroll (letters, Space, PageDown…) does nothing.
+    const OFF_KEYS_ALLOWED = new Set(['Tab', 'Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape', 'Meta', 'Control', 'Alt']);
+    prompt.addEventListener?.('keydown', (event) => {
+      if (row.getAttribute('data-off') !== 'true') return;
+      if (OFF_KEYS_ALLOWED.has(event.key) || event.metaKey || event.ctrlKey) return;
+      event.preventDefault?.();
+    });
     // Annulla: back to the person's own text before the first AI draft.
     function appendUndo() {
       const back = el('button', 'bo-composer-ai-undo', 'Annulla');
@@ -2273,15 +2314,16 @@ export function createCustomerCardView(deps) {
     // No usable channel: off, with Connettori beside it. AI off in the space
     // (the cached state read): off, with the reason and who turns it on. A
     // Genera already in flight is left to the gate's own answer.
+    // backlog:d30d17880f63: the AI state is read with or without a channel —
+    // an AI that is off is the first reason, the channel the second.
     if (channel() === null) {
       switchOff();
       sayConnect();
-    } else {
-      void readSpaceAi(spaceId).then((code) => {
-        if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
-        off(code);
-      });
     }
+    void readSpaceAi(spaceId).then((code) => {
+      if (code === null || stale() || busy || row.getAttribute('data-off') === 'true') return;
+      off(code);
+    });
     prompt.addEventListener?.('keydown', (event) => {
       if (event.key === 'Enter' && !(event.metaKey || event.ctrlKey)) {
         event.preventDefault?.();
@@ -2481,7 +2523,9 @@ export function createCustomerCardView(deps) {
         }
       });
     }
-    if (typeof text.focus === 'function' && selected !== null) text.focus();
+    // backlog:d30d17880f63: the opening focus never scrolls the window body —
+    // a scrolled body hid «Rispondi su» under the header (1512×773).
+    if (typeof text.focus === 'function' && selected !== null) text.focus({ preventScroll: true });
     let busy = false;
     send.addEventListener('click', () => { void doSend(); });
     const setBusy = (on) => {

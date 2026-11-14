@@ -3909,7 +3909,13 @@ test('backlog:f48593bb06d4: AI off in the space switches Genera off at opening, 
     assert.ok(input && go, `${name}: the AI row stays in the composer`);
     assert.equal(go.getAttribute('disabled'), 'disabled', `${name}: Genera is off before any click`);
     assert.equal(go.getAttribute('aria-disabled'), 'true');
+    // backlog:d30d17880f63 (review #880): read-only so the words stay
+    // copyable, out of the Tab order, described by the reason line.
     assert.equal(input.getAttribute('readonly'), 'readonly', 'nothing to type for an AI that is off');
+    assert.equal(input.getAttribute('disabled'), null, 'never disabled: the words stay selectable');
+    assert.equal(input.getAttribute('aria-disabled'), 'true');
+    assert.equal(input.getAttribute('tabindex'), '-1');
+    assert.equal(input.getAttribute('aria-describedby'), aiLine(panel).getAttribute('id'));
     const line = aiLine(panel);
     assert.match(line.textContent, /L’AI non è attiva in questo spazio/, name);
     const settings = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-ai-settings');
@@ -3923,6 +3929,119 @@ test('backlog:f48593bb06d4: AI off in the space switches Genera off at opening, 
     assert.ok(aiParts(panel).area, 'the message field stays for writing by hand');
     assert.ok(!panel.textContent.includes('LLM_'), 'no code on screen');
   }
+});
+
+// backlog:d30d17880f63 (verifica pilota 940312d): a customer with no
+// channel in a space with the AI off read only «Genera si accende con un
+// canale collegato» under a writable request — false, Genera stays off
+// with a channel too. The AI reason leads, the channel follows.
+test('backlog:d30d17880f63: no channel and AI off — the AI reason leads, the channel follows, the request is off', async () => {
+  for (const [role, aiSentence, aiLink] of [
+    ['owner', /L’AI non è attiva in questo spazio: accendila da Spazi e accessi/, true],
+    ['member', /L’AI non è attiva in questo spazio\. Per accenderla chiedi al titolare\./, false],
+  ]) {
+    const inner = aiStateClient({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+    const client = {
+      ...inner,
+      async request(path, options = {}) {
+        if (path.startsWith('/api/connectors')) return { connectors: [] };
+        if (path === '/api/profile') return { member: {}, connections: { available: true, reason: null, items: [] } };
+        return inner.request(path, options);
+      },
+    };
+    const { panel } = await openComposerMount({ client, role });
+    const line = aiLine(panel);
+    assert.match(line.textContent, aiSentence, role);
+    assert.match(line.textContent, /Manca anche un canale collegato: Collega in Connettori/, role);
+    assert.ok(!line.textContent.includes('Genera si accende con un canale collegato'), `${role}: never the channel alone`);
+    assert.ok(!line.textContent.includes('scrivi il messaggio qui sotto'), `${role}: nothing to send on, so no «scrivi qui sotto»`);
+    const actions = line.findAll('a').map((node) => node.getAttribute('data-action'));
+    assert.deepEqual(actions, aiLink ? ['composer-ai-settings', 'composer-connectors'] : ['composer-connectors'], role);
+    const { input, go } = aiParts(panel);
+    assert.equal(input.getAttribute('readonly'), 'readonly', `${role}: the request is off like with a channel`);
+    assert.equal(input.getAttribute('aria-disabled'), 'true');
+    assert.equal(input.getAttribute('tabindex'), '-1');
+    assert.equal(input.getAttribute('placeholder'), 'Scrittura con l’AI non disponibile');
+    assert.equal(go.getAttribute('disabled'), 'disabled');
+  }
+});
+
+test('backlog:d30d17880f63: with the AI off a press on the request row lands in the message field', async () => {
+  const client = aiStateClient({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  const { panel } = await openComposerMount({ client, role: 'owner' });
+  const { area } = aiParts(panel);
+  area.__focused = false;
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  let prevented = false;
+  field.dispatch('mousedown', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true, 'the press never focuses the off field');
+  assert.equal(area.__focused, true, 'the message field takes the typing');
+});
+
+test('backlog:d30d17880f63: with the AI on a press on the request row is left alone', async () => {
+  const client = aiStateClient({ spaceId: 'presti', enabled: true, model: 'gpt-4o-mini', purposes: ['assistant'], custody: 'worker' });
+  const { panel } = await openComposerMount({ client });
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  let prevented = false;
+  field.dispatch('mousedown', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false);
+  assert.equal(aiParts(panel).input.getAttribute('readonly'), null);
+  assert.equal(aiParts(panel).input.getAttribute('tabindex'), null);
+});
+
+test('backlog:d30d17880f63 (review #880): the off request keeps its words copyable and swallows only the keys that write', async () => {
+  const client = draftClient(Object.assign(new Error('off'), { status: 503, code: 'LLM_SPACE_DISABLED' }));
+  const { panel } = await openComposerMount({ client, role: 'owner' });
+  const { input, go } = aiParts(panel);
+  input.value = 'conferma la prova di giovedì';
+  go.dispatch('click');
+  await flushComposer();
+  assert.equal(input.getAttribute('readonly'), 'readonly');
+  assert.equal(input.value, 'conferma la prova di giovedì');
+  const press = (event) => {
+    let prevented = false;
+    input.dispatch('keydown', { ...event, preventDefault: () => { prevented = true; } });
+    return prevented;
+  };
+  for (const key of ['a', ' ', 'PageDown', 'Backspace', 'Enter']) {
+    assert.equal(press({ key }), true, `«${key}» does nothing in the off field`);
+  }
+  for (const event of [{ key: 'Tab' }, { key: 'ArrowLeft' }, { key: 'End' }, { key: 'c', metaKey: true }, { key: 'a', ctrlKey: true }]) {
+    assert.equal(press(event), false, `${JSON.stringify(event)} keeps selecting and copying`);
+  }
+  // With words in it, a press on the row is left alone so they can be selected.
+  const field = panel.findAll('div').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-field'));
+  let prevented = false;
+  field.dispatch('mousedown', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false, 'the words can be selected with the mouse');
+});
+
+test('backlog:d30d17880f63 (review #880): the AI-off state landing while the person is in the request moves focus to the message field', async () => {
+  let release;
+  const status = new Promise((resolve) => { release = resolve; });
+  const inner = draftClient({ body: 'x' });
+  const client = {
+    posts: inner.posts,
+    drafts: inner.drafts,
+    async request(path, options = {}) {
+      if (path === '/api/assistant/status') return status;
+      return inner.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti', wait: () => Promise.resolve(), role: () => 'owner' }).renderCard('contact', 'c1');
+  mount.findAll('button').find((node) => node.getAttribute('data-action') === 'compose-email').dispatch('click');
+  await flushComposer();
+  const panel = mount.findAll('div').find((node) => node.getAttribute('data-composer') === 'open');
+  const { input, area } = aiParts(panel);
+  assert.equal(input.getAttribute('readonly'), null, 'the state is not known yet');
+  doc.activeElement = input;
+  area.__focused = false;
+  release({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
+  await flushComposer();
+  assert.equal(input.getAttribute('readonly'), 'readonly');
+  assert.equal(area.__focused, true, 'the person lands in the message field, never on the page body');
 });
 
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
