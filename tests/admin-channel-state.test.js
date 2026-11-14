@@ -74,12 +74,27 @@ test('channelState: not linked reads da-completare, da-collegare or non-disponib
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(true) }).connectRoute, '#/profilo');
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(false) }).state, 'non-disponibile');
   // A profile Gmail link merges like the shared count — but the stand-in
-  // is no channel connection (backlog:3805161965cd): Email reads
-  // da-collegare with the email connectRoute, never collegato.
+  // is no channel connection (backlog:3805161965cd): with a connected
+  // grant and no composed adapter there is nowhere to create one, so
+  // Email reads non-disponibile, never collegato and never a Profilo
+  // cure into the loop (Muse P1 on #848).
   const profile = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
   const gmailAlone = channelState('email', { rows: [], adapters: [], profile });
-  assert.equal(gmailAlone.state, 'da-collegare');
-  assert.equal(gmailAlone.connectRoute, '#/profilo', 'Gmail connects on Profilo, the Connettori screen is only the fallback');
+  assert.equal(gmailAlone.state, 'non-disponibile');
+  assert.equal(gmailAlone.connectRoute, null, 'a connected grant cures nowhere when no adapter can connect it');
+  assert.match(gmailAlone.note ?? '', /non si può ancora collegare/, 'the note says so in plain words');
+  const gmailGuided = channelState('email', {
+    rows: [],
+    adapters: [{ channel: 'email', name: 'email-adapter', version: 1 }],
+    profile,
+    guided: ['email'],
+  });
+  assert.equal(gmailGuided.state, 'da-collegare');
+  assert.equal(gmailGuided.connectRoute, '#/connettori/email', 'a composed adapter opens the guided flow');
+  const grantMissing = { connections: { available: true, items: [{ connector: 'gmail', status: 'revoked', account: null }] } };
+  const gmailMissing = channelState('email', { rows: [], adapters: [], profile: grantMissing });
+  assert.equal(gmailMissing.state, 'da-collegare');
+  assert.equal(gmailMissing.connectRoute, '#/profilo', 'a missing grant still cures to Profilo');
   for (const label of Object.values(CHANNEL_STATE_LABELS)) {
     assert.doesNotMatch(label.text, /qui$/, 'no «Non disponibile qui»');
   }

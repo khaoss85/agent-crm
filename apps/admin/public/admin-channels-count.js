@@ -302,6 +302,24 @@ function profileConnects(profile, channel) {
 }
 
 /**
+ * Whether the profile already holds a connected grant for one channel
+ * (backlog:3805161965cd): a `connected` Gmail item with no active channel
+ * connection still leaves Email off, but Profilo shows the grant as
+ * connected with nothing left to do there — curing to Profilo loops.
+ * The Profilo cure only applies while the grant is actually missing.
+ * @param {unknown} profile the /api/profile payload, null when unreadable
+ * @param {string} channel the counted channel id
+ */
+export function profileGrantConnected(profile, channel) {
+  const items = profileItems(profile);
+  if (items === null) return false;
+  const id = countedChannel(channel);
+  return items.some((item) => item != null && typeof item === 'object'
+    && PROFILE_CONNECTOR_CHANNELS[item.connector] === id
+    && item.status === 'connected');
+}
+
+/**
  * The one state of one channel (backlog:e381c48581fa). Before it, WhatsApp
  * read ✓ in Personalizzazione, «Collegato» on Profilo and «Non disponibile
  * qui · Nessun adattatore composto» in its own detail, on the same space:
@@ -363,10 +381,10 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
     });
   }
   // The profile-Gmail Email stand-in is no channel connection, so it never
-  // holds `da-completare` alone: with a composed Email adapter and no real
-  // row that state has no route, while Stato sync and the composer cure
-  // elsewhere (backlog:3805161965cd, Muse review on #848: a sole stand-in
-  // falls through to `da-collegare` with a route).
+  // holds `da-completare` alone: a sole stand-in falls through to
+  // `da-collegare` with a route, or to `non-disponibile` when the grant is
+  // already connected and no adapter can create the connection
+  // (backlog:3805161965cd, Muse P1 on #848).
   const realMatching = matching.filter((row) => !isProfileEmailStandinRow(row));
   if (realMatching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
     return shape('da-completare', { managedHere: true });
@@ -374,11 +392,18 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
   // A composed adapter opens the guided flow only for a channel that flow
   // serves: Google Calendar connects on Profilo, Stripe nowhere (review
   // #782 P3), whatever the schema lists.
+  // Backlog:3805161965cd (Muse P1 on #848): no `da-completare` without a
+  // real row — with a composed adapter the guided flow takes it, and the
+  // Profilo cure only applies while the grant is actually missing. A
+  // connected grant with no channel connection cures to the guided flow,
+  // or honestly nowhere when no adapter can create the connection.
   const guidedHere = composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id);
+  const profiloCure = profileConnects(profile, id) && !profileGrantConnected(profile, id)
+    ? '#/profilo' : null;
   const connectRoute = guidedHere
     ? `#/connettori/${id}`
     : channelConnectRoute(id, { guided: composed === false ? [] : guided, profile })
-      ?? (profileConnects(profile, id) ? '#/profilo' : null);
+      ?? profiloCure;
   if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
 }

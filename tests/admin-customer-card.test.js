@@ -2302,8 +2302,8 @@ const COMPOSER_CONNECTORS = {
   ],
 };
 
-function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, card = CARD, onPost = null, onResume = null } = {}) {
-  const base = stubClient({ card });
+function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, card = CARD, onPost = null, onResume = null, schema = null } = {}) {
+  const base = stubClient({ card, schema });
   const posts = [];
   const resumes = [];
   return {
@@ -2743,7 +2743,7 @@ test('3805161965cd: profile-only Gmail leaves Email off and names Gmail', async 
   assert.ok(text.includes('collega Gmail'), 'the composer says to connect Gmail');
   const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
   assert.ok(link, 'the off channels link to Connettori');
-  assert.equal(link.getAttribute('href'), '#/connettori');
+  assert.equal(link.getAttribute('href'), '#/connettori', 'several channels off share the one way to Connettori');
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing sendable Invia stays disabled');
   assert.equal(send.textContent, 'Invia', 'Email is never the default on the mailbox alone');
@@ -2793,8 +2793,8 @@ test('3805161965cd: Oggi, Stato sync, composer and Connettori agree on profile-o
   const synced = withProfileConnections({ connections: [] }, profile);
   assert.ok(!channelConnectionCount(synced.connections).connectedChannels.includes('email'), 'Stato sync counts no Email either');
   const emailState = channelState('email', { rows: [], adapters: [], profile });
-  assert.equal(emailState.state, 'da-collegare');
-  assert.equal(emailState.connectRoute, '#/profilo', 'Connettori cures to Profilo, not to a dead end');
+  assert.equal(emailState.state, 'non-disponibile', 'a connected grant with no adapter cures nowhere, never Profilo');
+  assert.equal(emailState.connectRoute, null);
   const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
   const { panel } = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard }),
@@ -2804,32 +2804,45 @@ test('3805161965cd: Oggi, Stato sync, composer and Connettori agree on profile-o
   assert.ok(panel.textContent.includes('collega Gmail'), 'the composer names the same cure');
   const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
   assert.ok(link, 'the single off Gmail has its own cure line');
-  // Backlog:3805161965cd (review giro 6 P1): one cure everywhere — the
-  // composer lands where production Stato sync lands (adapters read, none
-  // for Email). The unread-schema branch still names the guided flow.
-  assert.equal(link.getAttribute('href'), '#/profilo', 'the Gmail cure lands on Profilo');
-  assert.equal(link.textContent, 'Profilo', 'the cure anchor names its real destination, not Connettori');
-  assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, []), 'the composer cures where Stato sync cures');
-  assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'unread schema still offers the guided flow');
+  // Backlog:3805161965cd (Muse P1 on #848): one cure everywhere — the
+  // composer lands where Stato sync lands. The schema is unread in this
+  // mount, so both name the guided flow, never the Profilo loop.
+  assert.equal(link.getAttribute('href'), '#/connettori/email', 'the Gmail cure takes the guided flow');
+  assert.equal(link.textContent, 'Connettori', 'the cure anchor names its real destination');
+  assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, null), 'the composer cures where Stato sync cures');
+  assert.equal(syncConnectRoute('email', profile, []), null, 'schema read with no adapter: Stato sync offers no looping Collega');
 });
 
-// Backlog:3805161965cd (Muse review on #848, P2, paired): the composer
-// never reads the schema, so it cannot follow the adapters the way Stato
-// sync does — the three adapter states are pinned here, loudly.
+// Backlog:3805161965cd (Muse P1 on #848): the composer reads the same
+// adapters input Stato sync uses, so the three schema states agree on
+// the Email cure — guided flow, honest nowhere, or Profilo while the
+// grant itself is missing.
 test('3805161965cd: composer cure per adapter state against Stato sync', async () => {
   const profile = COMPOSER_GMAIL_PROFILE;
-  assert.equal(syncConnectRoute('email', profile, []), '#/profilo', 'schema read, no adapter: both cure to Profilo');
+  assert.equal(syncConnectRoute('email', profile, []), null, 'schema read, no adapter: no looping Collega');
   assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'schema unread: Stato sync offers the guided flow');
   const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
-  assert.equal(syncConnectRoute('email', profile, emailAdapters), '#/connettori/email', 'composed Email adapter: Stato sync cures to the guided flow, never a routeless da-completare (Muse review on #848, giro 4 P1)');
+  assert.equal(syncConnectRoute('email', profile, emailAdapters), '#/connettori/email', 'composed Email adapter: Stato sync cures to the guided flow');
   const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
-  const { panel } = await openComposerMount({
-    client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard }),
+  const mountWith = (schema) => openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard, schema }),
   });
-  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
-  assert.ok(link, 'the single off Gmail keeps its own cure line');
-  assert.equal(link.getAttribute('href'), '#/profilo', 'the composer cure stays Profilo in every adapter state');
-  assert.equal(link.textContent, 'Profilo', 'and it says Profilo');
+  const cureLink = (panel) => panel.findAll('p')
+    .find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'))
+    ?.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  // Unread schema: the guided flow, like Stato sync.
+  const unread = await mountWith(null);
+  assert.equal(cureLink(unread.panel)?.getAttribute('href'), '#/connettori/email', 'unread schema cures to the guided flow');
+  // Read with no adapter: honestly nowhere, never a link into the loop.
+  const none = await mountWith({ domains: { channels: { metadata: { adapters: [] } } } });
+  assert.equal(cureLink(none.panel), undefined, 'no adapter means no cure link');
+  assert.ok(none.panel.textContent.includes('non si può ancora collegare'), 'the line says so honestly');
+  // Read with an Email adapter: the guided flow.
+  const guided = await mountWith({ domains: { channels: { metadata: { adapters: emailAdapters } } } });
+  assert.equal(cureLink(guided.panel)?.getAttribute('href'), '#/connettori/email', 'a composed adapter opens the guided flow');
+  // Missing grant: pinned at the shared state level (channel-state test:
+  // revoked Gmail cures to Profilo); the composer without a mailbox keeps
+  // the pre-existing generic way to Connettori, unchanged by this cure.
 });
 
 // Backlog:3805161965cd (review giro 6 P1, paired): a real Email row
