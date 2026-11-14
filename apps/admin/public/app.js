@@ -1,5 +1,5 @@
 import { createSubmissionController, requireSubmissionContext } from './admin-submission.js';
-import { createAssistantPanel } from './admin-assistant.js';
+import { ASSISTANT_STATUS_PATH, assistantStatusCode, createAssistantPanel } from './admin-assistant.js';
 import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
@@ -967,6 +967,12 @@ const profiloView = createProfiloView({
   mount: mountGate.owned('profilo'),
   client: moduleClient,
   member: () => shellUser,
+  // backlog:3136d15d: the name saved on Profilo is live everywhere at
+  // once — the sidebar and the home greeting read this same object.
+  onName: (name) => {
+    shellUser.name = name;
+    shellView?.update({ user: { name } });
+  },
   // backlog:8618ad3f72db: the Impostazioni tab row above the profile.
   navigate: (hash) => { window.location.hash = hash; },
   fixCount: () => shellFixCount,
@@ -1044,6 +1050,8 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
+  // backlog:3136d15d: the bar follows the new space's AI state.
+  void refreshShellAiOff();
   // The open card shows space-scoped calls (BO-F1-08): re-render it on
   // the new space instead of leaving the previous space's summaries.
   // The mounted home greets with the space name: re-render it too.
@@ -1146,6 +1154,8 @@ if (boSidebar && boTopbar) {
     win: typeof window !== 'undefined' ? window : null,
   });
   if (shellActiveSpace) shellView.setSpaces(shellSpaces, shellActiveSpace);
+  // backlog:3136d15d: the bar names the space AI state from the start.
+  void refreshShellAiOff();
 }
 
 let shellItems = buildShellNav();
@@ -1182,6 +1192,44 @@ function syncShell(target) {
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
     screenLabel: customerCrumbLabel(target, offerCrumbs.label(target) ?? (typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista'), rememberedCustomerTitle()),
   });
+  // backlog:3136d15d: every navigation re-checks the space AI, so flipping
+  // the master in Spazi e accessi reaches the bar on the next screen.
+  void refreshShellAiOff();
+}
+
+/**
+ * Backlog 3136d15d: the top bar says when the space AI is off. One status
+ * read per call, shared while in flight; anything but a really disabled
+ * space (LLM_SPACE_DISABLED) keeps the normal bar — a missing backend or
+ * key never reads as «off».
+ * @type {Promise<void> | null}
+ */
+let shellAiOffFlight = null;
+
+async function refreshShellAiOff() {
+  if (!shellView) return;
+  if (shellAiOffFlight) {
+    try { await shellAiOffFlight; } catch {
+      // The shared flight already settled the bar; nothing more to do.
+    }
+    return;
+  }
+  const flight = (async () => {
+    let off = false;
+    try {
+      const status = await moduleClient.request(ASSISTANT_STATUS_PATH);
+      off = assistantStatusCode(status) === 'LLM_SPACE_DISABLED';
+    } catch {
+      off = false;
+    }
+    shellView?.update({ aiOff: off });
+  })();
+  shellAiOffFlight = flight;
+  try {
+    await flight;
+  } finally {
+    if (shellAiOffFlight === flight) shellAiOffFlight = null;
+  }
 }
 
 async function refreshShellCounts() {

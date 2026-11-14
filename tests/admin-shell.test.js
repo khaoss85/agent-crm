@@ -7,6 +7,8 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_ENTRY_OFF_ARIA,
+  AI_ENTRY_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
@@ -1022,4 +1024,18 @@ test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in
     assert.equal(screen.label, label);
   }
   assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
+});
+
+test('backlog:3136d15d with the space AI off the bar says it is off, keeping the find', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_ENTRY_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_ENTRY_OFF_PLACEHOLDER, 'off wins over the fallback too');
+  assert.equal(aiPlaceholder('oggi'), 'Chiedi: «cosa è più urgente oggi?»', 'on keeps its own line');
+  const { view, topbar } = renderShell();
+  view.update({ aiOff: true });
+  const input = topbar.findAll('input')[0];
+  assert.equal(input.getAttribute('placeholder'), AI_ENTRY_OFF_PLACEHOLDER);
+  assert.equal(input.getAttribute('aria-label'), AI_ENTRY_OFF_ARIA);
+  assert.equal(Boolean(input.disabled), false, 'the find keeps working while the AI is off');
+  view.update({ aiOff: false });
+  assert.equal(topbar.findAll('input')[0].getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
 });

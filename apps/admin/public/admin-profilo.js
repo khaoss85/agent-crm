@@ -267,6 +267,7 @@ export function metaConnectionsCard({ doc, ready }) {
 /**
  * @param {{ doc: any, mount: any, client: { request: (path: string) => Promise<any> },
  *   member?: () => ({ name?: string | null, email?: string | null, role?: string | null } | null),
+ *   onName?: ((name: string) => void) | null,
  *   log?: (...args: any[]) => void }} deps
  */
 export const PROFILE_NAME_MAX = 120;
@@ -283,7 +284,7 @@ export function cleanProfileName(value) {
   return next;
 }
 
-export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions, navigate = null, fixCount = () => null } = {}) {
+export function createProfiloView({ doc, mount, client, member = () => null, onName = null, log = () => {}, submissions, navigate = null, fixCount = () => null } = {}) {
   let token = 0;
   // backlog:1cfc68175ab7: the name edit is local view state, never stored.
   // `draft` keeps what the user typed across saving, validation errors and
@@ -391,6 +392,13 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
             draft = '';
             editError = '';
             paint(session, fresh);
+            // backlog:3136d15d: the saved name is live everywhere at once
+            // (sidebar, home greeting), not only on this page — the host
+            // refreshes its own session copy from the reread member.
+            if (typeof onName === 'function') {
+              const live = personText(fresh?.member?.name);
+              if (live !== null) onName(live);
+            }
           },
           (error) => {
             log('bo-profilo profile save failed:', error?.code ?? 'Error');

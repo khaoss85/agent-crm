@@ -1932,3 +1932,8 @@ test('9d06eb1e174b: with the session unknown no row offers «Rimuovi»; known, o
   assert.equal(removes(mount).length, 3, 'every other row offers «Rimuovi», never the own one');
   assert.doesNotMatch(text(mount), /Rimuovi non è disponibile/);
 });
+
+test('backlog:3136d15d a disabled child switch reads not-allowed, knob included', () => {
+  const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-spazi-toggle:disabled\s*,\s*\.bo-spazi-toggle:disabled \.bo-spazi-knob\s*\{[^}]*cursor:\s*not-allowed/);
+});

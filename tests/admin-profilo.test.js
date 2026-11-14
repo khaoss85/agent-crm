@@ -502,3 +502,40 @@ test('8618ad3f72db: Profilo reads its channel state and Collega through the shar
   assert.ok(collega.length > 0);
   for (const link of collega) assert.match(link.getAttribute('class') ?? '', /\bui-connect\b/);
 });
+
+test('backlog:3136d15d the name saved on Profilo reaches the host at once (sidebar, home)', async () => {
+  const flush = (ms = 10) => new Promise((resolve) => setTimeout(resolve, ms));
+  let storedName = 'Elena Rinaldi';
+  const raw = {
+    async request(path, options = {}) {
+      assert.equal(path, '/api/profile');
+      if (String(options.method ?? 'GET').toUpperCase() === 'PATCH') {
+        const parsed = typeof options.body === 'string' ? JSON.parse(options.body) : options.body;
+        storedName = parsed.name;
+      }
+      return { member: { name: storedName, email: 'elena@studioaurora.it', role: 'owner' },
+        connections: { available: true, reason: null, items: [] } };
+    },
+  };
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      return raw.request(path, options);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const member = { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' };
+  const view = createProfiloView({ doc, mount, client, member: () => member,
+    onName: (name) => { seen.push(name); member.name = name; } });
+  await view.render();
+  mount.findAll('button').find((node) => node.textContent === 'Modifica').dispatch('click');
+  const input = mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name');
+  assert.ok(input, 'the edit form offers a Nome field');
+  input.value = 'Elena Presti';
+  mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
+  await flush(20);
+  assert.deepEqual(seen, ['Elena Presti'], 'the host learns the reread name once');
+  assert.equal(member.name, 'Elena Presti', 'the shared session copy is live for sidebar and home');
+});
