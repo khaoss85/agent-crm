@@ -272,6 +272,9 @@ test('team table: the open value follows the referente in every period; won and 
   assert.equal(septemberAlice.staleCount, 1);
   const septemberBob = september.team.find((entry) => entry.owner === 'bob');
   assert.deepEqual([septemberBob.openCount, septemberBob.openMinor], [2, 4000]);
+  // 35c3c897d696: bob's undated offer is in the forecast window, never
+  // stale — staleCount shares the global past-dates definition.
+  assert.equal(septemberBob.staleCount, 0);
   assert.deepEqual(september.team.map((entry) => entry.owner), ['alice', 'bob']);
 });
 
@@ -498,7 +501,10 @@ test('proposal baseline is period-scoped: equal in-period rates propose nothing'
   const alice = model.team.find((entry) => entry.owner === 'alice');
   const bob = model.team.find((entry) => entry.owner === 'bob');
   // backlog:48993bed7294: open follows the referente (two in October plus the undated one).
-  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [3, '50%', 1]);
+  // 35c3c897d696: stale is past-dated only — the same past-dates definition
+  // as the global stale rows — so the undated discovery row is in the
+  // forecast window, never stale.
+  assert.deepEqual([alice.openCount, alice.winRateDisplay, alice.staleCount], [3, '50%', 0]);
   assert.deepEqual([bob.openCount, bob.winRateDisplay], [0, '50%']);
   assert.equal(model.proposal, null, 'matching the period baseline proposes nothing');
   assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
@@ -518,6 +524,10 @@ test('query, month and target helpers behave', () => {
   assert.equal(monthOf('2026-10'), '2026-10');
   assert.equal(monthOf(null), null);
   assert.equal(monthOf('ieri'), null);
+  // 35c3c897d696: same month validation as the Pipeline board — an
+  // impossible calendar month is no date, like an absent one.
+  assert.equal(monthOf('2026-13-15'), null);
+  assert.equal(monthOf('2026-00-10'), null);
   assert.equal(shiftMonth('2026-10', -1), '2026-09');
   assert.equal(shiftMonth('2026-01', -1), '2025-12');
   assert.equal(formatMonth('2026-10'), 'ottobre 2026');

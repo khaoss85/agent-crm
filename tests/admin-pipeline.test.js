@@ -756,6 +756,29 @@ test('forecast shows the month title, the offers closed this month plus the hist
   assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
 });
 
+// 35c3c897d696: the Pipeline validates months like the Reporting dashboard —
+// an impossible calendar month is no date, so the offer waits in the
+// forecast like an undated one instead of silently dropping out.
+test('forecast reads an impossible month as undated, like the dashboard', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { valueCents: 10_000, owner: 'alice' }),
+      record('g', 'demo', { valueCents: 10_000, owner: 'alice', expectedCloseDate: `${MONTH_NOW.slice(0, 4)}-13-40` }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  // 0 decided offers: the 60% fallback over both waiting offers (100 €
+  // undated plus 100 € with an impossible month) = 120 €.
+  assert.ok(box.textContent.includes('120 €'), `both offers wait in the forecast (${box.textContent})`);
+});
+
 test('forecast names the highest-value open offer when one currency is in play', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

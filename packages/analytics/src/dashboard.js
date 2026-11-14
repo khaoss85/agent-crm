@@ -578,9 +578,12 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     if (isOpen(row)) {
       entry.openCount += row.count;
       entry.openMinor += row.totalMinor;
-      // Stale for redistribution: no expected date, or one already past.
-      // Rows expected in a FUTURE period are somebody's plan, not neglect.
-      if (expected === null || expected < query.period) {
+      // 35c3c897d696: stale for redistribution shares the global past-dates
+      // definition below — an expected date already past. Rows without an
+      // expected date can close any day: they stay in the forecast window,
+      // never stale. Rows expected in a FUTURE period are somebody's plan,
+      // not neglect.
+      if (expected !== null && expected < query.period) {
         entry.staleCount += row.count;
       }
     } else if (isWonValue(row['opportunity.stage'])) {
@@ -664,13 +667,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
           from: candidate.owner,
           to: recipient.owner,
           count: candidate.staleCount,
-          reason: `${candidate.staleCount} preventivi aperti senza data di chiusura attesa, tasso ${candidate.winRateDisplay} contro ${recipient.winRateDisplay}`,
+          reason: `${candidate.staleCount} preventivi aperti con la data di chiusura attesa già passata, tasso ${candidate.winRateDisplay} contro ${recipient.winRateDisplay}`,
         })]),
         note: 'La proposta non sposta nulla da sola: la riassegnazione resta dell\u2019operatore.',
       });
       insights.push({
         id: 'redistribute',
-        text: `${candidate.owner} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead senza data a ${recipient.owner}.`,
+        text: `${candidate.owner} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead con la data già passata a ${recipient.owner}.`,
       });
     }
     if (lost.count > 0 && closed > 0 && lost.count / closed >= 0.3) {
