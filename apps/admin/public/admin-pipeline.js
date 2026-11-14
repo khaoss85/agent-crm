@@ -1120,7 +1120,7 @@ export function createPipelineBoard(deps) {
       titleBox.appendChild(renderPipelineSwitch(pipelines, records, pipeline.name, offPipeline, truncated));
     }
     const tools = renderToolbar(pipeline, onBoard);
-    tools.appendChild(renderSummary(visible));
+    tools.appendChild(renderSummary(pipeline, visible));
     panel.appendChild(tools);
 
     if (state.view === 'lista') {
@@ -1610,58 +1610,84 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
-  /** Count + per-currency totals over the filtered set (currencies never summed). */
-  function renderSummary(visible) {
+  /**
+   * Count + per-currency open value over the filtered set (currencies never
+   * summed). backlog:48993bed7294 (verifica 13/11: «9 offerte · 1.126 €»
+   * summed a lost offer too): the amount is the value still open — won,
+   * paid and lost offers are counted, never summed — and it says so.
+   */
+  function renderSummary(pipeline, visible) {
     const summary = el(doc, 'p', { class: 'pipeline-summary', attrs: { 'data-summary': String(visible.length) } });
+    const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key));
     const totals = new Map();
     for (const record of visible) {
-      if (!Number.isSafeInteger(record.valueCents)) continue;
+      if (!Number.isSafeInteger(record.valueCents) || !openKeys.has(record.pipelineStage)) continue;
       totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
     }
-    // BO-F6-10 C9: `<n> offerte · <totale>`, updated by every filter/search.
+    // BO-F6-10 C9: `<n> offerte · valore aperto <totale>`, updated by every filter/search.
     const parts = [`${visible.length} offert${visible.length === 1 ? 'a' : 'e'}`];
-    for (const [currency, total] of [...totals.entries()].sort()) {
-      parts.push(formatAmount(total, currency));
+    const sorted = [...totals.entries()].sort();
+    for (const [index, [currency, total]] of sorted.entries()) {
+      parts.push(`${index === 0 ? 'valore aperto ' : ''}${formatAmount(total, currency)}`);
     }
     summary.textContent = parts.join(' · ');
     return summary;
   }
 
   /**
-   * Forecast over the filtered set (C4/C5): won and paid records at face
-   * value plus 60% of the open ones, per currency — currencies are never
-   * summed. The risk line names the owner or customer of the highest-value
-   * open offer. Labeled as a stima, never a commitment. Class hooks
-   * (`pipeline-forecast`, `forecast-total`) are unchanged: the supervisor
-   * owns the visual dress (ANSWER 28/10).
+   * Forecast over the filtered set (C4/C5). backlog:48993bed7294 (verifica
+   * 13/11: «Previsione di novembre 605,60 €» here, «Vinte in novembre
+   * 0,00 €» in Reporting): one rule with the Reporting forecast — the offers
+   * won or paid that closed this month (`closedAt`, the expected date only
+   * when it is missing), plus the historical close rate (won and paid over
+   * won, paid and lost) of the open ones expected this month or without a
+   * date. Per currency — currencies are never summed. The month is the UTC
+   * one, like the Reporting period. The risk line names the owner or
+   * customer of the highest-value open offer. Labeled as a stima, never a
+   * commitment. Class hooks (`pipeline-forecast`, `forecast-total`) are
+   * unchanged: the supervisor owns the visual dress (ANSWER 28/10).
    */
   function renderForecast(pipeline, visible) {
+    const period = new Date().toISOString().slice(0, 7);
     const box = el(doc, 'div', { class: 'pipeline-forecast', attrs: { 'data-forecast': 'estimate' } });
-    box.appendChild(el(doc, 'h3', { text: `✦ Previsione di ${MONTHS_IT[new Date().getMonth()]}` }));
+    box.appendChild(el(doc, 'h3', { text: `✦ Previsione di ${MONTHS_IT[Number(period.slice(5, 7)) - 1]}` }));
     const closedKeys = new Set(
       pipeline.stages.filter((stage) => stage.type === 'won' || stage.type === 'paid').map((stage) => stage.key),
     );
-    const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open').map((stage) => stage.key));
+    const lostKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'lost').map((stage) => stage.key));
+    const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key));
+    const monthOf = (value) => (typeof value === 'string' && /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : null);
     const closed = new Map();
     const waiting = new Map();
     const openCurrencies = new Set();
+    let wonCount = 0;
+    let lostCount = 0;
     let riskiest = null;
     for (const record of visible) {
+      if (closedKeys.has(record.pipelineStage)) wonCount += 1;
+      else if (lostKeys.has(record.pipelineStage)) lostCount += 1;
       if (!Number.isSafeInteger(record.valueCents)) continue;
       if (closedKeys.has(record.pipelineStage)) {
-        closed.set(record.currency, (closed.get(record.currency) ?? 0) + record.valueCents);
+        if ((monthOf(record.closedAt) ?? monthOf(record.expectedCloseDate)) === period) {
+          closed.set(record.currency, (closed.get(record.currency) ?? 0) + record.valueCents);
+        }
       } else if (openKeys.has(record.pipelineStage)) {
-        waiting.set(record.currency, (waiting.get(record.currency) ?? 0) + record.valueCents);
+        const expected = monthOf(record.expectedCloseDate);
+        if (expected === null || expected === period) {
+          waiting.set(record.currency, (waiting.get(record.currency) ?? 0) + record.valueCents);
+        }
         openCurrencies.add(record.currency);
         if (!riskiest || record.valueCents > riskiest.valueCents) riskiest = record;
       }
     }
+    const decided = wonCount + lostCount;
+    const rate = decided === 0 ? null : wonCount / decided;
     const total = new Map();
     for (const [currency, amount] of closed.entries()) {
       total.set(currency, (total.get(currency) ?? 0) + amount);
     }
     for (const [currency, amount] of waiting.entries()) {
-      total.set(currency, (total.get(currency) ?? 0) + Math.round(amount * 0.6));
+      total.set(currency, (total.get(currency) ?? 0) + (rate === null ? 0 : Math.round(amount * rate)));
     }
     if (!total.size) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessuna offerta da stimare — non un impegno.' }));
@@ -1672,7 +1698,9 @@ export function createPipelineBoard(deps) {
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
-      text: 'Vinte e pagate, più il 60% di quelle in attesa — stima, non un impegno.',
+      text: rate === null
+        ? 'Chiuse nel mese; nessuna offerta ancora vinta o persa, quindi nessuna stima sulle aperte. Sulle offerte in vista — stima, non un impegno.'
+        : `Chiuse nel mese, più il ${Math.round(rate * 100)}% (tasso di chiusura storico) delle aperte attese nel mese o senza data. Sulle offerte in vista — stima, non un impegno.`,
     }));
     // No global ranking across currencies: raw cents are not comparable
     // without exchange rates, so the risk line shows only when every valued

@@ -694,14 +694,39 @@ test('summary totals the filtered set per currency without mixing', async () => 
   pickVoice(mount, 'owner', 'alice');
   const text = summaryText(mount);
   assert.match(text, /3 offerte/);
-  assert.ok(text.includes('2.000 €'), `alice EUR total (${text})`);
+  // backlog:48993bed7294: the amount is the value still open — alice's won
+  // «d» is counted among the offers, never summed in.
+  assert.ok(text.includes('valore aperto 1.000 €'), `alice open EUR total (${text})`);
   assert.ok(text.includes('25 USD'), `alice USD total stays separate (${text})`);
 });
 
-test('forecast shows the month title, won plus 60% of open, and the risk name (C4/C5)', async () => {
+// backlog:48993bed7294 (verifica 13/11: Pipeline «Previsione di novembre
+// 605,60 €», Reporting «Vinte in novembre 0,00 €»): one rule with Reporting —
+// won and paid closed this month, plus the historical close rate of the open
+// offers expected this month or without a date.
+const MONTH_NOW = new Date().toISOString().slice(0, 7);
+const shiftedMonth = (delta) => {
+  const date = new Date(Date.UTC(Number(MONTH_NOW.slice(0, 4)), Number(MONTH_NOW.slice(5, 7)) - 1 + delta, 15));
+  return date.toISOString();
+};
+
+test('forecast shows the month title, the offers closed this month plus the historical rate of the open ones (C4/C5)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      record('b', 'demo', { valueCents: 50_000, owner: 'bob', expectedCloseDate: shiftedMonth(1) }),
+      record('c', 'demo', { currency: 'USD', valueCents: 2_500, owner: 'alice' }),
+      record('s', 'demo', { valueCents: 70_000, owner: 'bob', expectedCloseDate: shiftedMonth(-1) }),
+      record('d', 'won', { owner: 'alice', closedAt: shiftedMonth(0) }),
+      record('o', 'won', { valueCents: 900_000, owner: 'alice', closedAt: shiftedMonth(-2) }),
+      record('e', 'lost', { owner: 'bob', closeReason: 'No budget', closedAt: shiftedMonth(0) }),
+      record('f', 'lost', { owner: 'bob', closeReason: 'No budget', closedAt: shiftedMonth(0) }),
+    ]),
+  });
   await board.renderBoard('b2b-sales');
 
   const box = forecastBox(mount);
@@ -711,13 +736,17 @@ test('forecast shows the month title, won plus 60% of open, and the risk name (C
     'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
   ];
   assert.ok(
-    box.textContent.includes(`✦ Previsione di ${months[new Date().getMonth()]}`),
+    box.textContent.includes(`✦ Previsione di ${months[Number(MONTH_NOW.slice(5, 7)) - 1]}`),
     `the title names the current month (${box.textContent})`,
   );
-  // EUR: won 100_000 at face value + 60% of open (100_000 + 50_000) = 190_000;
-  // USD: 60% of the 2_500 open demo = 1_500; lost stages never forecast.
-  assert.ok(box.textContent.includes('1.900 €'), `EUR forecast total (${box.textContent})`);
-  assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
+  // Rate: 2 won (d, o) over 2 won + 2 lost = 50%. EUR: d closed this month
+  // (1.000 €; o closed two months ago stays out) + 50% of the undated «a»
+  // (500 €) = 1.500 € — «b» is expected next month, «s» is past-dated.
+  // USD: 50% of the undated 25 USD = 12,50 USD.
+  assert.ok(box.textContent.includes('1.500 €'), `EUR forecast total (${box.textContent})`);
+  assert.ok(box.textContent.includes('12,50 USD'), `USD forecast total stays separate (${box.textContent})`);
+  assert.match(box.textContent, /più il 50% \(tasso di chiusura storico\)/, 'the rule and the rate it used, said');
+  assert.match(box.textContent, /Sulle offerte in vista/, 'the shown offers, like the filters');
   assert.ok(
     !box.textContent.includes('Il rischio più alto'),
     `no global risk ranking across currencies (Codex P2 on #467) (${box.textContent})`,
@@ -752,7 +781,7 @@ test('forecast with closed offers but no open ones shows totals and no risk line
   const board = createPipelineBoard({
     doc,
     mount,
-    client: stubClient([record('d', 'won'), record('e', 'lost', { closeReason: 'No budget' })]),
+    client: stubClient([record('d', 'won', { closedAt: shiftedMonth(0) }), record('e', 'lost', { closeReason: 'No budget', closedAt: shiftedMonth(0) })]),
   });
   await board.renderBoard('b2b-sales');
 
