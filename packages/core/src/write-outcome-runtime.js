@@ -15,6 +15,7 @@ import {
   tenantNamespace,
 } from './idempotency.js';
 import { affineStorageFor, isSyncStorage, storageApi } from './storage-runtime.js';
+import { applyTraceRedact } from './trace-redact.js';
 import { nowIso } from './time.js';
 import { deterministicUuid, snapshotWriteIds, withWriteIds } from './write-ids.js';
 import {
@@ -93,6 +94,7 @@ function isNestedDispatchRefusal(errorOrCode) {
  *   target?: string,
  *   contractVersion?: string,
  *   input?: unknown,
+ *   traceRedact?: { input?: (value: unknown) => unknown, output?: (value: unknown) => unknown },
  *   phase?: string,
  *   now?: () => string,
  *   clock?: () => string,
@@ -223,12 +225,18 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               providerIdempotencyKey: providerKey,
             });
             const encoded = encodeJsonSafe(produced);
+            // The persisted copy holds the redacted output (a Bearer [REDACTED] an
+            // action result carries never lands in the outcome row or the
+            // settled trace); the live return below keeps the raw value.
+            const stored = spec.traceRedact
+              ? encodeJsonSafe(applyTraceRedact(spec.traceRedact, 'output', produced))
+              : encoded;
             const traceIntent = {
               runId,
               workflowName: operation,
               status: settleTrace ? 'completed' : 'running',
               input: traceInput,
-              output: encoded,
+              output: stored,
               error: null,
               startedAt,
               steps: steps.slice(),
@@ -239,7 +247,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
               phase,
               ...scope,
               recordIds: snapshotWriteIds(),
-              response: encoded,
+              response: stored,
               eventIntents: outbox.peek(),
               traceIntent,
               runId,

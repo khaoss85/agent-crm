@@ -17,8 +17,8 @@ import { createPackageCreditsCapability } from './package-credits.js';
  *
  * The second legacy domain to leave the kernel. It owns the catalog (products,
  * versions, price books, offers, components, tiers, sync runs), server-priced
- * quotes with immutable versions, and versioned discount approval: fourteen
- * record modules, eight quote actions, the declared catalog providers and
+ * quotes with immutable versions, and versioned discount approval: fifteen
+ * record modules, eleven quote actions, the declared catalog providers and
  * discount policies, and two capabilities.
  *
  * **Nothing about what it prices or decides changed in the move.** That is not
@@ -119,6 +119,7 @@ export const COMMERCIAL_RESOURCES = Object.freeze([
   'catalog-sync-run', 'product-import', 'product-import-row',
   'quote', 'quote-line', 'quote-version', 'quote-version-line',
   'quote-version-component', 'quote-version-total', 'quote-approval',
+  'quote-share',
   // Signed commercial terms (M16b prerequisite): the per-quote draft term and
   // the write-once per-version snapshot the signature document embeds.
   'quote-term', 'quote-version-term',
@@ -196,7 +197,19 @@ export function createCommercialDomain(options = {}) {
     // AI extraction drafts through the handed-over llm-complete@1 handle
     // and stays off without it. Additive: manual writes and reads are
     // untouched.
-    version: 7,
+    // 8: public quote links (A5 offerta via link) — one `quote-share` row
+    // per approved version with an unguessable token, plus `share-link`,
+    // `accept-link` and `link-info` quote actions. Additive: catalog,
+    // pricing, versions and approval are untouched; a project without the
+    // `quote-share` manifest keeps its exact pre-link behaviour.
+    // 9: concurrent share-link mints on one approved version converge on a
+    // single live row — per-version exclusion in the mint plus loser-reuses
+    // on conflict, so double acceptance stays impossible. Additive: the
+    // share-link contract (input, reused-vs-minted answers) is unchanged.
+    // 10: the mint exclusion is a same-quote-row fence inside the action
+    // transaction (cross-process, web and worker): the in-process lock is
+    // only the fast path. Additive: the share-link contract is unchanged.
+    version: 10,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
