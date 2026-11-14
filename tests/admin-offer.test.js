@@ -1224,10 +1224,84 @@ test('f2d39e473e3a: the crumb names the customer and the offer', async () => {
   const view = createOfferDetail({ doc: createFakeDocument(), mount, client: pageClient(), onTitle: (label) => titles.push(label) });
   await view.renderOfferDetail('off1');
   assert.deepEqual(titles, ['Offerta / Giulia Verdi / Cucina per Giulia']);
+});
+
+// Review Muse #881 giro 1: the shell keeps the crumb through a re-sync, and
+// forgets it when the person leaves the offer page or the space changes.
+// The shell's three writers, as app.js wires them — the router (`routed`),
+// every re-sync (`label`, through customerCrumbLabel) and the page naming
+// itself (`named`) — driven against the real offer page.
+test('f2d39e473e3a: the crumb survives the shell re-sync and never outlives its offer or its space', async () => {
+  const { createOfferCrumbs, customerCrumbLabel } = await import('../apps/admin/public/admin-navigation.js');
+  const { parseModuleRoute } = await import('../apps/admin/public/admin-core.js');
+  let space = 's1';
+  let hash = '#/';
+  let crumb = null;
+  let routed = null;
+  const crumbs = createOfferCrumbs({ space: () => space });
+  const plain = (target) => (target.view === 'offer-detail' ? 'Offerta' : target.view === 'pipeline' ? 'Pipeline' : 'Vista');
+  const syncShell = (target) => { crumb = customerCrumbLabel(target, crumbs.label(target) ?? plain(target), null); };
+  const records = {
+    offA: offerRecord({ id: 'offA', name: 'Cucina per Giulia', contactId: 'c1' }),
+    offB: offerRecord({ id: 'offB', name: 'Bagno per Marco', contactName: 'Marco Neri', contactId: 'c2' }),
+  };
+  const client = {
+    request(path, options = {}) {
+      const id = /^\/api\/opportunities\/([^/?]+)$/.exec(path)?.[1];
+      if (id && records[id]) return Promise.resolve({ ...records[id] });
+      return pageClient().request(path, options);
+    },
+  };
+  const view = createOfferDetail({
+    doc: createFakeDocument(), mount: createMount(), client,
+    onTitle: (label) => {
+      if (routed?.view !== 'offer-detail') return;
+      if (crumbs.named(parseModuleRoute(hash), label)) crumb = label;
+    },
+  });
+  const go = async (next) => {
+    hash = next;
+    routed = parseModuleRoute(hash);
+    crumbs.routed(routed);
+    syncShell(routed);
+    if (routed.view === 'offer-detail') await view.renderOfferDetail(routed.offerId, { from: null });
+  };
+  await go('#/offerte/offA');
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia', 'the page names the customer and the offer');
+  syncShell(routed); // populateNav: the schema lands after the offer
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia', 'a re-sync keeps the crumb');
+  await go('#/pipelines/b2b-sales');
+  assert.equal(crumb, 'Pipeline');
+  // Back to A after leaving it (renamed meanwhile, say): plain until A's
+  // own read lands again, never the crumb of the previous visit.
+  hash = '#/offerte/offA';
+  routed = parseModuleRoute(hash);
+  crumbs.routed(routed);
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'a crumb left behind is forgotten');
+  await view.renderOfferDetail('offA', { from: null });
+  assert.equal(crumb, 'Offerta / Giulia Verdi / Cucina per Giulia');
+  await go('#/pipelines/b2b-sales');
+  // Offer B, before its own read lands: never A's crumb.
+  hash = '#/offerte/offB';
+  routed = parseModuleRoute(hash);
+  crumbs.routed(routed);
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'another offer never borrows the crumb');
+  await view.renderOfferDetail('offB', { from: null });
+  assert.equal(crumb, 'Offerta / Marco Neri / Bagno per Marco');
+  // Another space: the crumb is not this space's.
+  space = 's2';
+  syncShell(routed);
+  assert.equal(crumb, 'Offerta', 'the crumb belongs to its space');
+});
+
+test('f2d39e473e3a: app.js hands every crumb writer to the same keeper', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
   const wiring = /const offerDetail = createOfferDetail\(\{([\s\S]*?)\n\}\);/.exec(app);
-  assert.ok(wiring && /onTitle: \(label\) => \{/.test(wiring[1]) && /mountGate\.isActive\('offer-detail'\)/.test(wiring[1]),
-    'the shell takes the crumb, only while the offer page is routed');
-  assert.match(app, /screenLabel: customerCrumbLabel\(target, rememberedOfferCrumb\(target\) \?\? /, 'and keeps it when the shell re-syncs');
+  assert.ok(wiring && /offerCrumbs\.named\(targetForHash\(/.test(wiring[1]) && /mountGate\.isActive\('offer-detail'\)/.test(wiring[1]));
+  assert.match(app, /screenLabel: customerCrumbLabel\(target, offerCrumbs\.label\(target\) \?\? /);
+  const route = app.slice(app.indexOf('async function route()'), app.indexOf("if (targetForHash(hash).view === 'settings')"));
+  assert.match(route, /offerCrumbs\.routed\(targetForHash\(hash\)\);/, 'every navigation, settings included');
 });
