@@ -1430,8 +1430,8 @@ test('the now-line paints on the current day inside painted hours', async () => 
   const sunday = await load(() => new Date('2026-10-25T10:00:00Z'));
   assert.equal(
     sunday.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now')).length,
-    0,
-    'no now-line when today is outside the work week',
+    1,
+    'backlog:c51dca86dc66: Sunday paints its own column, so the now-line crosses today',
   );
   const night = await load(() => new Date('2026-10-21T03:00:00Z'));
   assert.equal(
