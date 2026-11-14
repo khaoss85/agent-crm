@@ -1104,8 +1104,11 @@ test('96c7b56001ba: opened from a scheda the way back is that scheda, through ev
 test('96c7b56001ba: the scheda hands its own address to the offer page, and the sidebar stays on Clienti', async () => {
   const { readFileSync } = await import('node:fs');
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
-  assert.match(app, /case 'offer-detail': return \{ id: target\.from \? 'clienti' : 'pipeline', label: 'Offerta' \};/,
+  // shellScreenFor moved from app.js to admin-shell.js (backlog:8618ad3f72db).
+  const { shellScreenFor } = await import('../apps/admin/public/admin-shell.js');
+  assert.deepEqual(shellScreenFor({ view: 'offer-detail', from: '#/clienti/contact/c1' }), { id: 'clienti', label: 'Offerta' },
     'an offer opened from a scheda keeps Clienti lit');
+  assert.deepEqual(shellScreenFor({ view: 'offer-detail' }), { id: 'pipeline', label: 'Offerta' });
   assert.match(app, /offerDetail\.renderOfferDetail\(target\.offerId, \{ from: target\.from \?\? null \}\)/,
     'the router hands the page where it was opened from');
 });

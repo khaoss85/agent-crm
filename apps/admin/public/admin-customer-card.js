@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiAddOption, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
@@ -2823,15 +2823,11 @@ export function createCustomerCardView(deps) {
     // named record they open their screens unpicked instead of inventing a
     // customer.
     const pick = customerPickFor(navCtx, card);
-    // Voce c2793930850a: the creation voices are tiles like Chiama and
-    // Scrivi — the 2x2 grid below stays equal, no bare button overflows it.
-    const offer = tile('Offerta', 'offerta');
-    offer.setAttribute('type', 'button');
-    offer.setAttribute('data-action', 'new-offer');
-    // Dan 06/11: the offer is written where the customer is — a window
-    // over the scheda like «Scrivi», never a jump to another page. Only one
-    // window at a time: the composer steps aside (its draft is kept).
-    offer.addEventListener('click', () => {
+    // The manual voice of the Offerta menu: Dan 06/11, the offer is written
+    // where the customer is — a window over the scheda like «Scrivi», never
+    // a jump to another page. Only one window at a time: the composer steps
+    // aside (its draft is kept).
+    const openManualOffer = () => {
       if (pick === null) {
         navigate('#/modules/opportunity/new');
         return;
@@ -2853,8 +2849,56 @@ export function createCustomerCardView(deps) {
           void refreshParts(navCtx.resource, navCtx.id, ['profile'], (loaded) => withOpportunity(loaded, created));
         },
       });
+    };
+    // Voce 2c1c0e149cf9: the prototype's double option — «Offerta» opens the
+    // same «Crea con l'AI / Compila manualmente» menu as the other creation
+    // points (MEM_ACC_REUSE: uiAddOption voices, like the pipeline «Nuova
+    // offerta» and the Clienti add menu), never a direct «Nuova offerta».
+    const offerWrap = el('div', 'ui-conn-addwrap bo-scheda-offerwrap');
+    const offer = tile('Offerta', 'offerta');
+    offer.setAttribute('type', 'button');
+    offer.setAttribute('data-action', 'new-offer');
+    offer.setAttribute('aria-haspopup', 'menu');
+    offer.setAttribute('aria-expanded', 'false');
+    const offerMenu = el('div', 'ui-add-menu ui-conn-addmenu hidden');
+    offerMenu.setAttribute('role', 'menu');
+    const offerMenuHidden = () => String(offerMenu.getAttribute('class') ?? '').split(/\s+/).includes('hidden');
+    const syncOfferMenu = () => offer.setAttribute('aria-expanded', offerMenuHidden() ? 'false' : 'true');
+    const closeOfferMenu = () => {
+      offerMenu.setAttribute('class', 'ui-add-menu ui-conn-addmenu hidden');
+      syncOfferMenu();
+    };
+    offer.addEventListener('click', () => {
+      offerMenu.setAttribute('class', offerMenuHidden() ? 'ui-add-menu ui-conn-addmenu' : 'ui-add-menu ui-conn-addmenu hidden');
+      syncOfferMenu();
     });
-    row.appendChild(offer);
+    offer.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
+    offerMenu.addEventListener('keydown', (event) => { if (event?.key === 'Escape') closeOfferMenu(); });
+    const offerAiName = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : 'questo cliente';
+    const offerAi = uiAddOption(doc, {
+      kind: 'ai', title: "Crea con l'AI", line: 'Descrivi l\u2019offerta all\u2019assistente',
+      attrs: { 'data-voice': 'ai' },
+    });
+    offerAi.addEventListener('click', () => {
+      closeOfferMenu();
+      if (onAskAi) onAskAi('scheda-cliente', `Voglio creare un\u2019offerta per ${offerAiName} (${navCtx.resource}/${navCtx.id}): ti incollo i dettagli.`, { resource: navCtx.resource, id: navCtx.id });
+      else toast('Apri la barra AI (⌘K) e descrivi l\u2019offerta che vuoi creare.');
+    });
+    const offerManual = uiAddOption(doc, {
+      kind: 'manual', title: 'Compila manualmente', line: 'Voci, importo e scadenza',
+      attrs: { 'data-voice': 'manual' },
+    });
+    offerManual.addEventListener('click', () => {
+      closeOfferMenu();
+      openManualOffer();
+    });
+    offerMenu.appendChild(offerAi);
+    offerMenu.appendChild(offerManual);
+    offerWrap.appendChild(offer);
+    offerWrap.appendChild(offerMenu);
+    // The wrap joins the row below, after Appuntamento — the prototype order
+    // (voce 2c1c0e149cf9): Chiama, WhatsApp, Email, Appuntamento, Offerta,
+    // ✦ Chiedi all'AI.
     const appointment = tile('Appuntamento', 'appuntamento');
     appointment.setAttribute('type', 'button');
     appointment.setAttribute('data-action', 'new-appointment');
@@ -2884,6 +2928,9 @@ export function createCustomerCardView(deps) {
       });
     });
     row.appendChild(appointment);
+    // Voce 2c1c0e149cf9: the prototype order — Appuntamento before Offerta
+    // (Chiama, WhatsApp, Email, Appuntamento, Offerta, ✦ Chiedi all'AI).
+    row.appendChild(offerWrap);
     // Voce 2f2d22f2: the prototype's sixth tile — the same AI voice as
     // Dettagli (voce d525f4aa48b2): the BO-F0-04 bar with this customer
     // already in the context. Without a named record there is no context
@@ -2892,6 +2939,11 @@ export function createCustomerCardView(deps) {
       && typeof navCtx?.id === 'string' && navCtx.id !== '') {
       const ask = tile("✦ Chiedi all'AI", 'ai');
       ask.setAttribute('type', 'button');
+      // Voce 2c1c0e149cf9: the AI tile wears the assistant's violet, never
+      // the plain tile style — same tokens as the Dettagli AI voice. The
+      // violet joins the tile's own classes (el() gave it the ui-* one),
+      // never replaces them (BO-F6-09: every control carries the system).
+      ask.setAttribute('class', `${ask.getAttribute('class') ?? ''} bo-scheda-tile-ai`.trim());
       ask.setAttribute('data-action', 'quick-ask-ai');
       ask.setAttribute('title', 'Chiedi all\u2019assistente con questo cliente nel contesto (⌘K)');
       ask.addEventListener('click', () => {
@@ -4293,65 +4345,69 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  function nextSteps(box, profile, profileError = null, stepCtx = null) {
-    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
-    // section too, instead of vanishing as "no next steps".
-    if (profileError) {
-      box.appendChild(el('h4', undefined, 'Prossimi passi'));
-      readError(box, profileError, 'I prossimi passi non si sono potuti leggere. Riprova più tardi.');
-      return true;
-    }
-    // Voce 1a066ddfe42a: an uncomposed work package hides the whole block
-    // instead of printing its English reason.
-    if (profile?.workTasks?.available !== true) return false;
-    box.appendChild(el('h4', undefined, 'Prossimi passi'));
+  // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
+  // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
+  // when the package is not composed.
+  const openTasksOf = (profile) => {
+    if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
-    const tasks = items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
-    if (tasks.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun passo aperto'));
-      return true;
-    }
-    for (const task of tasks.slice(0, 5)) {
-      const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
-      // Voce 59def6cb805d (C24): the prototype's circular check before each
-      // step. It completes the real work task through the work-task
-      // `complete` action (the same path Oggi uses), then re-reads the card:
-      // the list is the server's, never an optimistic copy. Without an id or
-      // a card context the step stays plain text.
-      const taskId = typeof task?.id === 'string' && task.id !== '' ? task.id : null;
-      if (taskId === null || !stepCtx || typeof stepCtx.resource !== 'string' || typeof stepCtx.id !== 'string') {
-        box.appendChild(el('p', 'bo-scheda-step', name));
-        continue;
+    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
+  };
+  // Voce 2c1c0e149cf9: an agent-opened task is an AI suggestion — the
+  // prototype's «✦ suggeriti» mark, read from the record's openedByType
+  // (the work package writes user|agent|system), never invented.
+  const suggestedMark = (task) => (task?.openedByType === 'agent'
+    ? el('span', 'bo-scheda-suggested', ' ✦ suggeriti') : null);
+  // Voce 59def6cb805d (C24): the prototype's circular check before each
+  // step. It completes the real work task through the work-task `complete`
+  // action (the same path Oggi uses), then re-reads the card. Without an id
+  // or a card context there is no button — the step stays plain text.
+  function stepCompleteButton(taskId, name, stepCtx) {
+    if (typeof taskId !== 'string' || taskId === ''
+      || !stepCtx || typeof stepCtx.resource !== 'string' || typeof stepCtx.id !== 'string') return null;
+    const check = el('button', 'bo-scheda-step-check', '');
+    check.setAttribute('type', 'button');
+    check.setAttribute('data-action', 'complete-step');
+    check.setAttribute('aria-label', `Segna come fatto: ${name}`);
+    check.setAttribute('title', 'Segna come fatto');
+    let busy = false;
+    check.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      check.setAttribute('aria-busy', 'true');
+      try {
+        await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}/actions/complete`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        toast(`Fatto: ${name}`);
+        await renderCard(stepCtx.resource, stepCtx.id);
+      } catch (error) {
+        toast(humanReadError(error, { failed: 'Passo non aggiornato. Riprova più tardi.' }), true);
+        busy = false;
+        check.setAttribute('aria-busy', 'false');
       }
-      const row = el('div', 'bo-scheda-step bo-scheda-step-row');
-      const check = el('button', 'bo-scheda-step-check', '');
-      check.setAttribute('type', 'button');
-      check.setAttribute('data-action', 'complete-step');
-      check.setAttribute('aria-label', `Segna come fatto: ${name}`);
-      check.setAttribute('title', 'Segna come fatto');
-      let busy = false;
-      check.addEventListener('click', async () => {
-        if (busy) return;
-        busy = true;
-        check.setAttribute('aria-busy', 'true');
-        try {
-          await client.request(`/api/modules/work-task/records/${encodeURIComponent(taskId)}/actions/complete`, {
-            method: 'POST',
-            body: JSON.stringify({}),
-          });
-          toast(`Fatto: ${name}`);
-          await renderCard(stepCtx.resource, stepCtx.id);
-        } catch (error) {
-          toast(humanReadError(error, { failed: 'Passo non aggiornato. Riprova più tardi.' }), true);
-          busy = false;
-          check.setAttribute('aria-busy', 'false');
-        }
-      });
-      row.appendChild(check);
-      row.appendChild(el('span', undefined, name));
-      box.appendChild(row);
+    });
+    return check;
+  }
+  /** One open task row: the circular check, the name, the ✦ mark when the AI suggested it. */
+  function stepRow(task, stepCtx) {
+    const name = typeof task?.name === 'string' && task.name !== '' ? task.name : 'attività';
+    const taskId = typeof task?.id === 'string' && task.id !== '' ? task.id : null;
+    const check = taskId === null ? null : stepCompleteButton(taskId, name, stepCtx);
+    if (check === null) {
+      const line = el('p', 'bo-scheda-step', name);
+      const mark = suggestedMark(task);
+      if (mark) line.appendChild(mark);
+      return line;
     }
-    return true;
+    const row = el('div', 'bo-scheda-step bo-scheda-step-row');
+    row.appendChild(check);
+    const words = el('span', undefined, name);
+    const mark = suggestedMark(task);
+    if (mark) words.appendChild(mark);
+    row.appendChild(words);
+    return row;
   }
 
   function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
@@ -4696,31 +4752,25 @@ export function createCustomerCardView(deps) {
   // file, so it names the set instead of importing it).
   const TERMINAL_APPOINTMENT = Object.freeze(['done', 'no-show', 'cancelled']);
 
-  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
-    box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
-    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
-    // section too, instead of vanishing as "no appointment booked".
-    if (timelineError) {
-      readError(box, timelineError, 'Il prossimo appuntamento non si è potuto leggere. Riprova più tardi.');
-      return;
-    }
+  // Voce 2c1c0e149cf9: the bookings that can still happen — a non-terminal
+  // row starting now or later — shared by the «Prossimo appuntamento» card
+  // and the recap panel's Appuntamenti vista.
+  const upcomingOf = (timeline) => {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     // readSchedule lists every booking soonest-first, past and terminal rows
     // included: the next appointment is the soonest booking that can still
-    // happen — a non-terminal row starting now or later.
+    // happen.
     const nowMs = Date.now();
-    const upcoming = items.filter((item) => {
+    return items.filter((item) => {
       if (TERMINAL_APPOINTMENT.includes(String(item?.status ?? ''))) return false;
       const startsMs = Date.parse(String(item?.startsAt ?? ''));
       return Number.isFinite(startsMs) && startsMs >= nowMs;
     });
-    if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
-      return;
-    }
+  };
+  /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
+  function appointmentBody(box, next, serviceNames = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
     // the slot reads as a plain Italian date — no ISO instants, no member id.
-    const next = upcoming[0];
     const start = dateTimeParts(next?.startsAt);
     if (!start) {
       box.appendChild(el('p', 'bo-scheda-appt', 'data non disponibile'));
@@ -4743,6 +4793,23 @@ export function createCustomerCardView(deps) {
       ? `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${hours}`
       : (endTime && endTime !== startTime ? `${start} – ${dateTimeParts(next?.endsAt)}` : start);
     box.appendChild(el('p', 'bo-scheda-appt', when));
+  }
+
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // section too, instead of vanishing as "no appointment booked".
+    if (timelineError) {
+      box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
+      readError(box, timelineError, 'Il prossimo appuntamento non si è potuto leggere. Riprova più tardi.');
+      return true;
+    }
+    // Voce 2c1c0e149cf9: an empty card hides — the prototype shows no empty
+    // «Prossimo appuntamento».
+    const upcoming = upcomingOf(timeline);
+    if (upcoming.length === 0) return false;
+    box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
+    appointmentBody(box, upcoming[0], serviceNames);
+    return true;
   }
 
   /**
@@ -4835,26 +4902,24 @@ export function createCustomerCardView(deps) {
     return items.find((call) => typeof call?.summary === 'string' && call.summary !== '') ?? null;
   }
 
-  function aiSummary(box, calls) {
-    // BO-F1-08: the per-customer AI summary is the latest summarized call.
-    // Without a recorded source it stays unavailable — never an invented one.
-    // Voce 59def6cb805d (C23): the prototype's `<quando aggiornato>` row —
-    // when the summarized call was recorded, never an invented freshness.
-    box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
-    const latest = latestSummarized(calls);
-    if (!latest) {
-      box.appendChild(el('p', 'bo-muted', 'Nessun riepilogo registrato per questo cliente'));
+  // Voce 2c1c0e149cf9: the customer's own messages, shared by the timeline
+  // and the recap panel's Messaggi vista.
+  const messageItemsOf = (timeline) => {
+    const items = Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [];
+    return items.filter((item) => item?.entry === 'message');
+  };
+
+  /** The Chiamate vista body: the latest call's summary (BO-F1-08) with its signals and openable transcript. */
+  function callVistaBody(box, calls, callsError = null, timeline = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed calls read fails this
+    // vista too, instead of vanishing as "no summary".
+    if (callsError) {
+      readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
       return;
     }
-    const updated = dateTimeParts(latest?.recordedAt);
-    if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
-    box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
-  }
-
-  function callsBox(box, calls, timeline = null) {
-    // BO-F1-08, ref "05 Scheda cliente": signals (budget/tempi/interesse/
-    // dubbi) with their transcript source, and the openable transcript.
-    box.appendChild(el('h4', undefined, 'Chiamate'));
+    // Voce 2c1c0e149cf9: this vista merges the two cards it replaces — the
+    // «✦ Riepilogo AI» summary block and the «Chiamate» head, signals and
+    // openable transcript — with the same honest states, never invented.
     const items = Array.isArray(calls?.calls) ? calls.calls : [];
     // backlog:619b477c0464: one source for the calls. A call the cronologia
     // shows (a missed one has no recording) is a call here too — never
@@ -4880,14 +4945,23 @@ export function createCustomerCardView(deps) {
           : 'nessuna chiamata registrata per questo cliente'));
       return;
     }
-    const [latest, ...older] = items;
-    const when = dateParts(latest?.recordedAt);
+    const [first] = items;
+    const when = dateParts(first?.recordedAt);
     box.appendChild(el('p', 'bo-scheda-call-head',
-      `ultima chiamata${latest?.channel ? ` · ${channelLabel(latest.channel)}` : ''}${when ? ` · ${when}` : ''}`));
-    if (typeof latest?.summary === 'string' && latest.summary !== '') {
+      `ultima chiamata${first?.channel ? ` · ${channelLabel(first.channel)}` : ''}${when ? ` · ${when}` : ''}`));
+    // BO-F1-08: the per-customer AI summary is the latest summarized call.
+    // Without a recorded source it stays unavailable — never an invented one.
+    // Voce 59def6cb805d (C23): the prototype's `<quando aggiornato>` row —
+    // when the summarized call was recorded, never an invented freshness.
+    const latest = latestSummarized(calls);
+    if (latest) {
+      const updated = dateTimeParts(latest?.recordedAt);
+      if (updated) box.appendChild(el('p', 'bo-scheda-summary-when', `Aggiornato ${updated}`));
       box.appendChild(el('p', 'bo-scheda-summary', latest.summary));
+    } else {
+      box.appendChild(el('p', 'bo-muted', 'Nessun riepilogo registrato per questo cliente'));
     }
-    const signals = Array.isArray(latest?.signals) ? latest.signals : [];
+    const signals = Array.isArray(first?.signals) ? first.signals : [];
     if (signals.length > 0) {
       const list = el('ul', 'bo-scheda-signals');
       for (const signal of signals) {
@@ -4903,7 +4977,7 @@ export function createCustomerCardView(deps) {
     } else {
       box.appendChild(el('p', 'bo-muted', 'nessun segnale registrato per questa chiamata'));
     }
-    const transcript = latest?.transcript;
+    const transcript = first?.transcript;
     if (transcript?.available === true) {
       // Voce 59def6cb805d (C20): the prototype's toggle with its exact
       // texts — one speaker row per transcript line. The rows mount only
@@ -4932,9 +5006,117 @@ export function createCustomerCardView(deps) {
           ? `trascrizione ${transcript.reason}`
           : 'trascrizione non disponibile per questa chiamata'));
     }
+    const older = items.slice(1);
     if (older.length > 0) {
       box.appendChild(el('p', 'bo-muted', `+ ${plural(older.length, 'chiamata precedente', 'chiamate precedenti')}`));
     }
+  }
+
+  /** The Messaggi vista body: the customer's own latest messages, newest first. */
+  function messageVistaBody(box, timeline, timelineError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // vista too, instead of vanishing as "no messages".
+    if (timelineError) {
+      readError(box, timelineError, 'I messaggi non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
+    // Voce 2c1c0e149cf9, review Codex #854: the timeline arrives oldest-first,
+    // so the five-item preview takes the newest first — like the timeline
+    // projection (line ~3135) — never the five oldest.
+    const items = [...messageItemsOf(timeline)].sort(
+      (a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+    if (items.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'nessun messaggio registrato per questo cliente'));
+      return;
+    }
+    for (const item of items.slice(0, 5)) {
+      const who = item?.direction === 'outbound'
+        ? (writerName(item?.teamAuthorId) ?? 'il team')
+        : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
+          ? item.remoteHandle.trim() : 'ricevuto');
+      const head = [channelLabel(item?.channel), who, dateParts(item?.occurredAt)].filter(Boolean).join(' · ');
+      if (head !== '') box.appendChild(el('p', 'bo-scheda-recap-msg-head', head));
+      const line = passagePreview(item);
+      box.appendChild(el('p', 'bo-scheda-recap-msg', line !== '' ? line : '(nessun testo)'));
+    }
+    if (items.length > 5) {
+      box.appendChild(el('p', 'bo-muted', `+ ${items.length - 5} messaggi precedenti`));
+    }
+  }
+
+  /** The Appuntamenti vista body: the next booking that can still happen. */
+  function appointmentVistaBody(box, timeline, timelineError = null) {
+    // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
+    // vista too, instead of vanishing as "none booked".
+    if (timelineError) {
+      readError(box, timelineError, 'Gli appuntamenti non si sono potuti leggere. Riprova più tardi.');
+      return;
+    }
+    const upcoming = upcomingOf(timeline);
+    if (upcoming.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'nessun appuntamento prenotato'));
+      return;
+    }
+    appointmentBody(box, upcoming[0]);
+    if (upcoming.length > 1) {
+      box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
+    }
+  }
+
+  /**
+   * Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — it takes
+   * the place of the «✦ Riepilogo AI» and «Chiamate» cards. «Vista per» tabs
+   * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
+   * AZIONI lists the open server tasks, the only copy on the scheda. A failed
+   * read fails its vista (or the azioni block) like the card it replaces,
+   * never vanishing as empty. DECISION (to be confirmed): the panel always
+   * paints with honest vista states; only an empty azioni list hides its own
+   * block — the review left the empty state undecided, and hiding the whole
+   * panel would drop the failure contract.
+   */
+  function recapPanel(box, parts) {
+    const { card, calls, callsError, timeline, timelineError, profile, profileError, stepCtx } = parts;
+    const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : null;
+    box.appendChild(el('h4', undefined, name ? `✦ Recap per ${name}` : '✦ Recap'));
+    const vistas = el('p', 'bo-scheda-viste');
+    vistas.appendChild(el('span', 'bo-scheda-viste-label', 'Vista per'));
+    const body = el('div', 'bo-scheda-recap-body');
+    const painters = {
+      chiamate: (target) => callVistaBody(target, calls, callsError, timeline),
+      messaggi: (target) => messageVistaBody(target, timeline, timelineError),
+      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError),
+    };
+    const order = [['chiamate', 'Chiamate'], ['messaggi', 'Messaggi'], ['appuntamenti', 'Appuntamenti']];
+    let current = 'chiamate';
+    const tabs = [];
+    const paint = () => {
+      while (body.firstChild) body.removeChild(body.firstChild);
+      painters[current](body);
+      for (const tab of tabs) {
+        tab.setAttribute('data-active', tab.getAttribute('data-vista') === current ? 'true' : 'false');
+      }
+    };
+    for (const [key, label] of order) {
+      const tab = el('button', 'bo-scheda-vista', label);
+      tab.setAttribute('type', 'button');
+      tab.setAttribute('data-vista', key);
+      tab.addEventListener('click', () => { current = key; paint(); });
+      tabs.push(tab);
+      vistas.appendChild(tab);
+    }
+    box.appendChild(vistas);
+    box.appendChild(body);
+    paint();
+    const tasks = openTasksOf(profile);
+    if (profileError) {
+      box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+      readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
+      return true;
+    }
+    if (tasks === null || tasks.length === 0) return true;
+    box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
+    return true;
   }
 
   // Voce 908f2eb9bbfb: a section that fails shows its own error and leaves
@@ -5818,24 +6000,20 @@ export function createCustomerCardView(deps) {
     } else {
       section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames);
     }
-    if (waits('calls')) {
-      skeleton(right, 'bo-scheda-ai', '✦ Riepilogo AI');
-      skeleton(right, '', 'Chiamate');
-    } else if (callsError) {
-      section(right, 'bo-scheda-ai', (box) => {
-        box.appendChild(el('h4', undefined, '✦ Riepilogo AI'));
-        readError(box, callsError, 'Il riepilogo non si è potuto leggere. Riprova più tardi.');
-      });
-      section(right, '', (box) => {
-        box.appendChild(el('h4', undefined, 'Chiamate'));
-        readError(box, callsError, 'Le chiamate non si sono potute leggere. Riprova più tardi.');
-      });
+    // Voce 2c1c0e149cf9: the prototype's violet panel takes the place of the
+    // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
+    // prototype has not got.
+    if (waits('calls', 'timeline', 'profile')) {
+      skeleton(right, 'bo-scheda-ai', '✦ Recap');
     } else {
-      section(right, 'bo-scheda-ai', aiSummary, calls);
-      section(right, '', callsBox, calls, timeline);
+      section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
+        card, calls, callsError, timeline, timelineError, profile, profileError,
+        stepCtx: { resource, id },
+      });
     }
-    if (waits('profile')) skeleton(right, '', 'Prossimi passi');
-    else section(right, '', nextSteps, profile, profileError, { resource, id });
+    // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
+    // card — the prototype holds those rows once, as the recap's PROSSIME
+    // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
