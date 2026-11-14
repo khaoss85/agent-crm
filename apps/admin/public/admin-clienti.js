@@ -697,11 +697,16 @@ export function createCustomerListView(deps) {
     const viewsRow = frame.viewsRow;
     while (viewsRow.firstChild) viewsRow.removeChild(viewsRow.firstChild);
     for (const view of views) {
-      // backlog:5af848afdb63: every view carries its number, even 0 — a view
-      // without a count the server could name (scan truncated, derived view
-      // unreadable here) reads 0, never a bare label.
+      // Review #908 (Muse su d57c973f): honest absence — a view the server
+      // did not count (truncated scan, derived view unreadable here) reads
+      // its bare label, never an invented 0. This narrows backlog:5af848afdb63
+      // («viste numerate anche 0»): 0 shows only when the server names
+      // count: 0 on an exact total, so the operator never mistakes an
+      // unread count for «no renewals» and misses real deadlines.
       const count = Number(view.count);
-      const label = view.label + (Number.isFinite(count) ? ` ${count}` : ' 0');
+      const exact = data?.totalIsExact !== false;
+      const known = Number.isFinite(count) && (count !== 0 || exact);
+      const label = view.label + (known ? ` ${count}` : '');
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
