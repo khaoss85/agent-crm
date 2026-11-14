@@ -494,13 +494,30 @@ export const SYNC_CHANNELS = NINE_CHANNELS;
  * (shared `isProfileEmailStandin`) — without its own channel connection
  * the send fails with 409, like in the composer and on Oggi, so the hero,
  * the table and the count invite Email instead of painting it connected.
+/**
+ * A stand-in row that still has something to say stays visible
+ * (backlog:cf365ada15b9): a stopped import or a non-active binding owns a
+ * fix card on this screen, so the stand-in filter keeps it even though it
+ * never counts as connected (backlog:803d127c4458).
+ * @param {any} entry one activity connection entry.
+ */
+function standinKeepsRow(entry) {
+  if (entry === null || typeof entry !== 'object') return false;
+  const status = typeof entry.status === 'string' ? entry.status : '';
+  if (status !== '' && status !== 'active') return true;
+  const { code, dead } = lastErrorOf(entry);
+  return code !== null || dead > 0;
+}
+
+/**
  * @param {any} activity the GET /api/connectors/activity payload, possibly null.
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  */
 export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
-  const merged = mergeProfileConnections(entries, profile).filter((row) => !isProfileEmailStandin(row));
+  const merged = mergeProfileConnections(entries, profile)
+    .filter((row) => !isProfileEmailStandin(row) || standinKeepsRow(row));
   // Backlog 803d127c4458 (review Muse giro 4 P1): a length tie is not "no
   // change" — the filter may drop the Email stand-in while the merge adds
   // another profile channel in the same call. Compare the content instead.

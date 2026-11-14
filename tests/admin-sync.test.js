@@ -1570,3 +1570,17 @@ test('803d127c4458: withProfileConnections swaps the Email stand-in for the merg
   const plain = activityOf();
   assert.equal(withProfileConnections(plain, null), plain);
 });
+
+test('803d127c4458: withProfileConnections drops the quiet key-only stand-in but keeps the stopped import', () => {
+  const quiet = entryOf({ connectionKey: 'profile:gmail', channel: 'email', status: 'active', health: 'ok', sync: null });
+  const dropped = withProfileConnections(activityOf({ connections: [quiet] }), null);
+  assert.notEqual(dropped, activityOf({ connections: [quiet] }), 'a new activity object');
+  assert.deepEqual(dropped.connections, [], 'the quiet stand-in never counts as connected');
+  const stopped = entryOf({
+    connectionKey: 'profile:gmail', channel: 'email', importable: false, health: 'attention',
+    sync: { status: 'done', lastErrorCode: 'GOOGLE_GRANT_REFUSED', lastErrorReason: 'Google ha rifiutato il permesso.' },
+  });
+  const kept = withProfileConnections(activityOf({ connections: [stopped] }), null);
+  assert.equal(kept.connections.length, 1, 'the stopped import keeps its fix card');
+  assert.equal(kept.connections[0].connectionKey, 'profile:gmail');
+});
