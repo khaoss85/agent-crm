@@ -342,14 +342,20 @@ export function createHttpGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, recurrence = null, secret } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
+      const lines = recurrence === null || recurrence === undefined ? null : recurrence;
+      if (lines !== null && (!Array.isArray(lines) || lines.length === 0 || lines.length > 8
+        || lines.some((line) => typeof line !== 'string' || line.length === 0 || line.length > 256))) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google insertEvent needs a bounded recurrence string array when naming one');
+      }
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
         ...(typeof description === 'string' && description !== '' ? { description } : {}),
         ...(start === undefined || start === null ? {} : { start }),
         ...(end === undefined || end === null ? {} : { end }),
+        ...(lines === null ? {} : { recurrence: [...lines] }),
         extendedProperties: { private: { ...extendedProperties } },
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
       });
