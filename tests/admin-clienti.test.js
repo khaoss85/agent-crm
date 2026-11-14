@@ -1319,6 +1319,106 @@ test('a762c28a646c: the Clienti list remembers the names it shows', async () => 
   assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
 });
 
+// backlog:120f299445a6 (production 14/11: the list stayed grey for 30 s
+// with no sign of work): while the next page loads the status line says
+// the search is running, on top of the rows that stay on screen.
+test('120f299445a6: a search in flight reads «Ricerca in corso», never a stuck screen', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows are on screen');
+  gated = true;
+  const input = mount.findAll('input')[0];
+  input.value = 'nota';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(mount.textContent.includes('Ricerca in corso'), 'the wait names the running search');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no first-read flash on a later read');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  release();
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=nota'), 'the gated read was the search');
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'the sign goes with the new page');
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
+// backlog:120f299445a6 (production 14/11: the search answered 503 after
+// ~30 s): the timeout reads as what happened plus what to do — Italian,
+// no codes — and Cerca retries it.
+test('120f299445a6: a timed-out search says it took too long and retries', async () => {
+  let fail = false;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options) => {
+    if (fail) {
+      client.calls.push(path);
+      throw Object.assign(new Error('bridge timeout'), { status: 503, code: 'BO_ADMIN_READ_TIMEOUT' });
+    }
+    return base(path, options);
+  };
+  const logged = [];
+  const realError = console.error;
+  console.error = (text, cause) => { logged.push([String(text), cause]); };
+  let mount;
+  try {
+    ({ mount } = await render(client, { spaceId: 's1' }));
+    const input = mount.findAll('input')[0];
+    const form = mount.findAll('form')[0];
+    input.value = 'nota';
+    fail = true;
+    form.dispatch('submit', { preventDefault() {} });
+    await flush();
+  } finally {
+    console.error = realError;
+  }
+  assert.match(mount.textContent, /troppo tempo/, 'the timeout names the wait');
+  assert.match(mount.textContent, /Riprova/, 'the timeout offers a retry');
+  assert.ok(!/503|BO_ADMIN_READ_TIMEOUT/.test(mount.textContent), 'no code leaks into the screen');
+  assert.equal(logged.length, 1, 'the timeout logs one line like every failed read');
+  assert.match(logged[0][0], /lettura fallita/, 'the line names the failed read');
+  assert.match(logged[0][0], /503/, 'the line names the status');
+  assert.match(logged[0][0], /BO_ADMIN_READ_TIMEOUT/, 'the line names the code');
+  assert.equal(logged[0][1]?.status, 503, 'the cause carries the status');
+  assert.equal(logged[0][1]?.code, 'BO_ADMIN_READ_TIMEOUT', 'the cause carries the code');
+  assert.equal(logged[0][1]?.spaceId, 's1', 'the cause carries the space');
+  fail = false;
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=nota'), 'the same search reads again on Cerca');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the retry paints the list');
+});
+
+// backlog:120f299445a6 (review #904 giro 1, P3 at :293): «Ricerca in
+// corso…» only while a search runs — a later read without a q keeps the
+// old line, with only the table marked busy.
+test('120f299445a6: a later read without a search names no search in progress', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows are on screen');
+  gated = true;
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'no search runs, no search sign');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no first-read flash on a later read');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  release();
+  await flush();
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the read lands');
+});
+
 // backlog:7471d0bd718f: the Stato pill never shows the server's raw
 // technical-English reason («no signed business found in the composed
 // packages (orders: not readable here; …)»). The tooltip says in plain

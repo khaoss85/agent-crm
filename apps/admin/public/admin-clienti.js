@@ -300,19 +300,37 @@ export function createCustomerListView(deps) {
     const token = ++renderToken;
     if (frame === null) drawShell();
     const statusLine = frame.status;
-    // The first read has nothing to show yet; later reads keep the rows
-    // and only mark the table busy, so the bar never jumps.
-    if (data === null && statusLine) statusLine.textContent = 'Caricamento…';
-    // backlog:88ab568cdcba: a search already on screen names its wait —
-    // «Ricerca in corso…» under the bar, rows and focus untouched until
-    // the new page paints (which clears it).
-    else if (statusLine && state.q !== '') statusLine.textContent = 'Ricerca in corso…';
+    // The first read has nothing to show yet; a later read with a search
+    // says the search is running (backlog:120f2994, production 14/11: the
+    // list stayed grey for 30 s with no sign of work), so the wait never
+    // reads as a stuck screen. A later read without a search keeps the
+    // old line: only the table reads busy, the bar never jumps.
+    // (Same outcomes as backlog:88ab568cdcba: first read «Caricamento…»,
+    // later read with a search «Ricerca in corso…», rows and focus kept.)
+    if (statusLine && (data === null || state.q !== '')) {
+      statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
+    }
     frame.body.setAttribute('aria-busy', 'true');
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
       if (token !== renderToken) return;
-      data = { error: humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }), status: error?.status ?? null };
+      // A search the server could not answer in time (503 from the /bo
+      // bridge timeout): say what happened and what to do, never a code.
+      // Every failed read goes through humanReadError, the timeout too, so
+      // the console always names status, code and space (review #904 giro 1:
+      // the timeout branch used to skip reportFailure and log nothing).
+      const timedOut = error?.status === 503 || error?.code === 'BO_ADMIN_READ_TIMEOUT';
+      const spaceId = activeSpaceId();
+      data = {
+        error: humanReadError(error, {
+          failed: timedOut
+            ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
+            : 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.',
+          log: spaceId === null ? undefined : (text, cause) => console.error(text, { ...cause, spaceId }),
+        }),
+        status: error?.status ?? null,
+      };
     }
     if (token !== renderToken) return;
     paint();
