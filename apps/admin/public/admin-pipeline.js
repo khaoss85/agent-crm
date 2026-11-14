@@ -62,6 +62,14 @@ const OFF_PIPELINE_LISTED = 50;
 import { el, uiAddOption, uiBusy, uiButton, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
+ * backlog:48993bed7294 (review lead #896): the forecast's declared rule, the
+ * same constants as packages/analytics/src/dashboard.js (this view ships as a
+ * static file, so it names them instead of importing them).
+ */
+const FORECAST_MIN_DECIDED = 5;
+const FORECAST_FALLBACK_RATE = 0.6;
+
+/**
  * Italian month names for the `✦ Previsione di <mese>` title (C4). A static
  * list keeps the title deterministic without ICU locale data.
  */
@@ -1680,14 +1688,18 @@ export function createPipelineBoard(deps) {
         if (!riskiest || record.valueCents > riskiest.valueCents) riskiest = record;
       }
     }
+    // Review lead #896: below FORECAST_MIN_DECIDED decided offers the
+    // historical rate is noise; the declared fallback is used and said —
+    // the same rule and the same numbers as packages/analytics/src/dashboard.js.
     const decided = wonCount + lostCount;
-    const rate = decided === 0 ? null : wonCount / decided;
+    const steady = decided >= FORECAST_MIN_DECIDED;
+    const rate = steady ? wonCount / decided : FORECAST_FALLBACK_RATE;
     const total = new Map();
     for (const [currency, amount] of closed.entries()) {
       total.set(currency, (total.get(currency) ?? 0) + amount);
     }
     for (const [currency, amount] of waiting.entries()) {
-      total.set(currency, (total.get(currency) ?? 0) + (rate === null ? 0 : Math.round(amount * rate)));
+      total.set(currency, (total.get(currency) ?? 0) + Math.round(amount * rate));
     }
     if (!total.size) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessuna offerta da stimare — non un impegno.' }));
@@ -1698,9 +1710,9 @@ export function createPipelineBoard(deps) {
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
-      text: rate === null
-        ? 'Chiuse nel mese; nessuna offerta ancora vinta o persa, quindi nessuna stima sulle aperte. Sulle offerte in vista — stima, non un impegno.'
-        : `Chiuse nel mese, più il ${Math.round(rate * 100)}% (tasso di chiusura storico) delle aperte attese nel mese o senza data. Sulle offerte in vista — stima, non un impegno.`,
+      text: `Chiuse nel mese, più il ${steady
+        ? `${Math.round(rate * 100)}% (tasso di chiusura storico)`
+        : `${Math.round(FORECAST_FALLBACK_RATE * 100)}% (stima: poche offerte chiuse, ${decided} su almeno ${FORECAST_MIN_DECIDED})`} delle aperte attese nel mese o senza data. Sulle offerte in vista — stima, non un impegno.`,
     }));
     // No global ranking across currencies: raw cents are not comparable
     // without exchange rates, so the risk line shows only when every valued

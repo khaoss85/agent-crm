@@ -739,13 +739,14 @@ test('forecast shows the month title, the offers closed this month plus the hist
     box.textContent.includes(`✦ Previsione di ${months[Number(MONTH_NOW.slice(5, 7)) - 1]}`),
     `the title names the current month (${box.textContent})`,
   );
-  // Rate: 2 won (d, o) over 2 won + 2 lost = 50%. EUR: d closed this month
-  // (1.000 €; o closed two months ago stays out) + 50% of the undated «a»
-  // (500 €) = 1.500 € — «b» is expected next month, «s» is past-dated.
-  // USD: 50% of the undated 25 USD = 12,50 USD.
-  assert.ok(box.textContent.includes('1.500 €'), `EUR forecast total (${box.textContent})`);
-  assert.ok(box.textContent.includes('12,50 USD'), `USD forecast total stays separate (${box.textContent})`);
-  assert.match(box.textContent, /più il 50% \(tasso di chiusura storico\)/, 'the rule and the rate it used, said');
+  // 4 decided offers (d, o won; e, f lost) are fewer than 5: the declared
+  // 60% fallback (review lead #896). EUR: d closed this month (1.000 €; o
+  // closed two months ago stays out) + 60% of the undated «a» (600 €) =
+  // 1.600 € — «b» is expected next month, «s» is past-dated.
+  // USD: 60% of the undated 25 USD = 15 USD.
+  assert.ok(box.textContent.includes('1.600 €'), `EUR forecast total (${box.textContent})`);
+  assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
+  assert.match(box.textContent, /più il 60% \(stima: poche offerte chiuse, 4 su almeno 5\)/, 'the rule and the rate it used, said');
   assert.match(box.textContent, /Sulle offerte in vista/, 'the shown offers, like the filters');
   assert.ok(
     !box.textContent.includes('Il rischio più alto'),
@@ -1808,4 +1809,22 @@ test('169cd4bc988c: the offers of other pipelines read in the /bo dress — cust
   for (const link of list.findAll('a')) assert.equal(link.getAttribute('class'), 'pipeline-off-name', 'a styled link, never the browser default');
   const css = (await import('node:fs')).readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.pipeline-off-list \.pipeline-off-name \{[^}]*color: var\(--ink\)/, 'the name reads in ink, not link blue');
+});
+
+test('48993bed7294 (review lead #896): from five decided offers the board uses the historical rate, like Reporting', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      ...['w1', 'w2', 'w3', 'w4'].map((id) => record(id, 'won', { valueCents: 1, closedAt: shiftedMonth(-2) })),
+      record('l1', 'lost', { valueCents: 1, closeReason: 'No budget', closedAt: shiftedMonth(-2) }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+  const box = forecastBox(mount);
+  assert.ok(box.textContent.includes('800 €'), `80% of the undated 1.000 € (${box.textContent})`);
+  assert.match(box.textContent, /più il 80% \(tasso di chiusura storico\)/);
 });

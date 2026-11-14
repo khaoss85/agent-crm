@@ -281,12 +281,14 @@ test('forecast is labelled stima with history-weighted probabili', (t) => {
   assert.equal(model.forecast.heuristic, true);
   assert.equal(model.forecast.label, 'Stima');
   assert.match(model.forecast.method, /Non è una promessa/);
-  assert.match(model.forecast.method, /67% \(tasso di chiusura storico\)/, 'the rate it used, said');
+  // Review lead #896: 3 decided offers are fewer than 5 — the declared 60%
+  // fallback, said, never a «67%» that looks precise.
+  assert.match(model.forecast.method, /60% \(stima: poche offerte chiuse, 3 su almeno 5\)/, 'the rate it used, said');
   assert.equal(model.forecast.closedMinor, 14000);
   // backlog:48993bed7294: the open value the month may still close is the
   // open expected in October (14000) plus the undated a7 (1500) — the same
-  // window as the Pipeline forecast; × 2/3 historical win rate, rounded.
-  assert.equal(model.forecast.probableMinor, 10333);
+  // window as the Pipeline forecast; × the 60% fallback (3 decided < 5).
+  assert.equal(model.forecast.probableMinor, 9300);
   assert.equal(model.forecast.bestMinor, 15500);
   assert.equal(model.forecast.targetMinor, null);
   assert.match(model.forecast.note, /Obiettivo non impostato/);
@@ -362,7 +364,7 @@ test('CSV bytes are pinned exactly', (t) => {
   assert.ok(lines.includes('alice;4;22000;1;9000;1;50%'));
   assert.ok(lines.includes('bob;2;4000;1;5000;0;100%'));
   assert.ok(lines.includes('qualification;3;14500'));
-  assert.ok(lines.includes('probabili_euristica;10333'));
+  assert.ok(lines.includes('probabili_euristica;9300'));
   assert.ok(lines.includes('obiettivo;non_impostato'));
   const hostile = buildDashboardModel(dashboardResults(database, QUERY_OCT), [], QUERY_OCT, TS);
   assert.equal(hostile.csv.content.endsWith('\n'), true);
@@ -565,7 +567,7 @@ test('GET /api/reporting/dashboard serves the registry model and writes nothing'
   assert.equal(model.kpis[0].display, formatMinor(26000, 'EUR'));
   assert.equal(model.forecast.heuristic, true);
   assert.equal(model.forecast.label, 'Stima');
-  assert.equal(model.forecast.probableMinor, 10333);
+  assert.equal(model.forecast.probableMinor, 9300);
   assert.deepEqual(model.owners, ['alice', 'bob']);
   assert.ok(Array.isArray(model.insights) && model.insights.length > 0);
   assert.equal(model.csv.filename, 'reporting-2026-10.csv');
@@ -854,8 +856,10 @@ test('48993bed7294: the pilot month — won by close date, open by referente, on
   assert.equal(model.forecast.closedMinor, 35000, '«Chiuse» too');
   // Open, undated: 100 + 1500×4 + 35000 + 1500 + 2500 (no referente) = 45100; rate 1 won / 2 decided.
   assert.equal(model.forecast.bestMinor, 45100);
-  assert.equal(model.forecast.probableMinor, 22550, 'the same rule the Pipeline prints: 50% of the open expected this month or undated');
-  assert.match(model.forecast.method, /più il 50% \(tasso di chiusura storico\)/);
+  // Review lead #896: 2 decided offers are too few for a rate — the 60%
+  // fallback, said, the same the Pipeline prints (350 + 60% × 426 on the board).
+  assert.equal(model.forecast.probableMinor, 27060, '60% of the open expected this month or undated');
+  assert.match(model.forecast.method, /più il 60% \(stima: poche offerte chiuse, 2 su almeno 5\)/);
   const marco = model.team.find((entry) => entry.owner === 'marco');
   assert.deepEqual([marco.openCount, marco.openMinor, marco.wonCount, marco.wonMinor, marco.lostCount], [3, 38000, 1, 35000, 1],
     'the referente holds his three open offers (15+350+15 €), like the Pipeline');
@@ -866,4 +870,26 @@ test('48993bed7294: the pilot month — won by close date, open by referente, on
   assert.match(lostRate.text, /^1 preventivo perso su 2 chiusi \(50%\)/, '«1 preventivo perso», never «1 preventivi persi»');
   const monthly = model.monthly.find((entry) => entry.month === '2026-11');
   assert.deepEqual([monthly.wonCount, monthly.wonMinor], [1, 35000], 'the month chart counts the paid offer in November');
+});
+
+test('48993bed7294 (review lead #896): from five decided offers the historical rate drives the forecast', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+  const row = (stage, totalMinor, closedAt = null) => ({
+    'opportunity.owner': 'marco', 'opportunity.pipelineStage': stage, 'opportunity.expectedCloseDate': null,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const at = '2026-10-02T10:00:00.000Z';
+  const schedule = [row('proposta', 10000), row('pagato', 1, at), row('pagato', 1, at), row('pagato', 1, at), row('pagato', 1, at), row('perso', 1, at)];
+  const byStage = [
+    { 'opportunity.pipelineStage': 'proposta', 'opportunity.currency': 'EUR', totalMinor: 10000, count: 1 },
+    { 'opportunity.pipelineStage': 'pagato', 'opportunity.currency': 'EUR', totalMinor: 4, count: 4 },
+    { 'opportunity.pipelineStage': 'perso', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(model.forecast.rateSource, 'history');
+  assert.equal(model.forecast.probableMinor, 8000, '4 won of 5 decided: 80% of 100 €');
+  assert.match(model.forecast.method, /più il 80% \(tasso di chiusura storico\)/);
+  const four = buildDashboardModel({ byStage: { rows: byStage.slice(0, 2) }, schedule: { rows: schedule.slice(0, 5) } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(four.forecast.rateSource, 'fallback', 'four decided are still too few');
+  assert.equal(four.forecast.probableMinor, 6000);
 });

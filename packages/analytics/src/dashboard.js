@@ -369,6 +369,27 @@ function isOpenStage(value) {
 }
 
 /**
+ * backlog:48993bed7294 (review lead #896): the historical close rate needs
+ * at least this many decided offers (won, paid or lost) before it drives
+ * the forecast; below it the declared fallback rate is used.
+ */
+export const FORECAST_MIN_DECIDED = 5;
+/** The declared fallback close rate (the board's historical 60%). */
+export const FORECAST_FALLBACK_RATE = 0.6;
+
+/**
+ * The forecast rule in words, the same sentence the Pipeline prints.
+ * @param {number | null} steadyRate the historical rate when it is steady, else null
+ * @param {number} decided decided offers behind it
+ */
+export function forecastMethod(steadyRate, decided) {
+  const rate = steadyRate === null
+    ? `${Math.round(FORECAST_FALLBACK_RATE * 100)}% (stima: poche offerte chiuse, ${decided} su almeno ${FORECAST_MIN_DECIDED})`
+    : `${Math.round(steadyRate * 100)}% (tasso di chiusura storico)`;
+  return `Chiuse nel mese, più il ${rate} delle aperte attese nel mese o senza data. Non è una promessa.`;
+}
+
+/**
  * Build the frozen dashboard model from executed registry reports.
  *
  * Backlog 099c41c32355 (Reporting like the Pipeline board): when `query`
@@ -589,20 +610,24 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
   // Forecast: closed in the period plus a heuristic band over the open rows
   // expected in the period. `heuristic: true` is the contract the screen
   // must render — the number is arithmetic over history, never a promise.
-  const probableMinor = winRate === null ? 0 : Math.round(waitingInPeriod.minor * winRate);
+  // Review lead #896: with fewer than FORECAST_MIN_DECIDED decided offers a
+  // historical rate is noise (one sale reads 100%): the forecast uses the
+  // declared fallback rate and says so.
+  const steadyRate = winRate !== null && closed >= FORECAST_MIN_DECIDED;
+  const forecastRate = steadyRate ? winRate : FORECAST_FALLBACK_RATE;
+  const probableMinor = Math.round(waitingInPeriod.minor * forecastRate);
   const target = pickTarget(bundleRows, query);
   const forecast = Object.freeze({
     currency: query.currency,
     closedMinor: wonInPeriod.minor,
     probableMinor,
     bestMinor: waitingInPeriod.minor,
-    winRate,
+    winRate: forecastRate,
+    rateSource: steadyRate ? 'history' : 'fallback',
     targetMinor: target === null ? null : target.valueMinor,
     heuristic: true,
     label: 'Stima',
-    method: winRate === null
-      ? 'Chiuse nel mese; nessuna offerta ancora vinta o persa, quindi nessuna stima sulle aperte. Non è una promessa.'
-      : `Chiuse nel mese, più il ${Math.round(winRate * 100)}% (tasso di chiusura storico) delle aperte attese nel mese o senza data. Non è una promessa.`,
+    method: forecastMethod(steadyRate ? winRate : null, closed),
     note: target === null
       ? 'Obiettivo non impostato: aggiungi una riga obiettivo nel report.'
       : `Obiettivo ${formatMinor(target.valueMinor, query.currency)}.`,
