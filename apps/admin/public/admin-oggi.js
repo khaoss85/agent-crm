@@ -1526,6 +1526,11 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     appointmentsAvailable: false,
     channelsAvailable: false,
     channelsPartial: false,
+    // Backlog 0c0186a242af: without a readable space (no space id, or the
+    // scoped read refused) Oggi does not know whether the channels are
+    // active — unknown, never «not active». The render keeps the honest
+    // line for the read case and a different one for this case.
+    channelsUnknown: false,
     tasksPartial: false,
     appointmentsPartial: false,
     inboxPartial: false,
@@ -1647,6 +1652,11 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.connections = connectionsPage.rows;
     outcome.channelsAvailable = true;
     outcome.channelsPartial = connectionsPage.capped === true;
+  } else if (domains.channels != null) {
+    // Backlog 0c0186a242af: the domain is composed but the connections did
+    // not read — no space to scope to, or the scoped read was refused. The
+    // section stays unknown instead of posing as «not active».
+    outcome.channelsUnknown = true;
   }
   // Google Calendar and Gmail connect per person through the pilot's Google
   // consent, not through channel-connection rows: the same GET /api/profile
@@ -1939,6 +1949,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
  *     channelsPartial?: boolean,
+ *     channelsUnknown?: boolean,
  *     tasksPartial?: boolean,
  *     appointmentsPartial?: boolean,
  *     profile?: unknown,
@@ -2389,8 +2400,12 @@ export function renderOggi({
     // Backlog 803d127c4458: even when the channels do not read (no space
     // yet, refused read, package not composed), the operator keeps the way
     // to connect one — the strip never strands them without a link.
+    // Backlog 0c0186a242af: without a readable space the section is
+    // unknown, never «not active» — Oggi did not read, so it cannot say.
     const note = el(doc, 'section', 'bo-oggi-section');
-    note.appendChild(el(doc, 'p', 'bo-muted', 'I canali non sono attivi in questo spazio.'));
+    note.appendChild(el(doc, 'p', 'bo-muted', home.channelsUnknown === true
+      ? 'I canali non si sono potuti leggere in questo spazio.'
+      : 'I canali non sono attivi in questo spazio.'));
     const anchor = el(doc, 'a', 'bo-oggi-invite', 'Collega un canale →');
     anchor.setAttribute('href', '#/connettori');
     anchor.addEventListener('click', (event) => {
@@ -2693,6 +2708,7 @@ export function createOggiView(deps) {
         missing,
         connections: last.connections,
         channelsPartial: last.channelsPartial === true,
+        channelsUnknown: last.channelsUnknown === true,
         tasksPartial: last.tasksPartial === true,
         appointmentsPartial: last.appointmentsPartial === true,
         profile: last.profile ?? null,
