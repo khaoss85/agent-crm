@@ -114,12 +114,12 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
   };
 }
 
-function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }], active = SPACE } = {}) {
-  const doc = createFakeDocument();
+function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }], active = SPACE, doc = null } = {}) {
+  const docNode = doc ?? createFakeDocument();
   const mount = createMount();
   const seen = { toast: [], picked: [], navigated: [] };
   const v = createSpaziAccessiView({
-    doc,
+    doc: docNode,
     mount,
     client: client ?? stubClient(),
     navigate: (hash) => seen.navigated.push(hash),
@@ -128,7 +128,7 @@ function view({ client, spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }
     onPickSpace: (id) => seen.picked.push(id),
     toast: (message, error = false) => seen.toast.push({ message, error }),
   });
-  return { doc, mount, seen, view: v };
+  return { doc: docNode, mount, seen, view: v };
 }
 
 const text = (mount) => mount.textContent;
@@ -1401,6 +1401,124 @@ test('7d30fb517785: a refused invite whose reload fails too still shows exactly 
   const toasts = seen.toast.filter((row) => row.error);
   assert.equal(inline.length + toasts.length, 1, `exactly one visible message, not ${inline.length} inline + ${toasts.length} toast`);
   assert.equal(toasts[0]?.message, 'Non riesco a salvare la modifica adesso, riprova tra poco.');
+});
+
+// backlog:dd570f6d501e — the «+ Nuovo spazio di lavoro» menu (C11/C20)
+// closes with Escape and with an outside click, and focus returns to the
+// button. Same contract as the Nuova sequenza menu, scoped to this view.
+const newSpaceToggle = (mount) => mount.findAll('button')
+  .find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+const newSpaceMenus = (mount) => mount.findAll('div')
+  .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-menu'));
+
+test('dd570f6d501e: Escape in the new-space menu closes it and focus returns to the button', async () => {
+  const { mount, view: v } = view({});
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  newSpaceMenus(mount)[0].dispatch('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'Escape closes the menu');
+  assert.equal(newSpaceToggle(mount).getAttribute('aria-expanded'), 'false', 'the button reads collapsed');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the button');
+});
+
+test('dd570f6d501e: Escape on the new-space button closes the menu too', async () => {
+  const { mount, view: v } = view({});
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  newSpaceToggle(mount).dispatch('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'Escape on the button closes the menu');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus stays on the button');
+});
+
+test('dd570f6d501e: an outside click closes the new-space menu without stealing focus', async () => {
+  const docClicks = [];
+  const doc = {
+    ...createFakeDocument(),
+    addEventListener: (type, handler) => {
+      if (type === 'click') docClicks.push(handler);
+    },
+  };
+  const { mount, view: v } = view({ doc });
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  for (const handler of docClicks) handler({ target: mount });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'an outside click closes the menu');
+  assert.notEqual(newSpaceToggle(mount).__focused, true, 'an outside click leaves focus where the user put it');
+});
+
+test('dd570f6d501e: the opening click stops propagation so the document closer never sees it', async () => {
+  const docClicks = [];
+  const doc = {
+    ...createFakeDocument(),
+    addEventListener: (type, handler) => {
+      if (type === 'click') docClicks.push(handler);
+    },
+  };
+  const { mount, view: v } = view({ doc });
+  await v.render();
+  await flush();
+  // A real browser bubbles the opening click to the document after the
+  // toggle handler repainted: the toggle stops it, so the outside closer
+  // (which would shut anything outside the tracked menu wrap) never fires
+  // for the click that just opened the menu.
+  let stopped = 0;
+  await newSpaceToggle(mount).listeners.click[0]({ target: newSpaceToggle(mount), stopPropagation: () => { stopped += 1; } });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  assert.equal(stopped, 1, 'the opening click stops propagation');
+  await newSpaceToggle(mount).listeners.click[0]({ target: newSpaceToggle(mount), stopPropagation: () => {} });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'clicking the toggle again closes the menu');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'closing from the toggle keeps focus on it');
+});
+
+test('dd570f6d501e: a document-level Escape closes the menu when focus left the button', async () => {
+  const docHandlers = [];
+  const doc = {
+    ...createFakeDocument(),
+    addEventListener: (type, handler) => {
+      docHandlers.push({ type, handler });
+    },
+  };
+  const { mount, view: v } = view({ doc });
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  for (const { type, handler } of docHandlers) {
+    if (type === 'keydown') handler({ key: 'Escape', target: mount });
+  }
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'a document-level Escape closes the menu');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'a document-level Escape returns focus to the button');
+});
+
+test('dd570f6d501e: picking a voice closes the menu and focus returns to the button', async () => {
+  const { mount, view: v } = view({ client: stubClient({ members: [] }) });
+  await v.render();
+  await flush();
+  await newSpaceToggle(mount).listeners.click[0]();
+  await flush();
+  const manual = mount.findAll('button').find((node) => String(node.textContent).startsWith('Compila manualmente'));
+  assert.ok(manual, 'the manual voice is a menu item');
+  await manual.listeners.click[0]();
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'picking a voice closes the menu');
+  assert.match(text(mount), /control plane/, 'manual stays honest: no space is invented here');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the button');
 });
 
 test('backlog:76ded4e3: the two menus never stay open together, Escape and a click outside close them', async () => {

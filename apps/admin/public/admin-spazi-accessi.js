@@ -534,20 +534,32 @@ export function createSpaziAccessiView(deps) {
   // Documents without addEventListener (the dependency-free fake DOM of the
   // unit tests) skip the outside closer; the toggles, the voices and Escape
   // still work there.
+  // Toggling a menu repaints the whole view, so the node that had keyboard
+  // focus is gone after render(): closing with Escape returns focus to the
+  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
+  // click leaves focus where the user put it.
   /** Currently rendered menu nodes, rebuilt on every render. */
   const liveMenuWraps = [];
-  function closeMenus() {
+  function focusToggle(selector) {
+    if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
+    const target = mount.querySelector(selector);
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+  function closeMenus(refocusSelector = null) {
     if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
     state.newSpaceMenuOpen = false;
     state.inviteMenuOpen = false;
     render();
+    focusToggle(refocusSelector);
   }
-  function trackMenuWrap(node) {
+  function trackMenuWrap(node, toggleSelector = null) {
     liveMenuWraps.push(node);
     node.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
     });
   }
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
   if (doc && typeof doc.addEventListener === 'function') {
     doc.addEventListener('click', (event) => {
       let node = event?.target ?? null;
@@ -562,7 +574,9 @@ export function createSpaziAccessiView(deps) {
     // menu/toggle keydown handlers. Listen at document level, where Escape
     // always lands however the menu was opened.
     doc.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        closeMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : inviteToggleSelector);
+      }
     });
   }
 
@@ -874,6 +888,7 @@ export function createSpaziAccessiView(deps) {
       cls: 'bo-spazi-quiet',
       attrs: {
         type: 'button',
+        'data-menu': 'nuovo-spazio',
         'aria-haspopup': 'true',
         'aria-expanded': state.newSpaceMenuOpen ? 'true' : 'false',
       },
@@ -888,9 +903,12 @@ export function createSpaziAccessiView(deps) {
       if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
+      // Closing from the toggle replaces the toggle itself: keep keyboard
+      // focus on it, so Tab continues from the button that closed the menu.
+      if (!willOpen) focusToggle(newSpaceToggleSelector);
     });
     adderToggle.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
@@ -908,16 +926,18 @@ export function createSpaziAccessiView(deps) {
         state.newSpaceNote = null;
         say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       menu.appendChild(aiVoice);
       menu.appendChild(manualVoice);
-      trackMenuWrap(menu);
+      trackMenuWrap(menu, newSpaceToggleSelector);
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
@@ -969,9 +989,10 @@ export function createSpaziAccessiView(deps) {
     // relative wrap), like every other add menu: opening it never pushes
     // the team list or the invite form below.
     const inviteWrap = el(doc, 'div', { cls: 'bo-spazi-invite-wrap', attrs: { style: 'position: relative; margin-left: auto;' } });
-    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'data-menu': 'invita-persona', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
     inviteToggle.addEventListener('click', (event) => {
       event?.stopPropagation?.();
+      const wasMenuOpen = state.inviteMenuOpen;
       if (state.inviteMenuOpen) {
         state.inviteMenuOpen = false;
       } else if (state.inviteOpen) {
@@ -981,9 +1002,12 @@ export function createSpaziAccessiView(deps) {
         state.newSpaceMenuOpen = false;
       }
       render();
+      // Same promise as the new-space toggle: closing from the toggle keeps
+      // keyboard focus on it.
+      if (wasMenuOpen) focusToggle(inviteToggleSelector);
     });
     inviteToggle.addEventListener('keydown', (event) => {
-      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus();
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(inviteToggleSelector);
     });
     inviteWrap.appendChild(inviteToggle);
     teamHead.appendChild(inviteWrap);
@@ -1002,16 +1026,18 @@ export function createSpaziAccessiView(deps) {
         state.inviteMenuOpen = false;
         say('Gli inviti con l\u2019AI non sono ancora disponibili: usa Compila manualmente.');
         render();
+        focusToggle(inviteToggleSelector);
       });
       const inviteManual = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Email e ruolo' });
       inviteManual.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         state.inviteOpen = true;
         render();
+        focusToggle(inviteToggleSelector);
       });
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);
-      trackMenuWrap(inviteMenu);
+      trackMenuWrap(inviteMenu, inviteToggleSelector);
       inviteWrap.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
