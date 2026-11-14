@@ -206,7 +206,10 @@ export function createCommercialDomain(options = {}) {
     // single live row — per-version exclusion in the mint plus loser-reuses
     // on conflict, so double acceptance stays impossible. Additive: the
     // share-link contract (input, reused-vs-minted answers) is unchanged.
-    version: 9,
+    // 10: the mint exclusion is a same-quote-row fence inside the action
+    // transaction (cross-process, web and worker): the in-process lock is
+    // only the fast path. Additive: the share-link contract is unchanged.
+    version: 10,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
