@@ -5,7 +5,7 @@ import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { createShellSchemaClient } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
-import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -1352,6 +1352,11 @@ async function route() {
   const previousView = lastRoutedView;
   lastRoutedView = targetForHash(hash).view;
   const keepClienti = CLIENTI_PAIR.has(lastRoutedView) && CLIENTI_PAIR.has(previousView ?? '');
+  // backlog:25cf0cd8c678: la nuova schermata parte da scrollY 0 con il
+  // titolo visibile — lo scroll della finestra non sopravvive al cambio.
+  // Solo la coppia lista/finestra «Nuovo cliente» resta com'era (backlog
+  // ff8bb60f417f: la lista sotto la finestra non si ricarica).
+  if (!keepClienti) resetScreenScroll({ win: window, doc: document });
   if (targetForHash(hash).view === 'settings') {
     // The panel paints synchronously on the real mount: no view handle
     // may paint over it.
