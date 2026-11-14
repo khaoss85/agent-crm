@@ -1918,6 +1918,9 @@ export function createCustomerCardView(deps) {
     go.setAttribute('data-action', 'composer-ai-generate');
     const line = el('p', 'bo-composer-ai-line', '');
     line.setAttribute('aria-live', 'polite');
+    // The request field is described by this line (backlog:d30d17880f63):
+    // with the AI off a screen reader hears why the field takes no words.
+    line.setAttribute('id', `bo-composer-ai-line-${composerGeneration}`);
     // The three versions live in their own row, so a pick or a message in
     // `line` never wipes them (production 10/11: after «Diretta» the other
     // two were gone and only Rigenera — a new AI call — brought them back).
@@ -1958,8 +1961,9 @@ export function createCustomerCardView(deps) {
     // with the shared per-customer draft, so Annulla survives ✕/Esc and a
     // reopen, and restores the subject too.
     // Genera switched off with its reason beside it (backlog:f48593bb06d4).
-    // The field and the words typed in it stay — read-only, still there to
-    // copy — never a row wiped after a refusal.
+    // The request field and the words typed in it stay, read-only and out
+    // of the Tab order, still selectable to copy (backlog:d30d17880f63) —
+    // never a row wiped after a refusal.
     const switchOff = () => {
       go.setAttribute('disabled', 'disabled');
       go.setAttribute('aria-disabled', 'true');
@@ -2004,22 +2008,37 @@ export function createCustomerCardView(deps) {
     const off = (code, status = null) => {
       row.setAttribute('data-off', 'true');
       switchOff();
-      // backlog:d30d17880f63: the request field is out of the way, not a
-      // read-only trap — no focus, no Tab stop, so keys never land in a
-      // field that ignores them (production: the page scrolled ~240 px
-      // under the presses). A press on it moves to the message field.
-      prompt.setAttribute('disabled', 'disabled');
+      // backlog:d30d17880f63 (review #880): read-only, so the words typed
+      // stay selectable and copyable; out of the Tab order; described by
+      // the reason line; the keys that would write are swallowed below, so
+      // a press never scrolls the page under a field that ignores it.
+      prompt.setAttribute('readonly', 'readonly');
       prompt.setAttribute('aria-disabled', 'true');
       prompt.setAttribute('tabindex', '-1');
+      prompt.setAttribute('aria-describedby', line.getAttribute('id'));
       prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
-      if (typeof prompt.blur === 'function') prompt.blur();
+      // Focus inside the request field (an off state that lands while the
+      // person is in it) moves to the message field, where words go now.
+      const active = doc?.activeElement ?? null;
+      if (active === prompt && typeof text.focus === 'function') text.focus({ preventScroll: true });
       offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
       paintOff();
     };
+    // A press on the off row with nothing to copy goes to the message field;
+    // with words in the request it is left alone, so they can be selected.
     field.addEventListener?.('mousedown', (event) => {
-      if (row.getAttribute('data-off') !== 'true') return;
+      if (row.getAttribute('data-off') !== 'true' || prompt.value !== '') return;
       event.preventDefault?.();
       if (typeof text.focus === 'function') text.focus({ preventScroll: true });
+    });
+    // Keys in the off request field: selection and copy keep working (Tab,
+    // arrows, Home/End, Shift, Cmd/Ctrl combinations); any key that would
+    // write or scroll (letters, Space, PageDown…) does nothing.
+    const OFF_KEYS_ALLOWED = new Set(['Tab', 'Shift', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape', 'Meta', 'Control', 'Alt']);
+    prompt.addEventListener?.('keydown', (event) => {
+      if (row.getAttribute('data-off') !== 'true') return;
+      if (OFF_KEYS_ALLOWED.has(event.key) || event.metaKey || event.ctrlKey) return;
+      event.preventDefault?.();
     });
     // Annulla: back to the person's own text before the first AI draft.
     function appendUndo() {

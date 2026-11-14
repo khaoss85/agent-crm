@@ -114,9 +114,12 @@ function dumpDom(binary, url, width, height) {
   });
 }
 
-// 773 is the verifier's window; 640 makes the body taller than the window,
-// where the opening focus on the message field used to scroll it.
-for (const height of [773, 640]) {
+// 773 is the verifier's window. 520 makes the window body much shorter
+// than its content, with the message field below the fold: there a focus
+// without preventScroll scrolls the body to the field and «Rispondi su»
+// goes under the header (review #880: this case turns red without the
+// cure, the margin alone does not save it).
+for (const height of [773, 520]) {
   test(`backlog:d30d17880f63: at 1512×${height} «Rispondi su» shows whole under the composer header`, { skip: BROWSER_SKIP }, async () => {
     assert.ok(CHROMIUM_RUNS, 'CI runs this proof: no runnable Chromium here (set CHROMIUM_BIN)');
     const server = /** @type {import('node:http').Server} */ (await serve());
@@ -127,7 +130,8 @@ for (const height of [773, 640]) {
       assert.ok(match, 'the composer measured itself');
       const geo = JSON.parse(match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&'));
       assert.ok(geo.off, `the AI-off composer is the one measured: ${JSON.stringify(geo)}`);
-      assert.equal(geo.scrollTop, 0, `the body opens at its top: ${JSON.stringify(geo)}`);
+      if (height === 520) assert.ok(geo.overflows, `the short window really overflows: ${JSON.stringify(geo)}`);
+      assert.equal(geo.scrollTop, 0, `the opening focus never scrolls the body: ${JSON.stringify(geo)}`);
       assert.ok(geo.labelTop >= geo.headBottom + 8, `«Rispondi su» sits whole below the header, with room: ${JSON.stringify(geo)}`);
       assert.ok(geo.labelHeight > 0, 'the label takes room');
     } finally {

@@ -2584,9 +2584,9 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-ai-mark { color: var(--agent); font-size: 13px; line-height: 1; }
 .bo-scheda-composer .bo-composer-ai-input { flex: 1; min-width: 0; min-height: 0; padding: 7px 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 13.5px; color: var(--agent-ink); outline: none; }
 .bo-scheda-composer .bo-composer-ai-input::placeholder { color: var(--agent-ink); opacity: .6; }
-/* backlog:d30d17880f63: AI off — the request field reads off and lets the press through to its row. */
-.bo-scheda-composer .bo-composer-ai-input[disabled] { color: var(--muted); cursor: not-allowed; pointer-events: none; }
-.bo-scheda-composer .bo-composer-ai-input[disabled]::placeholder { color: var(--muted); opacity: 1; }
+/* backlog:d30d17880f63: AI off — the request field reads off, its words stay selectable to copy. */
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"] { color: var(--muted); cursor: default; }
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"]::placeholder { color: var(--muted); opacity: 1; }
 .bo-composer-ai[data-off="true"] .bo-composer-ai-field { background: var(--paper); border-color: var(--line); cursor: not-allowed; }
 .bo-composer-ai[data-off="true"] .bo-composer-ai-mark { color: var(--muted); }
 .bo-scheda-composer .bo-composer-ai-go { flex: none; min-height: 0; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--agent); color: var(--surface); font-size: 13px; font-weight: 650; cursor: pointer; }
