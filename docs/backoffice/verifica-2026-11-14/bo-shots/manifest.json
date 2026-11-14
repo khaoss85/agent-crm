@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-11-14T04:26:19.720Z",
+  "shots": [
+    {
+      "screen": "calendario",
+      "file": "/Users/danielepelleri/dev/_work/accordo-ws/agent-crm-134f3ed7/docs/backoffice/verifica-2026-11-14/bo-shots/calendario-1440x1800.png",
+      "width": 1440,
+      "height": 1800,
+      "bytes": 185955,
+      "viewport": "desktop"
+    },
+    {
+      "screen": "calendario",
+      "file": "/Users/danielepelleri/dev/_work/accordo-ws/agent-crm-134f3ed7/docs/backoffice/verifica-2026-11-14/bo-shots/calendario-390x1600.png",
+      "width": 390,
+      "height": 1600,
+      "bytes": 102253,
+      "viewport": "phone"
+    }
+  ]
+}

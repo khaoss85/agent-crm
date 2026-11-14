@@ -1208,6 +1208,13 @@ export function createCalendarioView(deps) {
    * still lands its outcome (review #781).
    */
   let viewToken = 0;
+  /**
+   * backlog:134f3ed7 — the next render() is a fresh entry (first paint or
+   * back from another route), so it drops any old panel. Plain re-renders
+   * (week reload, search answers, unsaved-work checks) keep the form, the
+   * search and the selection.
+   */
+  let entryFresh = true;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
   /**
@@ -1233,6 +1240,9 @@ export function createCalendarioView(deps) {
     renderToken += 1;
     viewToken += 1;
     phraseSeq += 1;
+    // backlog:134f3ed7 — leaving drops the panel on return: the next
+    // render() is a fresh entry, never a plain re-render.
+    entryFresh = true;
     // The search in flight is dropped with the route (review #664): the
     // card comes back idle, never wedged on «Sto cercando…».
     state.aiLoading = false;
@@ -4363,6 +4373,7 @@ export function createCalendarioView(deps) {
     state.customerError = null;
     state.customerPartial = false;
     state.selectedId = null;
+    state.manualTyped.clear();
     resetPopSteps();
     state.moveNote = '';
     const id = typeof appointment?.id === 'string' && appointment.id !== '' ? appointment.id : null;
@@ -5099,29 +5110,33 @@ export function createCalendarioView(deps) {
       servicesRead = null;
     }
     state.renderedSpace = space;
-    // backlog:134f3ed7 — every entry starts with no old panel: a form left
-    // open (or kept open after a booking) never survives leaving and
+    // backlog:134f3ed7 — a fresh entry starts with no old panel: a form
+    // left open (or kept open after a booking) never survives leaving and
     // returning. A fresh pick below reopens the form around the named
-    // customer; without one the form stays shut.
-    state.selection = null;
-    state.manualOpen = false;
-    state.manual = null;
-    state.draftFill = null;
-    state.draftWrote = null;
-    state.customerPick = null;
-    state.customerQuery = '';
-    state.customerItems = [];
-    state.customerError = null;
-    state.customerPartial = false;
-    state.bookingNote = '';
-    state.serviceError = '';
-    state.confirmed = null;
-    state.selectedId = null;
-    state.pendingEventId = null;
-    state.pendingEventMember = null;
-    resetPopSteps();
-    state.moveNote = '';
-    cancelCustomerSearch();
+    // customer; without one the form stays shut. Plain re-renders skip
+    // this, so a search in flight, a typed form and a selection survive.
+    if (entryFresh) {
+      entryFresh = false;
+      state.selection = null;
+      state.manualOpen = false;
+      state.manual = null;
+      state.draftFill = null;
+      state.draftWrote = null;
+      state.customerPick = null;
+      state.customerQuery = '';
+      state.customerItems = [];
+      state.customerError = null;
+      state.customerPartial = false;
+      state.bookingNote = '';
+      state.serviceError = '';
+      state.confirmed = null;
+      state.selectedId = null;
+      state.pendingEventId = null;
+      state.pendingEventMember = null;
+      resetPopSteps();
+      state.moveNote = '';
+      cancelCustomerSearch();
+    }
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
     // one-time pick the calendar takes here, once, on entry — read and
     // cleared, so a later visit starts unpicked. A fresh pick opens the
