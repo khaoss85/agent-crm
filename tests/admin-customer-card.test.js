@@ -729,8 +729,8 @@ test('voce 908f2eb9bbfb: with the profile in error the scheda keeps name, timeli
   assert.ok(text.includes('Le identità non si sono potute leggere. Riprova più tardi.'), 'the identities name the failure');
   assert.ok(text.includes('Offerta'), 'the offer section stays');
   assert.ok(text.includes("L'offerta non si è potuta leggere. Riprova più tardi."), 'the offer names the failure instead of hiding as none');
-  assert.ok(text.includes('Prossimi passi'), 'the next-steps section stays');
-  assert.ok(text.includes('I prossimi passi non si sono potuti leggere. Riprova più tardi.'), 'the next steps name the failure instead of hiding as none');
+  assert.ok(text.includes('Prossime azioni'), 'the recap azioni block stays');
+  assert.ok(text.includes('Le prossime azioni non si sono potute leggere. Riprova più tardi.'), 'the next actions name the failure instead of hiding as none');
   assert.ok(!text.includes('503'), 'no raw status on screen');
 });
 
@@ -2472,11 +2472,30 @@ test('2c1c0e149cf9: the scheda matches the prototype — action order, violet AI
   const heads = mount.findAll('h4').map((node) => node.textContent);
   assert.ok(!heads.includes('✦ Riepilogo AI'), 'no standalone summary card');
   assert.ok(!heads.includes('Chiamate'), 'no standalone calls card');
-  // Prossime azioni shares the server list with Prossimi passi; the
-  // agent-opened step carries the prototype «✦ suggeriti» mark.
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap's PROSSIME AZIONI
+  // is the only copy of the open tasks — no «Prossimi passi» card repeats
+  // it below. The agent-opened step carries the prototype «✦ suggeriti» mark.
   assert.ok(mount.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
-  assert.ok(mount.textContent.includes('Prossimi passi'), 'the Prossimi passi card stays');
+  assert.ok(!mount.textContent.includes('Prossimi passi'), 'no duplicate Prossimi passi card under the recap');
   assert.ok(mount.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
+});
+
+test('voce 2c1c0e149cf9 (design check 14/11): the «Vista per» tabs are history-chip pills on their own row, never big stacked buttons', async () => {
+  // bo:shots at 1440: the ui-btn base painted the vista tabs big and
+  // stacked in the 300px right column. The guard reads the override rule in
+  // styles.css, the same metrics as the cronologia pills.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const labelRules = [...css.matchAll(/\.bo-scheda-viste-label\s*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(labelRules.length > 0, 'the viste label rule exists in styles.css');
+  assert.ok(labelRules.some((body) => /flex\s*:\s*1\s+1\s+100%/.test(body)),
+    'the label takes its own row above the pills');
+  const tabRules = [...css.matchAll(/\.bo-scheda-viste\s+\.bo-scheda-vista\.ui-btn\s*\{([^}]*)\}/g)]
+    .map((match) => match[1]);
+  assert.ok(tabRules.length > 0, 'the vista pill override exists in styles.css');
+  const tabs = tabRules[tabRules.length - 1];
+  assert.ok(/height\s*:\s*30px/.test(tabs), 'the tabs are chip-high (30px)');
+  assert.ok(/border-radius\s*:\s*99px/.test(tabs), 'the tabs are pills');
+  assert.ok(/font-size\s*:\s*12\.5px/.test(tabs), 'the tabs read at chip size');
 });
 
 test('review #654: a contact without Azienda picks its own placeholder id under the person name, never «Senza azienda»', async () => {
@@ -5088,17 +5107,17 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   const check = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'complete-step');
   assert.ok(check, 'the open step carries the circular check');
   assert.equal(check.getAttribute('aria-label'), 'Segna come fatto: Richiamare per la prova');
-  // Voce 2c1c0e149cf9: the recap PROSSIME AZIONI and «Prossimi passi» share
-  // the same server list — the open step carries its check in both.
-  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 2,
-    'a done task carries no check, the open one in both sections');
+  // Voce 2c1c0e149cf9 (design check 14/11): the recap PROSSIME AZIONI is
+  // the only copy — the open step carries its check once.
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step').length, 1,
+    'a done task carries no check, the open one once in the recap');
   check.dispatch('click');
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
   // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
-  // copy — with no open step left the empty card hides like the prototype.
-  assert.ok(!mount.textContent.includes('Prossimi passi'), 'with no open step the card hides');
+  // copy — with no open step left the empty azioni block hides like the prototype.
+  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
   assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
     'no check without an open step');
 });
@@ -5795,7 +5814,7 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', 'Prossimi passi', 'Offerta', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
@@ -5830,13 +5849,14 @@ test('backlog:1a96094db71d: each section fills as its own read lands, the slow o
   await land('/api/customer-hub/timeline/');
   assert.ok(mount.textContent.includes(CARD.name), 'the header shows the customer');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Tutti i contatti')), 'the cronologia paints with the name, without the profile');
-  assert.ok(isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'the profile sections keep their skeleton');
+  assert.ok(isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap keeps its skeleton while calls and profile are out');
   assert.ok(isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli waits for the profile');
   assert.equal(mount.firstChild.getAttribute('aria-busy'), 'true', 'still busy while reads are out');
 
-  // The profile lands: its sections fill.
+  // The profile and the calls land: their sections fill.
   await land('/api/customer-data/profile/');
-  assert.ok(!isSkeleton(sectionTitled(mount, 'Prossimi passi')), 'Prossimi passi fills from the profile');
+  await land('/api/call-intelligence/calls/');
+  assert.ok(!isSkeleton(sectionTitled(mount, '✦ Recap')), 'the recap fills once calls, timeline and profile land');
   assert.ok(!isSkeleton(sectionTitled(mount, 'Dettagli')), 'Dettagli fills from card and profile');
 
   await drain();

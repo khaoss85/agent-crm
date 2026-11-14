@@ -4183,9 +4183,9 @@ export function createCustomerCardView(deps) {
     }
   }
 
-  // Voce 2c1c0e149cf9: the still-open work tasks, shared by «Prossimi passi»
-  // and the recap panel's PROSSIME AZIONI — the same server list, never an
-  // optimistic copy. Null when the package is not composed.
+  // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
+  // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
+  // when the package is not composed.
   const openTasksOf = (profile) => {
     if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
@@ -4246,24 +4246,6 @@ export function createCustomerCardView(deps) {
     if (mark) words.appendChild(mark);
     row.appendChild(words);
     return row;
-  }
-
-  function nextSteps(box, profile, profileError = null, stepCtx = null) {
-    // Voce 908f2eb9bbfb, review round 2: a failed profile read fails this
-    // section too, instead of vanishing as "no next steps".
-    if (profileError) {
-      box.appendChild(el('h4', undefined, 'Prossimi passi'));
-      readError(box, profileError, 'I prossimi passi non si sono potuti leggere. Riprova più tardi.');
-      return true;
-    }
-    // Voce 1a066ddfe42a: an uncomposed work package hides the whole block
-    // instead of printing its English reason. Voce 2c1c0e149cf9: an empty
-    // card hides too — the prototype shows no empty «Prossimi passi».
-    const tasks = openTasksOf(profile);
-    if (tasks === null || tasks.length === 0) return false;
-    box.appendChild(el('h4', undefined, 'Prossimi passi'));
-    for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
-    return true;
   }
 
   function offer(box, profile, offerCtx, profileError = null, pipelines = []) {
@@ -4923,7 +4905,7 @@ export function createCustomerCardView(deps) {
    * Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — it takes
    * the place of the «✦ Riepilogo AI» and «Chiamate» cards. «Vista per» tabs
    * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
-   * AZIONI lists the same open server tasks as «Prossimi passi». A failed
+   * AZIONI lists the open server tasks, the only copy on the scheda. A failed
    * read fails its vista (or the azioni block) like the card it replaces,
    * never vanishing as empty. DECISION (to be confirmed): the panel always
    * paints with honest vista states; only an empty azioni list hides its own
@@ -5851,8 +5833,9 @@ export function createCustomerCardView(deps) {
         stepCtx: { resource, id },
       });
     }
-    if (waits('profile')) skeleton(right, '', 'Prossimi passi');
-    else section(right, '', nextSteps, profile, profileError, { resource, id });
+    // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
+    // card — the prototype holds those rows once, as the recap's PROSSIME
+    // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
