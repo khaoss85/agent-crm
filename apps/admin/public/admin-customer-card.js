@@ -2068,7 +2068,7 @@ export function createCustomerCardView(deps) {
    * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
-  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline, connectorLink }) {
     const row = el('div', 'bo-composer-ai');
     // The composer generation this row was built in: Scrivi again, ✕ or Esc
     // supersede it (openComposer bumps the counter on every opening).
@@ -2166,7 +2166,11 @@ export function createCustomerCardView(deps) {
       } else if (status === 404 || status === 405) {
         line.appendChild(el('span', undefined, `La scrittura con l’AI non è ancora disponibile qui${hand}.`));
       }
-      if (!canWrite) {
+      if (!canWrite && connectorLink === true) {
+        // backlog:88ab568cdcba: a single Collega per composer — the off line
+        // above already links Connettori.
+        line.appendChild(el('span', undefined, ' · Manca anche un canale collegato.'));
+      } else if (!canWrite) {
         line.appendChild(el('span', undefined, ' · Manca anche un canale collegato: '));
         line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
       }
@@ -2185,10 +2189,11 @@ export function createCustomerCardView(deps) {
       prompt.setAttribute('tabindex', '-1');
       prompt.setAttribute('aria-describedby', line.getAttribute('id'));
       prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
-      // Focus inside the request field (an off state that lands while the
-      // person is in it) moves to the message field, where words go now.
-      const active = doc?.activeElement ?? null;
-      if (active === prompt && typeof text.focus === 'function') text.focus({ preventScroll: true });
+      // backlog:88ab568cdcba: no unexplained cursor jump — an off state
+      // landing while the person is in the request leaves the focus where
+      // the person put it (words stay selectable); the reason line says
+      // where to write instead. Only an explicit press on the empty off
+      // row moves to the message field (see the mousedown below).
       offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
       paintOff();
     };
@@ -2244,8 +2249,14 @@ export function createCustomerCardView(deps) {
     // No channel to write on: the one way forward is Connettori. Genera is
     // off with this reason beside it from the opening (backlog:f48593bb06d4):
     // the draft is written for one channel, and Invia has none either.
+    // backlog:88ab568cdcba: the composer carries a single Collega — when the
+    // off line above already links Connettori this line names it in words.
     const sayConnect = () => {
       say('');
+      if (connectorLink === true) {
+        line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato.'));
+        return;
+      }
       line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato · '));
       line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     };
@@ -2645,8 +2656,11 @@ export function createCustomerCardView(deps) {
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
+    // backlog:88ab568cdcba: the off line above is the composer's single
+    // Collega when it links Connettori — the AI row then names it in words.
     const ai = composerAiRow({
       spaceId, navCtx, text,
+      connectorLink: Boolean(offLine.firstChild),
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
       restoreSubject: (value) => {
@@ -2668,6 +2682,12 @@ export function createCustomerCardView(deps) {
     if (selected !== null) select(selected);
     else {
       send.setAttribute('disabled', 'disabled');
+      // backlog:88ab568cdcba: with nothing to send on the reason sits
+      // beside the switched-off Invia; the way to Connettori stays the one
+      // single link in the off line above, never one per channel.
+      channelHint.textContent = spaceUnlinked
+        ? 'Serve un canale collegato per inviare'
+        : 'Nessun canale collegato per questo cliente';
       // backlog:bd9ae1482194: the space has no channel at all, or only
       // channels this customer cannot be reached on.
       toLine.textContent = spaceUnlinked ? 'Nessun canale collegato' : 'Nessun canale collegato per questo cliente';
@@ -4578,7 +4598,9 @@ export function createCustomerCardView(deps) {
             historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               (loaded) => withOfferStage(loaded, stageMenu.id, 'pipeline', voice.key));
-            toast(`Spostata in ${voice.label}.`);
+            // backlog:26afd13657c5: the board's words (upperFirst), like the
+            // offer page — never the raw lowercase core voice.
+            toast(`Spostata in ${upperFirst(voice.label)}.`);
             await refreshed;
           } else {
             const result = await client.request(
@@ -4635,7 +4657,11 @@ export function createCustomerCardView(deps) {
         confirmPanel.box.setAttribute('class', 'card-confirm hidden');
       });
       for (const voiceDef of stageMenu.voices) {
-        const voice = el('button', undefined, voiceDef.label);
+        // backlog:26afd13657c5: the voices read the board's labels — the
+        // state pill above and the board columns upper-case them, and so
+        // does the offer page; the menu never shows the raw lowercase core
+        // voice («proposta») beside a «Proposta» pill.
+        const voice = el('button', undefined, upperFirst(voiceDef.label) ?? voiceDef.key);
         voice.setAttribute('type', 'button');
         voice.setAttribute('role', 'menuitem');
         voice.setAttribute('data-stage', voiceDef.key);
@@ -4780,7 +4806,7 @@ export function createCustomerCardView(deps) {
     });
   };
   /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
-  function appointmentBody(box, next, serviceNames = null) {
+  function appointmentBody(box, next, serviceNames = null, customerName = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
     // the slot reads as a plain Italian date — no ISO instants, no member id.
     const start = dateTimeParts(next?.startsAt);
@@ -4823,7 +4849,7 @@ export function createCustomerCardView(deps) {
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) return false;
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
-    appointmentBody(box, upcoming[0], serviceNames);
+    appointmentBody(box, upcoming[0], serviceNames, customerName);
     return true;
   }
 
@@ -5096,7 +5122,7 @@ export function createCustomerCardView(deps) {
    * panel would drop the failure contract.
    */
   function recapPanel(box, parts) {
-    const { card, calls, callsError, timeline, timelineError, profile, profileError, stepCtx } = parts;
+    const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, stepCtx } = parts;
     const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : null;
     box.appendChild(el('h4', undefined, name ? `✦ Recap per ${name}` : '✦ Recap'));
     const vistas = el('p', 'bo-scheda-viste');
@@ -6063,6 +6089,8 @@ export function createCustomerCardView(deps) {
     } else {
       section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
         card, calls, callsError, timeline, timelineError, profile, profileError,
+        // backlog:26afd13657c5: the listino for the Appuntamenti vista.
+        serviceNames,
         stepCtx: { resource, id },
       });
     }

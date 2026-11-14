@@ -131,6 +131,7 @@ test('the five quick views render as tabs, with Tutti active first', async () =>
   assert.deepEqual(tabs.map((node) => node.textContent),
     ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
+  void active;
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
   assert.ok(mount.textContent.includes('Anna Bianchi'));
@@ -1043,6 +1044,32 @@ test('754918ad8da7: after Azzera the chips and rows stay until the new page arri
   await flush();
   assert.ok(!chipsRow().textContent.includes('WhatsApp'), 'the chip goes with the new page');
   assert.equal(body.getAttribute('aria-busy'), null);
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
+test('backlog:88ab568cdcba: while a search reads, the list names the wait under the bar', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  gated = true;
+  input.value = 'marco';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  // Rows and focus stay; the status line under the bar names the wait.
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while the search reads');
+  assert.equal(mount.findAll('input')[0], input, 'the field keeps focus and caret');
+  assert.ok(mount.textContent.includes('Ricerca in corso'), 'the wait reads while the search is in flight');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no loading line above the bar');
+  release();
+  await flush();
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'the wait goes with the new page');
   assert.ok(mount.textContent.includes('Marco Rossi'));
 });
 
