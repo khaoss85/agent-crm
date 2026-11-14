@@ -3778,7 +3778,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null, servicesReady = true) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3790,11 +3790,15 @@ export function createCustomerCardView(deps) {
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
       && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
+    // backlog:26afd13657c5: the appointment rows wait for the listino —
+    // while the services read is still in flight the cronologia paints
+    // without them, so no row ever flashes the slug words first; they
+    // join on the repaint the listino read triggers.
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
-      ...bookedAppointmentEntries(timeline, serviceNames),
-      ...cancelledAppointmentEntries(timeline, serviceNames),
+      ...(servicesReady ? bookedAppointmentEntries(timeline, serviceNames) : []),
+      ...(servicesReady ? cancelledAppointmentEntries(timeline, serviceNames) : []),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
@@ -5087,7 +5091,7 @@ export function createCustomerCardView(deps) {
 
   /** The Appuntamenti vista body: the next booking that can still happen. */
   // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
-  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
+  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null, servicesReady = true) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // vista too, instead of vanishing as "none booked".
     if (timelineError) {
@@ -5101,9 +5105,14 @@ export function createCustomerCardView(deps) {
     }
     // backlog:26afd13657c5: the listino names the service here too — like
     // the cronologia «Appuntamento fissato» row and «Prossimo appuntamento»,
-    // never slug words once the listino has landed. The row paints at once
-    // (slug words while the listino loads) and the listino repaint upgrades
-    // it. backlog:c51dca86dc66: with a contact name the title matches Oggi.
+    // never slug words once the listino has landed. While the listino
+    // loads the vista holds grey bars; the listino repaint paints the row.
+    // backlog:c51dca86dc66: with a contact name the title matches Oggi.
+    if (!servicesReady) {
+      box.appendChild(uiSkeleton(doc, { width: '62%', block: true }));
+      box.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+      return;
+    }
     appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
       box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
@@ -5122,7 +5131,7 @@ export function createCustomerCardView(deps) {
    * panel would drop the failure contract.
    */
   function recapPanel(box, parts) {
-    const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, stepCtx } = parts;
+    const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
     const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : null;
     box.appendChild(el('h4', undefined, name ? `✦ Recap per ${name}` : '✦ Recap'));
     const vistas = el('p', 'bo-scheda-viste');
@@ -5133,7 +5142,7 @@ export function createCustomerCardView(deps) {
       messaggi: (target) => messageVistaBody(target, timeline, timelineError),
       // backlog:26afd13657c5: the listino names the service under the vista title.
       // backlog:c51dca86dc66: the contact's name, so the title matches Oggi.
-      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError, serviceNames, name),
+      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError, serviceNames, name, servicesReady),
     };
     const order = [['chiamate', 'Chiamate'], ['messaggi', 'Messaggi'], ['appuntamenti', 'Appuntamenti']];
     let current = 'chiamate';
@@ -6006,6 +6015,11 @@ export function createCustomerCardView(deps) {
     // backlog:1a96094db71d: a part still in flight paints its section as a
     // skeleton (the same card, its title, grey bars), never an empty claim.
     const waits = (...parts) => pending !== null && parts.some((part) => pending.has(part));
+    // backlog:26afd13657c5: the appointment rows wait for the listino — a
+    // row never flashes the slug words while the services read is still in
+    // flight. A settled read paints at once, even failed or 404 (slug
+    // words then, like the screen the scheda replaces).
+    const servicesReady = !waits('services');
     if (waits('card')) {
       const head = el('div', 'bo-scheda-head');
       head.setAttribute('data-loading', 'true');
@@ -6079,7 +6093,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames);
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames, servicesReady);
     }
     // Voce 2c1c0e149cf9: the prototype's violet panel takes the place of the
     // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
@@ -6091,6 +6105,7 @@ export function createCustomerCardView(deps) {
         card, calls, callsError, timeline, timelineError, profile, profileError,
         // backlog:26afd13657c5: the listino for the Appuntamenti vista.
         serviceNames,
+        servicesReady,
         stepCtx: { resource, id },
       });
     }
@@ -6099,7 +6114,10 @@ export function createCustomerCardView(deps) {
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
-    if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    // backlog:26afd13657c5: like the cronologia rows, the card waits for the
+    // listino — a grey skeleton while the services read is in flight, never
+    // the slug words first.
+    if (waits('timeline') || !servicesReady) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
     // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
     else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
     grid.appendChild(left);

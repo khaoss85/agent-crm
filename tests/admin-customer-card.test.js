@@ -727,6 +727,95 @@ test('26afd13657c5: without the listino the Appuntamenti vista still reads slug 
   assert.ok(recap.textContent.includes('Pt single'), `the vista falls back to slug words: ${recap.textContent}`);
 });
 
+// backlog:26afd13657c5 (repro del NON PASSA 14/11, verifica Mac 06:5xZ: la
+// riga «Appuntamento fissato» mostrava ~0,8 s il nome breve del servizio e
+// poi il listino). Finché il listino è in volo la cronologia dipinge senza
+// la riga e «Prossimo appuntamento» resta scheletro; all'arrivo del listino
+// la riga nasce già col nome giusto. Mai le parole slug prima del listino.
+test('26afd13657c5: the appointment row waits for the listino, never slug words first', async () => {
+  const gates = new Map();
+  const hold = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const booked = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'b9', status: 'booked', startsAt: '2099-10-23T16:00:00.000Z', endsAt: '2099-10-23T17:00:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const noOffers = {
+    ...PROFILE,
+    opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+  };
+  const client = {
+    requested: [],
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if ((options?.method ?? 'GET') !== 'GET') return {};
+      this.requested.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return hold('timeline').promise;
+      if (path.startsWith('/api/customer-data/profile/')) return noOffers;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      if (path.startsWith('/api/customer-data/fields')) return path.includes('/values') ? { values: [] } : { definitions: [] };
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path === '/api/spine/context') return { actor: { id: 'u-me' } };
+      if (path === '/api/appointments/services') return hold('services').promise;
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const shown = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  await flush();
+  gates.get('timeline').release.resolve(booked);
+  await flush();
+  // The cronologia paints from the timeline alone — but without the
+  // appointment row while the listino is still in flight.
+  assert.ok(mount.textContent.includes('vorrei prenotare una prova'), 'the timeline paints without the listino');
+  const bookedRows = () => mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(bookedRows().length, 0, 'no appointment row before the listino lands');
+  assert.ok(!mount.textContent.includes('Lezione prova'), 'never the slug words before the listino');
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'), 'the fixed row waits for the listino too');
+  assert.equal(mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title')).length, 0,
+    'no next-appointment title before the listino lands');
+  // The Appuntamenti vista holds grey bars while the listino loads.
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  await flush();
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('Lezione prova'), 'the vista never flashes slug words either');
+  // The listino lands: the row is born with the right name, nothing flashes.
+  gates.get('services').release.resolve({ services: [{ serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' }] });
+  await shown;
+  await flush();
+  assert.equal(bookedRows().length, 1, 'one cronologia row per confirmed booking');
+  assert.ok(bookedRows()[0].textContent.includes('Appuntamento fissato · Lezione di prova ·'),
+    `the row reads the listino name: ${bookedRows()[0].textContent}`);
+  assert.ok(!mount.textContent.includes('Lezione prova'), 'no slug words once the listino has landed');
+  const titles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title'));
+  assert.ok(titles.some((node) => node.textContent.includes('Lezione di prova')), 'the next appointment names the listino too');
+});
+
 test('the channel filter narrows the timeline to one channel', async () => {
   const client = stubClient();
   const doc = createFakeDocument();
