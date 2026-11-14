@@ -617,6 +617,51 @@ test('channel weeks open the period month on the Monday of the week with the 1st
   );
 });
 
+test('776cf3469e64: nel mese in corso le settimane del grafico finiscono a oggi', () => {
+  // Sabato 14 novembre 2026: niente settimana futura 16–22 nov in coda.
+  assert.deepEqual(
+    channelWeeksOf('2026-11', '2026-11-14T10:00:00.000Z').map((slot) => slot.week),
+    ['2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09'],
+  );
+  // A inizio mese la quarta è la settimana di oggi, a fine mese anche.
+  assert.deepEqual(
+    channelWeeksOf('2026-11', '2026-11-02T10:00:00.000Z').map((slot) => slot.week),
+    ['2026-10-12', '2026-10-19', '2026-10-26', '2026-11-02'],
+  );
+  assert.deepEqual(
+    channelWeeksOf('2026-11', '2026-11-30T10:00:00.000Z').map((slot) => slot.week),
+    ['2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'],
+  );
+  // Un mese passato tiene le settimane di apertura, anche con oggi fissato.
+  assert.deepEqual(
+    channelWeeksOf('2026-10', '2026-11-14T10:00:00.000Z').map((slot) => slot.week),
+    ['2026-09-28', '2026-10-05', '2026-10-12', '2026-10-19'],
+  );
+  // Senza oggi, o con un oggi illeggibile: le settimane di apertura, come prima.
+  assert.deepEqual(
+    channelWeeksOf('2026-11').map((slot) => slot.week),
+    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16'],
+  );
+  assert.deepEqual(
+    channelWeeksOf('2026-11', 'non-una-data').map((slot) => slot.week),
+    ['2026-10-26', '2026-11-02', '2026-11-09', '2026-11-16'],
+  );
+});
+
+test('776cf3469e64: la ripartizione conta solo le settimane fino a oggi nel mese in corso', () => {
+  const breakdown = buildChannelBreakdown(
+    [
+      { system: 'instagram', week: '2026-11-16', count: 5 },
+      { system: 'whatsapp', week: '2026-11-09', count: 3 },
+    ],
+    { period: '2026-11' },
+    '2026-11-14T10:00:00.000Z',
+  );
+  assert.deepEqual(breakdown.weeks.map((slot) => slot.week), ['2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09']);
+  assert.equal(breakdown.total, 3, 'la settimana futura non si conta');
+  assert.deepEqual(breakdown.channels.map((entry) => entry.channel), ['whatsapp']);
+});
+
 test('channel week labels pin UTC so a western timezone keeps the Monday', () => {
   assert.equal(channelWeekLabel('2026-09-28'), '28 set');
   assert.equal(channelWeekLabel('2026-10-05'), '5 ott');

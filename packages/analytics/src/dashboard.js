@@ -251,18 +251,40 @@ export function channelWeekLabel(week) {
     .format(date).replace(/\./g, '');
 }
 
+/** A YYYY-MM-DD day, or null when `nowIso` names no usable instant. @param {unknown} nowIso */
+function channelTodayIso(nowIso) {
+  const instant = nowIso === undefined || nowIso === null ? Date.now() : Date.parse(String(nowIso));
+  if (!Number.isFinite(instant)) return null;
+  return new Date(instant).toISOString().slice(0, 10);
+}
+
 /**
  * The four Monday-start weeks opening a YYYY-MM period: the Monday of the
  * week containing the 1st, plus three. For 2026-10 that is 28 set, 5, 12
  * and 19 ott — the prototype's axis.
+ *
+ * backlog:776cf3469e64 — in the running month the bars end at today: the
+ * fourth week is the one holding today, never a future week the first
+ * contacts cannot have filled yet. Any other period keeps the four weeks
+ * opening the month. `nowIso` pins today (tests, the dashboard stamp);
+ * without it the opening weeks stay, and an unreadable value keeps them.
  * @param {string} period YYYY-MM
+ * @param {unknown} [nowIso] today as an ISO instant
  * @returns {Array<{week: string, label: string}>}
  */
-export function channelWeeksOf(period) {
+export function channelWeeksOf(period, nowIso = null) {
   const first = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1));
   const monday = new Date(first.getTime() - (((first.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
+  let last = new Date(monday.getTime() + (DASHBOARD_CHANNEL_WEEKS - 1) * 7 * 24 * 60 * 60 * 1000);
+  if (nowIso !== undefined && nowIso !== null && nowIso !== '') {
+    const today = channelTodayIso(nowIso);
+    if (today !== null && period === today.slice(0, 7)) {
+      const day = new Date(`${today}T00:00:00.000Z`);
+      last = new Date(day.getTime() - (((day.getUTCDay() + 6) % 7) * 24 * 60 * 60 * 1000));
+    }
+  }
   return Array.from({ length: DASHBOARD_CHANNEL_WEEKS }, (_, index) => {
-    const start = new Date(monday.getTime() + index * 7 * 24 * 60 * 60 * 1000);
+    const start = new Date(last.getTime() - (DASHBOARD_CHANNEL_WEEKS - 1 - index) * 7 * 24 * 60 * 60 * 1000);
     const week = start.toISOString().slice(0, 10);
     return Object.freeze({ week, label: channelWeekLabel(week) });
   });
@@ -276,9 +298,10 @@ export function channelWeeksOf(period) {
  * can say so honestly instead of silently dropping them.
  * @param {Array<{system: string, week: string | null, count: number}>} origins
  * @param {{period: string}} query
+ * @param {unknown} [nowIso] today as an ISO instant (the dashboard stamp)
  */
-export function buildChannelBreakdown(origins, query) {
-  const weeks = channelWeeksOf(query.period);
+export function buildChannelBreakdown(origins, query, nowIso = null) {
+  const weeks = channelWeeksOf(query.period, nowIso);
   const inWindow = new Set(weeks.map((entry) => entry.week));
   /** @type {Map<string, {channel: string, weeks: number[], total: number}>} */
   const byChannel = new Map();
@@ -694,7 +717,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     }
   }
 
-  const channels = buildChannelBreakdown(channelOrigins, query);
+  const channels = buildChannelBreakdown(channelOrigins, query, nowIso ?? new Date().toISOString());
   const csv = buildDashboardCsv({ kpis, funnel, team, forecast, query });
 
   return Object.freeze({
