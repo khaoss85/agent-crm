@@ -7,6 +7,7 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_SPACE_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
@@ -428,6 +429,44 @@ test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder('stato-sync'), 'Chiedi: «c’è qualcosa che non si è sincronizzato?»');
   assert.equal(aiPlaceholder('unknown-screen'), AI_ENTRY_FALLBACK);
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
+});
+
+// backlog 3136d15da7bd: with the space AI off the bar says so instead of
+// inviting a question the AI would not answer.
+test('AI entry placeholder names the off space AI on every screen', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('calendario', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('agenti', 'Mano', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /spenta/);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /Spazi e accessi/);
+});
+
+test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', () => {
+  const { view, topbar } = renderShell();
+  const input = () => topbar.findAll('input')[0];
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+  view.update({ aiSpaceOff: true });
+  assert.equal(input().getAttribute('placeholder'), AI_SPACE_OFF_PLACEHOLDER);
+  assert.ok(!/Chiedi: «cosa/.test(input().getAttribute('placeholder')), 'no inviting question while off');
+  view.update({ aiSpaceOff: false });
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+});
+
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
 });
 
 test('settings tabs list the four areas with the open one underlined', () => {

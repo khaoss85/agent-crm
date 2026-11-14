@@ -118,13 +118,23 @@ const AI_PLACEHOLDERS = Object.freeze({
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
+ * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
+ * inviting a question would promise an AI that stays silent. The bar keeps
+ * working (search never needed the AI), only its words change.
+ */
+export const AI_SPACE_OFF_PLACEHOLDER = 'AI dello spazio spenta: la riaccendi in Spazi e accessi';
+
+/**
  * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
  * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
  * always reaches somebody; otherwise a neutral line.
  * @param {string} screenId
  * @param {string} [agentName]
+ * @param {boolean} [spaceAiOff] backlog 3136d15da7bd: with the space AI off
+ *   the bar says so instead of inviting a question.
  */
-export function aiPlaceholder(screenId, agentName = '') {
+export function aiPlaceholder(screenId, agentName = '', spaceAiOff = false) {
+  if (spaceAiOff === true) return AI_SPACE_OFF_PLACEHOLDER;
   if (typeof screenId !== 'string') return AI_ENTRY_FALLBACK;
   if (screenId === 'agenti' && typeof agentName === 'string' && agentName.trim() !== '') {
     return agentMentionPlaceholder([{ name: agentName.trim() }]);
@@ -611,6 +621,9 @@ export function createShellView({
     // Backlog 7d169a3b1dd2: first named team agent, told by the Agenti
     // screen once its read lands — the bar placeholder names the team.
     aiAgentName: '',
+    // Backlog 3136d15da7bd: the space AI master, told by app.js (the shell
+    // does its own reads never). True paints the off words in the bar.
+    aiSpaceOff: false,
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -976,8 +989,14 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName));
-    aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
+    // backlog 3136d15da7bd: with the space AI off the placeholder says so
+    // instead of inviting a question the AI would not answer.
+    const aiOff = state.aiSpaceOff === true;
+    const aiWords = aiOff
+      ? AI_SPACE_OFF_PLACEHOLDER
+      : aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName);
+    aiInput.setAttribute('placeholder', aiWords);
+    aiInput.setAttribute('title', aiOff ? AI_SPACE_OFF_PLACEHOLDER : 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
     form.appendChild(hint);
@@ -1072,13 +1091,15 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, aiSpaceOff, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
       if (typeof aiAgentName === 'string') state.aiAgentName = aiAgentName;
+      // backlog 3136d15da7bd: the space AI master state, pushed by app.js.
+      if (typeof aiSpaceOff === 'boolean') state.aiSpaceOff = aiSpaceOff;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
