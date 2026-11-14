@@ -328,12 +328,19 @@ export function createOfferDetail(deps) {
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
     // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
+    // The skeleton mirrors the real paint: once the offer is read and its
+    // close date is known to be missing, the row is skipped instead of a
+    // grey bar that would vanish on paint. With no record yet (first paint)
+    // the date is still unknown, so the row keeps its bar.
     const known = record === null ? {} : {
       'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+    const labels = ['Referente', 'Stato'];
+    if (record === null || close !== null) labels.push('Chiusura prevista');
+    labels.push('Creata da', 'Creata il', 'Ultima modifica');
+    for (const label of labels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));

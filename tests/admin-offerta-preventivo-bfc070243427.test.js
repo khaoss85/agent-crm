@@ -77,3 +77,45 @@ test('bfc070243427: the two top quote links are separated by the stylesheet', ()
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(css.includes('.quote-back + .quote-offer-link'), 'an adjacent-sibling gap keeps «← cliente» and «Apri l’offerta» apart');
 });
+
+test('bfc070243427: the skeleton with a dateless offer skips «Chiusura prevista» instead of a vanishing bar', async () => {
+  const record = {
+    id: 'off1',
+    name: 'Cucina per Giulia',
+    contactName: 'Giulia Verdi',
+    companyName: null,
+    pipelineKey: 'b2b-sales',
+    pipelineStage: 'discovery',
+    valueCents: 2750000,
+    currency: 'EUR',
+    expectedCloseDate: null,
+    createdAt: '2026-10-02T09:15:00.000Z',
+    updatedAt: '2026-10-28T18:40:00.000Z',
+    owner: 'maria',
+  };
+  const held = [];
+  let releaseHeld = () => {};
+  const gate = new Promise((resolve) => { releaseHeld = resolve; });
+  const base = stubClient(record);
+  const client = {
+    request(path, options = {}) {
+      if (path === '/api/schema' || path === '/api/spine/memberships' || path.startsWith('/api/modules/price-book/records')) {
+        held.push(path);
+        return gate.then(() => base.request(path, options));
+      }
+      return base.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll(12);
+  const skeleton = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.ok(skeleton, 'the second skeleton (offer read, rest in flight) is on screen');
+  assert.ok(mount.textContent.includes('Cucina per Giulia'), 'the headline is already read');
+  assert.ok(!mount.textContent.includes('Chiusura prevista'), 'no close-date row while the date is known to be missing');
+  releaseHeld();
+  await done;
+  await flushAll();
+  assert.ok(!mount.textContent.includes('Chiusura prevista'), 'the final paint has no close-date row either');
+});
