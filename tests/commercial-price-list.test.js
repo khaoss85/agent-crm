@@ -1070,8 +1070,8 @@ test('no parallel catalog: the listino reuses product, price-book and offer', ()
   assert.deepEqual([...COMMERCIAL_RESOURCES].sort(), [
     'catalog-sync-run', 'offer', 'package-credit', 'price-book', 'price-component', 'price-tier',
     'product', 'product-import', 'product-import-row', 'product-version', 'quote', 'quote-approval',
-    'quote-line', 'quote-term', 'quote-version', 'quote-version-component', 'quote-version-line',
-    'quote-version-term', 'quote-version-total',
+    'quote-line', 'quote-share', 'quote-term', 'quote-version', 'quote-version-component',
+    'quote-version-line', 'quote-version-term', 'quote-version-total',
   ].sort(), 'no new commercial resource may arrive with the listino');
   const modulesDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'packages', 'commercial', 'modules');
   const manifests = readdirSync(modulesDir).filter((entry) => entry.endsWith('.module.json'));
