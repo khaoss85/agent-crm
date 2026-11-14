@@ -571,7 +571,9 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — the booked panel closes instead of reading «Prenotato».
+  assert.ok(!mount.textContent.includes('Prenotato:'), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the form closes');
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
