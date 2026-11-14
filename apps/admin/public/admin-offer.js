@@ -13,7 +13,7 @@
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
 import { centsToField, euroToCents } from './admin-offer-panel.js';
-import { auditActorLabel, isBoardPlacement, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { isBoardPlacement, offerActorLabel, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -108,12 +108,8 @@ const AUDIT_LIMIT = 100;
  * referente, the contact or the company the deal stores).
  */
 function actorLabel(entry, record, people = []) {
-  // A team member reads their profile name (famiglia F5): the roster first,
-  // then the deal's own display values — never a slug like «coach-guido».
-  const owner = personLabel(record?.owner, people);
-  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
-  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
-  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+  // One rule with the scheda cronologia (backlog:6c40dcfaeb3f).
+  return offerActorLabel(entry, record, people);
 }
 
 /**

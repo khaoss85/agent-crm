@@ -672,6 +672,22 @@ export function auditActorLabel(entry, known = [], roster = []) {
   return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
 }
 
+/**
+ * Who an offer's audit entry names (its creation, a stage move): the
+ * offer's owner reads their profile name when they are the actor, anyone
+ * else through auditActorLabel. One rule for the offer page («Creata da»)
+ * and the scheda cronologia («Offerta creata · da …», backlog:6c40dcfaeb3f).
+ * @param {any} entry the audit entry @param {any} record the offer @param {unknown} [people] the roster
+ */
+export function offerActorLabel(entry, record, people = []) {
+  // A team member reads their profile name (famiglia F5): the roster first,
+  // then the deal's own display values — never a slug like «coach-guido».
+  const owner = personLabel(record?.owner, people);
+  const actor = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
+  if (entry?.actorType !== 'system' && owner !== null && actor !== '' && actor === record?.owner) return owner;
+  return auditActorLabel(entry, [owner, record?.contactName, record?.companyName], people);
+}
+
 // ---------------------------------------------------------------------------
 // Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
 // screen names in Italian, from one place. Every view that writes money, a
