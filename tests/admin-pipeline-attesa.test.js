@@ -145,6 +145,25 @@ test('fd0adcded1c3: a board read still running after 3 s says so in words, like 
   assert.ok(!mount.textContent.includes('il caricamento è lento'), 'and the slow words go with the skeleton');
 });
 
+test('85630aa14a4f: a slow move keeps saying the wait while it flags the slowness', async () => {
+  let slow = () => {};
+  const { mount, client } = await board([record('a', 'discovery')], {
+    wait: (ms) => (ms === MOVE_SLOW_MS ? new Promise((resolve) => { slow = resolve; }) : new Promise(() => {})),
+  });
+  drop(mount, 'a', 'demo');
+  await tick();
+  assert.equal(client.posts.length, 1, 'the write is still running');
+  const status = cardOf(mount, 'a').findAll('small').find((node) => node.getAttribute('role') === 'status');
+  assert.ok(status.textContent.includes('Spostamento in corso…'), 'the wait is said at once');
+  slow();
+  await tick();
+  assert.ok(status.textContent.includes('Spostamento in corso…'), 'and still said after 3 s');
+  assert.ok(status.textContent.includes('Ancora un momento: il salvataggio è lento.'), 'with the slow note beside it');
+  client.posts[0].answer();
+  await tick(8);
+  assert.ok(!mount.textContent.includes('Spostamento in corso'), 'the wait leaves with the answer');
+});
+
 test('fd0adcded1c3: a fast read never shows the slow words, even when its 3 s timer fires later', async () => {
   let slow = () => {};
   const { mount } = await board([record('a', 'discovery')], {

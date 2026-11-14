@@ -19,6 +19,8 @@ import {
   agentRunKey,
   assertRunTransition,
   checkAgentInput,
+  checkAgentStatusInput,
+  checkAgentUpdateInput,
   checkAssignmentInput,
   checkCostCents,
   checkExecuteResult,
@@ -421,6 +423,72 @@ export function createAgentOperations(options = {}) {
       sourceAction: 'create-agent',
     }, actor);
     return { duplicate: made.duplicate, agent: made.row };
+  }
+
+  /**
+   * Update one hand-written agent's own fields (backlog:7d169a3b1dd2):
+   * name, role, instructions, monthly cap. Space-scoped like every other
+   * agent write — an agent of another space is unknown here, never
+   * touched. A renamed agent still keeps its @name unique in the space,
+   * excluding itself; the name check and the write hold the same per-space
+   * chain as create-agent, so a concurrent create cannot take the name
+   * between the check and the write. The row keeps its provenance
+   * (decidedAt, human actor, source action).
+   */
+  async function updateAgent(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireHumanActor(requireAgentActor(record.actor, 'Updating an agent'), 'Updating an agent');
+    const input = checkAgentUpdateInput(record);
+    const at = now();
+    return withAgentCapLock(`${input.spaceId}\0agent-names`, async () => {
+      const agent = await loadAgent(input.spaceId, input.agentSourceKey);
+      if (input.name !== undefined) {
+        const clash = (await agents().listWhere({ spaceId: input.spaceId }))
+          .find((row) => row?.sourceKey !== input.agentSourceKey
+            && agentMentionName(row?.name) === agentMentionName(input.name)) ?? null;
+        if (clash) {
+          throw new AppError('Another agent of this space already has this name', {
+            code: 'AGENT_NAME_TAKEN', status: 409,
+          });
+        }
+      }
+      const patch = {
+        decidedAt: at,
+        actorType: actor.type,
+        actorId: actor.id,
+        sourcePackage: AGENTS_DOMAIN,
+        sourceAction: 'update-agent',
+      };
+      for (const field of ['name', 'role', 'instructions', 'spendingCapCents']) {
+        if (input[field] !== undefined) patch[field] = input[field];
+      }
+      const updated = await agents().applyManaged(agent.id, patch, { actor });
+      return { agent: updated };
+    });
+  }
+
+  /**
+   * Pause or resume one hand-written agent (backlog:7d169a3b1dd2 «Ritira» /
+   * «Riattiva»): status only, never the fields. Space-scoped and
+   * human-gated like updateAgent; writing the status it already carries is
+   * a replay, never a second write.
+   */
+  async function setAgentStatus(request) {
+    const record = request && typeof request === 'object' ? request : {};
+    const actor = requireHumanActor(requireAgentActor(record.actor, 'Changing an agent status'), 'Changing an agent status');
+    const input = checkAgentStatusInput(record);
+    const at = now();
+    const agent = await loadAgent(input.spaceId, input.agentSourceKey);
+    if (agent.status === input.status) return { agent, duplicate: true };
+    const updated = await agents().applyManaged(agent.id, {
+      status: input.status,
+      decidedAt: at,
+      actorType: actor.type,
+      actorId: actor.id,
+      sourcePackage: AGENTS_DOMAIN,
+      sourceAction: 'set-agent-status',
+    }, { actor });
+    return { agent: updated };
   }
 
   /**
@@ -1118,6 +1186,8 @@ export function createAgentOperations(options = {}) {
     });
   }
 
+  // Union of the lot (update-agent, set-agent-status) and main squads
+  // (create-squad, read-squad-overview): both sets stay available.
   /**
    * The member @names one squad would take, folded the way agents answer.
    * @param {{ spaceId: string, sourceKey: string, name: string, members: ReadonlyArray<{ name: string }> }} input
@@ -1327,5 +1397,5 @@ export function createAgentOperations(options = {}) {
     });
   }
 
-  return { createAgent, createAssignment, createSquad, readSquadOverview, runDue, approveRun, rejectRun, reviseRun };
+  return { createAgent, createAssignment, createSquad, readSquadOverview, runDue, approveRun, rejectRun, reviseRun, updateAgent, setAgentStatus };
 }

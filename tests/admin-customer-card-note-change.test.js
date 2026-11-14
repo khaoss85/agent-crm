@@ -709,3 +709,87 @@ test('4eceae80a5ca: a send again answered «already withdrawn» is done, quietly
   assert.ok(!toasts.some((entry) => entry.error), 'no error toast');
   assert.equal(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY), null);
 });
+
+// ---- review Muse #883 ---------------------------------------------------------
+
+const storedEntry = (over = {}) => ({
+  spaceId: 'spazio-prova', resource: 'contact', id: 'c1', noteId: 'n-mia',
+  idempotencyKey: 'v1.20261114.000000000000000000000000000000c1', expiresAt: Date.now() + 60_000, ...over,
+});
+
+/** A view whose first cronologia read of c1 never answers (the operator leaves before it lands). */
+function heldTimelineView(session, pageWindow = null) {
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/contact/c1')) return new Promise(() => {});
+    return original(path, options);
+  };
+  const view = createCustomerCardView({
+    doc: createFakeDocument(), mount: createMount(), client, spaceId: 'spazio-prova', wait: manualWait().wait,
+    toast: () => {}, hideToast: () => {}, sessionStorage: session, ...(pageWindow ? { pageWindow } : {}),
+  });
+  return { client, view };
+}
+
+test('4eceae80a5ca (review Muse #883, P2): a restored withdrawal still leaves when the operator opens another customer first', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const { client, view } = heldTimelineView(session);
+  void view.renderCard('contact', 'c1');
+  await flush();
+  assert.equal(client.writes.length, 0, 'c1 cronologia not read yet: nothing settled');
+  await view.renderCard('contact', 'c2');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.path, write.body.noteId, write.key]),
+    [['/api/customer-hub/notes/withdraw', 'n-mia', storedEntry().idempotencyKey]], 'sent with its own key');
+});
+
+test('4eceae80a5ca (review Muse #883, P2): a restored withdrawal is written down again on pagehide and sent', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const pageWindow = fakeWindow();
+  const { client, view } = heldTimelineView(session, pageWindow);
+  void view.renderCard('contact', 'c1');
+  await flush();
+  session.removeItem(NOTE_WITHDRAWALS_STORAGE_KEY);
+  pageWindow.fire('pagehide');
+  // Read as the page goes away: the answer of the keepalive POST never
+  // reaches a page that is gone.
+  const [kept] = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY));
+  assert.equal(kept.noteId, 'n-mia', 'the next page still knows it');
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.body.noteId, write.keepalive]), [['n-mia', true]]);
+});
+
+test('4eceae80a5ca (review Muse #883, P2): an unreadable cronologia sends the restored withdrawal again, never hides it in silence', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([storedEntry()]));
+  const client = fakeClient();
+  const original = client.request.bind(client);
+  client.request = async (path, options = {}) => {
+    if (String(options.method ?? 'GET') === 'GET' && path.startsWith('/api/customer-hub/timeline/')) {
+      throw Object.assign(new Error('boom'), { status: 503 });
+    }
+    return original(path, options);
+  };
+  await open(client, 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((write) => write.body.noteId), ['n-mia']);
+});
+
+test('4eceae80a5ca (review Muse #883, P3): settling one withdrawal leaves the same note id of another space or customer alone', async () => {
+  const session = memoryStore();
+  session.setItem(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify([
+    storedEntry(),
+    storedEntry({ spaceId: 'altro-spazio', idempotencyKey: 'v1.20261114.000000000000000000000000000000a2' }),
+    storedEntry({ id: 'c9', idempotencyKey: 'v1.20261114.000000000000000000000000000000c9' }),
+    storedEntry({ noteId: 'n-altra', idempotencyKey: 'non-una-chiave' }),
+  ]));
+  const { client } = await open(fakeClient(), 'spazio-prova', { sessionStorage: session });
+  await flush();
+  assert.deepEqual(client.writes.map((write) => [write.body.noteId, write.key]), [['n-mia', storedEntry().idempotencyKey]],
+    'only this space and customer; a key of another shape is never sent');
+  const left = JSON.parse(session.getItem(NOTE_WITHDRAWALS_STORAGE_KEY)).map((entry) => `${entry.spaceId}/${entry.id}/${entry.noteId}`);
+  assert.deepEqual(left, ['altro-spazio/c1/n-mia', 'spazio-prova/c9/n-mia']);
+});

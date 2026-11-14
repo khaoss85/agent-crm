@@ -2261,6 +2261,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* backlog:7b2203e69826: tutta la card apre il pannello; il toast ha «Annulla». */
 .pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
 .pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
+/* backlog:85630aa14a4f: la card con il pannello aperto resta segnata. */
+.pipeline-card.is-open { border-color: var(--accent); box-shadow: var(--shadow); }
 .ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
 .ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 /* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */
@@ -2465,6 +2467,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-profilo-words { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .bo-profilo-words .bo-kicker { margin: 0; }
 .bo-profilo-name { margin: 0; font-size: 44px; line-height: 1.02; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+/* backlog:f7d2f7f362cf: Modifica sits beside the name at its own text
+ * measure — a small command, never a full-width field. It wraps below the
+ * name on narrow screens instead of squeezing beside it. */
+.bo-profilo-name-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bo-profilo-name-row .bo-profilo-name { flex: 1 1 auto; min-width: 0; }
+button.bo-profilo-edit-open { flex: none; align-self: center; }
 .bo-profilo-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
 .bo-profilo-pill {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px;
