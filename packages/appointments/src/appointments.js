@@ -837,6 +837,20 @@ export async function seriesScopeRows(appointments, row, scope) {
 }
 
 /**
+ * Review giro 6 (backlog:0f2ae629e09b): a series the calendar edge knows
+ * moves as one Google event — «solo questo» and «questo e i successivi»
+ * would move the grid while Google keeps the old rule, so they are refused
+ * before any write and only «tutti» stays. The guard keys on the SAVED row
+ * (`seriesKey`) and the composed calendar edge, never on a request `calendar`
+ * field the first-party UI never sends — otherwise it is dead code on the
+ * real path. Without the edge every scope works as before.
+ */
+function googleLinkedSeriesScopeRefused(calendarSync, row, scope) {
+  const edge = calendarSync != null && typeof calendarSync.pushAppointment === 'function';
+  return edge && Boolean(row?.seriesKey) && scope !== 'all';
+}
+
+/**
  * First conflicting occurrence of a series against held rows (plus the
  * series' own earlier slots, so a rule overlapping itself is refused naming
  * the pair). Null when every occurrence is free.
@@ -1660,7 +1674,7 @@ export async function rescheduleAppointment(context, request) {
   // push through the head is a noop), so they are refused before any write.
   // «Tutti» stays as it is. Per-occurrence Google exceptions (EXDATE/UNTIL)
   // are not covered here.
-  if (calendarPush !== null && first.seriesKey && scope !== 'all') {
+  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
     throw new AppError(
       'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
       { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
@@ -1973,7 +1987,7 @@ export async function cancelAppointment(context, request) {
   // (the push through the head is a noop), so they are refused before any
   // write. «Tutti» stays as it is. Per-occurrence Google exceptions
   // (EXDATE/UNTIL) are not covered here.
-  if (calendarPush !== null && first.seriesKey && scope !== 'all') {
+  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
     throw new AppError(
       'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
       { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
@@ -2875,6 +2889,16 @@ export async function bookFromLink(context, request) {
   }
   const spaceId = record.spaceId;
   const linkToken = validateBookingLinkToken(record.linkToken);
+  // Review giro 6 (backlog:0f2ae629e09b): the public link books ONE single
+  // appointment — a request naming a recurrence is refused 400 before any
+  // read or write, so one public call can never fan out into a whole series
+  // behind the link's idempotency.
+  if (record.recurrence !== undefined && record.recurrence !== null) {
+    throw new ValidationError(
+      'Il link pubblico prenota un solo appuntamento, senza ricorrenza: per una serie prenota una data alla volta dal calendario',
+      { field: 'recurrence' },
+    );
+  }
   // Canonicalize the slot before deriving the identity: validation normalizes
   // instants to UTC ISO, and the source key must derive from that canonical
   // form — never from the caller's spelling. Otherwise a valid spelling the
