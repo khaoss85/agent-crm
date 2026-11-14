@@ -286,14 +286,25 @@ export function createCustomerListView(deps) {
     if (frame === null) drawShell();
     const statusLine = frame.status;
     // The first read has nothing to show yet; later reads keep the rows
-    // and only mark the table busy, so the bar never jumps.
-    if (data === null && statusLine) statusLine.textContent = 'Caricamento…';
+    // and only mark the table busy, so the bar never jumps. While the next
+    // page loads the status line still says the search is running
+    // (backlog:120f2994, production 14/11: the list stayed grey for 30 s
+    // with no sign of work), so the wait never reads as a stuck screen.
+    if (statusLine) statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
     frame.body.setAttribute('aria-busy', 'true');
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
       if (token !== renderToken) return;
-      data = { error: humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }), status: error?.status ?? null };
+      // A search the server could not answer in time (503 from the /bo
+      // bridge timeout): say what happened and what to do, never a code.
+      const timedOut = error?.status === 503 || error?.code === 'BO_ADMIN_READ_TIMEOUT';
+      data = {
+        error: timedOut
+          ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
+          : humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }),
+        status: error?.status ?? null,
+      };
     }
     if (token !== renderToken) return;
     paint();
