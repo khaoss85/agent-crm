@@ -1624,7 +1624,23 @@ export const PACE_PRELUDE = `<script>
       if (!done) later(beat, ${PACE_STEP_MS});
     });
   };
-  const finish = () => { done = true; };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    // backlog:c7e97de6cf1f: the harness is done (or stopped). With a budget
+    // that is no deadline, a page timer still ticking (an interval, a frame
+    // loop) would walk the clock through the rest of the budget — minutes
+    // of virtual time a loaded runner pays in real time, with no request a
+    // guard could see. So the page's timers stop here and the clock jumps
+    // to the end: what was painted at the ready title is what is shot.
+    const top = later(() => {}, 0);
+    for (let id = 0; id <= top; id += 1) { clearTimeout(id); clearInterval(id); }
+    const frame = requestAnimationFrame(() => {});
+    for (let id = 0; id <= frame; id += 1) cancelAnimationFrame(id);
+    window.setTimeout = () => 0;
+    window.setInterval = () => 0;
+    window.requestAnimationFrame = () => 0;
+  };
   new MutationObserver(() => {
     if (/-ready$/.test(document.title)) finish();
   }).observe(document.head, { childList: true, subtree: true, characterData: true });
