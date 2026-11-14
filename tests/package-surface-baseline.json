@@ -222,15 +222,15 @@
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
+      "version": 3,
+      "fingerprint": "ef82580e4a356c11596e453990f7644a0268a54837b302cff277b5464c255167"
     },
     {
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
+      "version": 3,
+      "fingerprint": "ef82580e4a356c11596e453990f7644a0268a54837b302cff277b5464c255167"
     },
     {
       "name": "sequences",

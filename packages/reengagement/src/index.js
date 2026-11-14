@@ -67,7 +67,9 @@ export function createReengagementPackage(options = {}) {
     // approval-shaped proposals, no records of its own.
     // 2: fd36da512b0e — proposals travel as teammate-run rows («Da fare»)
     // through the run-due executor, never as space-ai-proposal rows.
-    version: 2,
+    // 3: 22614551 — fallback only over message channels, cause beside
+    // no-draft, no-inbound removed from the documented skip reasons.
+    version: 3,
     label: 'Re-engagement agent',
     description:
       'The teammate agent that re-contacts silent customers: selects who arrived from WhatsApp, Instagram '
