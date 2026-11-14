@@ -77,3 +77,10 @@ test('bfc070243427: the two top quote links are separated by the stylesheet', ()
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(css.includes('.quote-back + .quote-offer-link'), 'an adjacent-sibling gap keeps «← cliente» and «Apri l’offerta» apart');
 });
+
+test('bfc070243427: inactive commercial functions speak plain words without «progetto»', () => {
+  const src = readFileSync(new URL('../apps/admin/public/admin-quotes.js', import.meta.url), 'utf8');
+  assert.ok(!src.includes('non è attiva in questo progetto'), 'no «progetto» in inactive messages');
+  assert.ok(src.includes('La parte commerciale non è attiva qui.'), 'commercial off message is plain');
+  assert.ok(src.includes('La firma non è attiva qui.'), 'signature off message is plain');
+});

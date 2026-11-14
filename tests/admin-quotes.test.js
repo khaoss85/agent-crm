@@ -224,7 +224,8 @@ test('pending approval shows human decision controls; approved and rejected show
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
   // The commercial view never invents a signature surface on its own: without
   // the ADR-017 schema block it degrades to a statement, not a control.
-  assert.ok(approved.textContent.includes('La firma non è attiva in questo progetto.'));
+  // backlog:bfc070243427: plain words, never «progetto».
+  assert.ok(approved.textContent.includes('La firma non è attiva qui.'));
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 

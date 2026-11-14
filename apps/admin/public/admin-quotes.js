@@ -286,7 +286,8 @@ export function createQuoteView(deps) {
     }
     if (token !== renderToken) return;
     if (!commercialBlock(schema)) {
-      status.textContent = 'La gestione commerciale non è attiva in questo progetto.';
+      // backlog:bfc070243427: plain words, never «progetto».
+      status.textContent = 'La parte commerciale non è attiva qui.';
       return;
     }
     status.textContent = quotes.truncated
@@ -726,7 +727,8 @@ export function createQuoteView(deps) {
     panel.appendChild(el('h3', undefined, 'Firma'));
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
-      panel.appendChild(el('p', 'muted', 'La firma non è attiva in questo progetto.'));
+      // backlog:bfc070243427: plain words, never «progetto».
+      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui.'));
       return;
     }
     let envelopes;
