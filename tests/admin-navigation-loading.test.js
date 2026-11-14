@@ -256,7 +256,8 @@ test('94eabbd4762f: the badges wait for the screen opened at boot, either way it
 
 test('94eabbd4762f: at boot the shell reads its badges only after the routed screen', () => {
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
-  const nav = /async function populateNav\(\) \{([\s\S]*?)\n\}\n/.exec(app);
+  // backlog:c048bf6f2dd3: populateNav takes an option (repaintScreen).
+  const nav = /async function populateNav\([^)]*\) \{([\s\S]*?)\n\}\n/.exec(app);
   assert.ok(nav, 'populateNav is there');
   assert.ok(!/await refreshShellCounts\(\)/.test(nav[1]), 'the boot never reads the badges in front of the screen');
   assert.match(nav[1], /afterScreen\(bootScreen\)\.then\(\(\) => refreshShellCounts\(\)\)/);
