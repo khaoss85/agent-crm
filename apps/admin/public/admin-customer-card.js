@@ -3780,7 +3780,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null, servicesReady = true) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3792,17 +3792,15 @@ export function createCustomerCardView(deps) {
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
       && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
-    // Review #908 (Muse su d57c973f): known rows are never filtered — the
-    // booked and cancelled appointments paint at once with the slug-word
-    // fallback (serviceTitle), and the listino repaint renames them on
-    // arrival. This replaces backlog:26afd13657c5's wait: hiding booked
-    // rows while the listino was in flight read as «no appointments» and
-    // invited double bookings.
+    // backlog:26afd13657c5: the appointment rows wait for the listino —
+    // while the services read is still in flight the cronologia paints
+    // without them, so no row ever flashes the slug words first; they
+    // join on the repaint the listino read triggers.
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
-      ...bookedAppointmentEntries(timeline, serviceNames),
-      ...cancelledAppointmentEntries(timeline, serviceNames),
+      ...(servicesReady ? bookedAppointmentEntries(timeline, serviceNames) : []),
+      ...(servicesReady ? cancelledAppointmentEntries(timeline, serviceNames) : []),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
@@ -5210,7 +5208,7 @@ export function createCustomerCardView(deps) {
 
   /** The Appuntamenti vista body: the next booking that can still happen. */
   // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
-  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
+  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null, servicesReady = true) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // vista too, instead of vanishing as "none booked".
     if (timelineError) {

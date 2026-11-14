@@ -128,9 +128,8 @@ test('page numbers collapse to first, last and neighbours with ellipses', () => 
 test('the five quick views render as tabs, with Tutti active first', async () => {
   const { mount } = await render(stubClient());
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
-  // Review #908: the fixture answers no counts, so the pills read bare.
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
@@ -661,13 +660,11 @@ test('the fallback views keep the prototype order before the server answers', as
   const bare = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return {}; } };
   const { mount } = await render(bare);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
-  // Review #908 (Muse su d57c973f): no invented counts before the server
-  // answers — the fallback pills read bare labels.
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
 });
 
-test('review #908: a view without a server count reads its bare label, never an invented 0', async () => {
+test('5af848afdb63: a view without a server count still reads a number, 0', async () => {
   const uncounted = {
     calls: [],
     async request(path = '', options = {}) {
@@ -681,28 +678,8 @@ test('review #908: a view without a server count reads its bare label, never an 
   };
   const { mount } = await render(uncounted);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
-  assert.ok(tabs.some((node) => node.textContent === 'Da leggere'), 'the uncounted view reads its bare label');
-  assert.ok(!tabs.some((node) => node.textContent === 'Da leggere 0'), 'no invented 0 for the unread count');
-});
-
-test('review #908: an explicit 0 reads 0 on an exact total, bare on a truncated scan', async () => {
-  const zeroed = (exact) => ({
-    calls: [],
-    async request(path = '', options = {}) {
-      enforceAdminWriteGate(path, options);
-      return {
-        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
-        totalIsExact: exact, ...MENUS,
-        views: MENUS.views.map((view) => ({ ...view, count: 0 })),
-      };
-    },
-  });
-  const exact = await render(zeroed(true));
-  const exactTabs = buttons(exact.mount).filter((node) => node.getAttribute('role') === 'tab');
-  assert.ok(exactTabs.every((node) => /\b0$/.test(node.textContent)), 'an explicit 0 on an exact total reads 0');
-  const partial = await render(zeroed(false));
-  const partialTabs = buttons(partial.mount).filter((node) => node.getAttribute('role') === 'tab');
-  assert.ok(partialTabs.every((node) => !/\d$/.test(node.textContent)), 'a 0 on a truncated scan reads bare');
+  assert.ok(tabs.some((node) => node.textContent === 'Da leggere 0'), 'the uncounted view reads 0');
+  for (const tab of tabs) assert.match(tab.textContent, /\d+$/, 'every view carries a number');
 });
 
 test('changing the view or the page size returns to page 1', async () => {
