@@ -491,7 +491,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
  *   onAiSubmit?: ((text: string) => void) | null,
- *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null> } | null,
+ *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null>, agents?: () => Promise<Array<any> | null> } | null,
  *   schedule?: (fn: () => void, ms: number) => any,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
@@ -800,8 +800,9 @@ export function createShellView({
 
   /**
    * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
-   * shell's own voices and settings areas; customers and offers from the
-   * reads app.js already makes (commandSearch). The AI is the last row.
+   * shell's own voices and settings areas; customers, offers and (backlog
+   * 1f7cb20d3c30) the space's agents from the reads app.js already makes
+   * (commandSearch). The AI is the last row.
    */
   function commandPages() {
     const customerData = state.items.some((item) => item.id === 'clienti' && item.available === true);

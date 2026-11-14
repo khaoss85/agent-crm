@@ -716,3 +716,17 @@ test('bo:shots photographs the production pipeline, not a demo invention', () =>
   const pipeline = SCREENS.find((screen) => screen.name === 'pipeline');
   assert.ok(pipeline.expect.includes('Proposta'), 'the render gate watches a production stage label');
 });
+
+// backlog:d30d17880f63: the Linux CI runner's Playwright layout
+// (chrome-headless-shell-linux64) — missed before, so every browser proof
+// on that runner skipped as «no runnable Chromium».
+test('findChromium finds the Linux Playwright headless shell, as on the CI runner', () => {
+  const home = mkdtempSync(join(tmpdir(), 'bo-shots-home-'));
+  const dir = join(home, '.cache', 'ms-playwright', 'chromium_headless_shell-1248', 'chrome-headless-shell-linux64');
+  mkdirSync(dir, { recursive: true });
+  const binary = join(dir, 'chrome-headless-shell');
+  writeFileSync(binary, '');
+  assert.equal(findChromium({ env: {}, home, system: [] }), binary);
+  assert.equal(findChromium({ env: { CHROMIUM_BIN: binary }, home: join(home, 'none'), system: [] }), binary, 'CHROMIUM_BIN still wins');
+  assert.equal(findChromium({ env: {}, home: join(home, 'none'), system: [] }), null);
+});

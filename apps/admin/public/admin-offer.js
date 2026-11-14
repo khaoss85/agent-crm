@@ -159,9 +159,23 @@ export function backLink(schema, record, from) {
   return { href: pipelineHref(schema, record), label: '← Pipeline' };
 }
 
-/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void}} deps */
+/**
+ * backlog:f2d39e473e3a: the breadcrumb of the offer page names the customer
+ * and the offer — «Offerta / Giulia Verdi / Cucina per Giulia» — never the
+ * bare «Offerta». Missing parts are left out.
+ * @param {any} record
+ * @returns {string}
+ */
+export function offerCrumb(record) {
+  const customer = offerCustomer(record);
+  const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name.trim() : null;
+  return ['Offerta', customer?.name ?? null, name].filter((part) => part !== null).join(' / ');
+}
+
+/** @param {{doc: any, mount: any, client: any, navigate?: (hash: string) => void, toast?: (text: string, error?: boolean) => void, onTitle?: (label: string) => void}} deps */
 export function createOfferDetail(deps) {
   const { doc, mount, navigate = () => {} } = deps;
+  const onTitle = typeof deps.onTitle === 'function' ? deps.onTitle : () => {};
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
 
@@ -359,13 +373,15 @@ export function createOfferDetail(deps) {
    * @param {Promise<any>} schemaRead
    */
   function readBooks(schemaRead) {
-    return schemaRead.then((schema) => {
-      if (!commercialBlock(schema)) return { books: null, error: null };
-      return client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then(
-        (answer) => ({ books: Array.isArray(answer?.items) ? answer.items : [], error: null }),
-        (error) => ({ books: null, error }),
-      );
-    }, () => ({ books: null, error: null }));
+    // backlog:f2d39e473e3a (pilota 13/11: the price books left 1,3-4,4 s
+    // late, after the schema): the read leaves with the others; the schema
+    // only decides, once in, whether its answer is used.
+    const read = client.request(`/api/modules/price-book/records?limit=${LIST_LIMIT}`).then(
+      (answer) => ({ books: Array.isArray(answer?.items) ? answer.items : [], error: null }),
+      (error) => ({ books: null, error }),
+    );
+    const composed = schemaRead.then((schema) => Boolean(commercialBlock(schema)), () => false);
+    return Promise.all([composed, read]).then(([commercial, answer]) => (commercial ? answer : { books: null, error: null }));
   }
 
   /**
@@ -440,6 +456,7 @@ export function createOfferDetail(deps) {
     }
     if (token !== renderToken || !record || typeof record !== 'object') return;
     clear();
+    onTitle(offerCrumb(record));
 
     const customer = offerCustomer(record);
 

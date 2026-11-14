@@ -4,7 +4,7 @@ import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
-import { afterScreen, createMountGate, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -100,6 +100,9 @@ const submissions = createSubmissionController({
     method: options.method,
     body: typeof options.body === 'string' ? options.body : JSON.stringify(options.body ?? {}),
     idempotencyKey: options.idempotencyKey,
+    // backlog:fe9be5f0af4a (review Muse #878): the same keepalive as the
+    // views' write client, never silently dropped here.
+    ...(options.keepalive === true ? { keepalive: true } : {}),
   }),
 });
 
@@ -594,6 +597,9 @@ const pipelineBoard = createPipelineBoard({
 // Quote builder (ADR-016) over the ADR-009 override seam: the generic action
 // forms cannot browse a price book, so this focused view owns that experience
 // while every mutation still goes through the same server actions.
+/** The crumb of the offer page last read (backlog:f2d39e473e3a, review Muse #881). */
+const offerCrumbs = createOfferCrumbs({ space: () => shellActiveSpace ?? null });
+
 const offerDetail = createOfferDetail({
   doc: document,
   mount: mountGate.owned('offer-detail'),
@@ -601,6 +607,14 @@ const offerDetail = createOfferDetail({
   submissions,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
+  // backlog:f2d39e473e3a: the crumb names the customer and the offer once
+  // read, and keeps them when the shell re-syncs (the schema landing after
+  // the offer); a page that is no longer routed never retitles the screen.
+  onTitle: (label) => {
+    if (!mountGate.isActive('offer-detail')) return;
+    if (!offerCrumbs.named(targetForHash(window.location.hash || '#/'), label)) return;
+    if (shellView) shellView.update({ screenLabel: label });
+  },
 });
 
 const quoteView = createQuoteView({
@@ -652,6 +666,16 @@ const marketingView = createMarketingView({
 // Customer scheda (BO-F1-06): the three-column customer view, a read-only
 // projection over the hub. Renders only while the server publishes the
 // customer-hub package; otherwise the view itself says so.
+/**
+ * The name the customer card last gave its breadcrumb, for the customer it
+ * named (backlog:fe9be5f0af4a). @type {{ resource: string, id: string, name: string | null } | null}
+ */
+let customerTitle = null;
+/** The remembered name, only in the space it was read in (review Muse #878). */
+function rememberedCustomerTitle() {
+  return customerTitle !== null && customerTitle.space === (shellActiveSpace ?? null) ? customerTitle : null;
+}
+
 const customerCardView = createCustomerCardView({
   doc: document,
   mount: mountGate.owned('customer-card'),
@@ -684,7 +708,13 @@ const customerCardView = createCustomerCardView({
   // screen, so a title from a card that is no longer routed is dropped.
   onCustomerTitle: (name) => {
     if (!mountGate.isActive('customer-card')) return;
-    if (shellView) shellView.update({ screenLabel: name ? `Clienti / ${name}` : 'Clienti' });
+    // backlog:fe9be5f0af4a: remembered for the routed customer, so a later
+    // re-sync of the shell (the schema read landing after the card) keeps it.
+    const target = targetForHash(window.location.hash || '#/');
+    customerTitle = target.view === 'customer-card'
+      ? { resource: target.resource, id: target.subjectId, name: name ?? null, space: shellActiveSpace ?? null }
+      : null;
+    if (shellView) shellView.update({ screenLabel: customerCrumbLabel(target, 'Clienti', rememberedCustomerTitle()) });
   },
 });
 
@@ -1068,6 +1098,18 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
+      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
+      // agents from the same teammate-agent module read the Agenti screen
+      // makes — the hand-written agent suggests like the catalogue ones.
+      async agents() {
+        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
+        const params = new URLSearchParams({ limit: '201' });
+        const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
+        else return null;
+        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
+        return Array.isArray(answer?.items) ? answer.items : [];
+      },
     },
     onPickSpace: (id) => {
       pickSpace(id);
@@ -1159,7 +1201,7 @@ function syncShell(target) {
     items: shellItems,
     activeScreenId: typeof screen?.id === 'string' ? screen.id : '',
     aiScreenId: typeof screen?.ai === 'string' && screen.ai !== '' ? screen.ai : null,
-    screenLabel: typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista',
+    screenLabel: customerCrumbLabel(target, offerCrumbs.label(target) ?? (typeof screen?.label === 'string' && screen.label !== '' ? screen.label : 'Vista'), rememberedCustomerTitle()),
   });
 }
 
@@ -1318,6 +1360,9 @@ async function route() {
   }
   const hash = window.location.hash || '#/';
   const navToken = ++navSeq;
+  // Review Muse #881: leaving the offer page (settings included) forgets
+  // its crumb, so a later visit never shows a stale one before its read.
+  offerCrumbs.routed(targetForHash(hash));
   // backlog:ff8bb60f417f: opening or closing the Nuovo cliente window keeps
   // the list under it as it was — no reload, no loading frame.
   const previousView = lastRoutedView;
@@ -1392,7 +1437,12 @@ async function route() {
   // Voce 2f2d22f2, review #722: a card read still in flight must die when
   // the operator leaves the card — otherwise its late response retitles the
   // screen just opened. Same shared-mount race as the list and the form.
-  if (target.view !== 'customer-card') customerCardView.invalidate();
+  if (target.view !== 'customer-card') {
+    customerCardView.invalidate();
+    // Leaving the scheda forgets its name: a later visit never paints a
+    // stale one before its own read (review Muse #878).
+    customerTitle = null;
+  }
   // backlog:607f33ee: every async view paints straight into the shared
   // mount, so a read still in flight must die when the operator leaves
   // the view — otherwise its late response repaints the screen just
