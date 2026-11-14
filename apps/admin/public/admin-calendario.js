@@ -1291,6 +1291,13 @@ export function createCalendarioView(deps) {
    * still lands its outcome (review #781).
    */
   let viewToken = 0;
+  /**
+   * backlog:134f3ed7 — the next render() is a fresh entry (first paint or
+   * back from another route), so it drops any old panel. Plain re-renders
+   * (week reload, search answers, unsaved-work checks) keep the form, the
+   * search and the selection.
+   */
+  let entryFresh = true;
   /** Guards the member-list read, like renderToken guards the week. */
   let memberToken = 0;
   /**
@@ -1316,6 +1323,9 @@ export function createCalendarioView(deps) {
     renderToken += 1;
     viewToken += 1;
     phraseSeq += 1;
+    // backlog:134f3ed7 — leaving drops the panel on return: the next
+    // render() is a fresh entry, never a plain re-render.
+    entryFresh = true;
     // The search in flight is dropped with the route (review #664): the
     // card comes back idle, never wedged on «Sto cercando…».
     state.aiLoading = false;
@@ -2188,6 +2198,7 @@ export function createCalendarioView(deps) {
           // customer field. An open event popover gives way: one at a time.
           state.manualOpen = true;
           state.selectedId = null;
+          ensureManualDefaults();
           renderAll();
           return state.manualFirst;
         },
@@ -2484,6 +2495,21 @@ export function createCalendarioView(deps) {
     return Math.min(Math.max(Math.max(anchor, current) + GRID_ROW_MINUTES, Math.min(anchor, current) + GRID_SLOT_MINUTES), GRID_END_MINUTES);
   }
 
+  /**
+   * backlog:134f3ed7 — every opening of the manual form proposes a day and
+   * a time: the picked slot where one was clicked, else tomorrow 09:30–10:00
+   * Rome. A real free-slot read needs the person, still unnamed at this
+   * point, so the default is a proposal the operator confirms or moves —
+   * never an empty form that books a midnight.
+   */
+  function ensureManualDefaults() {
+    const manual = { ...(state.manual ?? {}) };
+    if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return;
+    const tomorrow = romeDayKey(new Date(clock().getTime() + 86400000).toISOString());
+    if (!tomorrow) return;
+    state.manual = { ...manual, date: tomorrow, start: '09:30', end: '10:00' };
+  }
+
   /** Opens the manual form for a slot chosen on the grid. */
   function openSlot(key, start, end) {
     state.selection = { key, start, end };
@@ -2522,10 +2548,11 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:6e6750ff8163 — × or Esc on the «Nuovo appuntamento» form:
-   * it closes AND empties, so the next opening starts clean — never the
-   * old slot, customer or price left behind. Focus goes back to the
-   * «Nuovo appuntamento» button.
+   * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
+   * appuntamento» form: it closes AND drops the typed values — never the
+   * old slot, customer or price left behind. The next opening proposes a
+   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
+   * goes back to the «Nuovo appuntamento» button.
    */
   function closeManual() {
     if (!state.selection && !state.manualOpen && !state.draftFill) return;
@@ -2533,6 +2560,10 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): the typed
+    // marks go with the values, or the next opening reads the proposed
+    // date as «written» and raises a false unsaved-text warning.
+    state.manualTyped.clear();
     state.draftFill = null;
     state.draftWrote = null;
     state.customerPick = null;
@@ -3706,6 +3737,7 @@ export function createCalendarioView(deps) {
     if (phrase !== '' && String(state.manual?.notes ?? '').trim() === '') {
       state.manual = { ...(state.manual ?? {}), notes: phrase.slice(0, 2000) };
     }
+    ensureManualDefaults();
     renderAll();
     const target = state.manualFirst;
     if (target && typeof target.focus === 'function') target.focus();
@@ -4294,6 +4326,9 @@ export function createCalendarioView(deps) {
         // Review #690 (P2): the choice ends the search — no pending timer or
         // request in flight reads again after it.
         cancelCustomerSearch();
+        // backlog:134f3ed7 — the pick is the missing data: the note goes
+        // with the repaint.
+        state.bookingNote = '';
         state.customerPick = {
           resource: typeof item?.resource === 'string' && item.resource !== '' ? item.resource : 'contact',
           id: typeof item?.id === 'string' ? item.id : '',
@@ -4399,16 +4434,19 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * Production 07/11: after a «booked» answer the form still read «Bozza
-   * pronta: premi Conferma…» and the phrase card kept its draft. A booking
-   * is a done state: every draft note, proposal and form value goes, the
-   * form stays open on «Prenotato: <persona> · <giorno ora>», and the grid
-   * moves to the booked day's week so the event shows once the week reloads.
+   * backlog:134f3ed7 — like Google Calendar: after a «booked» answer the
+   * «Nuovo appuntamento» form closes and the new event shows highlighted.
+   * No «Prenotato» line stays in a panel covering the day, and no old panel
+   * survives leaving and returning: every draft note, proposal and form
+   * value goes, the week moves to the booked day, and the reload selects
+   * the new event once it paints.
    * @param {any} appointment
    */
   function markBooked(appointment) {
-    state.confirmed = appointment;
+    state.confirmed = appointment ?? null;
     state.selection = null;
+    state.manualOpen = false;
+    state.manual = null;
     state.draft = null;
     state.draftNote = '';
     state.draftFill = null;
@@ -4417,10 +4455,19 @@ export function createCalendarioView(deps) {
     state.aiNote = '';
     state.bookingNote = '';
     state.serviceError = '';
-    state.manual = null;
-    state.manualTyped.clear();
     state.customerPick = null;
-    state.manualOpen = true;
+    state.customerQuery = '';
+    state.customerItems = [];
+    state.customerError = null;
+    state.customerPartial = false;
+    state.selectedId = null;
+    state.manualTyped.clear();
+    resetPopSteps();
+    state.moveNote = '';
+    const id = typeof appointment?.id === 'string' && appointment.id !== '' ? appointment.id : null;
+    const member = typeof appointment?.teamMemberId === 'string' && appointment.teamMemberId !== '' ? appointment.teamMemberId : null;
+    state.pendingEventId = id;
+    state.pendingEventMember = member;
     const day = romeDayKey(appointment?.startsAt);
     if (day && !state.weekKeys.includes(day)) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
@@ -4466,6 +4513,8 @@ export function createCalendarioView(deps) {
       change.addEventListener('click', () => {
         // Review #690 (P2): a search still pending never lands after the reset.
         cancelCustomerSearch();
+        // backlog:134f3ed7 — the reset is an edit: the missing-data note goes.
+        state.bookingNote = '';
         state.customerPick = null;
         state.customerQuery = '';
         state.customerItems = [];
@@ -4723,15 +4772,9 @@ export function createCalendarioView(deps) {
       className: 'lede',
       text: 'Compila e premi «Proponi»: niente è scritto finché non premi «Conferma».',
     }));
-    // The done state leads the panel (production 07/11): after «booked» the
-    // operator reads what was booked first, never a stale draft note.
-    if (state.confirmed) {
-      panel.appendChild(el(doc, 'p', {
-        className: 'cal-ok',
-        attrs: { role: 'status', 'data-role': 'booked' },
-        text: `Prenotato: ${memberLabelFor(state.confirmed.teamMemberId, parseMemberFilter(state.memberFilter), state.members)} · ${romeShortDay(state.confirmed.startsAt) ?? ''} ${romeTime(state.confirmed.startsAt) ?? ''}.`,
-      }));
-    }
+    // backlog:134f3ed7 — no done state stays in the panel: after «booked»
+    // the form closes and the new event shows highlighted on the grid.
+    // state.confirmed only retriggers the week reload after the booking.
     const form = el(doc, 'div', { className: 'cal-form' });
     // The customer is picked by name from the search, never typed as an id
     // or a resource (owner 29/10): the search block below owns the pick, so
@@ -4781,6 +4824,17 @@ export function createCalendarioView(deps) {
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
+    // backlog:134f3ed7 — a missing-data note never outlives the edit that
+    // fixes it: every keystroke in the form clears it live, like the
+    // service refusal under its field.
+    const clearBookingNote = () => {
+      state.bookingNote = '';
+      bookingNoteNode.textContent = '';
+    };
+    for (const node of Object.values(inputs)) {
+      node?.addEventListener?.('input', clearBookingNote);
+      node?.addEventListener?.('change', clearBookingNote);
+    }
     // state.manualFirst is the customer search field (or the «Cambia
     // cliente» button over an existing pick), set by renderCustomerPick
     // above so «Compila manualmente» focuses the customer first.
@@ -4867,7 +4921,8 @@ export function createCalendarioView(deps) {
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
-    if (state.bookingNote) panel.appendChild(el(doc, 'p', { className: 'empty', text: state.bookingNote }));
+    const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
+    if (state.bookingNote) panel.appendChild(bookingNoteNode);
     return panel;
   }
 
@@ -5143,11 +5198,40 @@ export function createCalendarioView(deps) {
       servicesRead = null;
     }
     state.renderedSpace = space;
+    // backlog:134f3ed7 — a fresh entry starts with no old panel: a form
+    // left open (or kept open after a booking) never survives leaving and
+    // returning. A fresh pick below reopens the form around the named
+    // customer; without one the form stays shut. Plain re-renders skip
+    // this, so a search in flight, a typed form and a selection survive.
+    if (entryFresh) {
+      entryFresh = false;
+      state.selection = null;
+      state.manualOpen = false;
+      state.manual = null;
+      // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): leaving
+      // and returning drops the typed marks too, never a stale «written».
+      state.manualTyped.clear();
+      state.draftFill = null;
+      state.draftWrote = null;
+      state.customerPick = null;
+      state.customerQuery = '';
+      state.customerItems = [];
+      state.customerError = null;
+      state.customerPartial = false;
+      state.bookingNote = '';
+      state.serviceError = '';
+      state.confirmed = null;
+      state.selectedId = null;
+      state.pendingEventId = null;
+      state.pendingEventMember = null;
+      resetPopSteps();
+      state.moveNote = '';
+      cancelCustomerSearch();
+    }
     // Voce 714433c2: «Nuovo appuntamento» from the scheda cliente stashes a
     // one-time pick the calendar takes here, once, on entry — read and
     // cleared, so a later visit starts unpicked. A fresh pick opens the
-    // manual form around the named customer; without one the form keeps its
-    // own state (an operator search in progress is never clobbered).
+    // manual form around the named customer; without one the form stays shut.
     // backlog:bd5e84545021: Oggi's «Fonti: Appuntamento delle …» lands on
     // the event's own week with the event selected, like a block click.
     const askedEvent = takePendingCalendarEvent(storage);
@@ -5164,6 +5248,7 @@ export function createCalendarioView(deps) {
     if (freshPick !== null) {
       state.customerPick = freshPick;
       state.manualOpen = true;
+      ensureManualDefaults();
     }
     // backlog:7587307d5215: the roster read starts with this paint, so the
     // first frame shows the loading skeletons, never «nessuna persona».
