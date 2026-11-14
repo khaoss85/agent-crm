@@ -281,7 +281,7 @@ export { AGENT_APPLY_PERMISSION };
 export { AGENT_CATALOG, catalogAgentSourceKey } from './catalog.js';
 // backlog:1f7cb20d3c30: hand-written agents («Nuovo agente») and the one
 // @mention name rule both the backoffice and create-agent use.
-export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey } from './catalog.js';
+export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey, isCustomAgentSourceKey } from './catalog.js';
 // backlog:0d2d8f2e: the squad templates the «Squadre» screen offers, and the
 // squad source-key rule the create route uses.
 export { PHASE_APPROVAL_LABEL, PHASE_APPROVALS, SQUAD_TEMPLATES, squadSourceKey } from './squads.js';

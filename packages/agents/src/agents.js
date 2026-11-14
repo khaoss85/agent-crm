@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { isCustomAgentSourceKey } from './catalog.js';
 
 /**
  * Teammate agents — the automation engine (backlog:8986f4459f0f).
@@ -428,9 +429,13 @@ export function checkAgentInput(record) {
  */
 export function checkAgentUpdateInput(record) {
   const input = record && typeof record === 'object' ? record : {};
+  const agentSourceKey = checkRecordKey(input.agentSourceKey, 'agentSourceKey');
+  if (!isCustomAgentSourceKey(agentSourceKey)) {
+    throw new ValidationError('only a hand-written agent can be updated', { field: 'agentSourceKey' });
+  }
   const patch = {
     spaceId: checkSpaceId(input.spaceId),
-    agentSourceKey: checkRecordKey(input.agentSourceKey, 'agentSourceKey'),
+    agentSourceKey,
   };
   let writes = 0;
   if (input.name !== undefined) {
@@ -466,9 +471,13 @@ export function checkAgentStatusInput(record) {
   if (status !== 'active' && status !== 'paused') {
     throw new ValidationError('status must be active or paused', { field: 'status' });
   }
+  const agentSourceKey = checkRecordKey(input.agentSourceKey, 'agentSourceKey');
+  if (!isCustomAgentSourceKey(agentSourceKey)) {
+    throw new ValidationError('only a hand-written agent can be paused or resumed', { field: 'agentSourceKey' });
+  }
   return {
     spaceId: checkSpaceId(input.spaceId),
-    agentSourceKey: checkRecordKey(input.agentSourceKey, 'agentSourceKey'),
+    agentSourceKey,
     status,
   };
 }
