@@ -1381,6 +1381,20 @@ export function buildChannelInvite({ connections = [], profile = null } = {}) {
  * @param {string} scope
  * @param {unknown} error
  */
+/**
+ * Voce 785aeb28bd18: the monotonic clock the step timings below read.
+ * Falls back to the wall clock where `performance` is unavailable; never
+ * throws, so measuring never breaks the load.
+ */
+function nowMs() {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+  } catch {
+    // Fall through to the wall clock.
+  }
+  return Date.now();
+}
+
 function noteReadFailure(scope, error) {
   try {
     console.warn(`bo-oggi ${scope} unreadable:`, error instanceof Error ? error.name : 'unknown');
@@ -1503,17 +1517,37 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // every read once but one after the other): the independent reads start
   // together, each fail-soft as before. The profile needs no schema, so it
   // starts beside it.
-  const profileRead = client.request('/api/profile').then(
+  // Voce 785aeb28bd18: the roster rides the first wave beside the profile —
+  // the member step no longer waits for every module read, so on a warm
+  // server it settles with the wave (under 1 s). Fail-soft as before: a
+  // refused or unreadable roster falls back to the notes cue. `stepMs`
+  // names where the load time goes, step by step, on `outcome.timings`.
+  const loadStartedAt = nowMs();
+  const stepMs = {};
+  const endStep = (scope, start) => { stepMs[scope] = Math.max(0, nowMs() - start); };
+  const timed = (scope, work) => {
+    const start = nowMs();
+    return Promise.resolve(work).then(
+      (value) => { endStep(scope, start); return value; },
+      (error) => { endStep(scope, start); throw error; },
+    );
+  };
+  const profileRead = timed('profile', client.request('/api/profile')).then(
     (answer) => (answer && typeof answer === 'object' ? answer : null),
     (error) => { noteReadFailure('profile', error); return null; },
   );
+  const membersRead = timed('members', client.request('/api/spine/memberships')).then(
+    (answer) => (Array.isArray(answer?.items) ? answer.items : []),
+    (error) => { noteReadFailure('memberships', error); return []; },
+  );
   let domains = {};
   try {
-    const schema = await client.request('/api/schema');
+    const schema = await timed('schema', client.request('/api/schema'));
     domains = schema?.domains ?? {};
   } catch (error) {
     noteReadFailure('schema', error);
     // The profile read started already: nothing waits on it.
+    outcome.timings = { ...stepMs, total: Math.max(0, nowMs() - loadStartedAt) };
     return outcome;
   }
   /** One fail-soft module read: the rows, or null after naming the failure. */
@@ -1584,10 +1618,11 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       noteReadFailure('paint', error);
     }
   }
+  // Voce 785aeb28bd18: the essentials mark says where the first wave went.
+  endStep('essentials', loadStartedAt);
   const subject = outcome.next != null && interactions
     ? { subjectResource: outcome.next.subjectResource, subjectId: outcome.next.subjectId }
     : null;
-  const withMember = outcome.appointments.some((row) => nonEmptyText(row?.teamMemberId) !== null);
   // review Muse #792: the call recap reads apart, so a slow brief never
   // keeps the actions waiting once the names are in.
   const briefRead = (async () => {
@@ -1620,17 +1655,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.inboxNamesPending = false;
     repliesSettled = true;
   });
-  const [appointmentNames, members] = await Promise.all([
+  // Voce 785aeb28bd18: the roster already rides the first wave beside the
+  // profile (see above) — joining it here only waits for what is still
+  // flying, never a new read. The names mark says where the second wave went.
+  const [appointmentNames, members] = await timed('names', Promise.all([
     readAppointmentNames(client, outcome.appointments, outcome.next, now),
-    // The roster names the member holding each slot: read only when a slot
-    // names one, fail-soft (the line then falls back to the notes cue).
-    withMember
-      ? client.request('/api/spine/memberships').then(
-        (answer) => (Array.isArray(answer?.items) ? answer.items : []),
-        (error) => { noteReadFailure('memberships', error); return []; },
-      )
-      : Promise.resolve([]),
-  ]);
+    membersRead,
+  ]));
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
@@ -1648,6 +1679,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   await repliesBranch;
   if (answeredLate) named();
   await briefRead;
+  // Voce 785aeb28bd18: where the load time went, step by step.
+  outcome.timings = { ...stepMs, total: Math.max(0, nowMs() - loadStartedAt) };
   return outcome;
 }
 

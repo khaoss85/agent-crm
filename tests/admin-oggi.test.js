@@ -1814,6 +1814,72 @@ test('2a075e2d9250 (production fc3fa62): the independent reads start together â€
     'each read still runs once');
 });
 
+// Voce 785aeb28bd18: the roster launches with the profile, not after the
+// first wave â€” the member step settles with the wave (under 1 s on a warm
+// server), and `timings` says where the load time went.
+test('785aeb28bd18: memberships launches beside profile, before any read resolves', async () => {
+  const asked = [];
+  let resolveSchema = null;
+  const schemaGate = new Promise((resolve) => { resolveSchema = resolve; });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      asked.push(path);
+      if (path === '/api/schema') return schemaGate;
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') return { items: [] };
+      return {};
+    },
+  };
+  const pending = loadOggiData(client, OGGI_NOW);
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  assert.ok(asked.includes('/api/profile'), 'the profile read left at once');
+  assert.ok(asked.includes('/api/spine/memberships'),
+    'the roster left with the profile, not after the first wave');
+  assert.ok(!asked.some((path) => path.startsWith('/api/modules/')),
+    'no module read resolves before the schema lands');
+  resolveSchema({ domains: {} });
+  const data = await pending;
+  assert.deepEqual(data.members, [], 'the empty roster travels, fail-soft');
+  assert.equal(typeof data.timings?.members, 'number', 'the member step is measured');
+});
+
+test('785aeb28bd18: on a warm server the member step is under 1 s, and timings name every step', async () => {
+  const members = [{ subject: 'marco', role: 'owner', status: 'active' }];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {} } };
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') return { items: members };
+      if (path.startsWith('/api/modules/')) return { items: [] };
+      return {};
+    },
+  }, OGGI_NOW);
+  assert.deepEqual(data.members, members, 'the roster travels with the load');
+  for (const scope of ['schema', 'profile', 'members', 'essentials', 'names', 'total']) {
+    assert.equal(typeof data.timings?.[scope], 'number', `timings names ${scope}`);
+    assert.ok(data.timings[scope] >= 0, `${scope} is a duration`);
+    assert.ok(data.timings[scope] < 1000, `${scope} is under 1 s on a warm server`);
+  }
+});
+
+test('785aeb28bd18: a refused roster stays fail-soft and still measured', async () => {
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: {} };
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') {
+        throw Object.assign(new Error('refused'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
+      }
+      return {};
+    },
+  }, OGGI_NOW);
+  assert.deepEqual(data.members, [], 'a refusal is an empty roster, never an error on Oggi');
+  assert.equal(typeof data.timings?.members, 'number', 'even a failed member step is measured');
+});
+
 test('2a075e2d9250: the day paints on the essentials; names and the call recap fill their sections without repainting the rest', async () => {
   const clock = virtualClock();
   const client = slowOggiClient(clock, 2000);
