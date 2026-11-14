@@ -746,7 +746,8 @@ test('forecast shows the month title, the offers closed this month plus the hist
   // USD: 60% of the undated 25 USD = 15 USD.
   assert.ok(box.textContent.includes('1.600 €'), `EUR forecast total (${box.textContent})`);
   assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
-  assert.match(box.textContent, /più il 60% \(stima: poche offerte chiuse, 4 su almeno 5\)/, 'the rule and the rate it used, said');
+  // Review Muse #896: the rate is per currency — EUR has 4 decided, USD none.
+  assert.match(box.textContent, /per ogni valuta il suo tasso \(EUR 60% \(stima: poche offerte chiuse, 4 su almeno 5\); USD 60% \(stima: poche offerte chiuse, 0 su almeno 5\)\)/, 'the rule and the rate it used, said');
   assert.match(box.textContent, /Sulle offerte in vista/, 'the shown offers, like the filters');
   assert.ok(
     !box.textContent.includes('Il rischio più alto'),
@@ -1827,4 +1828,27 @@ test('48993bed7294 (review lead #896): from five decided offers the board uses t
   const box = forecastBox(mount);
   assert.ok(box.textContent.includes('800 €'), `80% of the undated 1.000 € (${box.textContent})`);
   assert.match(box.textContent, /più il 80% \(tasso di chiusura storico\)/);
+});
+
+// Review Muse #896 giro 1: the rate is per currency, like the Reporting.
+test('48993bed7294: each currency forecasts with its own close rate', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const won = (id, currency) => record(id, 'won', { currency, valueCents: 1, closedAt: shiftedMonth(-2) });
+  const lost = (id, currency) => record(id, 'lost', { currency, valueCents: 1, closeReason: 'No budget', closedAt: shiftedMonth(-2) });
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery'),
+      record('u', 'discovery', { currency: 'USD', valueCents: 10_000 }),
+      ...[1, 2, 3, 4, 5].map((n) => won(`ew${n}`, 'EUR')),
+      ...[1, 2, 3, 4, 5].map((n) => lost(`ul${n}`, 'USD')),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+  const box = forecastBox(mount);
+  assert.ok(box.textContent.includes('1.000 €'), `EUR: 100% of 1.000 € (${box.textContent})`);
+  assert.ok(box.textContent.includes('0 USD'), `USD: 0% of 100 USD (${box.textContent})`);
+  assert.match(box.textContent, /EUR 100% \(tasso di chiusura storico\); USD 0% \(tasso di chiusura storico\)/);
 });

@@ -893,3 +893,30 @@ test('48993bed7294 (review lead #896): from five decided offers the historical r
   assert.equal(four.forecast.rateSource, 'fallback', 'four decided are still too few');
   assert.equal(four.forecast.probableMinor, 6000);
 });
+
+// Review Muse #896 giro 1: «senza referente» is nobody to redistribute from
+// or to; undated open offers are in the forecast, so only past-dated ones
+// are called stale.
+test('48993bed7294: no proposal from or to «senza referente»; only past-dated offers are stale', () => {
+  const query = Object.freeze({ period: '2026-11', owner: null, currency: 'EUR', pipeline: 'accordo-sales' });
+  const row = (owner, stage, totalMinor, { closedAt = null, expected = null } = {}) => ({
+    'opportunity.owner': owner, 'opportunity.pipelineStage': stage, 'opportunity.expectedCloseDate': expected,
+    'opportunity.closedAt': closedAt, 'opportunity.currency': 'EUR', totalMinor, count: 1,
+  });
+  const at = '2026-11-03T10:00:00.000Z';
+  const schedule = [
+    row('', 'proposta', 1000), row('', 'proposta', 1000), row('', 'perso', 1, { closedAt: at }),
+    row('marco', 'proposta', 1000, { expected: '2026-09-10' }), row('marco', 'pagato', 1, { closedAt: at }),
+  ];
+  const byStage = [
+    { 'opportunity.pipelineStage': 'proposta', 'opportunity.currency': 'EUR', totalMinor: 3000, count: 3 },
+    { 'opportunity.pipelineStage': 'perso', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+    { 'opportunity.pipelineStage': 'pagato', 'opportunity.currency': 'EUR', totalMinor: 1, count: 1 },
+  ];
+  const model = buildDashboardModel({ byStage: { rows: byStage }, schedule: { rows: schedule } }, [], query, TS, [], [accordoSalesPipeline]);
+  assert.equal(model.proposal, null, 'never a move from or to nobody');
+  assert.ok(model.insights.every((entry) => entry.id !== 'redistribute'));
+  const stale = model.insights.find((entry) => entry.id === 'stale');
+  assert.match(stale.text, /^1 preventivo aperto con la data di chiusura attesa già passata/, 'the two undated offers are in the forecast, not stale');
+  assert.equal(model.forecast.bestMinor, 2000, 'the undated ones are the forecast window');
+});

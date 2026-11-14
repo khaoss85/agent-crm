@@ -1668,12 +1668,18 @@ export function createPipelineBoard(deps) {
     const closed = new Map();
     const waiting = new Map();
     const openCurrencies = new Set();
-    let wonCount = 0;
-    let lostCount = 0;
+    // Review Muse #896: the rate is per currency, like the Reporting (one
+    // currency per query) — a sale in USD never moves the EUR estimate.
+    /** @type {Map<string, {won: number, lost: number}>} */
+    const decidedBy = new Map();
     let riskiest = null;
     for (const record of visible) {
-      if (closedKeys.has(record.pipelineStage)) wonCount += 1;
-      else if (lostKeys.has(record.pipelineStage)) lostCount += 1;
+      if (closedKeys.has(record.pipelineStage) || lostKeys.has(record.pipelineStage)) {
+        const tally = decidedBy.get(record.currency) ?? { won: 0, lost: 0 };
+        if (closedKeys.has(record.pipelineStage)) tally.won += 1;
+        else tally.lost += 1;
+        decidedBy.set(record.currency, tally);
+      }
       if (!Number.isSafeInteger(record.valueCents)) continue;
       if (closedKeys.has(record.pipelineStage)) {
         if ((monthOf(record.closedAt) ?? monthOf(record.expectedCloseDate)) === period) {
@@ -1691,15 +1697,23 @@ export function createPipelineBoard(deps) {
     // Review lead #896: below FORECAST_MIN_DECIDED decided offers the
     // historical rate is noise; the declared fallback is used and said —
     // the same rule and the same numbers as packages/analytics/src/dashboard.js.
-    const decided = wonCount + lostCount;
-    const steady = decided >= FORECAST_MIN_DECIDED;
-    const rate = steady ? wonCount / decided : FORECAST_FALLBACK_RATE;
+    /** @param {string} currency */
+    const rateOf = (currency) => {
+      const tally = decidedBy.get(currency) ?? { won: 0, lost: 0 };
+      const decided = tally.won + tally.lost;
+      const steady = decided >= FORECAST_MIN_DECIDED;
+      return { decided, steady, rate: steady ? tally.won / decided : FORECAST_FALLBACK_RATE };
+    };
+    /** @param {{decided: number, steady: boolean, rate: number}} used */
+    const rateWords = (used) => (used.steady
+      ? `${Math.round(used.rate * 100)}% (tasso di chiusura storico)`
+      : `${Math.round(FORECAST_FALLBACK_RATE * 100)}% (stima: poche offerte chiuse, ${used.decided} su almeno ${FORECAST_MIN_DECIDED})`);
     const total = new Map();
     for (const [currency, amount] of closed.entries()) {
       total.set(currency, (total.get(currency) ?? 0) + amount);
     }
     for (const [currency, amount] of waiting.entries()) {
-      total.set(currency, (total.get(currency) ?? 0) + Math.round(amount * rate));
+      total.set(currency, (total.get(currency) ?? 0) + Math.round(amount * rateOf(currency).rate));
     }
     if (!total.size) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: 'Nessuna offerta da stimare — non un impegno.' }));
@@ -1710,9 +1724,13 @@ export function createPipelineBoard(deps) {
     }
     box.appendChild(el(doc, 'p', {
       class: 'hint',
-      text: `Chiuse nel mese, più il ${steady
-        ? `${Math.round(rate * 100)}% (tasso di chiusura storico)`
-        : `${Math.round(FORECAST_FALLBACK_RATE * 100)}% (stima: poche offerte chiuse, ${decided} su almeno ${FORECAST_MIN_DECIDED})`} delle aperte attese nel mese o senza data. Sulle offerte in vista — stima, non un impegno.`,
+      text: (() => {
+        const currencies = [...total.keys()].sort();
+        const rates = currencies.length <= 1
+          ? `il ${rateWords(rateOf(currencies[0] ?? ''))}`
+          : `per ogni valuta il suo tasso (${currencies.map((currency) => `${currency} ${rateWords(rateOf(currency))}`).join('; ')})`;
+        return `Chiuse nel mese, più ${rates} delle aperte attese nel mese o senza data. Sulle offerte in vista — stima, non un impegno.`;
+      })(),
     }));
     // No global ranking across currencies: raw cents are not comparable
     // without exchange rates, so the risk line shows only when every valued

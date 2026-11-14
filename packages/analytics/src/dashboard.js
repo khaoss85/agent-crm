@@ -484,10 +484,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     const month = monthOf(row['opportunity.expectedCloseDate']);
     return month === null || month === query.period;
   });
+  // Review Muse #896: undated open rows are inside the forecast window
+  // (they can close any day); only a date already past keeps an open offer
+  // out of it, so only those are the forecast's stale rows.
   const staleOpen = sumRows(dated, (row) => {
     if (!isOpen(row)) return false;
     const month = monthOf(row['opportunity.expectedCloseDate']);
-    return month === null || month < query.period;
+    return month !== null && month < query.period;
   });
   const undatedOpen = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === null);
 
@@ -645,10 +648,13 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     const lostInPeriod = sumRows(dated, (row) => isLostValue(row['opportunity.stage']) && closedInPeriod(row));
     const periodDecided = wonInPeriod.count + lostInPeriod.count;
     const periodOverall = periodDecided === 0 ? null : wonInPeriod.count / periodDecided;
-    const candidate = [...team]
+    // Review Muse #896: the «senza referente» row is nobody — never a
+    // redistribution source or target.
+    const people = team.filter((entry) => entry.owner !== '');
+    const candidate = [...people]
       .filter((entry) => entry.openCount >= 2 && entry.winRate !== null && periodOverall !== null && entry.winRate < periodOverall && entry.staleCount > 0)
       .sort((a, b) => /** @type {number} */ (a.winRate) - /** @type {number} */ (b.winRate))[0];
-    const recipient = [...team]
+    const recipient = [...people]
       .filter((entry) => entry.wonCount > 0 && (!candidate || entry.owner !== candidate.owner))
       .sort((a, b) => /** @type {number} */ (b.winRate ?? -1) - /** @type {number} */ (a.winRate ?? -1))[0];
     if (candidate && recipient) {
@@ -677,7 +683,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     if (staleOpen.count > 0) {
       insights.push({
         id: 'stale',
-        text: `${plural(staleOpen.count, 'preventivo aperto', 'preventivi aperti')} senza data di chiusura attesa o con la data passata: assegna una data, così la previsione li conta nel mese giusto.`,
+        text: `${plural(staleOpen.count, 'preventivo aperto', 'preventivi aperti')} con la data di chiusura attesa già passata: aggiornala, così la previsione li conta di nuovo.`,
       });
     }
     if (insights.length === 0) {
