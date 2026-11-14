@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -3603,9 +3603,18 @@ export function createCustomerCardView(deps) {
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
-      if (channelFilter === 'note' && authors.length > 1) {
+      // backlog:6c40dcfaeb3f: no «dal team» chip that splits into names a
+      // moment later. Review Muse #894 (P2): the chips that can already be named show at
+      // once (a human handle, an API-named writer); a provider id the
+      // roster alone can name, and the «dal team» bucket, wait for it.
+      const chipAuthors = rosterSettled ? authors : authors.filter((author) => {
+        if (author === '') return false;
+        const first = notes.find((note) => noteAuthor(note) === author) ?? null;
+        return first !== null && noteWriterName(first) !== null;
+      });
+      if (channelFilter === 'note' && authors.length > 1 && chipAuthors.length > 0) {
         const byAuthor = el('span', 'bo-scheda-chips-authors');
-        for (const author of authors) {
+        for (const author of chipAuthors) {
           // backlog:2883ef12f233: like the signature, a chip prefers the
           // API-named author of one of its notes over the roster lookup.
           const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
@@ -3661,7 +3670,7 @@ export function createCustomerCardView(deps) {
       ? profile.identity.company.name : null;
     const offers = profile?.opportunities?.available === true && Array.isArray(profile.opportunities.items)
       ? profile.opportunities.items : [];
-    const offerEvents = offers
+    let offerEvents = offers
       .filter((row) => typeof row?.id === 'string' && Number.isFinite(Date.parse(String(row?.createdAt ?? ''))))
       .map((row) => ({
         entry: 'offer-created', id: `offerta:${row.id}`, occurredAt: row.createdAt,
@@ -3698,12 +3707,27 @@ export function createCustomerCardView(deps) {
     // later reads — the profile names the offers, then the trail their
     // moves. Until both are in, the messages and notes show with one marked
     // row; the offers' creation and their moves then arrive together.
+    /**
+     * The offer's trail read: its stage moves, and — backlog:6c40dcfaeb3f —
+     * who created it, from the same source as the offer page's «Creata
+     * da»: the offer's creation entry in that trail.
+     * @param {{items: any, people: Array<any>}} answer
+     */
+    const applyHistory = (answer) => {
+      stageEvents = stageRowsOf(answer);
+      const record = offers.find((row) => row?.id === historyId) ?? null;
+      // The offer page's own rule and guard (review Muse #894): a full page
+      // of the trail may hide the creation, and then nobody is named.
+      const who = record === null ? null : offerCreatorLabel(answer?.items, record, answer?.people ?? []);
+      if (who === null || who === '—') return;
+      offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
+    };
     /** @type {'none' | 'pending' | 'done' | 'failed'} */
     let historyState = profilePending ? 'pending' : 'none';
     if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
       if (settled !== undefined) {
-        stageEvents = stageRowsOf(settled);
+        applyHistory(settled);
         historyState = 'done';
       } else {
         historyState = 'pending';
@@ -3828,7 +3852,8 @@ export function createCustomerCardView(deps) {
           // backlog:2883ef12f233: the API-named author wins over the
           // roster, which an admin-gated read may withhold.
           const writer = noteWriterName(item);
-          const author = writer !== null ? `da ${writer}` : 'dal team';
+          const waits = signatureWaits(item?.teamAuthorId, item?.teamAuthor);
+          const author = writer !== null && !waits ? `da ${writer}` : 'dal team';
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -3838,8 +3863,17 @@ export function createCustomerCardView(deps) {
           // the correction beside the hour of the note.
           const revisedWhen = typeof item?.revisedAt === 'string' ? timeParts(item.revisedAt) : null;
           const revised = typeof item?.revisedAt === 'string' ? ` · modificata${revisedWhen ? ` ${revisedWhen}` : ''}` : '';
-          paper.appendChild(el('p', 'bo-scheda-entry-head',
-            `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`));
+          // backlog:6c40dcfaeb3f: while the roster is read the writer's place
+          // holds a grey bar — «Nota · ▬ · 10:00» — never «dal team».
+          const noteHead = el('p', 'bo-scheda-entry-head');
+          if (waits) {
+            noteHead.appendChild(el('span', undefined, 'Nota · '));
+            noteHead.appendChild(signaturePlaceholder());
+            noteHead.appendChild(el('span', undefined, `${when ? ` · ${when}` : ''}${revised}`));
+          } else {
+            noteHead.textContent = `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`;
+          }
+          paper.appendChild(noteHead);
           const mine = myActorId();
           const own = noteCtx !== null && mine !== null && typeof item?.id === 'string' && item.id !== ''
             && typeof item?.teamAuthorId === 'string' && item.teamAuthorId.trim() === mine;
@@ -3873,8 +3907,11 @@ export function createCustomerCardView(deps) {
         const bubble = el('div', 'bo-scheda-bubble');
         // The side already says the direction: the head names channel,
         // person and hour once (it used to repeat the channel three times).
+        // backlog:6c40dcfaeb3f: an outbound passage's writer waits for the
+        // roster like a note's — no «il team» that becomes a name later.
+        const whoWaits = isOutbound && signatureWaits(item?.teamAuthorId);
         const who = isOutbound
-          ? (writerName(item?.teamAuthorId) ?? 'il team')
+          ? (whoWaits ? null : (writerName(item?.teamAuthorId) ?? 'il team'))
           : (typeof item?.remoteHandle === 'string' && item.remoteHandle.trim() !== ''
             ? item.remoteHandle.trim()
             // Review #626 giro 2: a received passage without a handle still
@@ -3894,7 +3931,13 @@ export function createCustomerCardView(deps) {
           row.setAttribute('data-unread', 'true');
           entryHead.appendChild(el('span', 'bo-scheda-new', 'Nuovo'));
         }
-        entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        if (whoWaits) {
+          entryHead.appendChild(el('span', undefined, `${channelLabel(item?.channel)} · `));
+          entryHead.appendChild(signaturePlaceholder());
+          if (when) entryHead.appendChild(el('span', undefined, ` · ${when}`));
+        } else {
+          entryHead.appendChild(el('span', undefined, [channelLabel(item?.channel), who, when].filter(Boolean).join(' · ')));
+        }
         bubble.appendChild(entryHead);
         const outcome = typeof item?.sync === 'string' && item.sync !== '' ? syncLabel(item.sync) : null;
         if (item?.entry === 'call') {
@@ -4003,7 +4046,7 @@ export function createCustomerCardView(deps) {
     if (historyState === 'pending' && !profilePending) {
       void readHistory(historyId).then((answer) => {
         historyState = 'done';
-        stageEvents = stageRowsOf(answer);
+        applyHistory(answer);
         drawList();
       }, () => {
         historyState = 'failed';
@@ -4990,7 +5033,7 @@ export function createCustomerCardView(deps) {
   function readHistory(targetId) {
     let read = historyReads.get(targetId);
     if (read === undefined) {
-      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=100`;
+      const auditPath = `/api/audit?entityType=opportunity&entityId=${encodeURIComponent(targetId)}&limit=${OFFER_AUDIT_LIMIT}`;
       // backlog:947260f9f036: the roster and the trail leave together — in
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
@@ -5322,6 +5365,13 @@ export function createCustomerCardView(deps) {
   }
   /** @type {Array<any> | null} */
   let rosterPeople = null;
+  /**
+   * backlog:6c40dcfaeb3f: whether a roster read has answered in this view
+   * (names, an empty team or a refusal). Until then a signature waits — a
+   * neutral placeholder, never «dal team» that turns into a name 8-15 s
+   * later on a cold load.
+   */
+  let rosterSettled = false;
   function readRoster() {
     if (rosterRead === null) {
       const read = client.request('/api/spine/memberships').then(
@@ -5334,11 +5384,17 @@ export function createCustomerCardView(deps) {
       );
       rosterRead = read;
       void read.then((people) => {
-        if (rosterRead !== read || people.length === 0) return;
-        const first = rosterPeople === null;
-        rosterPeople = people;
-        // Names arrive after the first paint: paint once more, no read.
-        if (first && lastShown !== null && lastShown.key === shownKey) {
+        // Any answer settles the waiting signatures — a refusal too, whose
+        // read is already dropped for the next paint to ask again.
+        const firstAnswer = !rosterSettled;
+        rosterSettled = true;
+        if (rosterRead !== read && !firstAnswer) return;
+        const firstNames = people.length > 0 && rosterPeople === null;
+        if (people.length > 0) rosterPeople = people;
+        // Names arrive after the first paint: paint once more, no read. The
+        // first answer repaints even without names: the waiting signatures
+        // then read «dal team» for a writer the team really does not name.
+        if ((firstNames || firstAnswer) && lastShown !== null && lastShown.key === shownKey) {
           paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
         }
       });
@@ -5367,6 +5423,27 @@ export function createCustomerCardView(deps) {
     const named = typeof item?.teamAuthor === 'string' ? item.teamAuthor.trim() : '';
     if (named !== '') return named;
     return writerName(item?.teamAuthorId);
+  }
+  /**
+   * backlog:6c40dcfaeb3f: a signature that waits for the roster — the row
+   * names a writer, the API gave no name and no roster answer is in yet.
+   * @param {unknown} authorId @param {unknown} [apiName]
+   */
+  function signatureWaits(authorId, apiName = null) {
+    if (rosterSettled) return false;
+    if (typeof apiName === 'string' && apiName.trim() !== '') return false;
+    if (typeof authorId !== 'string' || authorId.trim() === '') return false;
+    // Review Muse #894 (P2): a writer whose name reads without the roster
+    // (a human handle, «elena» → «Elena») is named at once; only an id the
+    // roster alone can name waits.
+    return writerName(authorId) === null;
+  }
+  /** The neutral place of a name still being read: a short grey bar, no words. */
+  function signaturePlaceholder() {
+    const bar = uiSkeleton(doc, { width: '4em' });
+    bar.setAttribute('class', `${bar.getAttribute('class')} bo-scheda-who-pending`);
+    bar.setAttribute('data-who-pending', 'true');
+    return bar;
   }
 
   /**
