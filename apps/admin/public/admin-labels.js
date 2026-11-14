@@ -482,6 +482,15 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
+    // backlog:a060a4aa65b6 (pilota 14/11: the scheda read «qualificazione»
+    // for an offer in a Pipeline column): a placed offer whose pipelines are
+    // not readable here (the schema read failed or timed out) still reads
+    // its column, from the stage key — never the core stage, which the
+    // board does not show.
+    if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
+      const words = placed.replace(/-/g, ' ');
+      return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
+    }
   }
   return offerStateLabel(offer.stage);
 }
@@ -561,6 +570,29 @@ function orderedPipelines(pipelines, name) {
  * @param {any} entry one `/api/audit` item
  * @returns {{ kind: 'pipeline' | 'core', from: string, to: string } | null}
  */
+/**
+ * Whether an audit row only records where the card sits on the board — an
+ * order inside its column, written beside a drag move — and so is no event
+ * of the offer's history (backlog:a060a4aa65b6).
+ * @param {any} entry one `/api/audit` item
+ * @returns {boolean}
+ */
+export function isBoardPlacement(entry) {
+  if (!entry || typeof entry !== 'object' || entry.action !== 'opportunity.updated') return false;
+  const data = entry.data;
+  if (!data || typeof data !== 'object') return false;
+  const keys = Object.keys(data);
+  return keys.length > 0 && keys.every((key) => BOARD_PLACEMENT_KEYS.has(key));
+}
+
+/**
+ * backlog:a060a4aa65b6 (pilota 14/11: «Offerta aggiornata · da …» beside
+ * every state move, 4 rows out of 11): the keys of the audit row a board
+ * placement writes (positionOnBoard in the opportunity service) — the card's
+ * order in its column, never a change of the offer.
+ */
+const BOARD_PLACEMENT_KEYS = new Set(['boardPosition', 'afterId', 'first', 'renumbered']);
+
 export function stageMoveOf(entry) {
   if (!entry || typeof entry !== 'object') return null;
   if (entry.action === 'opportunity.stage_changed') {

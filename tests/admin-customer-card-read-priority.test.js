@@ -144,6 +144,9 @@ function recordingClient() {
 const kindOf = (path) => {
   if (path.startsWith('/api/customer-hub/card/')) return 'card';
   if (path.startsWith('/api/customer-hub/timeline/')) return 'timeline';
+  // backlog:a060a4aa65b6: the team roster (a light read «Storia stati» and
+  // the cronologia need) leaves right behind card and timeline.
+  if (path === '/api/spine/memberships') return 'roster';
   return 'later';
 };
 
@@ -156,8 +159,9 @@ test('voce 4cd1bbb646d0: card e timeline partono per prime, le altre solo dopo',
   await flush(10);
   const firstWave = client.started.map(kindOf);
   assert.ok(firstWave.length > 0, 'the first reads start');
-  assert.ok(firstWave.every((kind) => kind === 'card' || kind === 'timeline'),
-    `only card and timeline start first, got: ${JSON.stringify(client.started)}`);
+  assert.ok(firstWave.every((kind) => kind === 'card' || kind === 'timeline' || kind === 'roster'),
+    `only card and timeline start first, the roster behind them, got: ${JSON.stringify(client.started)}`);
+  assert.deepEqual(firstWave.slice(0, 2).sort(), ['card', 'timeline'], 'card and timeline are asked before anything else');
   assert.ok(firstWave.includes('card') && firstWave.includes('timeline'), 'both card and timeline start first');
   // P1 rev-agent-crm-865-10914b18: the second wave starts at the first
   // paint — the timeline alone opens the gate while the card is still out.

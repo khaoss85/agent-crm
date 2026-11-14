@@ -1319,3 +1319,71 @@ test('a762c28a646c: the offer page remembers its customer for the scheda', async
   await other.renderOfferDetail('off1');
   assert.equal(company.get('company', 'co1'), 'Palestra Sole', 'without a contact, the company');
 });
+
+// backlog:a060a4aa65b6 (verifica 14/11 01:47Z): the title waited for the
+// slowest read (memberships or quote records), 2,9-5,8 s from a direct link.
+test('a060a4aa65b6: title, customer, amount and dates show the moment the offer is read', async () => {
+  const base = pageClient();
+  let release = () => {};
+  const held = new Promise((resolve) => { release = resolve; });
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path)) return base.request(path, options);
+      return held.then(() => base.request(path, options));
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  const done = view.renderOfferDetail('off1');
+  await flushAll();
+  const text = mount.textContent;
+  assert.ok(text.includes('Cucina per Giulia'), 'the title');
+  assert.ok(text.includes('Per Giulia Verdi'), 'who it is for');
+  assert.ok(text.includes('27.500'), 'the amount');
+  assert.ok(text.includes('20 nov 2026'), 'the expected close');
+  assert.ok(!text.includes('Scoperta'), 'the stage waits for the schema');
+  const page = mount.findAll('div').find((node) => node.getAttribute('data-offer-skeleton') === 'true');
+  assert.equal(page?.getAttribute('aria-busy'), 'true', 'the rest is still reading');
+  release();
+  await done;
+  await flushAll();
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-offer-skeleton') === 'true').length, 0);
+  assert.ok(mount.textContent.includes('Cucina per Giulia'));
+});
+
+// backlog:a060a4aa65b6: every state move added «Offerta aggiornata · da …»
+// (the card's order on the board, written beside a drag move), and the rows
+// had the day without the hour.
+test('a060a4aa65b6: one history row per state move, with the hour', async () => {
+  const audit = [
+    { action: 'opportunity.updated', actorType: 'user', actorId: 'maria', createdAt: '2026-11-13T21:39:05.000Z', data: { boardPosition: 1024, first: true } },
+    { action: 'opportunity.updated', actorType: 'user', actorId: 'maria', createdAt: '2026-11-13T21:39:04.000Z', data: { pipelineStage: 'won', fromPipelineStage: 'discovery', stageEnteredAt: '2026-11-13T21:39:04.000Z' } },
+    { action: 'opportunity.updated', actorType: 'user', actorId: 'maria', createdAt: '2026-11-12T10:00:00.000Z', data: { boardPosition: 2048, afterId: 'x', renumbered: 2 } },
+    { action: 'opportunity.updated', actorType: 'user', actorId: 'maria', createdAt: '2026-11-11T10:00:00.000Z', data: { valueCents: 100 } },
+  ];
+  const client = stubClient({ audit });
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client });
+  await view.renderOfferDetail('off1');
+  const rows = mount.findAll('p').filter((node) => node.getAttribute('class') === 'history-event').map((node) => node.textContent);
+  assert.equal(rows.length, 2, 'the move and the commercial edit, never the board placements');
+  assert.match(rows[0], /13 nov, 22:39/, 'the day and the hour, Rome time');
+  assert.match(rows[0], /Cambio di stato · da Scoperta a Vinta/);
+  assert.match(rows[1], /Offerta aggiornata/);
+  const { isBoardPlacement } = await import('../apps/admin/public/admin-labels.js');
+  assert.equal(isBoardPlacement(audit[0]), true);
+  assert.equal(isBoardPlacement(audit[1]), false);
+  assert.equal(isBoardPlacement({ action: 'opportunity.created', data: { boardPosition: 1 } }), false);
+});
+
+// backlog:a060a4aa65b6: the scheda read «qualificazione» for an offer in a
+// Pipeline column — the core stage, when the pipelines were not readable.
+test('a060a4aa65b6: a placed offer reads its column even when the pipelines are not readable', async () => {
+  const { offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
+  const placed = { pipelineKey: 'accordo-sales', pipelineStage: 'richiesta-info', stage: 'qualification' };
+  assert.equal(offerStageLabel([], placed), 'Richiesta info', 'the column, never «qualificazione»');
+  assert.equal(offerStageLabel(null, { ...placed, pipelineStage: 'prova' }), 'Prova');
+  assert.equal(offerStageLabel([], { stage: 'qualification' }), 'qualificazione', 'an offer outside any board keeps its core stage');
+  assert.equal(offerStageLabel([], { pipelineStage: 'Strano Valore!', stage: 'qualification' }), 'qualificazione', 'never a raw odd key');
+});

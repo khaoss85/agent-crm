@@ -1299,6 +1299,21 @@ export function createCustomerCardView(deps) {
       PART_READS.card(encoded).then((read) => firstTake('card', read, false)),
       PART_READS.timeline(encoded).then((read) => firstTake('timeline', read)),
     ]);
+    // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
+    // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
+    // nothing, and the offer the person came from is already known — both
+    // leave right behind card and timeline instead of after the profile.
+    // The profile's own paint reuses them (historyReads, rosterRead).
+    // One microtask later, like settle(): card and timeline are asked first.
+    if (typeof onPart === 'function') {
+      void Promise.resolve().then(() => {
+        void readRoster();
+        const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
+        if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
+      // A client that throws at once fails the card on its own read; this
+      // early start never adds a second, unhandled failure.
+      }).catch(() => {});
+    }
     // Voce 4cd1bbb646d0: second wave — everything else, after the first
     // paint of card/timeline (or the budget). take() never throws (settle
     // catches), so this await always runs: a failed card still reads the
