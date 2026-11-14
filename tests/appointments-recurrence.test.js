@@ -24,7 +24,7 @@ import {
   rescheduleAppointment,
   validateAppointmentRequest,
 } from '../packages/appointments/src/appointments.js';
-import { NotFoundError, ValidationError } from '../packages/core/index.js';
+import { AppError, NotFoundError, ValidationError } from '../packages/core/index.js';
 
 // Martedì 17 novembre 2026, 17:00 ora di Roma.
 const TUE = '2026-11-17T17:00:00+01:00';
@@ -494,6 +494,79 @@ test('senza bordo calendario single e following funzionano come ora', async () =
     scope: 'single',
   });
   assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
+});
+
+test('la serie rifiuta un «owner hold» su un’occorrenza dopo la prima, come la singola (backlog:0f2ae629e09b)', async () => {
+  // Seconda occorrenza (mar 24 nov, 16:00Z) coperta da un impegno del
+  // titolare: la serie non si prenota, la proposta non passa.
+  const hold = [{
+    teamMemberId: 'coach-guido',
+    startsAt: '2026-11-24T16:30:00.000Z',
+    endsAt: '2026-11-24T17:30:00.000Z',
+    title: 'visita medica privata',
+  }];
+  const calendarSync = { async listOwnerBlocks() { return hold; } };
+  const recurrence = { kind: 'weekly', count: 3 };
+  for (const via of ['book', 'propose']) {
+    const service = fakeAppointments();
+    const context = { ...contextFor(service), calendarSync };
+    const request = { ...booking({ sourceKey: `gym:series:hold:${via}` }), recurrence };
+    const failed = via === 'book'
+      ? bookAppointment(context, request)
+      : proposeBooking(context, { ...request, spaceId: 'spazio-1' });
+    await assert.rejects(
+      failed,
+      (error) => {
+        assert.equal(error.code, 'APPOINTMENTS_OVERLAP');
+        assert.equal(error.status, 409);
+        assert.match(error.message, /2 di 3/);
+        assert.match(error.message, /titolare/);
+        assert.doesNotMatch(error.message, /visita medica privata/, 'il titolo del titolare non esce a chi prenota');
+        assert.equal(error.details?.occurrenceIndex, 1);
+        return true;
+      },
+      `la serie cade sull’hold con via ${via}`,
+    );
+    assert.equal(service.rows.length, 0, `nessuna riga scritta con via ${via}`);
+  }
+});
+
+test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:0f2ae629e09b)', async () => {
+  const service = fakeAppointments();
+  const context = contextFor(service);
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const [first, raced, third] = booked.occurrences;
+  // La seconda occorrenza la cancella un altro operatore tra la lettura
+  // dello scope e la sua scrittura: lo storage rifiuta la scrittura
+  // perdente con il 409 di transizione, come fa Postgres sulla seconda
+  // connessione.
+  let racedOnce = false;
+  const realApply = service.applyManaged;
+  service.applyManaged = async (id, patch, options) => {
+    if (id === raced.id && !racedOnce) {
+      racedOnce = true;
+      const winner = service.rows.find((row) => row.id === raced.id);
+      winner.status = 'cancelled';
+      winner.cancelReason = 'altro operatore';
+      throw new AppError(
+        `An appointment in state "cancelled" cannot advance to "cancelled"; it is terminal and advances nowhere`,
+        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: 'cancelled', to: 'cancelled' } },
+      );
+    }
+    return realApply(id, patch, options);
+  };
+  const out = await cancelAppointment(context, { id: first.id, scope: 'all', reason: 'serie finita' });
+  assert.equal(out.appointment.id, first.id, 'la risposta nomina la riga richiesta');
+  assert.equal(out.cancelled, true);
+  const byId = Object.fromEntries(out.occurrences.map((entry) => [entry.id, entry]));
+  assert.deepEqual(Object.keys(byId).sort(), [first.id, raced.id, third.id].sort());
+  assert.equal(byId[raced.id].cancelled, false, 'il perdente non scrive ma risponde con la riga del vincitore');
+  assert.equal(
+    service.rows.find((row) => row.id === raced.id).startsAt,
+    raced.startsAt,
+    'la riga del vincitore è il bersaglio, non la nominata',
+  );
+  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
 });
 
 test('annullare «tutti» con la seconda scrittura che fallisce non lascia niente annullato', async () => {

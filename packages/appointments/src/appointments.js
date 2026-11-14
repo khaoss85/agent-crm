@@ -860,6 +860,24 @@ function seriesConflict(held, teamMemberId, slots, total) {
 
 /** The 409 the operator's dialog shows: which occurrence is busy, and by what. */
 function seriesOverlapError(teamMemberId, hit, total) {
+  if (hit.conflict && hit.conflict.kind === OWNER_BLOCK_KIND) {
+    return new AppError(
+      `L'occorrenza ${hit.index + 1} di ${total} (${seriesOccurrenceLabel(hit.slot.startsAt)}) è occupata: `
+        + `il membro "${teamMemberId}" ha un impegno del titolare dalle ${hit.conflict.startsAt} alle ${hit.conflict.endsAt}. `
+        + 'Sposta la serie o scegli un altro membro, poi riprova.',
+      {
+        code: 'APPOINTMENTS_OVERLAP',
+        status: 409,
+        details: {
+          conflictingId: null,
+          status: null,
+          occurrenceIndex: hit.index,
+          occurrenceStartsAt: hit.slot.startsAt,
+          occurrenceCount: total,
+        },
+      },
+    );
+  }
   return new AppError(
     `L'occorrenza ${hit.index + 1} di ${total} (${seriesOccurrenceLabel(hit.slot.startsAt)}) è occupata: `
       + `il membro "${teamMemberId}" ha già un appuntamento dalle ${hit.conflict.startsAt} alle ${hit.conflict.endsAt} `
@@ -1146,6 +1164,16 @@ async function bookSeries(context, input) {
     // committed occurrences below instead of 409ing on them.
     const held = await appointments.listWhere({ teamMemberId: input.teamMemberId });
     const others = held.filter((row) => !row || row.seriesKey !== input.sourceKey);
+    // The single path refuses a slot on an owner hold through the composed
+    // calendar-sync handle; the series refuses every occurrence the same way,
+    // over the whole series window — never just the head slot.
+    const blocks = slots.length === 0 ? [] : await ownerBlocksFor(
+      context.calendarSync,
+      input.teamMemberId,
+      slots[0].startsAt,
+      slots[slots.length - 1].endsAt,
+    );
+    const heldWithBlocks = [...others, ...blocks];
     const stored = [];
     for (const key of keys) stored.push((await appointments.listWhere({ sourceKey: key }))[0] ?? null);
     const missing = [];
@@ -1159,7 +1187,7 @@ async function bookSeries(context, input) {
     }
     if (missing.length > 0) {
       const hit = seriesConflict(
-        others,
+        heldWithBlocks,
         input.teamMemberId,
         missing.map((entry) => ({ ...entry.slot, occurrenceIndex: entry.index })),
         slots.length,
@@ -1951,7 +1979,21 @@ export async function cancelAppointment(context, request) {
       if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
         throw error;
       }
-      const fresh = await lookup();
+      // The winner's row is the TARGET occurrence being advanced — never the
+      // named row of the request, which may be another occurrence of the
+      // scope. It is re-read by its own id, so the loser answers the row
+      // the race was actually lost on.
+      let fresh = row;
+      try {
+        if (row && row.id !== undefined && row.id !== null) {
+          fresh = await appointments.get(row.id);
+        } else if (row && typeof row.sourceKey === 'string' && row.sourceKey !== '') {
+          fresh = (await appointments.listWhere({ sourceKey: row.sourceKey }))[0] ?? row;
+        }
+      } catch (readError) {
+        if (!(readError instanceof NotFoundError)) throw readError;
+        fresh = row;
+      }
       // The loser answers the winner's row (never a 409 on the operator's
       // own intent) but reports cancelled:false: it wrote nothing, the
       // winner's single write is the cancellation.
@@ -2573,7 +2615,15 @@ export async function proposeBooking(context, request) {
   if (input.recurrence !== null) {
     const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
     assertSeriesHeadSlot(input, slots);
-    const hit = seriesConflict(held, input.teamMemberId, slots, slots.length);
+    // Like bookSeries: the proposal checks every occurrence against the
+    // owner holds over the whole series window, not just the head slot.
+    const seriesBlocks = slots.length === 0 ? [] : await ownerBlocksFor(
+      context.calendarSync,
+      input.teamMemberId,
+      slots[0].startsAt,
+      slots[slots.length - 1].endsAt,
+    );
+    const hit = seriesConflict([...held, ...seriesBlocks], input.teamMemberId, slots, slots.length);
     if (hit) throw seriesOverlapError(input.teamMemberId, hit, slots.length);
   }
   const gate = requireFlowPermissionGate(context);
