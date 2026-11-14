@@ -633,10 +633,15 @@ export function createOfferDetail(deps) {
     // backlog:a060a4aa65b6: one row per state move — the card's order on
     // the board, written beside a drag move, is no event of the offer.
     const events = auditItems.filter((entry) => !isBoardPlacement(entry));
-    if (!auditUnreadable && events.length === 0) {
+    // Review Muse #887: the server answers the last AUDIT_LIMIT rows, board
+    // placements included. A full page says it is cut first — even when
+    // the placements leave no row to show — never «nessun evento».
+    if (!auditUnreadable && auditTruncated) {
+      historyPanel.appendChild(el('p', 'muted', events.length === 0
+        ? `Gli ultimi ${AUDIT_LIMIT} eventi sono solo spostamenti sulla board: quelli precedenti non sono mostrati.`
+        : `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
+    } else if (!auditUnreadable && events.length === 0) {
       historyPanel.appendChild(el('p', 'empty', 'Ancora nessun evento registrato per questa offerta.'));
-    } else if (!auditUnreadable && auditTruncated) {
-      historyPanel.appendChild(el('p', 'muted', `Mostro solo gli ultimi ${AUDIT_LIMIT} eventi.`));
     }
     for (const entry of events) {
       const line = historyLine(entry, schema, record, people);

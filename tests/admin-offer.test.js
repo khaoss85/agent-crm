@@ -1387,3 +1387,30 @@ test('a060a4aa65b6: a placed offer reads its column even when the pipelines are 
   assert.equal(offerStageLabel([], { stage: 'qualification' }), 'qualificazione', 'an offer outside any board keeps its core stage');
   assert.equal(offerStageLabel([], { pipelineStage: 'Strano Valore!', stage: 'qualification' }), 'qualificazione', 'never a raw odd key');
 });
+
+// Review Muse #887 giro 1: the «column from the key» fallback is for
+// unreadable pipelines only; with the pipelines read, a stage they do not
+// define reads the core stage.
+test('a060a4aa65b6: with the pipelines read, a stage they do not define reads the core stage', async () => {
+  const { offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
+  const offer = { pipelineKey: 'b2b-sales', pipelineStage: 'fase-sparita', stage: 'qualification' };
+  assert.equal(offerStageLabel(SCHEMA.pipelines, offer), 'qualificazione');
+  assert.equal(offerStageLabel([], offer), 'Fase sparita', 'only without readable pipelines');
+});
+
+// Review Muse #887 giro 1: placements are filtered after the server's cap;
+// a full page of placements must say it is cut, never «nessun evento».
+test('a060a4aa65b6: a full audit page of board placements says it is cut, never empty', async () => {
+  const audit = Array.from({ length: 100 }, (_, index) => ({
+    action: 'opportunity.updated', actorType: 'user', actorId: 'maria',
+    createdAt: new Date(Date.UTC(2026, 10, 13, 10, 0, 100 - index)).toISOString(),
+    data: { boardPosition: index * 1024, first: true },
+  }));
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: stubClient({ audit }) });
+  await view.renderOfferDetail('off1');
+  const text = mount.textContent;
+  assert.ok(!text.includes('Ancora nessun evento'), 'never «nessun evento» over a cut page');
+  assert.match(text, /Gli ultimi 100 eventi sono solo spostamenti sulla board/);
+  assert.equal(mount.findAll('p').filter((node) => node.getAttribute('class') === 'history-event').length, 0);
+});

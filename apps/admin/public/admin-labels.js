@@ -482,12 +482,13 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
-    // backlog:a060a4aa65b6 (pilota 14/11: the scheda read «qualificazione»
-    // for an offer in a Pipeline column): a placed offer whose pipelines are
-    // not readable here (the schema read failed or timed out) still reads
-    // its column, from the stage key — never the core stage, which the
-    // board does not show.
-    if (/^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
+    // backlog:a060a4aa65b6: a placed offer whose pipelines are not readable
+    // here (the schema read failed or timed out) still reads its column,
+    // from the stage key — never the core stage, which the board does not
+    // show for it.
+    // Review Muse #887: only when no pipeline is readable here — with the
+    // pipelines read, a stage they do not define reads the core stage.
+    if (ordered.length === 0 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
       const words = placed.replace(/-/g, ' ');
       return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
     }
