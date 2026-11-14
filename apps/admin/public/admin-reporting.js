@@ -45,6 +45,26 @@ export const REPORTING_CURRENCY = 'EUR';
 export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi tutto']);
 
 /**
+ * backlog:48993bed7294 (verifica 13/11: «25 nel periodo» with 19 customers
+ * in Clienti, a November chart starting on 26 ott): what the channel card
+ * counts, in words — each customer once per channel, in the week of their
+ * first contact on it, over the four weeks the bars show.
+ * @param {{ total?: unknown, weeks?: Array<{ week?: unknown }> }} breakdown
+ */
+export function channelsLede(breakdown) {
+  const total = Number.isInteger(breakdown?.total) ? Number(breakdown.total) : 0;
+  const weeks = Array.isArray(breakdown?.weeks) ? breakdown.weeks : [];
+  const day = (iso) => new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+    .format(new Date(`${iso}T00:00:00.000Z`)).replace(/\./g, '');
+  const first = typeof weeks[0]?.week === 'string' ? weeks[0].week : null;
+  const lastStart = typeof weeks.at(-1)?.week === 'string' ? weeks.at(-1).week : null;
+  const count = `${total} ${total === 1 ? 'primo contatto' : 'primi contatti'} da un canale`;
+  if (first === null || lastStart === null || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))) return count;
+  const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · un cliente con più canali conta una volta per canale`;
+}
+
+/**
  * On-track status of the forecast against the operator-set obiettivo
  * (spec checklist C13: «✦ Sei in linea con l'obiettivo»). Pure: reached
  * (closed + probable) versus target, all integer minor units. Returns the
@@ -266,7 +286,11 @@ export function withPersonNames(model, roster) {
   return {
     ...model,
     ownerNames: names,
-    team: (model.team ?? []).map((entry) => ({ ...entry, owner: names.get(entry?.owner) ?? ownerName(entry?.owner, people) })),
+    // backlog:48993bed7294: offers without a referente gather in one row.
+    team: (model.team ?? []).map((entry) => ({
+      ...entry,
+      owner: entry?.owner === '' ? 'Senza referente' : (names.get(entry?.owner) ?? ownerName(entry?.owner, people)),
+    })),
     insights: (model.insights ?? []).map((insight) => ({ ...insight, text: say(insight?.text) })),
   };
 }
@@ -558,7 +582,7 @@ export function createReportingView(deps) {
     const breakdown = model.channels ?? { weeks: [], channels: [], total: 0, undated: 0 };
     const panel = el(doc, 'section', { class: 'panel' });
     panel.appendChild(el(doc, 'h3', { text: 'Nuovi clienti per canale' }));
-    panel.appendChild(el(doc, 'p', { class: 'lede', text: `${breakdown.total ?? 0} nel periodo` }));
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: channelsLede(breakdown) }));
     const slots = Array.isArray(breakdown.weeks) ? breakdown.weeks : [];
     const entries = Array.isArray(breakdown.channels) ? breakdown.channels : [];
     const totals = slots.map((slot, index) => {
@@ -768,6 +792,8 @@ export function createReportingView(deps) {
     const periodText = String(model.periodLabel ?? '');
     head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: periodText.charAt(0).toUpperCase() + periodText.slice(1) }));
     panel.appendChild(head);
+    // backlog:48993bed7294: what each column counts, like the Pipeline.
+    panel.appendChild(el(doc, 'p', { class: 'lede', text: `Aperte: tutte quelle del referente, come in Pipeline · vinte e perse: chiuse in ${periodText}.` }));
     if ((model.team ?? []).length === 0) {
       panel.appendChild(el(doc, 'div', { class: 'empty', text: 'Nessun preventivo in questa vista.' }));
       section.appendChild(panel);
