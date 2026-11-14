@@ -344,6 +344,46 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(open, 'the popover links the scheda, never a raw id');
 });
 
+// backlog:f9cf5e4616c2 — a Saturday appointment Oggi lists must read in the
+// team week on the same day and time, never vanish with the weekend.
+test('a Saturday booking paints its own column on the same day and time', async () => {
+  const saturday = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'a-sat',
+        status: 'booked',
+        // Saturday 2026-10-24, 10:00–10:30 Rome (CEST).
+        startsAt: '2026-10-24T08:00:00.000Z',
+        endsAt: '2026-10-24T08:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        priceCents: 4500,
+        currency: 'EUR',
+        notes: null,
+        sourceKey: 'calendario:marco:sat:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week: saturday }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  assert.equal(heads.length, 6, 'the Saturday booking opens its own column');
+  assert.ok(heads[5].textContent.includes('sab 24'), `the sixth head is Saturday: ${heads[5].textContent}`);
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.equal(days.length, 6);
+  assert.ok(texts(mount, 'span').some((text) => text === '10:00–10:30'), 'the Saturday block keeps its Rome time');
+});
+
 test('the week pager reloads the named members instead of blanking the week', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

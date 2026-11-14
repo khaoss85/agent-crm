@@ -1664,7 +1664,15 @@ export function createPipelineBoard(deps) {
     );
     const lostKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'lost').map((stage) => stage.key));
     const openKeys = new Set(pipeline.stages.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key));
-    const monthOf = (value) => (typeof value === 'string' && /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : null);
+    // 35c3c897d696: the same month validation as the Reporting dashboard
+    // (packages/analytics/src/dashboard.js monthOf) — a full YYYY-MM with a
+    // real calendar month (01-12). Anything else is no date, so the offer
+    // waits in the forecast like an undated one instead of dropping out.
+    const monthOf = (value) => {
+      if (typeof value !== 'string' || value.length < 7) return null;
+      const month = value.slice(0, 7);
+      return /^(\d{4})-(0[1-9]|1[0-2])$/.test(month) ? month : null;
+    };
     const closed = new Map();
     const waiting = new Map();
     const openCurrencies = new Set();

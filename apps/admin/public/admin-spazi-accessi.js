@@ -333,7 +333,7 @@ function selfSubjectOf(settled) {
 }
 
 /** The sign-in kind of a person's subjects, or null (never a technical id). */
-const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso aggiunto dal pilota']]);
+const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
 /** @param {Array<string>} subjects */
 function accessLabel(subjects) {
   const kinds = [];

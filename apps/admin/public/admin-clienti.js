@@ -45,6 +45,24 @@ const CHANNEL_LABELS = Object.freeze({
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 
+/**
+ * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
+ * `status.reason` (technical English diagnostics naming packages, e.g.
+ * «no signed business found in the composed packages (orders: not readable
+ * here; …)»). The tooltip says in plain Italian why the customer is in
+ * that state; an unknown state carries no tooltip rather than a raw
+ * diagnostic.
+ */
+const STATO_TOOLTIPS = Object.freeze({
+  cliente: 'È un cliente perché ha almeno un acquisto confermato.',
+  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+});
+
+/** Plain-Italian tooltip for a customer state, or null when unknown. */
+export function statoTooltip(value) {
+  return STATO_TOOLTIPS[String(value ?? '').toLowerCase()] ?? null;
+}
+
 /** localStorage key for the visible columns (operator-local, like the shell). */
 export const CLIENTI_COLUMNS_KEY = 'accordo.clienti.columns';
 
@@ -270,13 +288,10 @@ export function createCustomerListView(deps) {
       Object.assign(state, {
         vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
-    } else if (state.q !== '') {
-      // backlog:4968615de0a4: coming back to Clienti from another page the
-      // search starts empty — never a list filtered by a word typed earlier.
-      // Filters, order and columns stay: they show in the bar.
-      state.q = '';
-      state.page = 1;
     }
+    // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
+    // scheda) keeps the search too — like the filters, it shows in the bar
+    // and clears only with its own Azzera.
     drawShell();
     return load();
   }
@@ -285,12 +300,14 @@ export function createCustomerListView(deps) {
     const token = ++renderToken;
     if (frame === null) drawShell();
     const statusLine = frame.status;
-    // The first read has nothing to show yet; later reads keep the rows
-    // and only mark the table busy, so the bar never jumps. While the next
-    // page loads the status line still says the search is running
-    // (backlog:120f2994, production 14/11: the list stayed grey for 30 s
-    // with no sign of work), so the wait never reads as a stuck screen.
-    if (statusLine) statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
+    // The first read has nothing to show yet; a later read with a search
+    // says the search is running (backlog:120f2994, production 14/11: the
+    // list stayed grey for 30 s with no sign of work), so the wait never
+    // reads as a stuck screen. A later read without a search keeps the
+    // old line: only the table reads busy, the bar never jumps.
+    if (statusLine && (data === null || state.q !== '')) {
+      statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
+    }
     frame.body.setAttribute('aria-busy', 'true');
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
@@ -298,11 +315,18 @@ export function createCustomerListView(deps) {
       if (token !== renderToken) return;
       // A search the server could not answer in time (503 from the /bo
       // bridge timeout): say what happened and what to do, never a code.
+      // Every failed read goes through humanReadError, the timeout too, so
+      // the console always names status, code and space (review #904 giro 1:
+      // the timeout branch used to skip reportFailure and log nothing).
       const timedOut = error?.status === 503 || error?.code === 'BO_ADMIN_READ_TIMEOUT';
+      const spaceId = activeSpaceId();
       data = {
-        error: timedOut
-          ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
-          : humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }),
+        error: humanReadError(error, {
+          failed: timedOut
+            ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
+            : 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.',
+          log: spaceId === null ? undefined : (text, cause) => console.error(text, { ...cause, spaceId }),
+        }),
         status: error?.status ?? null,
       };
     }
@@ -916,7 +940,8 @@ export function createCustomerListView(deps) {
       case 'stato': {
         const value = String(row.status?.value ?? '');
         const node = el('span', `bo-clienti-pill bo-pill-${value || 'none'}`, STATO_LABELS[value] ?? (value || '—'));
-        if (row.status?.reason) node.setAttribute('title', row.status.reason);
+        const hint = statoTooltip(value);
+        if (hint) node.setAttribute('title', hint);
         return node;
       }
       case 'ultimo': {
@@ -1002,8 +1027,17 @@ export function createCustomerListView(deps) {
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = frame?.status ?? null;
     if (statusLine) {
+      // backlog:ee1244a145c9: a view emptied by no search reads as itself —
+      // «Nessun cliente corrisponde…» only answers an actual search or filter.
+      const searching = state.q !== '' || state.canale !== 'all' || state.stato !== 'all' || state.campo !== '';
+      const views = data?.views ?? FALLBACK_VIEWS;
+      const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
       statusLine.textContent = total === 0
-        ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+        ? (searching
+          ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+          : (state.vista === 'tutti' || viewLabel === null
+            ? 'Nessun cliente ancora.'
+            : `Nessun cliente in «${viewLabel}».`))
         : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }

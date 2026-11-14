@@ -327,12 +327,20 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
+    // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
+    // The skeleton mirrors the real paint: once the offer is read and its
+    // close date is known to be missing, the row is skipped instead of a
+    // grey bar that would vanish on paint. With no record yet (first paint)
+    // the date is still unknown, so the row keeps its bar.
     const known = record === null ? {} : {
-      'Chiusura prevista': close ?? '—',
+      'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+    const labels = ['Referente', 'Stato'];
+    if (record === null || close !== null) labels.push('Chiusura prevista');
+    labels.push('Creata da', 'Creata il', 'Ultima modifica');
+    for (const label of labels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
@@ -556,14 +564,19 @@ export function createOfferDetail(deps) {
     // page may hide the creation, so it names nobody.
     const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
-    for (const [label, value] of [
+    // backlog:bfc070243427: an unknown close date paints no row — never an
+    // empty «Chiusura prevista —» field.
+    const factRows = [
       ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Stato', stageLabel(schema, record)],
-      ['Chiusura prevista', close ?? '—'],
+    ];
+    if (close !== null) factRows.push(['Chiusura prevista', close]);
+    factRows.push(
       ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
-    ]) {
+    );
+    for (const [label, value] of factRows) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       cell.appendChild(el('span', 'offer-fact-value', value ?? '—'));
