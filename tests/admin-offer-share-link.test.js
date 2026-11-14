@@ -28,6 +28,11 @@ test('7fa422415232: share builders carry only the token path, never an id or a p
   assert.equal(offerShareUrl(ORIGIN, TOKEN), URL);
   assert.equal(offerShareUrl('', TOKEN), null, 'no origin, no URL');
   assert.equal(offerShareUrl(ORIGIN, 'short'), null);
+  assert.equal(offerShareUrl('http://spazio.example', TOKEN), 'http://spazio.example/q/' + TOKEN, 'http stays usable');
+  assert.equal(offerShareUrl('https://spazio.example///', TOKEN), URL, 'trailing slashes never double the path slash');
+  assert.equal(offerShareUrl('HTTPS://spazio.example', TOKEN), null, 'scheme match stays case-sensitive, as before the cure');
+  assert.equal(offerShareUrl('ftp://spazio.example', TOKEN), null, 'only http(s) origins mint a URL');
+  assert.equal(offerShareUrl(null, TOKEN), null, 'a missing origin is no URL, never a throw');
   const message = offerShareMessage({ offerName: 'Cucina per Giulia', url: URL, expiresAt: EXPIRES });
   assert.ok(message.includes('Cucina per Giulia'), 'names the offer');
   assert.ok(message.includes(URL), 'the URL stays whole and tappable');
