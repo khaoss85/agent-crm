@@ -4674,11 +4674,7 @@ export function createCustomerCardView(deps) {
       shareButton.setAttribute('data-action', 'scheda-share-link');
       const shareLine = el('p', 'bo-muted', '');
       shareLine.setAttribute('role', 'status');
-      let shareBusy = false;
-      const shareSend = async () => {
-        if (shareBusy) return;
-        shareBusy = true;
-        shareButton.setAttribute('disabled', 'disabled');
+      const shareSend = () => uiBusy(shareButton, 'Creo il link…', async () => {
         shareLine.setAttribute('class', 'bo-muted');
         shareLine.textContent = 'Creo il link…';
         try {
@@ -4735,11 +4731,8 @@ export function createCustomerCardView(deps) {
         } catch (error) {
           shareLine.setAttribute('class', 'field-error');
           shareLine.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi.' });
-        } finally {
-          shareBusy = false;
-          shareButton.removeAttribute('disabled');
         }
-      };
+      });
       shareButton.addEventListener('click', () => { void shareSend(); });
       shareWrap.appendChild(shareButton);
       shareWrap.appendChild(shareLine);
