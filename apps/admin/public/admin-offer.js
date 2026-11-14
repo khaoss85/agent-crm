@@ -176,10 +176,27 @@ export function offerCrumb(record) {
 export function createOfferDetail(deps) {
   const { doc, mount, navigate = () => {} } = deps;
   const onTitle = typeof deps.onTitle === 'function' ? deps.onTitle : () => {};
+  // backlog:a762c28a646c: «Per <cliente>» opens a scheda that reads the
+  // name at once.
+  const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
 
   const el = elFor(doc);
+
+  /** The offer's customer, remembered by the scheda it links to. @param {any} record */
+  function rememberCustomer(record) {
+    const customer = offerCustomer(record);
+    const parts = customer?.href ? /^#\/customer-card\/([a-z][a-z0-9-]*)\/([^/]+)$/.exec(customer.href) : null;
+    if (knownNames === null || parts === null) return;
+    let id;
+    try {
+      id = decodeURIComponent(parts[2]);
+    } catch {
+      return;
+    }
+    knownNames.remember(parts[1], id, customer?.name);
+  }
   let renderToken = 0;
   /** Record id with the edit form open. */
   let editing = false;
@@ -457,6 +474,7 @@ export function createOfferDetail(deps) {
     if (token !== renderToken || !record || typeof record !== 'object') return;
     clear();
     onTitle(offerCrumb(record));
+    rememberCustomer(record);
 
     const customer = offerCustomer(record);
 

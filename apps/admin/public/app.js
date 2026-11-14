@@ -4,6 +4,7 @@ import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { withSchemaCache } from './admin-schema-cache.js';
+import { createKnownNames } from './admin-known-names.js';
 import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
@@ -600,10 +601,14 @@ const pipelineBoard = createPipelineBoard({
 /** The crumb of the offer page last read (backlog:f2d39e473e3a, review Muse #881). */
 const offerCrumbs = createOfferCrumbs({ space: () => shellActiveSpace ?? null });
 
+/** The customer names the views already showed (backlog:a762c28a646c). */
+const knownNames = createKnownNames({ space: () => shellActiveSpace ?? null });
+
 const offerDetail = createOfferDetail({
   doc: document,
   mount: mountGate.owned('offer-detail'),
   client: moduleClient,
+  knownNames,
   submissions,
   toast,
   navigate: (hash) => { window.location.hash = hash; },
@@ -680,6 +685,7 @@ const customerCardView = createCustomerCardView({
   doc: document,
   mount: mountGate.owned('customer-card'),
   client: moduleClient,
+  knownNames,
   toast,
   // backlog:947260f9f036: a withdrawal sent early takes its «Annulla» away.
   hideToast: (scope) => { if (toaster !== null) toaster.hideScope(scope); },
@@ -726,6 +732,7 @@ const clientiListView = createCustomerListView({
   // backlog:ff8bb60f417f: the list stays under the Nuovo cliente window.
   mount: mountGate.owned(['customer-data', 'customer-new']),
   client: moduleClient,
+  knownNames,
   navigate: (hash) => { window.location.hash = hash; },
   notify: (message) => toast(message),
   // The unfiltered total is the sidebar badge: it never lags the list.

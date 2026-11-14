@@ -951,6 +951,13 @@ export function createCustomerCardView(deps) {
     titleKnown = false;
     lastTitle = undefined;
   };
+  /**
+   * backlog:a762c28a646c: the names other views already showed (the
+   * Clienti list, an offer's «Per <cliente>»): the scheda paints one at
+   * once, before its own card read lands.
+   * @type {{ remember: (resource: unknown, id: unknown, name: unknown) => void, get: (resource: unknown, id: unknown) => string | null } | null}
+   */
+  const knownNames = deps.knownNames && typeof deps.knownNames.get === 'function' ? deps.knownNames : null;
   const emitTitle = (name) => {
     const title = typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
     if (titleKnown && title === lastTitle) return;
@@ -4678,6 +4685,12 @@ export function createCustomerCardView(deps) {
         partials = false;
       }
     };
+    // backlog:a762c28a646c: the crumb names a customer another view already
+    // showed at once; the card read confirms (or corrects) it.
+    if (partials && knownNames !== null) {
+      const known = knownNames.get(resource, id);
+      if (known !== null) emitTitle(known);
+    }
     partialPaint(null, PART_NAMES_PENDING());
     try {
       loaded = await load(resource, id, firstVisit ? partialPaint : null);
@@ -4755,6 +4768,7 @@ export function createCustomerCardView(deps) {
     }
     retainedDrafts = null;
     emitTitle(card?.name ?? null);
+    knownNames?.remember(resource, id, card?.name);
     try {
       buildAndShow(key, resource, id, {
         card, timeline, timelineError, profile, profileError,
@@ -5050,7 +5064,10 @@ export function createCustomerCardView(deps) {
   function paintPartial(key, resource, id, partial, pending) {
     const waiting = pending ?? PART_NAMES_PENDING();
     if (partial?.cardError) return;
-    if (partial?.card) emitTitle(partial.card.name ?? null);
+    if (partial?.card) {
+      emitTitle(partial.card.name ?? null);
+      knownNames?.remember(resource, id, partial.card.name);
+    }
     pendingDrafts = key === shownKey ? readDrafts(mount) : null;
     try {
       buildAndShow(key, resource, id, {
@@ -5159,8 +5176,21 @@ export function createCustomerCardView(deps) {
       const head = el('div', 'bo-scheda-head');
       head.setAttribute('data-loading', 'true');
       head.setAttribute('aria-busy', 'true');
-      head.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
-      head.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+      // backlog:a762c28a646c: a name another view already showed reads at
+      // once; the rest of the header stays grey until the card lands.
+      const known = knownNames !== null ? knownNames.get(resource, id) : null;
+      if (known !== null) {
+        const avatar = el('span', 'bo-scheda-avatar', customerInitials(known));
+        avatar.setAttribute('aria-hidden', 'true');
+        head.appendChild(avatar);
+        const titles = el('div', 'bo-scheda-titles');
+        titles.appendChild(el('h1', 'bo-scheda-name', known));
+        titles.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+        head.appendChild(titles);
+      } else {
+        head.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+        head.appendChild(uiSkeleton(doc, { width: '22%', block: true }));
+      }
       panel.appendChild(head);
     } else {
       header(panel, card, resource, id);
