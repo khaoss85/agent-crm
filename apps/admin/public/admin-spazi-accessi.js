@@ -1117,6 +1117,12 @@ export function createSpaziAccessiView(deps) {
     // the titles say whose it is.
     const conns = state.spaceConns.get(readActiveSpace()) ?? { entries: null, unreadable: 'failed' };
     const list = el(doc, 'div', { cls: 'bo-spazi-team' });
+    if (state.selfSubject === null && rows.length > 0) {
+      list.appendChild(el(doc, 'p', {
+        text: 'Rimuovi non \u00E8 disponibile: non sono riuscito a verificare il tuo account. Ricarica la pagina per riprovare.',
+        cls: 'bo-muted bo-spazi-remove-off',
+      }));
+    }
     if (rows.length === 0) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
@@ -1221,8 +1227,11 @@ export function createSpaziAccessiView(deps) {
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
-      } else if (!row.self) {
-        // backlog:9d06eb1e174b: never «Rimuovi» on one's own account.
+      } else if (state.selfSubject !== null && !row.self) {
+        // backlog:9d06eb1e174b: never «Rimuovi» on one's own account — and
+        // fail closed (review Muse #897 giro 2): while who «Tu» is stays
+        // unknown (context unread, failed or without a subject) no row
+        // offers it; the note above the list says why.
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
         remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; render(); });

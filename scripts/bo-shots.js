@@ -1383,7 +1383,9 @@ const client = {
   async request(path, options) {
     const opts = options || {};
     if (path === '/api/spine/context') {
-      return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+      // The production shape: the verified session subject (Elena's Google
+      // login), so «Rimuovi» shows on the other rows (backlog:9d06eb1e174b).
+      return { identity: { subject: 'google|1001', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|1001' }, roles: { owner: [], operator: [], observer: [] } };
     }
     if (path === '/api/spine/memberships' && String(opts.method || 'GET').toUpperCase() !== 'POST') {
       return { items: MEMBERS };

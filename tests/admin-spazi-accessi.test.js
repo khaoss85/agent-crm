@@ -58,7 +58,7 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
       if (calls) calls.push({ path, body, method: options?.method ?? 'GET' });
       if (path === '/api/spine/context') {
         if (fail.context) throw fail.context;
-        return context ?? { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+        return context ?? { identity: { subject: 'google|sessione-test' }, membership: { role: 'owner', subject: 'google|sessione-test' }, roles: { owner: [], operator: [], observer: [] } };
       }
       if (path === '/api/spine/memberships') {
         if (fail.members) throw fail.members;
@@ -1905,4 +1905,29 @@ test('9d06eb1e174b: an empty identity subject falls back to the membership subje
   const own = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member')
     && node.textContent.includes('dario@esempio.invalid'));
   assert.equal(own.findAll('button').filter((button) => button.textContent === 'Rimuovi').length, 0);
+});
+
+// Review Muse #897 giro 2 (P1): the guard fails closed. While who «Tu» is
+// stays unknown — context failed, or no subject in it — no row offers
+// «Rimuovi», and one line says why; with the identity known only the
+// other rows offer it.
+test('9d06eb1e174b: with the session unknown no row offers «Rimuovi»; known, only the others do', async () => {
+  const removes = (mount) => mount.findAll('button').filter((button) => button.textContent === 'Rimuovi');
+  const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
+  for (const client of [
+    stubClient({ fail: { context: failed }, members: ROSTER_SELF }),
+    stubClient({ context: { identity: { subject: '' }, membership: { role: 'owner', subject: '' }, roles: { owner: [] } }, members: ROSTER_SELF }),
+  ]) {
+    const { mount, view: v } = view({ client });
+    await v.render();
+    await flush();
+    assert.equal(removes(mount).length, 0, 'no «Rimuovi» while the session is unknown');
+    assert.match(text(mount), /Rimuovi non è disponibile: non sono riuscito a verificare il tuo account/);
+  }
+  const context = { identity: { subject: 'google|2002' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  assert.equal(removes(mount).length, 3, 'every other row offers «Rimuovi», never the own one');
+  assert.doesNotMatch(text(mount), /Rimuovi non è disponibile/);
 });
