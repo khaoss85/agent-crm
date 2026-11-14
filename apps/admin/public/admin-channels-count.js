@@ -132,6 +132,43 @@ export function profileOffersConnector(profile, connector) {
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
  * @returns {Array<any>}
  */
+/**
+ * Whether one row is a stand-in for the space-profile Gmail rather than a
+ * real channel connection (backlog:3805161965cd). The server refuses the
+ * Email send with 409 CHANNEL_CONNECTION_NOT_ACTIVE without a real channel
+ * connection, so these rows never vote Email in a «collegati» count — on
+ * Oggi, on Stato sync, anywhere the count prints. Calendar and the other
+ * profile votes keep counting.
+ * @param {unknown} row connection-like row ({ channel, connectionKey, source })
+ */
+export function isProfileEmailStandinRow(row) {
+  if (row === null || typeof row !== 'object') return false;
+  // The counted id, never the raw spelling: a Gmail stand-in stored as
+  // channel 'gmail' still evades an Email vote while the shared count
+  // normalizes it to Email (backlog:3805161965cd, review giro 4 P1).
+  if (countedChannel(String(row.channel ?? '').toLowerCase()) !== 'email') return false;
+  if (row.source === 'profile') return true;
+  const key = row.connectionKey;
+  return typeof key === 'string' && key.trim().toLowerCase().startsWith('profile:');
+}
+
+/**
+ * Whether one row spells Email in a way that can never send
+ * (backlog:3805161965cd, Muse P1+P2 giro 7 on #848): the send route matches
+ * `entry.channel === channel` exactly (POST /api/customer-hub/messages), so
+ * only the canonical 'email' spelling votes Email anywhere — an adapter
+ * alias ('gmail') or a case variant ('Email') reads off on every screen,
+ * like in the composer. Every other channel keeps the shared alias mapping
+ * (countedChannel): a stored 'google-calendar' still counts Calendar.
+ * @param {unknown} row connection-like row ({ channel })
+ */
+export function isNonCanonicalEmailRow(row) {
+  if (row === null || typeof row !== 'object') return false;
+  const spelling = typeof row.channel === 'string' ? row.channel : '';
+  if (spelling === 'email') return false;
+  return countedChannel(spelling) === 'email' || countedChannel(spelling.toLowerCase()) === 'email';
+}
+
 export function mergeProfileConnections(rows, profile = null) {
   const list = Array.isArray(rows) ? rows.filter((row) => row != null && typeof row === 'object') : [];
   const items = profileItems(profile);
@@ -282,6 +319,24 @@ function profileConnects(profile, channel) {
 }
 
 /**
+ * Whether the profile already holds a connected grant for one channel
+ * (backlog:3805161965cd): a `connected` Gmail item with no active channel
+ * connection still leaves Email off, but Profilo shows the grant as
+ * connected with nothing left to do there — curing to Profilo loops.
+ * The Profilo cure only applies while the grant is actually missing.
+ * @param {unknown} profile the /api/profile payload, null when unreadable
+ * @param {string} channel the counted channel id
+ */
+export function profileGrantConnected(profile, channel) {
+  const items = profileItems(profile);
+  if (items === null) return false;
+  const id = countedChannel(channel);
+  return items.some((item) => item != null && typeof item === 'object'
+    && PROFILE_CONNECTOR_CHANNELS[item.connector] === id
+    && item.status === 'connected');
+}
+
+/**
  * The one state of one channel (backlog:e381c48581fa). Before it, WhatsApp
  * read ✓ in Personalizzazione, «Collegato» on Profilo and «Non disponibile
  * qui · Nessun adattatore composto» in its own detail, on the same space:
@@ -294,7 +349,8 @@ function profileConnects(profile, channel) {
  *   whether this backoffice configures it (an adapter is composed, or the
  *   adapters are unknown); when not, `note` says so in plain words and
  *   `manageRoute` points to Profilo for a profile link.
- * - `da-completare`: rows exist, none active, and an adapter can finish it.
+ * - `da-completare`: real rows exist, none active, and an adapter can finish it
+ *   (the profile-Gmail Email stand-in alone never holds it: no route).
  * - `da-collegare`: nothing linked, and `connectRoute` is where it connects.
  * - `non-disponibile`: nothing linked and nowhere here to connect it.
  *
@@ -307,10 +363,19 @@ function profileConnects(profile, channel) {
  */
 export function channelState(channel, { rows = [], profile = null, adapters = null, guided = [] } = {}) {
   const id = countedChannel(channel);
+  // Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): Email votes only on
+  // its canonical spelling — the server matches entry.channel === channel
+  // exactly, so an alias ('gmail') or a case variant ('Email') never reads
+  // `collegato` here, like in the composer. Every other channel keeps the
+  // shared alias mapping.
   const matching = mergeProfileConnections(rows, profile)
-    .filter((row) => countedChannel(row.channel) === id);
+    .filter((row) => countedChannel(row.channel) === id && !isNonCanonicalEmailRow(row));
   const composed = Array.isArray(adapters) ? adapters.length > 0 : null;
-  const active = matching.find((row) => row.status === 'active') ?? null;
+  // The profile-Gmail stand-in is no channel connection (the send without
+  // one fails 409), so it never reads `collegato` — Connettori agrees with
+  // Oggi, Stato sync and the composer on profile-only Gmail
+  // (backlog:3805161965cd, review giro 4 P1).
+  const active = matching.find((row) => row.status === 'active' && !isProfileEmailStandinRow(row)) ?? null;
   const shape = (state, extra = {}) => Object.freeze({
     channel: id,
     state,
@@ -337,17 +402,30 @@ export function channelState(channel, { rows = [], profile = null, adapters = nu
       manageRoute: onProfile ? '#/profilo' : null,
     });
   }
-  if (matching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
+  // The profile-Gmail Email stand-in is no channel connection, so it never
+  // holds `da-completare` alone: a sole stand-in falls through to
+  // `da-collegare` with a route, or to `non-disponibile` when the grant is
+  // already connected and no adapter can create the connection
+  // (backlog:3805161965cd, Muse P1 on #848).
+  const realMatching = matching.filter((row) => !isProfileEmailStandinRow(row));
+  if (realMatching.length > 0 && composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id)) {
     return shape('da-completare', { managedHere: true });
   }
   // A composed adapter opens the guided flow only for a channel that flow
   // serves: Google Calendar connects on Profilo, Stripe nowhere (review
   // #782 P3), whatever the schema lists.
+  // Backlog:3805161965cd (Muse P1 on #848): no `da-completare` without a
+  // real row — with a composed adapter the guided flow takes it, and the
+  // Profilo cure only applies while the grant is actually missing. A
+  // connected grant with no channel connection cures to the guided flow,
+  // or honestly nowhere when no adapter can create the connection.
   const guidedHere = composed === true && !Object.hasOwn(OUTSIDE_GUIDED_FLOW, id);
+  const profiloCure = profileConnects(profile, id) && !profileGrantConnected(profile, id)
+    ? '#/profilo' : null;
   const connectRoute = guidedHere
     ? `#/connettori/${id}`
     : channelConnectRoute(id, { guided: composed === false ? [] : guided, profile })
-      ?? (profileConnects(profile, id) ? '#/profilo' : null);
+      ?? profiloCure;
   if (connectRoute !== null) return shape('da-collegare', { managedHere: guidedHere, connectRoute });
   return shape('non-disponibile', { note: NOT_AVAILABLE_NOTE });
 }

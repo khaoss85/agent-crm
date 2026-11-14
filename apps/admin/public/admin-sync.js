@@ -32,6 +32,8 @@ import {
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
+  isNonCanonicalEmailRow,
+  isProfileEmailStandinRow,
   mergeProfileConnections,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -206,17 +208,24 @@ export function syncAgo(iso, nowMs = Date.now()) {
  * fallback, never a zero posing as measured.
  * @param {any} activity
  * @param {number} [nowMs]
- * @param {{ syncing?: boolean, extraCount?: number }} [options]
+ * @param {{ syncing?: boolean, extraCount?: number, fixActivity?: any }} [options] `fixActivity` is the raw
+ *   entries the fix/grant cards read; the badge votes their total while rows and tone stay on `activity`.
  */
-export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, extraCount = 0 } = {}) {
+export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, extraCount = 0, fixActivity = null } = {}) {
   // A null payload is an unread state, never an ok one: unknown must not
   // pose as fresh. The view only calls this with a loaded payload; the
   // empty-space case below (a real object with no connections) stays ok.
   if (activity === null || typeof activity !== 'object') {
     return { tone: 'wait', title: 'Stato non letto', detail: 'Ricarica la pagina per leggere lo stato.', count: 0 };
   }
-  const items = syncFixItems(activity);
-  const grantCards = syncGrantCards(activity, nowMs);
+  // The fix and grant cards read the raw entries (backlog:3805161965cd):
+  // a stand-in Email row with failure state keeps its card below, so the
+  // hero votes the same fix total, never a calm badge above a
+  // «Da sistemare» card (Muse review on #848). Rows, pills and the empty
+  // tone stay on the filtered activity; only the fix total is shared.
+  const fixes = fixActivity !== null && typeof fixActivity === 'object' ? fixActivity : activity;
+  const items = syncFixItems(fixes);
+  const grantCards = syncGrantCards(fixes, nowMs);
   // Unresolved identity candidates need a human on this same screen, so
   // they count like the channel fix items (the purple cards below).
   const extra = Number.isSafeInteger(extraCount) && extraCount > 0 ? extraCount : 0;
@@ -495,8 +504,20 @@ export const SYNC_CHANNELS = NINE_CHANNELS;
 export function withProfileConnections(activity, profile = null) {
   if (activity === null || typeof activity !== 'object') return activity;
   const entries = entriesOf(activity);
-  const merged = mergeProfileConnections(entries, profile);
-  return merged.length === entries.length ? activity : { ...activity, connections: merged };
+  const preFilter = mergeProfileConnections(entries, profile);
+  // The profile-Gmail stand-in never votes Email in the count or the
+  // table: without a real channel connection the send fails 409
+  // (backlog:3805161965cd). An alias ('gmail') or a case variant ('Email')
+  // spelling never votes either — the server matches entry.channel exactly,
+  // like in the composer (Muse P1+P2 giro 7 on #848). The fix and grant
+  // cards keep reading the raw entries (the view runs them on the
+  // unfiltered activity).
+  const merged = preFilter.filter((row) => !isProfileEmailStandinRow(row) && !isNonCanonicalEmailRow(row));
+  // Identity means nothing changed, row for row: a removed Email
+  // stand-in plus an added profile link is a change even at equal length,
+  // so the length shortcut never stands alone.
+  const same = merged.length === entries.length && merged.every((row, index) => row === entries[index]);
+  return same ? activity : { ...activity, connections: merged };
 }
 
 /**
@@ -1057,7 +1078,9 @@ export function createSyncView(deps) {
   function renderHero(box, activity) {
     const syncing = state.syncingAll || state.syncing.size > 0;
     const extraCount = syncIdentityCards(state.candidates).length;
-    const indicator = syncIndicator(activity, Date.now(), { syncing, extraCount });
+    // The hero's rows read the filtered activity; its fix total reads the
+    // same raw entries the cards below read (backlog:3805161965cd).
+    const indicator = syncIndicator(activity, Date.now(), { syncing, extraCount, fixActivity: state.activity });
     box.appendChild(settingsTabs(doc, { activeId: 'stato-sync', fixCount: indicator.count, navigate: go }));
     box.appendChild(el(doc, 'p', 'bo-kicker', 'Stato sync'));
     const hero = el(doc, 'div', 'bo-sync-hero');
@@ -1249,7 +1272,15 @@ export function createSyncView(deps) {
     // pill but is not «collegato».
     // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
     // included, plus a linked channel outside the nine (review #647).
-    const count = channelConnectionCount(entriesOf(activity));
+    // Backlog:3805161965cd: the profile-Gmail stand-in never votes Email —
+    // without a real channel connection the send fails 409, so Stato sync
+    // prints the same number Oggi prints (cf365ada15b9). An alias ('gmail')
+    // or a case variant ('Email') never votes either (Muse P1+P2 giro 7 on
+    // #848). The table rows keep painting from the shared merge untouched
+    // (review #680).
+    const count = channelConnectionCount(
+      entriesOf(activity).filter((row) => !isProfileEmailStandinRow(row) && !isNonCanonicalEmailRow(row)),
+    );
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
     cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));
@@ -1440,7 +1471,12 @@ export function createSyncView(deps) {
     // count all read the same connections (backlog:cf365ada15b9).
     const activity = withProfileConnections(state.activity, state.profile);
     renderHero(box, activity);
-    renderFixes(box, activity);
+    // The fix and grant cards read the raw entries: a stopped import or
+    // a refused grant keyed `profile:` is a real server row with a route
+    // to name, even though it never votes Email in the count and table
+    // (review giro 4 P1). The hero votes the same raw fix total through
+    // `fixActivity`, so its badge never reads 0 above these cards.
+    renderFixes(box, state.activity);
     // Supervisor design pass: channels and the live feed as the prototype's
     // two cards side by side (2:1).
     const cols = el(doc, 'div', 'bo-sync-cols');

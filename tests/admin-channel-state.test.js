@@ -19,6 +19,8 @@ import {
   NINE_CHANNEL_IDS,
   channelConnectionCount,
   channelState,
+  isNonCanonicalEmailRow,
+  isProfileEmailStandinRow,
   mergeProfileConnections,
 } from '../apps/admin/public/admin-channels-count.js';
 import { CONNECTOR_CATALOG, connectorStatus, createConnectorsView } from '../apps/admin/public/admin-connectors.js';
@@ -72,9 +74,28 @@ test('channelState: not linked reads da-completare, da-collegare or non-disponib
   const meta = (configured) => ({ connections: { available: true, items: [{ connector: 'whatsapp', status: 'disconnected' }], meta: { configured } } });
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(true) }).connectRoute, '#/profilo');
   assert.equal(channelState('whatsapp', { rows: [], adapters: [], profile: meta(false) }).state, 'non-disponibile');
-  // A profile link merges like the shared count.
+  // A profile Gmail link merges like the shared count — but the stand-in
+  // is no channel connection (backlog:3805161965cd): with a connected
+  // grant and no composed adapter there is nowhere to create one, so
+  // Email reads non-disponibile, never collegato and never a Profilo
+  // cure into the loop (Muse P1 on #848).
   const profile = { connections: { available: true, items: [{ connector: 'gmail', status: 'connected', account: 'dan@presti.it' }] } };
-  assert.equal(channelState('email', { rows: [], adapters: [], profile }).state, 'collegato');
+  const gmailAlone = channelState('email', { rows: [], adapters: [], profile });
+  assert.equal(gmailAlone.state, 'non-disponibile');
+  assert.equal(gmailAlone.connectRoute, null, 'a connected grant cures nowhere when no adapter can connect it');
+  assert.match(gmailAlone.note ?? '', /non si può ancora collegare/, 'the note says so in plain words');
+  const gmailGuided = channelState('email', {
+    rows: [],
+    adapters: [{ channel: 'email', name: 'email-adapter', version: 1 }],
+    profile,
+    guided: ['email'],
+  });
+  assert.equal(gmailGuided.state, 'da-collegare');
+  assert.equal(gmailGuided.connectRoute, '#/connettori/email', 'a composed adapter opens the guided flow');
+  const grantMissing = { connections: { available: true, items: [{ connector: 'gmail', status: 'revoked', account: null }] } };
+  const gmailMissing = channelState('email', { rows: [], adapters: [], profile: grantMissing });
+  assert.equal(gmailMissing.state, 'da-collegare');
+  assert.equal(gmailMissing.connectRoute, '#/profilo', 'a missing grant still cures to Profilo');
   for (const label of Object.values(CHANNEL_STATE_LABELS)) {
     assert.doesNotMatch(label.text, /qui$/, 'no «Non disponibile qui»');
   }
@@ -265,4 +286,75 @@ test('1cfc68175ab7: a settings tab keeps the tab row while its content loads', (
   const loading = paintScreenLoading({ doc, mount, label: 'Clienti' });
   assert.equal(keepSettingsTabs(doc, { mount, loading, view: 'customer-data' }), false);
   assert.ok(!mount.textContent.includes('IMPOSTAZIONI'));
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): the Email stand-in rule is the
+// composer's rule — a `source: 'profile'` marker or a `profile:` key (any
+// case), never a real route. Only Email rows count; other channels and
+// real Email rows stay out.
+test('isProfileEmailStandinRow shares the composer rule, key and alias spellings included', () => {
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'profile:gmail', source: 'profile' }), true);
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'profile:gmail' }), true, 'key-only row');
+  assert.equal(isProfileEmailStandinRow({ channel: 'Email', status: 'active', connectionKey: 'PROFILE:Gmail' }), true, 'key match ignores case');
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active', connectionKey: 'gmail-1' }), false, 'a real route stays in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'whatsapp', status: 'active', connectionKey: 'profile:whatsapp' }), false, 'only Email is a stand-in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'email', status: 'active' }), false, 'no marker, no key');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'profile:gmail', source: 'profile' }), true, 'alias spelling still a stand-in');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'PROFILE:Gmail' }), true, 'alias spelling, key only');
+  assert.equal(isProfileEmailStandinRow({ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }), false, 'a real gmail route stays in');
+  assert.equal(isProfileEmailStandinRow(null), false);
+});
+
+// Backlog:3805161965cd (Muse P1+P2 giro 7 on #848): Email votes only on
+// its canonical spelling — an alias ('gmail') or a case variant ('Email')
+// can never send, so it never reads `collegato`, whatever key it carries.
+// Every other channel keeps the shared alias mapping ('google-calendar'
+// still reads `collegato`).
+test('isNonCanonicalEmailRow names the Email spellings that can never send', () => {
+  assert.equal(isNonCanonicalEmailRow({ channel: 'gmail', status: 'active', connectionKey: 'gmail-1' }), true, 'alias spelling with a real key');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'Email', status: 'active', connectionKey: 'gmail-1' }), true, 'case variant with a real key');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'GMAIL', status: 'active', connectionKey: 'gmail-1' }), true, 'upper-case alias');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'email', status: 'active', connectionKey: 'gmail-1' }), false, 'the canonical spelling votes');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'google-calendar', status: 'active' }), false, 'other channels keep their aliases');
+  assert.equal(isNonCanonicalEmailRow({ channel: 'calendar', status: 'active' }), false);
+  assert.equal(isNonCanonicalEmailRow({ channel: 'messenger', status: 'active' }), false, 'Meta aliases stay untouched');
+  assert.equal(isNonCanonicalEmailRow(null), false);
+  assert.equal(isNonCanonicalEmailRow({}), false, 'no channel votes nothing');
+});
+
+// Muse review on #848, giro 4 P1 (backlog:3805161965cd): a sole
+// profile-Gmail Email stand-in never holds `da-completare` — with a composed
+// Email adapter it falls through to `da-collegare` with the guided route,
+// never a dead end with no route. A real pending row still holds it.
+test('channelState: a sole Email stand-in with a composed adapter reads da-collegare, never da-completare', () => {
+  const adapters = [{ name: 'email-adapter', version: 1 }];
+  const standin = { channel: 'email', status: 'active', connectionKey: 'profile:gmail', source: 'profile' };
+  const state = channelState('email', { rows: [standin], adapters });
+  assert.equal(state.state, 'da-collegare');
+  assert.equal(state.connectRoute, '#/connettori/email', 'the guided flow is where the adapter completes');
+  const alias = { channel: 'gmail', status: 'active', connectionKey: 'profile:gmail', source: 'profile' };
+  const aliasState = channelState('email', { rows: [alias], adapters });
+  assert.equal(aliasState.state, 'da-collegare');
+  assert.equal(aliasState.connectRoute, '#/connettori/email');
+  const pending = channelState('email', {
+    rows: [{ channel: 'email', status: 'pending', connectionKey: 'gmail-1' }],
+    adapters,
+  });
+  assert.equal(pending.state, 'da-completare', 'a real row still holds da-completare');
+});
+
+// Backlog:3805161965cd (Muse P1 giro 7 on #848): an alias- or
+// case-variant-spelled real Email row never reads `collegato` — with a
+// composed adapter it cures to the guided flow, like the composer cures,
+// never the loop back to Profilo.
+test('channelState: a non-canonical Email spelling never reads collegato', () => {
+  const adapters = [{ name: 'email-adapter', version: 1 }];
+  for (const channel of ['gmail', 'Email']) {
+    const state = channelState('email', {
+      rows: [{ channel, status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }],
+      adapters,
+    });
+    assert.equal(state.state, 'da-collegare', `${channel}: never collegato without the canonical spelling`);
+    assert.equal(state.connectRoute, '#/connettori/email', `${channel}: the guided flow cures it`);
+  }
 });

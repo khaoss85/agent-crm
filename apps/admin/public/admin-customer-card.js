@@ -2,8 +2,8 @@
 
 import { elFor, uiAddOption, uiBusy, uiIcon, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
-import { channelState, countedChannel } from './admin-channels-count.js';
-import { matchConnections } from './admin-connectors.js';
+import { NOT_AVAILABLE_NOTE, channelState, countedChannel } from './admin-channels-count.js';
+import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
@@ -1569,21 +1569,27 @@ export function createCustomerCardView(deps) {
    * @param {any} card the frozen card from `read-customer-card`
    * @param {unknown} connections the sync-state entries (`GET /api/connectors`), or null before they load
    * @param {unknown} profile the space-profile answer (`GET /api/profile`, served by
-   *   the pilot), or null when unreadable — its linked Gmail mailbox also
-   *   connects Email (backlog:a935af6a6d19)
+   *   the pilot), or null when unreadable — its linked Gmail mailbox only
+   *   names the «Da» sender and the «collega Gmail» line, never the Email
+   *   connection itself (backlog:a935af6a6d19, backlog:3805161965cd)
+   * @param {ReadonlyArray<unknown> | null} [adapters] the schema's composed
+   *   channel adapters, the same input Stato sync reads (`GET /api/schema`
+   *   channels metadata) — null when the composer did not read them
+   *   (backlog:3805161965cd, Muse P1 on #848)
    */
-  function composerChannelsFor(card, connections, profile) {
+  function composerChannelsFor(card, connections, profile, adapters = null) {
     /** A `profile:` handle (any case) is a pilot key, never an account or a route. */
     const isProfileKey = (value) => typeof value === 'string' && value.trim().toLowerCase().startsWith('profile:');
     /** The pilot's profile mailbox merged as a connection row: never a route. */
     const isSyntheticRow = (entry) => entry?.source === 'profile' || isProfileKey(entry?.connectionKey);
     const list = Array.isArray(connections) ? connections : [];
-    // Voce a935af6a6d19: the profile Google link counts for Email. The
-    // Connettori screen links channel connections (one row per account),
-    // while Profilo links the operator's Gmail mailbox — without this the
-    // composer says «non collegato» on a space whose mailbox is linked.
-    // A revoked, errored or unreadable link changes nothing: only a
-    // `connected` Gmail item with a mailbox connects the channel.
+    // Voce a935af6a6d19: the profile Google link names the space mailbox.
+    // Backlog:3805161965cd (Codex P2 su #563): it never connects Email by
+    // itself — without an active channel connection the send fails 409
+    // CHANNEL_CONNECTION_NOT_ACTIVE. Only a `connected` Gmail item with a
+    // mailbox keeps the channel linked, so the composer names Gmail (not
+    // the generic line) while Email stays off. A revoked, errored or
+    // unreadable link changes nothing.
     const items = Array.isArray(profile?.connections?.items) && profile.connections.available === true
       ? profile.connections.items
       : [];
@@ -1606,6 +1612,19 @@ export function createCustomerCardView(deps) {
       if (channel === 'whatsapp' || channel === 'sms') return phone;
       return handleFor(channel === 'instagram' ? 'instagram' : 'facebook');
     };
+    // Backlog:3805161965cd (Muse P1 on #848): the Email cure is the
+    // shared one, read with the same adapters input Stato sync uses. A
+    // connected grant with no channel connection cures to the guided flow
+    // when an Email adapter is composed — or while the schema is unread,
+    // like Stato sync — honestly nowhere when no adapter can create the
+    // connection, and to Profilo only while the grant itself is missing.
+    const emailShared = channelState('email', {
+      rows: list,
+      profile,
+      adapters: adapters === null ? null : matchAdapters('email', adapters),
+      guided: CONNECTOR_CATALOG.map((entry) => entry.channel),
+    });
+    const emailConnectRoute = emailShared.state === 'da-collegare' ? emailShared.connectRoute : null;
     return COMPOSER_CHANNEL_ORDER.map((channel) => {
       const recipient = recipientFor(channel);
       // A real channel connection is preferred over the pilot's synthetic
@@ -1613,11 +1632,22 @@ export function createCustomerCardView(deps) {
       // row's key is a route readSyncState knows and its account is the
       // mailbox that route sends from, so «Da» and the route agree. The
       // synthetic row only stands in when it is the sole active one.
-      const active = matchConnections(channel, list).filter((entry) => entry.status === 'active');
+      // Backlog:3805161965cd (Muse P1 giro 6 su #848): the lookup
+      // follows the server contract (POST /api/customer-hub/messages
+      // matches entry.channel === channel exactly with a non-empty key):
+      // a real row stored under an alias spelling (channel 'gmail') can
+      // never send, so the composer leaves it off instead of enabling an
+      // Invia the server refuses 404/409. DECISION (to be confirmed): the
+      // composer stays on the canonical spelling until the server
+      // normalizes aliases; Oggi keeps counting alias rows as before.
+      const active = matchConnections(channel, list)
+        .filter((entry) => entry.status === 'active'
+          && typeof entry.connectionKey === 'string' && entry.connectionKey !== '');
       const live = active.find((entry) => !isSyntheticRow(entry)) ?? active[0] ?? null;
       // The channel connection wins (it carries the connectionKey the send
-      // queues on); the profile Gmail mailbox only fills the gap, with no
-      // key — the server still needs its own email connection to send.
+      // queues on). The profile Gmail mailbox never stands in for it:
+      // without an active row Email stays off (backlog:3805161965cd), and
+      // `linked` only keeps the Gmail-specific off line.
       const gmailLinked = channel === 'email' && live === null && gmailSender !== null;
       // Voce eaa84ccafc53: the pilot now merges the profile mailbox into the
       // connections as an active email row (`profile:gmail`). Its account is
@@ -1634,16 +1664,30 @@ export function createCustomerCardView(deps) {
       // a route the send queues on, so it is never sent (the server derives
       // the route from the space's own mailbox).
       const synthetic = live !== null && isSyntheticRow(live);
+      // A sole synthetic row is no route either: readSyncState lists real
+      // DB connections only, so a send with no key and zero real candidates
+      // fails 409 CHANNEL_CONNECTION_NOT_ACTIVE (backlog:3805161965cd).
+      // Email is connected only on a real active row, everywhere else it
+      // stays off with its «collega Gmail» line — the same contract Oggi,
+      // Stato sync and Connettori enforce (review giro 4 P1).
+      const realLive = live !== null && !synthetic;
+      const connectRoute = channel === 'email' ? emailConnectRoute : null;
       // «Connected» implies a sender for Email: a linked row that names no
       // valid mailbox reads off with its Connettori link, never an enabled
-      // channel with an empty «Da».
+      // channel with an empty «Da». The profile Gmail alone is linked but
+      // never connected: the send without a channel connection fails 409
+      // CHANNEL_CONNECTION_NOT_ACTIVE (backlog:3805161965cd, Codex P2 su
+      // #563), so Email stays off and never the default on the mailbox.
       const linked = live !== null || gmailLinked;
+      const gmailUnlinked = channel === 'email' && !realLive && (liveAccount ?? gmailSender) !== null;
       return Object.freeze({
         channel,
         label: ownLabel(CHANNEL_LABELS, channel) ?? channel,
         recipient,
         linked,
-        connected: linked && (channel !== 'email' || sender !== null),
+        connected: live !== null && (channel !== 'email' || (sender !== null && realLive)),
+        gmailUnlinked,
+        connectRoute,
         connectionKey: live !== null && !synthetic && typeof live.connectionKey === 'string'
           && live.connectionKey !== '' ? live.connectionKey : null,
         sender,
@@ -2013,19 +2057,30 @@ export function createCustomerCardView(deps) {
     // (`GET /api/profile`, served by the pilot). An unreadable profile
     // resolves to null and changes nothing — the channel connections
     // decide alone, like before.
-    readProfile(client).then((profile) => {
+    // Backlog:3805161965cd (Muse P1 on #848): the Email cure reads the
+    // same adapters input Stato sync uses (`GET /api/schema` channels
+    // metadata, like Connettori reads). An unread schema resolves to null
+    // and cures like Stato sync unread — never a hardcoded empty list.
+    const schemaRead = client.request('/api/schema').then(
+      (schema) => {
+        const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
+        return Array.isArray(meta?.adapters) ? meta.adapters : [];
+      },
+      () => null,
+    );
+    Promise.all([readProfile(client), schemaRead]).then(([profile, adapters]) => {
       if (generation !== composerGeneration) return;
       client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
         if (generation !== composerGeneration) return;
         if (wait.parentNode === panel) panel.removeChild(wait);
-        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile, preferChannel);
+        buildComposerForm(panel, card, navCtx, spaceId, Array.isArray(sync?.connectors) ? sync.connectors : [], profile, adapters, preferChannel);
       },
       (error) => {
         if (generation !== composerGeneration) return;
         if (wait.parentNode === panel) panel.removeChild(wait);
         if (isNotComposedFailure(error)) {
-          buildComposerForm(panel, card, navCtx, spaceId, [], profile, preferChannel);
+          buildComposerForm(panel, card, navCtx, spaceId, [], profile, adapters, preferChannel);
           return;
         }
         panel.appendChild(el('p', 'field-error', humanReadError(error, {
@@ -2493,7 +2548,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function buildComposerForm(panel, card, navCtx, spaceId, connections, profile, preferChannel = null) {
+  function buildComposerForm(panel, card, navCtx, spaceId, connections, profile, adapters = null, preferChannel = null) {
     // Keyed by space too: a draft never crosses into another workspace
     // (Muse P2 on #588), the same boundary the send payload keeps.
     const draftKey = `${spaceId ?? ''}:${navCtx?.resource ?? ''}:${navCtx?.id ?? ''}`;
@@ -2505,7 +2560,7 @@ export function createCustomerCardView(deps) {
       else composerDrafts.set(draftKey, { text: text.value, subject, aiBefore });
       draft.subject = subject;
     };
-    const channels = composerChannelsFor(card, connections, profile);
+    const channels = composerChannelsFor(card, connections, profile, adapters);
     const body = el('div', 'bo-composer-body');
     // Channel chips: one radio per channel (kept for keyboard and tests),
     // visually a pill row like Gmail's «Da/A» chips. Unusable channels stay
@@ -2595,8 +2650,11 @@ export function createCustomerCardView(deps) {
         chip.setAttribute('aria-disabled', 'true');
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}, non collegato`);
         // Voce 8ce25b0f445f: the address reads in the line too, not only in
-        // the title — a phone has no hover.
-        offLinked.push(`${entry.label} (${entry.recipient})`);
+        // the title — a phone has no hover. Backlog:3805161965cd: the
+        // profile-only Email names its own cure right in its segment.
+        offLinked.push(entry.gmailUnlinked === true
+          ? `${entry.label} (${entry.recipient}): collega Gmail`
+          : `${entry.label} (${entry.recipient})`);
       } else {
         chip.setAttribute('title', `${entry.label}: ${entry.recipient}`);
         radio.addEventListener('click', () => select(entry));
@@ -2624,8 +2682,33 @@ export function createCustomerCardView(deps) {
     if (spaceUnlinked) {
       offLine.appendChild(link('#/connettori', 'Collega un canale per scrivere a questo cliente', 'composer-connectors'));
     } else if (offLinked.length > 0) {
-      offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
-      offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      // Backlog:3805161965cd: the profile Gmail alone names its own cure —
+      // Email stays off until its channel connection exists, and the line
+      // says to connect Gmail (the send without one fails 409).
+      const namesGmail = channels.some((entry) => entry.gmailUnlinked === true && entry.recipient !== null);
+      if (offLinked.length === 1 && namesGmail) {
+        // Backlog:3805161965cd (Muse P1 on #848): the Gmail line lands
+        // where the shared state cures — the guided flow, or Profilo while
+        // the grant itself is missing. With no route anywhere (no adapter
+        // can create the connection) the line says so honestly, never a
+        // link into the loop.
+        const gmailEntry = channels.find((entry) => entry.channel === 'email');
+        const gmailRoute = typeof gmailEntry?.connectRoute === 'string' && gmailEntry.connectRoute !== ''
+          ? gmailEntry.connectRoute : null;
+        if (gmailRoute !== null) {
+          // Muse review on #848 (P2): the anchor names its real destination —
+          // «Profilo» when the cure lands there, never «Connettori» to Profilo.
+          const gmailLabel = gmailRoute === '#/profilo' ? 'Profilo' : 'Connettori';
+          offLine.appendChild(el('span', undefined, `${offLinked[0]} in `));
+          offLine.appendChild(link(gmailRoute, gmailLabel, 'composer-connectors'));
+        } else {
+          offLine.appendChild(el('span', undefined,
+            `${gmailEntry?.label ?? 'Email'} (${gmailEntry?.recipient ?? ''}): ${NOT_AVAILABLE_NOTE}`));
+        }
+      } else {
+        offLine.appendChild(el('span', undefined, `${offLinked.join(', ')}: canale non collegato · `));
+        offLine.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
+      }
     }
     body.appendChild(el('p', 'bo-composer-label bo-composer-reply-on', 'Rispondi su'));
     body.appendChild(list);

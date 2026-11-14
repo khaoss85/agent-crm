@@ -809,7 +809,10 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
 // Review #782 P1: the raw GET /api/connectors carries no profile link; the
 // Google and Meta links live in GET /api/profile. The active space card
 // counts them like Oggi's «x di 9»; another space's card never borrows them.
-test('e381c48581fa: the active space card counts the profile links, another space does not', async () => {
+// Backlog:3805161965cd (P1 giro 8 on #848): the profile-Gmail stand-in is
+// no channel — without a real channel connection the send fails 409 — so
+// the card counts Calendar but never Gmail; Oggi and Stato sync agree.
+test('e381c48581fa: the active space card counts the profile Calendar but never the Gmail stand-in, another space does not', async () => {
   const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
   const base = stubClient({
     members,
@@ -833,10 +836,10 @@ test('e381c48581fa: the active space card counts the profile links, another spac
   await v.render();
   await flush();
   const rendered = text(mount);
-  assert.match(rendered, /2 canali · 1 persona · 3 clienti/, 'the active space counts Calendar and Gmail');
+  assert.match(rendered, /1 canale · 1 persona · 3 clienti/, 'the active space counts Calendar, the Gmail stand-in votes nothing (backlog:3805161965cd)');
   // backlog:9d06eb1e174b: another space is never read, so its card has no
   // statistic at all — never one borrowed from the profile.
-  assert.equal((rendered.match(/canali ·/g) ?? []).length, 1, 'only the open space carries a statistic');
+  assert.equal((rendered.match(/canal[ie] ·/g) ?? []).length, 1, 'only the open space carries a statistic');
 });
 
 // backlog:9d06eb1e174b (verifica 13-14/11): opening Spazi e accessi read
@@ -875,6 +878,46 @@ test('9d06eb1e174b: the page never reads another space\'s connectors or customer
   assert.deepEqual(asked.filter((path) => path.includes('altro')), [], 'no read for a space that is not open');
   assert.ok(asked.some((path) => path.startsWith(`/api/connectors?spaceId=${SPACE}`)), 'the open space is still read');
   assert.deepEqual(errors.filter((args) => String(args[0]).includes('[bo]')), [], 'no console.error');
+});
+
+// Backlog:3805161965cd (supervisore 14/11, P1 giro 8 on #848): with the
+// profile Gmail alone, Spazi e accessi read 1 channel while Oggi and Stato
+// sync read 0. The three screens share one answer: the Gmail stand-in
+// votes Email nowhere — without a real channel connection the send fails
+// 409 — and a real active Email row votes once on all three.
+test('3805161965cd: profile-only Gmail votes Email on no screen — Spazi, Oggi and Stato sync agree', async () => {
+  const { countConnectedNine } = await import('../apps/admin/public/admin-oggi.js');
+  const { withProfileConnections } = await import('../apps/admin/public/admin-sync.js');
+  const {
+    channelConnectionCount,
+    isNonCanonicalEmailRow,
+    isProfileEmailStandinRow,
+  } = await import('../apps/admin/public/admin-channels-count.js');
+  const profile = { connections: { available: true, items: [
+    { connector: 'gmail', status: 'connected', account: 'op@palestra.it' },
+  ] } };
+  const syncCountOf = (activity) => {
+    const merged = withProfileConnections(activity, profile);
+    const rows = merged !== null && typeof merged === 'object' && Array.isArray(merged.connections)
+      ? merged.connections
+      : [];
+    return channelConnectionCount(
+      rows.filter((row) => !isProfileEmailStandinRow(row) && !isNonCanonicalEmailRow(row)),
+    );
+  };
+  // Same input everywhere: no rows, profile Gmail connected.
+  assert.equal(countSpaceChannels({ connectors: [] }, profile), 0, 'Spazi e accessi: the stand-in is no channel');
+  assert.equal(countConnectedNine([], profile), 0, 'Oggi: the stand-in votes no Email');
+  const syncAlone = syncCountOf({ connections: [] });
+  assert.equal(syncAlone.connected, 0, 'Stato sync: the stand-in votes no Email');
+  assert.ok(!syncAlone.connectedChannels.includes('email'), 'Stato sync names no Email among the connected');
+  // A real active Email row votes once on all three.
+  const real = [{ connectionKey: 'mail-1', channel: 'email', status: 'active' }];
+  assert.equal(countSpaceChannels({ connectors: real }, profile), 1, 'Spazi e accessi: a real Email row is one channel');
+  assert.equal(countConnectedNine(real, profile), 1, 'Oggi: a real Email row connects Email');
+  const syncReal = syncCountOf({ connections: real });
+  assert.equal(syncReal.connected, 1, 'Stato sync: a real Email row connects Email');
+  assert.ok(syncReal.connectedChannels.includes('email'), 'Stato sync names Email among the connected');
 });
 
 test('an unreadable count omits the statistic, never an invented row', async () => {

@@ -42,6 +42,7 @@ import {
   syncIdentityCards,
   syncIndicator,
   timeAgo,
+  withProfileConnections,
 } from '../apps/admin/public/admin-sync.js';
 import { CLIENTI_IMPORT_ROUTE } from '../apps/admin/public/admin-clienti.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
@@ -196,6 +197,42 @@ test('indicator is ok with a count and fix with N things to fix', () => {
   const unknown = syncIndicator(null, NOW);
   assert.equal(unknown.tone, 'wait');
   assert.ok(!unknown.title.includes('Tutto sincronizzato'));
+});
+
+test('hero votes the raw fix total the cards read (stand-in Email with failures)', () => {
+  // Muse review on #848 (P1): the raw activity carries a key-only Email
+  // stand-in with failure state; the filtered hero rows drop it, but the
+  // fix cards below still name it — the hero badge must vote the same
+  // total, never 0 above a «Da sistemare» card.
+  const raw = activityOf({
+    connections: [{
+      connectionKey: 'profile:gmail',
+      channel: 'email',
+      account: 'guido@palestra-esempio.it',
+      status: 'active',
+      importable: false,
+      sync: null,
+      inbox: inboxOf(),
+      outbox: { openDeadLetters: 1, lastFailedAt: '2026-10-25T11:45:00.000Z' },
+      direction: 'both',
+      health: 'ok',
+      needsFix: 0,
+    }],
+  });
+  const profile = {
+    connections: {
+      available: true,
+      items: [{ connector: 'gmail', status: 'connected', account: 'guido@palestra-esempio.it' }],
+    },
+  };
+  const filtered = withProfileConnections(raw, profile);
+  assert.equal(syncFixItems(filtered).length, 0, 'the filtered rows carry no fix');
+  assert.equal(syncIndicator(filtered, NOW).count, 0, 'without the shared total the hero would read calm');
+  assert.equal(syncFixItems(raw).length, 1, 'the raw card names the failed send');
+  const hero = syncIndicator(filtered, NOW, { fixActivity: raw });
+  assert.equal(hero.count, 1, 'hero badge votes the same total the cards read');
+  assert.equal(hero.tone, 'empty', 'nothing real is linked, so the Collega button stays');
+  assert.equal(hero.title, 'Nessun canale collegato');
 });
 
 test('syncAgo reads seconds, then minutes, then the longer wording', () => {
@@ -1245,7 +1282,7 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(count[0], '1 di 9 collegati', 'Calendar counts, the profile-Gmail stand-in never votes Email (backlog:3805161965cd: no channel connection, send would 409)');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1309,15 +1346,19 @@ test('cf365ada15b9: a stopped import offers Sincronizza ora only where the pull 
 // counted as connected, but with no update and no events they wait for
 // the first event like any other quiet row (DECISION to be confirmed:
 // «senza aggiornamento né eventi» covers profile-merged rows too).
+// Backlog:3805161965cd narrows the count only: the profile-Gmail stand-in
+// never votes Email in «<n> di 9» (no channel connection, send would 409);
+// the table rows keep waiting like #680 says.
 test('#680 P2-1: profile links counted as connected wait for the first event', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }), profile: GOOGLE_PROFILE },
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  assert.ok(mount.textContent.includes('1 di 9 collegati'), 'Calendar votes, the profile-Gmail stand-in does not (backlog:3805161965cd)');
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
-  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
+  assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento'], 'only the quiet Google Calendar waits: head, table and hero agree');
+  assert.ok(!mount.textContent.includes('Quasi tutto sincronizzato'), 'the hero agrees with the count');
 });
 
 test('#680 P2-2: a suspended row alone is not connected — table, hero and count agree', async () => {
@@ -1535,4 +1576,40 @@ test('e381c48581fa: with no adapter Stato sync offers Collega only where Connett
     const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
     assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
   }
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): withProfileConnections never
+// keeps the original activity when the rows changed — a removed Email
+// stand-in plus an added Calendar link is a change even at equal length.
+test('withProfileConnections returns the new rows when a stand-in leaves and a link arrives', () => {
+  const emailStandin = entryOf({ connectionKey: 'profile:gmail', channel: 'email', account: 'op@palestra.it', source: 'profile' });
+  const activity = activityOf({ connections: [emailStandin] });
+  const out = withProfileConnections(activity, GOOGLE_PROFILE);
+  assert.notEqual(out, activity, 'same length, different rows: a new activity');
+  assert.deepEqual(out.connections.map((row) => row.channel), ['calendar'], 'Email out, Calendar in');
+  assert.equal(out.connections.filter((row) => row.channel === 'email').length, 0);
+});
+
+// No merged link and no stand-in: the same object comes back, no new
+// array for the view to repaint.
+test('withProfileConnections keeps the activity when nothing merges', () => {
+  const activity = activityOf();
+  assert.equal(withProfileConnections(activity, null), activity);
+  assert.equal(withProfileConnections(null, GOOGLE_PROFILE), null);
+});
+
+// Review giro 4 P1 (backlog:3805161965cd): a key-only Email row (the
+// pilot's merged profile mailbox, no `source` marker) never votes Email
+// on Stato sync — the composer and Oggi already read it as synthetic —
+// while a stopped import on the same key keeps its fix card from the raw
+// entries.
+test('a key-only Email row counts nothing but keeps no silent table', async () => {
+  const keyOnly = entryOf({ connectionKey: 'PROFILE:Gmail', channel: 'email', account: 'op@palestra.it' });
+  const { mount, view } = renderView({ client: { activity: activityOf({ connections: [keyOnly] }) } });
+  await view.render();
+  await flush();
+  const text = mount.textContent;
+  assert.ok(/0 di 9 collegati/.test(text), 'a key-only Email row connects nothing');
+  assert.ok(!text.includes('Tutto sincronizzato'), 'the hero never calls it synced');
+  assert.ok(text.includes('Collega'), 'Email offers its Collega');
 });

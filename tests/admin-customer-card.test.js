@@ -16,6 +16,9 @@ import {
   teamName,
 } from '../apps/admin/public/admin-customer-card.js';
 import { offerStageLabel } from '../apps/admin/public/admin-labels.js';
+import { buildChannelInvite, countConnectedNine, missingLeadChannels } from '../apps/admin/public/admin-oggi.js';
+import { channelConnectionCount, channelState } from '../apps/admin/public/admin-channels-count.js';
+import { syncConnectRoute, withProfileConnections } from '../apps/admin/public/admin-sync.js';
 import { ASSISTANT_SPACE_DISABLED_NOTICE, FREE_QUESTION_DISABLED_NOTICE, assistantDisabledNotice } from '../apps/admin/public/admin-assistant.js';
 import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 import { OPPORTUNITY_ALLOWED_TRANSITIONS as SERVICE_TRANSITIONS } from '../packages/modules/opportunity/src/opportunity-service.js';
@@ -2567,8 +2570,8 @@ const COMPOSER_CONNECTORS = {
   ],
 };
 
-function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, onPost = null, onResume = null } = {}) {
-  const base = stubClient();
+function composerClient({ connectors = COMPOSER_CONNECTORS, profile = null, card = CARD, onPost = null, onResume = null, schema = null } = {}) {
+  const base = stubClient({ card, schema });
   const posts = [];
   const resumes = [];
   return {
@@ -2989,23 +2992,168 @@ test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
 });
 
-// Voce a935af6a6d19 (acceptance 1): Gmail linked in the space profile, no
-// email channel connection — Email reads connected and names its sender.
-test('a935af6a6d19: with Gmail linked in the profile Email is connected and shows its sender', async () => {
+// Voce a935af6a6d19: the space profile links the operator's Gmail mailbox
+// while no email channel connection exists — the owner's 03/11 case.
+// Backlog:3805161965cd (Codex P2 su #563): Gmail linked in the profile
+// but no active channel connection — Email stays off and never the
+// default (the send without one fails 409 CHANNEL_CONNECTION_NOT_ACTIVE),
+// and the composer says to connect Gmail.
+test('3805161965cd: profile-only Gmail leaves Email off and names Gmail', async () => {
   const { panel } = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
   });
   const text = panel.textContent;
-  assert.ok(text.includes('daniele.pelleri@gmail.com'), 'the linked mailbox reads as the sender');
   assert.ok(text.includes('guido@palestra-esempio.it'), 'the customer email still reads as the recipient');
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
   const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
-  assert.equal(byValue('email').getAttribute('disabled'), null, 'Email is selectable on the profile Gmail link');
+  assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without a channel connection stays off');
   assert.equal(byValue('whatsapp').getAttribute('disabled'), 'disabled', 'WhatsApp without a connection stays off');
-  const links = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
-  assert.ok(links.length > 0, 'the truly unlinked channels still link to Connettori');
+  assert.ok(text.includes('collega Gmail'), 'the composer says to connect Gmail');
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the off channels link to Connettori');
+  assert.equal(link.getAttribute('href'), '#/connettori', 'several channels off share the one way to Connettori');
   const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
-  assert.equal(send.getAttribute('disabled'), null, 'Invia is available on the Gmail-linked Email');
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing sendable Invia stays disabled');
+  assert.equal(send.textContent, 'Invia', 'Email is never the default on the mailbox alone');
+});
+
+// Backlog:3805161965cd: with a usable channel beside the profile Gmail,
+// the usable channel is the default — never Email.
+test('3805161965cd: beside an active WhatsApp the default is WhatsApp, not Email', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ channel: 'whatsapp', status: 'active', connectionKey: 'wa-1' }] },
+      profile: COMPOSER_GMAIL_PROFILE,
+    }),
+  });
+  const text = panel.textContent;
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  const byValue = (value) => radios.find((node) => node.getAttribute('value') === value);
+  assert.equal(byValue('email').getAttribute('disabled'), 'disabled', 'Email without a channel connection stays off');
+  assert.equal(byValue('whatsapp').getAttribute('disabled'), null, 'the active WhatsApp stays usable');
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.equal(send.getAttribute('disabled'), null, 'Invia stays available on the usable channel');
+  assert.equal(send.textContent, 'Invia su WhatsApp', 'the default is WhatsApp, never Email');
+  assert.ok(text.includes('collega Gmail'), 'the off Email still says to connect Gmail');
+});
+
+// Backlog:3805161965cd (review giro 4 P1, paired): Oggi and the composer
+// read the same sole synthetic Email row and agree — both off, because the
+// send without a real channel connection fails 409.
+test('3805161965cd: Oggi and the composer agree on a sole synthetic Email row', async () => {
+  const rows = [{ connectionKey: 'profile:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' }];
+  assert.equal(countConnectedNine(rows, null), 0, 'Oggi does not count the stand-in');
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: rows }, profile: null }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the composer leaves Email off too');
+  assert.equal(fromValueOf(panel), '', 'no sender without a route');
+});
+
+// Backlog:3805161965cd (review giro 4 P1, paired): on profile-only Gmail
+// the four screens agree — Oggi and Stato sync count no Email, the composer
+// keeps it off with the Gmail cure, Connettori names it da-collegare with
+// the email connectRoute.
+test('3805161965cd: Oggi, Stato sync, composer and Connettori agree on profile-only Gmail', async () => {
+  const profile = COMPOSER_GMAIL_PROFILE;
+  assert.equal(countConnectedNine([], profile), 1, 'Oggi counts only the linked Calendar');
+  const synced = withProfileConnections({ connections: [] }, profile);
+  assert.ok(!channelConnectionCount(synced.connections).connectedChannels.includes('email'), 'Stato sync counts no Email either');
+  const emailState = channelState('email', { rows: [], adapters: [], profile });
+  assert.equal(emailState.state, 'non-disponibile', 'a connected grant with no adapter cures nowhere, never Profilo');
+  assert.equal(emailState.connectRoute, null);
+  const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the composer keeps Email off');
+  assert.ok(panel.textContent.includes('collega Gmail'), 'the composer names the same cure');
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the single off Gmail has its own cure line');
+  // Backlog:3805161965cd (Muse P1 on #848): one cure everywhere — the
+  // composer lands where Stato sync lands. The schema is unread in this
+  // mount, so both name the guided flow, never the Profilo loop.
+  assert.equal(link.getAttribute('href'), '#/connettori/email', 'the Gmail cure takes the guided flow');
+  assert.equal(link.textContent, 'Connettori', 'the cure anchor names its real destination');
+  assert.equal(link.getAttribute('href'), syncConnectRoute('email', profile, null), 'the composer cures where Stato sync cures');
+  assert.equal(syncConnectRoute('email', profile, []), null, 'schema read with no adapter: Stato sync offers no looping Collega');
+});
+
+// Backlog:3805161965cd (Muse P1 on #848): the composer reads the same
+// adapters input Stato sync uses, so the three schema states agree on
+// the Email cure — guided flow, honest nowhere, or Profilo while the
+// grant itself is missing.
+test('3805161965cd: composer cure per adapter state against Stato sync', async () => {
+  const profile = COMPOSER_GMAIL_PROFILE;
+  assert.equal(syncConnectRoute('email', profile, []), null, 'schema read, no adapter: no looping Collega');
+  assert.equal(syncConnectRoute('email', profile, null), '#/connettori/email', 'schema unread: Stato sync offers the guided flow');
+  const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
+  assert.equal(syncConnectRoute('email', profile, emailAdapters), '#/connettori/email', 'composed Email adapter: Stato sync cures to the guided flow');
+  const emailOnlyCard = { ...CARD, phone: { ...CARD.phone, available: false, value: null }, socials: [] };
+  const mountWith = (schema) => openComposerMount({
+    client: composerClient({ connectors: { connectors: [] }, profile, card: emailOnlyCard, schema }),
+  });
+  const cureLink = (panel) => panel.findAll('p')
+    .find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-off'))
+    ?.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  // Unread schema: the guided flow, like Stato sync.
+  const unread = await mountWith(null);
+  assert.equal(cureLink(unread.panel)?.getAttribute('href'), '#/connettori/email', 'unread schema cures to the guided flow');
+  // Read with no adapter: honestly nowhere, never a link into the loop.
+  const none = await mountWith({ domains: { channels: { metadata: { adapters: [] } } } });
+  assert.equal(cureLink(none.panel), undefined, 'no adapter means no cure link');
+  assert.ok(none.panel.textContent.includes('non si può ancora collegare'), 'the line says so honestly');
+  // Read with an Email adapter: the guided flow.
+  const guided = await mountWith({ domains: { channels: { metadata: { adapters: emailAdapters } } } });
+  assert.equal(cureLink(guided.panel)?.getAttribute('href'), '#/connettori/email', 'a composed adapter opens the guided flow');
+  // Missing grant: pinned at the shared state level (channel-state test:
+  // revoked Gmail cures to Profilo); the composer without a mailbox keeps
+  // the pre-existing generic way to Connettori, unchanged by this cure.
+});
+
+// Backlog:3805161965cd (Muse P1 giro 6 su #848, paired): the server
+// matches entry.channel === channel exactly, so a real row stored under
+// the alias spelling (channel 'gmail') can never send — the composer
+// leaves Email off instead of enabling an Invia the server refuses
+// 404/409. The canonical spelling still sends (see the gmail-1 test).
+test('3805161965cd: the composer leaves an alias-spelled row off like the server', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({
+      connectors: { connectors: [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }] },
+      profile: null,
+    }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the alias-spelled row never enables Email');
+  assert.equal(fromValueOf(panel), '', 'no route, no sender: «Da» stays empty');
+});
+
+// Backlog:3805161965cd (Muse P1 giro 7 su #848, paired): an alias-spelled
+// real row ('gmail' with a real key) can never send — the server matches
+// entry.channel === channel exactly — so every screen reads it off: the
+// state never `collegato`, Oggi and Stato sync count no Email, the strip
+// and the lead channels keep inviting Email, and the composer keeps it
+// off. One paired test asserting channelState and composerChannelsFor
+// (through the mounted composer) agree on the same row.
+test('3805161965cd: every screen agrees on an alias-spelled real Email row', async () => {
+  const rows = [{ channel: 'gmail', status: 'active', connectionKey: 'gmail-1', account: 'studio@palestra.it' }];
+  const emailAdapters = [{ channel: 'email', name: 'email-adapter', version: 1 }];
+  const state = channelState('email', { rows, adapters: emailAdapters });
+  assert.equal(state.state, 'da-collegare', 'the state never reads collegato');
+  assert.equal(state.connectRoute, '#/connettori/email', 'the state cures to the guided flow');
+  assert.equal(countConnectedNine(rows, null), 0, 'Oggi counts no Email');
+  assert.ok(missingLeadChannels(rows, null).some((entry) => entry.channel === 'email'), 'the lead channels keep inviting Email');
+  const invite = buildChannelInvite({ connections: rows });
+  assert.ok(invite.leads.includes('Email'), 'the strip invites the Email the composer requires');
+  const synced = withProfileConnections({ connections: rows }, null);
+  assert.ok(!channelConnectionCount(synced.connections).connectedChannels.includes('email'), 'Stato sync counts no Email either');
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: rows }, profile: null }),
+  });
+  const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'the composer keeps Email off too');
 });
 
 // Voce eaa84ccafc53: the pilot merges the profile mailbox into the
@@ -3017,24 +3165,30 @@ const fromValueOf = (panel) => {
   return row ? row.childNodes[1].textContent : null;
 };
 
-test('eaa84ccafc53: a profile-sourced email row fills «Da» with its mailbox', async () => {
+test('eaa84ccafc53: a lone profile-sourced email row leaves Email off with the Gmail cure', async () => {
   const { panel } = await openComposerMount({
     client: composerClient({
       connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: ' studio@palestra.it ', status: 'active', source: 'profile' }] },
       profile: null,
     }),
   });
-  assert.equal(fromValueOf(panel), 'studio@palestra.it', 'Da names the linked mailbox');
+  assert.equal(fromValueOf(panel), '', 'a sole synthetic row is no route: «Da» stays empty (backlog:3805161965cd)');
   assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the connection key never reads as text');
   const radios = panel.findAll('input').filter((node) => node.getAttribute('name') === 'composer-channel');
-  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), null);
+  assert.equal(radios.find((node) => node.getAttribute('value') === 'email').getAttribute('disabled'), 'disabled', 'Email without a real connection stays off');
+  assert.ok(panel.textContent.includes('collega Gmail'), 'the off Email names its cure');
+  const link = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(link, 'the Gmail cure links somewhere');
+  assert.equal(link.getAttribute('href'), '#/connettori', 'with no profile naming a route, Connettori is the fallback');
 });
 
-test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; a key never does', async () => {
+// Backlog:3805161965cd: without the email row the profile Gmail alone no
+// longer fills «Da» — Email is off, so no sender is named.
+test('eaa84ccafc53: without the email row the profile Gmail alone names no sender; a key never does', async () => {
   const old = await openComposerMount({
     client: composerClient({ connectors: { connectors: [] }, profile: COMPOSER_GMAIL_PROFILE }),
   });
-  assert.equal(fromValueOf(old.panel), 'daniele.pelleri@gmail.com', 'the old shape is unchanged');
+  assert.equal(fromValueOf(old.panel), '', 'profile-only Gmail is off: «Da» stays empty');
   const keyOnly = await openComposerMount({
     client: composerClient({
       connectors: { connectors: [{ connectionKey: 'profile:gmail', channel: 'email', account: 'profile:gmail', status: 'active' }] },
@@ -3045,21 +3199,23 @@ test('eaa84ccafc53: without the email row the profile Gmail still fills «Da»; 
   assert.ok(!keyOnly.panel.textContent.toLowerCase().includes('profile:'));
 });
 
-// Review #648 P1: the synthetic profile row is no channel connection — its
-// `profile:` key never travels in the send payload; the server derives the
-// route from the space mailbox.
-test('review #648: a profile-sourced email row sends no connectionKey', async () => {
+// Review #648 P1, narrowed by backlog:3805161965cd: the synthetic profile
+// row is no channel connection — the send without a real one would fail
+// 409, so Email stays off and nothing goes out on it. Its `profile:` key
+// never travels in a payload; a real connection still sends its own key.
+test('review #648: a lone profile-sourced email row sends nothing', async () => {
   for (const row of [
     { connectionKey: 'profile:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active', source: 'profile' },
     { connectionKey: 'PROFILE:gmail', channel: 'email', account: 'studio@palestra.it', status: 'active' },
   ]) {
     const client = composerClient({ connectors: { connectors: [row] } });
     const { panel } = await openComposerMount({ client });
-    assert.equal(fromValueOf(panel), 'studio@palestra.it');
-    await typeAndSend(panel, 'Ciao Guido');
-    assert.equal(client.posts.length, 1, `${row.connectionKey}: the send goes out`);
-    assert.equal(client.posts[0].channel, 'email');
-    assert.equal('connectionKey' in client.posts[0], false, `${row.connectionKey}: the synthetic key is never sent`);
+    assert.equal(fromValueOf(panel), '', `${row.connectionKey}: no route, no sender`);
+    const email = panel.findAll('input').find((node) => node.getAttribute('name') === 'composer-channel' && node.getAttribute('value') === 'email');
+    assert.equal(email.getAttribute('disabled'), 'disabled', `${row.connectionKey}: Email stays off`);
+    assert.equal(composerSendButton(panel).getAttribute('disabled'), 'disabled', 'nothing sendable, Invia stays disabled');
+    assert.equal(client.posts.length, 0, `${row.connectionKey}: no send goes out`);
+    assert.ok(!panel.textContent.toLowerCase().includes('profile:'), 'the key never reads as text');
   }
   // A real connection still sends its own key.
   const real = composerClient();
