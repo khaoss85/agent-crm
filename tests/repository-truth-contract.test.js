@@ -18,6 +18,7 @@ import {
   FACT_SCOPES,
   FACT_STATUSES,
   FACT_VALUES,
+  GENERATED_PROBE_CLOCK_READ_BUDGET,
   REPOSITORY_TRUTH_CONTRACT,
   RETIRED_CLAIMS,
   RETIRED_CODES,
@@ -224,9 +225,17 @@ function frameworkFixture(t) {
 
 
 test('a generated authority clock that cannot advance fails explicitly without waiting', async () => {
-  const started = Date.now();
+  // Bounded by the event, not the wall clock: a wait on a clock that cannot
+  // advance reads it without end, and the probe clock refuses past its read
+  // budget. A 2-second elapsed-time bound here measured readAuthorities as a
+  // whole and failed on a loaded CI machine (#856: 2350 ms, then 4750 ms).
   const result = await readAuthorities({ rootDir: repoRoot, generatedProbeClock: 'stalled' });
-  assert.ok(Date.now() - started < 2_000, 'stalled authority must terminate within a hard test bound');
+  assert.equal(typeof result.generatedProbeClockReads, 'number', 'the stalled clock must be the one the probe read');
+  assert.ok(result.generatedProbeClockReads > 0, 'the probe never read the stalled clock');
+  assert.ok(result.generatedProbeClockReads <= GENERATED_PROBE_CLOCK_READ_BUDGET,
+    `stalled authority must stop on the stale timestamp, not after ${result.generatedProbeClockReads} clock reads`);
+  assert.ok(!result.problems.some((problem) => problem.message.includes('something waits on the clock')),
+    `a stalled clock must be refused, not waited on: ${JSON.stringify(result.problems)}`);
   assert.notEqual(result.generatedRuntimeUsesStorage, true);
   assert.ok(result.problems.some((problem) => problem.code === 'TRUTH_AUTHORITY_UNAVAILABLE'
     && problem.message.includes('generated mutation timestamps did not advance strictly')),
@@ -246,10 +255,19 @@ test('a generated authority clock that cannot advance fails explicitly without w
 const fullHistory = String(spawnGit(['rev-parse', '--is-shallow-repository'], { cwd: repoRoot, encoding: 'utf8' }).stdout ?? '').trim() === 'false';
 
 test('the committed truth document is a fresh generation of its own authorities', async () => {
-  const report = await checkRepository({ rootDir: repoRoot });
+  // The same leniency every CI agreement gate applies (`--drift-advisory`,
+  // S70 and backlog:e03475513020): a moved or dropped fact still fails here,
+  // but a `sourceSha` moved by an edit to an authority source only warns. The
+  // strict form failed the full suite on `main` after every such merge — and
+  // the suite runs before the realign step that clears exactly that drift, so
+  // PRs regenerated the document by hand instead and conflicted on its lines.
+  const report = await checkRepository({ rootDir: repoRoot, driftAdvisory: true });
   const detail = report.problems.map((p) => `${p.code}: ${p.message}`).join('\n');
+  for (const warning of report.warnings ?? []) {
+    assert.equal(warning.advisory, true, `a non-advisory warning: ${warning.code}: ${warning.message}`);
+  }
   if (fullHistory) {
-    assert.deepEqual(report.problems, [], `repo:truth --check failed:\n${detail}`);
+    assert.deepEqual(report.problems, [], `repo:truth --check --drift-advisory failed:\n${detail}`);
     assert.equal(report.ok, true);
   } else {
     // A shallow clone cannot prove the measured commit, so the measurement facts

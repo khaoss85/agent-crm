@@ -147,6 +147,9 @@ export function pageNumbers(pages, page) {
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
+  // backlog:a762c28a646c: each name the list shows is remembered, so the
+  // scheda it opens reads it at once.
+  const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client } = deps;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
@@ -912,7 +915,15 @@ export function createCustomerListView(deps) {
         // Two lines that never run together (Dan 05/11: «giovedì.WhatsApp»):
         // the meta line — mark and mono «canale · quando» — then the excerpt,
         // clamped to two lines so every row keeps the same rhythm.
-        if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
+        // backlog:fe9be5f0af4a (production 13/11: «mai» beside a customer
+        // with notes and an offer of today): the column counts messages and
+        // calls with the customer, and says so — a note or an offer is the
+        // team's work, not a contact.
+        if (!row.lastContactAt) {
+          const none = el('span', 'bo-muted', 'nessun messaggio');
+          none.setAttribute('title', 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
+          return none;
+        }
         const wrap = el('span', 'bo-clienti-last');
         const meta = el('span', 'bo-clienti-last-meta');
         const channel = String(row.lastContactChannel ?? '');
@@ -1016,6 +1027,7 @@ export function createCustomerListView(deps) {
       card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
+      knownNames?.remember(row.resource, row.id, row.name);
       head.appendChild(el('span', 'bo-clienti-avatar', customerInitials(name)));
       const who = el('div', 'bo-clienti-who');
       const nameLink = link(

@@ -5,24 +5,86 @@ name: Nightly tool-selection matrix
 # receipt tests on every CI run and skips the 21 worktree-heavy cells unless the
 # variable is set. This job sets it, so the whole matrix still runs daily, off
 # peak, on the same self-hosted runner — coverage is moved, not removed.
+# Two launchers, one run a night (owner GO 13/11: one run a night after 01:17Z, idempotent, no double with the
+# GitHub event). The server launcher (accordo-night round -> nightly-matrix.sh, outside this repo) dispatches at
+# 01:17Z unless a run of that night exists. The GitHub schedule stays as the in-repo fallback: a scheduled run
+# skips when it starts outside 00:00-04:59 UTC (it came ~7 h late every day 10-13/11) or when another run of
+# this workflow was already created this UTC night, so the two never run twice.
 on:
   schedule:
     - cron: '17 1 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
 
 concurrency:
   group: nightly-tool-selection
   cancel-in-progress: false
 
 jobs:
+  # Light gate: decides whether this run does the matrix. A skip leaves the matrix job «skipped» (no cancel, no
+  # extra token right); only the matrix job concluding «success» counts as a night done, for this check and for
+  # the supervisor round (nightly-matrix.sh status). A manual dispatch always runs.
+  window:
+    runs-on: [self-hosted, accordo-ci]
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          h=$((10#$(date -u +%H)))
+          run=true
+          if [ "${{ github.event_name }}" = schedule ]; then
+            if [ "$h" -ge 5 ]; then
+              run=false; echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04"
+            else
+              # Another run of tonight counts only if it is still going or its matrix job succeeded.
+              api="repos/${{ github.repository }}/actions"
+              done_or_going=0
+              for id in $(gh api "$api/workflows/nightly-tool-selection.yml/runs?created=>=$(date -u +%F)T00:00:00Z&per_page=20" \
+                  --jq ".workflow_runs[] | select(.id != ${{ github.run_id }}) | .id") ; do
+                st=$(gh api "$api/runs/$id" --jq .status) || continue
+                if [ "$st" != completed ]; then done_or_going=1; break; fi
+                ok=$(gh api "$api/runs/$id/jobs" --jq '[.jobs[] | select(.name == "full-matrix" and .conclusion == "success")] | length') || continue
+                if [ "${ok:-0}" -gt 0 ]; then done_or_going=1; break; fi
+              done
+              if [ "$done_or_going" = 1 ]; then run=false; echo "::notice::nightly matrix already done or running tonight; this scheduled run skips"; fi
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   full-matrix:
+    needs: window
+    if: needs.window.outputs.run == 'true'
     runs-on: [self-hosted, accordo-ci]
     env:
       ACCORDO_FULL_TOOL_SELECTION: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # GitHub can fire a scheduled run hours late when the runners are busy (10-13/11: the 01:17 schedule
+      # started between 07:44 and 08:25Z and held one of the runners during the morning PR rush). A scheduled
+      # run that starts outside the night window (00:00-04:59 UTC, so the 45+ min matrix ends before the
+      # morning) skips the matrix in seconds instead of holding a runner, with a warning so the lost night is
+      # visible; the supervisor round also reports the night as NOT DONE. A manual workflow_dispatch always runs.
+      - id: window
+        run: |
+          h=$((10#$(date -u +%H)))
+          if [ "${{ github.event_name }}" = schedule ] && [ "$h" -ge 5 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::nightly matrix skipped: scheduled run started at ${h}h UTC, outside 00-04; this night has no full tool-selection matrix"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.window.outputs.run == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - run: npm ci
-      - run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js
+      - if: steps.window.outputs.run == 'true'
+        run: npm ci
+      - if: steps.window.outputs.run == 'true'
+        run: scripts/ci-heavy.sh nightly-scoring -- node --no-warnings --test tests/agent-tool-selection-scoring.test.js

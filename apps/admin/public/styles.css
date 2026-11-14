@@ -384,6 +384,9 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
 .bo-offer .offer-quote:first-of-type { border-top: 0; }
+/* Review Muse #871: the place of the price books and of each quote while they read. */
+.bo-offer .offer-quote-create-wait { padding: 4px 0 8px; }
+.bo-offer .offer-quote[data-loading="true"] > * + *, .bo-offer .offer-quote-create-wait > * + * { margin-top: 6px; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
@@ -405,6 +408,14 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
 .bo-offer .offer-quote-create-line:empty { display: none; }
+/* backlog:a2ea75f705fd: «Apri il preventivo» is a link that reads as the main button. */
+.bo-offer a.offer-quote-open-main { display: inline-flex; align-items: center; text-decoration: none; }
+/* backlog:d8175e1c3495: the offer page skeleton keeps the page's frame; bars fill the room their values take. */
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton { height: 18px; margin: 8px 0 0; }
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton:first-of-type { height: 30px; }
+.bo-offer-skeleton .bo-offer-value .ui-skeleton { height: 36px; }
+.bo-offer-skeleton .offer-fact .ui-skeleton { height: 14px; margin-top: 4px; }
+.bo-offer-skeleton .offer-quotes .ui-skeleton, .bo-offer-skeleton .offer-history .ui-skeleton { height: 14px; margin: 10px 0 0; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -432,6 +443,9 @@ button[aria-busy="true"] { opacity: .6; }
 /* Preventivo (Dan 06/11): un piccolo documento curato a sinistra, il flusso (approvazione, firma, storico) a destra. */
 .quote-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
 .quote-back:hover { color: var(--ink); }
+/* backlog:a2ea75f705fd: from the quote to its offer page. */
+.quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-offer-link:hover { text-decoration: underline; }
 .bo-quote { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 20px; align-items: start; margin-top: 4px; }
 .bo-quote-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 24px; box-shadow: var(--shadow-pop); overflow: hidden; }
 .bo-quote-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--accent); }
@@ -743,6 +757,8 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-entry .bo-scheda-entry-more { justify-self: start; min-height: 0; margin: 0; padding: 4px 14px 0; border: 0; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); border-radius: 0; background: var(--surface); color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; width: 100%; text-align: left; }
 .bo-scheda-timeline .bo-scheda-older { align-self: center; margin-top: 6px; min-height: 0; padding: 8px 16px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
 .bo-scheda-timeline .bo-scheda-older:hover { border-color: var(--ink); }
+/* backlog:947260f9f036: the grey row where the stage moves arrive. */
+.bo-scheda-timeline .bo-scheda-moves-wait { margin: 0; display: grid; gap: 6px; font-size: 13px; }
 .bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
 .bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-offer { margin: 0; font-size: 14px; }
@@ -1048,6 +1064,17 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
+/* backlog:1f7cb20d3c30: a hand-written agent nothing runs yet — waiting, never «Attivo». */
+.bo-agent-status-waiting { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-agent-noengine { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agenti-sectionhead > .ui-btn { margin-left: auto; }
+.bo-agent-talk .bo-agent-cost { flex: 0 0 96px; min-width: 0; }
+.bo-agent-new-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agent-new { display: flex; flex-direction: column; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+.bo-agent-new > h3 { margin: 0 0 12px; font-size: 17px; }
+.bo-agent-new .bo-seq-create-error { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--danger); }
+.bo-agent-new .bo-seq-field { max-width: 640px; gap: 4px; }
+.bo-agent-new textarea.ui-field { width: 100%; resize: vertical; font-family: inherit; line-height: 1.45; }
 /* One metric per line: small label, clear value, never a broken word. */
 .bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
 .bo-agent-fact { min-width: 0; max-width: 100%; display: flex; align-items: baseline; gap: 8px; }
@@ -2177,6 +2204,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-top .actions .badge:nth-child(2) { background: var(--agent-soft); color: var(--agent-ink); }
 .bo-rep .pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0; margin: 8px 0 0; }
 .bo-rep .pipeline-forecast .bo-rep-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; margin: 12px 0 10px; }
+/* Review #761: a label that wraps («In chiusura in novembre 2026») must not
+   push its amount below the others: each card spans three rows of the
+   metrics grid (label, amount, sub) and shares them, so amounts line up. */
+.bo-rep .metric { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
 .bo-rep .metric strong { font-size: clamp(20px, 2.2vw, 26px); line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .bo-rep-grid .forecast-total { font-size: 15px; letter-spacing: 0; }
 .bo-rep-grid > .pipeline-forecast .lede, .bo-rep-grid > .pipeline-forecast p:not(.forecast-total) { font-size: 13px; }
@@ -2221,7 +2252,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
    «Sposta in» serve a tastiera e touch, non si vede col mouse (si trascina). */
 .pipeline-card .card-move { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .pipeline-card { position: relative; }
-.pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+/* backlog:85630aa14a4f: solo il focus da tastiera apre la riga; un clic col mouse su Riprova o Apri non sposta più la card sotto il puntatore. */
+.pipeline-card:has(:focus-visible) .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+/* Review Muse #893 (P1): un browser senza :has tiene il comportamento di prima, così la riga resta raggiungibile da tastiera. */
+@supports not selector(:has(*)) {
+  .pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 }
@@ -2230,13 +2266,36 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* backlog:7b2203e69826: tutta la card apre il pannello; il toast ha «Annulla». */
 .pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
 .pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
+/* backlog:85630aa14a4f: la card con il pannello aperto resta segnata. */
+/* backlog:85630aa14a4f: la card aperta si riconosce a colpo d'occhio: anello verde pieno, non solo il bordo. */
+.pipeline-card.is-open, .pipeline-card[data-openable="true"].is-open:hover { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
 .ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
 .ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
 /* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */
 .pipeline-column .stage-totals { display: contents; }
+/* backlog:3d811389bb4c: lo scheletro della Pipeline mentre carica. */
+.pipeline-skeleton .pipeline-skeleton-bar { height: 14px; width: 60%; margin: 2px 0 14px; border-radius: 7px; background: var(--line-soft); }
+.pipeline-skeleton .pipeline-skeleton-card { height: 84px; margin-bottom: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-faint); }
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-skeleton .pipeline-skeleton-bar, .pipeline-skeleton .pipeline-skeleton-card { animation: pipeline-skeleton-pulse 1.2s ease-in-out infinite; }
+  @keyframes pipeline-skeleton-pulse { 50% { opacity: .55; } }
+}
+/* backlog:fd0adcded1c3: dopo 3 s di caricamento lo scheletro lo dice a parole. */
+.pipeline-skeleton .pipeline-skeleton-slow { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+/* backlog:fd0adcded1c3: con il pannello offerta aperto la board tiene le sue colonne e guadagna spazio in fondo, così la colonna della card aperta scorre fuori da sotto il pannello. */
+.pipeline-board[data-offer-room="true"] .pipeline-column { flex: 0 0 var(--pipeline-column-width); min-width: var(--pipeline-column-width); }
+.pipeline-board[data-offer-room="true"]::after { content: ""; flex: 0 0 var(--pipeline-offer-room); }
 .pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
 .pipeline-card.dragging { opacity: .45; }
 .pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+/* backlog:67a3116f4f65 (verifica-38): lo spostamento dura 2-3 s sul pilota; la
+   card in attesa ha una barra che scorre in basso, visibile anche senza leggere. */
+.pipeline-card[aria-busy="true"] { overflow: hidden; }
+.pipeline-card[aria-busy="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent); background-size: 50% 100%; background-repeat: no-repeat; }
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-card[aria-busy="true"]::after { animation: pipeline-card-wait 1.1s linear infinite; }
+  @keyframes pipeline-card-wait { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+}
 .pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .pipeline-card > .field-error { display: block; margin-top: 6px; }
 .pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
@@ -2252,8 +2311,13 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
 .bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
 .bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
-@media (max-width: 560px) {
+/* backlog:23f92c6a72ea: fino a 700 px (la Pipeline da telefono) il pannello
+   e' un foglio a tutta larghezza; prima, a 606 px, una finestra da 420 px
+   stava a meta' e copriva la prima colonna della kanban. */
+@media (max-width: 700px) {
   .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+}
+@media (max-width: 560px) {
   .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
 }
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
@@ -2409,6 +2473,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-profilo-words { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .bo-profilo-words .bo-kicker { margin: 0; }
 .bo-profilo-name { margin: 0; font-size: 44px; line-height: 1.02; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+/* backlog:f7d2f7f362cf: Modifica sits beside the name at its own text
+ * measure — a small command, never a full-width field. It wraps below the
+ * name on narrow screens instead of squeezing beside it. */
+.bo-profilo-name-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bo-profilo-name-row .bo-profilo-name { flex: 1 1 auto; min-width: 0; }
+button.bo-profilo-edit-open { flex: none; align-self: center; }
 .bo-profilo-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
 .bo-profilo-pill {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 99px;
@@ -2507,7 +2577,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer-channels { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0 10px; border-bottom: 1px solid var(--line-faint); }
 .bo-scheda-composer-channel { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 550; cursor: pointer; user-select: none; transition: border-color .12s, background .12s; }
 .bo-scheda-composer-channel input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.bo-scheda-composer-channel:hover { border-color: var(--ink); }
+/* backlog:f48593bb06d4: an off chip never answers the hover like a live one. */
+.bo-scheda-composer-channel:not([data-off="true"]):hover { border-color: var(--ink); }
 .bo-scheda-composer-channel[data-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
 .bo-scheda-composer-channel[data-selected="true"]::before { content: "✓"; font-size: 11px; }
 .bo-scheda-composer-channel[data-off="true"] { color: var(--dim); background: transparent; border-style: dashed; border-color: var(--line-dashed); cursor: not-allowed; font-weight: 450; }
@@ -2527,9 +2598,18 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-ai-mark { color: var(--agent); font-size: 13px; line-height: 1; }
 .bo-scheda-composer .bo-composer-ai-input { flex: 1; min-width: 0; min-height: 0; padding: 7px 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 13.5px; color: var(--agent-ink); outline: none; }
 .bo-scheda-composer .bo-composer-ai-input::placeholder { color: var(--agent-ink); opacity: .6; }
+/* backlog:d30d17880f63: AI off — the request field reads off, its words stay selectable to copy. */
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"] { color: var(--muted); cursor: default; }
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"]::placeholder { color: var(--muted); opacity: 1; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-field { background: var(--paper); border-color: var(--line); cursor: not-allowed; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-mark { color: var(--muted); }
 .bo-scheda-composer .bo-composer-ai-go { flex: none; min-height: 0; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--agent); color: var(--surface); font-size: 13px; font-weight: 650; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-go:hover { background: var(--agent-ink); }
 .bo-scheda-composer .bo-composer-ai-go[disabled] { opacity: .6; cursor: progress; }
+/* backlog:f48593bb06d4: AI off or no channel — Genera reads switched off, the reason sits on the line below. */
+.bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"], .bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"]:hover { opacity: 1; background: var(--line); color: var(--muted); cursor: not-allowed; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line { color: var(--muted); }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line a { color: var(--accent); font-weight: 600; }
 .bo-composer-ai-line { margin: 6px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
 .bo-composer-ai-line:empty { display: none; }
 .bo-scheda-composer .bo-composer-ai-undo { min-height: 0; padding: 0; border: 0; background: none; color: var(--agent-ink); font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
@@ -2539,7 +2619,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-composer-ai-pick { min-height: 0; padding: 4px 12px; border: 1px solid var(--agent-soft); border-radius: 999px; background: var(--surface); color: var(--agent-ink); font: inherit; font-weight: 600; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-pick:hover { border-color: var(--agent); }
 .bo-scheda-composer .bo-composer-ai-pick[aria-pressed="true"] { border-color: var(--agent); background: var(--agent); color: var(--surface); }
-.bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
+/* Voce 1ca42058: ogni versione mostra l'anteprima del testo sotto l'etichetta, leggibile prima della scelta. */
+.bo-scheda-composer .bo-composer-ai-pick { text-align: left; max-width: 230px; border-radius: 12px; }
+.bo-composer-ai-pick-label { display: block; font-weight: 600; }
+.bo-composer-ai-preview { display: block; margin-top: 2px; font-weight: 400; font-size: 11.5px; line-height: 1.4; opacity: .85; white-space: normal; }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }
@@ -2562,7 +2645,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-foot [data-action="composer-send"] { min-width: 96px; border-radius: 999px; }
 .bo-composer-limit { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .bo-composer-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.bo-composer-body .bo-composer-reply-on { flex: none; margin: 0 0 6px; }
+/* backlog:d30d17880f63: «Rispondi su» keeps room under the dark header, never flush against it. */
+.bo-composer-body .bo-composer-reply-on { flex: none; margin: 12px 0 6px; line-height: 1.4; }
 @media (max-width: 700px) {
   .bo-scheda-composer { inset: 0; width: auto; max-height: none; border-radius: 0; border: 0; }
   .bo-scheda-composer[data-minimized="true"] { inset: auto 0 0 0; width: auto; }
@@ -2604,11 +2688,22 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* backlog:5346ab531538: a cancelled appointment in the cronologia — the
    note card shape, in the neutral tone, with an × mark. */
 .bo-scheda-chan.bo-tile-cancelled { background: var(--surface-soft); color: var(--muted); font-family: inherit; font-size: 15px; }
+/* backlog:0d68c387: a confirmed booking in the cronologia — the note card
+   shape, with a ✓ mark in the accent tone. */
+.bo-scheda-chan.bo-tile-booked { background: var(--accent-soft); color: var(--accent); font-family: inherit; font-size: 15px; }
 .bo-scheda-entry-cancelled .bo-scheda-note-paper { border-color: var(--line-soft); background: var(--surface-soft); }
 .bo-scheda-entry .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head, .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head { color: var(--ink); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+/* backlog:cb348c9fcaeb: «Modifica» and «Elimina» under the operator's own note, quiet text commands; the editor sits in the note itself. */
+.bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-actions { display: flex; gap: 14px; margin: 0; padding: 6px 0 0; border: 0; background: transparent; }
+button.bo-scheda-note-action { min-height: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pending-ink); font-size: 12.5px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+button.bo-scheda-note-action:hover { transform: none; color: var(--ink); }
+.bo-scheda-note-paper .bo-scheda-note-form.bo-scheda-note-edit { padding: 6px 0 0; }
+.bo-scheda-note-edit .bo-scheda-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bo-scheda-note-edit .bo-scheda-form-actions button { padding: 8px 16px; }
+.bo-scheda-entry .bo-scheda-note-paper .bo-scheda-note-edit p.bo-muted { padding: 0; border: 0; background: transparent; font-size: 12.5px; }
 /* backlog:82235e46e3e9: offers and stage moves in «Tutti i contatti» — a quiet system line, not a bubble. */
 .bo-scheda-chan.bo-tile-event { background: var(--agent-soft); color: var(--agent-ink); font-family: inherit; font-size: 14px; }
 .bo-scheda-event-paper { grid-column: 2; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 8px 14px 10px; }

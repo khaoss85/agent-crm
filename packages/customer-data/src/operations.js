@@ -1,7 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
-import { teamCorrespondents } from '../../core/sender-kind.js';
+import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
@@ -1323,6 +1323,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   });
   return Object.freeze({
     customerListContract: CUSTOMER_LIST_CONTRACT,
+    // La base «mai scritto» della scansione (seguito P2 review Muse #821
+    // giro 4, backlog:095fb37de6bb): chi il team ha mai contattato, sugli
+    // stessi messaggi da cui la vista «Da rispondere» decide — Oggi la riusa
+    // per le notifiche invece dei suoi ultimi 100. Solo quando la lettura
+    // dei messaggi è esatta e completa; la vista rifiuta (409) altrimenti,
+    // quindi questa base non descrive mai una lettura parziale.
+    teamCorrespondents: serializeCorrespondents(repliesReadable ? correspondents : null),
     items: page.items,
     total: page.total,
     page: page.page,

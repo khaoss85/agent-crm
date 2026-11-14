@@ -8,7 +8,7 @@ import { WorkActivityService } from './work-activity-service.js';
 export const workActivityModuleDefinition = Object.freeze({
   name: 'work-activity',
   version: '0.1.0',
-  description: "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
+  description: "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. A note is never edited or deleted in place: a correction is a later note row whose revisesId names the original note, and a withdrawal is one with withdrawn true and no body, so the timeline shows the latest wording, hides a withdrawn note, and every version stays on record. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
   // The static contract that exposes this module through the generic
   // /api/modules surface and client.module('work-activity') (ADR-008).
   kind: 'generated',
@@ -34,13 +34,15 @@ export const workActivityModuleDefinition = Object.freeze({
     {"name":"sourcePackage","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"sourceAction","type":"string","required":false,"unique":false,"writable":"managed"},
     {"name":"seq","type":"integer","required":false,"unique":false,"writable":"managed"},
+    {"name":"revisesId","type":"string","required":false,"unique":false,"writable":"managed"},
+    {"name":"withdrawn","type":"boolean","required":false,"unique":false,"writable":"managed"},
   ]),
   references: Object.freeze([]),
   immutableFields: Object.freeze(['id', 'createdAt', 'updatedAt']),
   entities: [
     {
       name: 'work-activity',
-      fields: ['id', 'sourceKey', 'kind', 'subjectResource', 'subjectId', 'taskId', 'body', 'occurredAt', 'actorType', 'actorId', 'sourcePackage', 'sourceAction', 'seq', 'createdAt', 'updatedAt'],
+      fields: ['id', 'sourceKey', 'kind', 'subjectResource', 'subjectId', 'taskId', 'body', 'occurredAt', 'actorType', 'actorId', 'sourcePackage', 'sourceAction', 'seq', 'revisesId', 'withdrawn', 'createdAt', 'updatedAt'],
     },
   ],
 });

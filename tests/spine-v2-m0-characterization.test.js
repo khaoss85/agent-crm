@@ -205,8 +205,14 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   // deliberately here, the way #380 moved it for `postpone`.
   assert.deepEqual(
     (work.operations ?? []).map(({ name, operationContract, appMethod }) => ({ name, operationContract, appMethod })),
-    [{ name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' }],
-    'Work v1 declares exactly the operator-note application operation',
+    [
+      { name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' },
+      // backlog:82235e46e3e9: «Modifica» and «Elimina» on a scheda note,
+      // both append-only — moved here deliberately, like the note itself.
+      { name: 'revise-subject-note', operationContract: 1, appMethod: 'reviseSubjectNote' },
+      { name: 'withdraw-subject-note', operationContract: 1, appMethod: 'withdrawSubjectNote' },
+    ],
+    'Work v1 declares the operator-note operations',
   );
   assert.deepEqual(
     work.operations[0].input.map(({ name, type }) => ({ name, type })),

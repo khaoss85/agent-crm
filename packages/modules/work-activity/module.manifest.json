@@ -1,8 +1,8 @@
 {
   "manifestVersion": 1,
-  "revision": 2,
+  "revision": 3,
   "name": "work-activity",
-  "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
+  "description": "An append-only, user-facing entry on a subject's work timeline. Its vocabulary is closed -- task_created, task_completed, task_cancelled, note -- and it is written only inside the transaction of the action that caused it. It is NOT a projection of the audit log: audit and trace stay the technical record of every write, and this is the curated semantic one. It stores no provider payload, no attachment, no email body and no chat message; the only free text is a bounded, control-character-free note body. A note is never edited or deleted in place: a correction is a later note row whose revisesId names the original note, and a withdrawal is one with withdrawn true and no body, so the timeline shows the latest wording, hides a withdrawn note, and every version stays on record. taskId is a plain indexed string rather than a reference field because managed fields cannot be references, and because a timeline entry must survive being read beside a subject the database cannot join to.",
   "table": "work_activities",
   "fields": [
     {
@@ -115,6 +115,22 @@
       "required": false,
       "unique": false,
       "column": "seq",
+      "writable": "managed"
+    },
+    {
+      "name": "revisesId",
+      "type": "string",
+      "required": false,
+      "unique": false,
+      "column": "revises_id",
+      "writable": "managed"
+    },
+    {
+      "name": "withdrawn",
+      "type": "boolean",
+      "required": false,
+      "unique": false,
+      "column": "withdrawn",
       "writable": "managed"
     }
   ]
