@@ -225,6 +225,19 @@ export function isTransientConflict(error) {
   return record.code === 'CONFLICT' && (record.status === 409 || record.status === undefined)
     && record.details !== null && typeof record.details === 'object' && record.details.transient === true;
 }
+/**
+ * backlog:4eceae80a5ca — a move another write beat (409: CONFLICT,
+ * STALE_STAGE, STALE_POSITION): the server already holds the winner's
+ * move, so the board is read again instead of putting the card back where
+ * it started.
+ * @param {unknown} error
+ */
+export function lostToAnotherWrite(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  // Exactly these three 409s (review Muse #883): SAME_STAGE, TERMINAL_STAGE
+  // and every other refusal keep the instant put-back with their line.
+  return record.status === 409 && ['CONFLICT', 'STALE_STAGE', 'STALE_POSITION'].includes(record.code);
+}
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -767,13 +780,14 @@ export function createPipelineBoard(deps) {
       moveLocks.delete(id);
       seatedStages.delete(id);
       const message = moveFailureText(error);
-      if (error?.code === 'STALE_POSITION' || error?.code === 'STALE_STAGE') {
+      if (lostToAnotherWrite(error)) {
         // Review Muse #852 (P2): the column changed under this drop. On the
         // pilot the stage write may already have landed before the place was
         // refused (two writes, not one): never guess by putting the card
         // back — the fresh board says where it is. STALE_STAGE (backlog
         // 1541408e8144): someone else moved the card meanwhile, so the card
         // the person sees is stale the same way — the re-read tells the truth.
+        // backlog:4eceae80a5ca: the same for a lost CONFLICT.
         restore = null;
         await renderBoard(pipeline.name, { quiet: true });
       } else if (restore) {

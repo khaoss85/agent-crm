@@ -897,6 +897,73 @@ export function noteChangeRefusalText(error, failed, change = 'revise') {
  */
 export const NOTE_WITHDRAW_GRACE_MS = 10000;
 
+/**
+ * backlog:4eceae80a5ca — the withdrawals a page sent as it went away. The
+ * keepalive POST of pagehide can land after the next page has already read
+ * the cronologia (production 14/11: a reload right after Elimina showed the
+ * note again, 2 tries out of 2). They are kept in sessionStorage — the
+ * note, its customer, the space, the submission key and a deadline — so the
+ * next scheda hides the note at once and, if the cronologia still lists
+ * it, sends the withdrawal again with the SAME key (the server replays the
+ * first one, never a second write). An entry leaves when the cronologia no
+ * longer lists the note, or when its deadline passes.
+ */
+export const NOTE_WITHDRAWALS_STORAGE_KEY = 'accordo.bo.note-withdrawals.v1';
+/** How long a stored withdrawal is kept for the next page. */
+export const NOTE_WITHDRAWAL_KEEP_MS = 10 * 60 * 1000;
+
+/** @typedef {{ spaceId: string | null, resource: string, id: string, noteId: string, idempotencyKey: string, expiresAt: number }} StoredWithdrawal */
+
+/**
+ * The stored withdrawals still in time, never a throw.
+ * @param {any} storage @param {number} now
+ * @returns {StoredWithdrawal[]}
+ */
+export function readStoredWithdrawals(storage, now) {
+  let raw = null;
+  try {
+    raw = storage?.getItem?.(NOTE_WITHDRAWALS_STORAGE_KEY) ?? null;
+  } catch {
+    return [];
+  }
+  if (typeof raw !== 'string' || raw === '') return [];
+  let list;
+  try {
+    list = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  return list.filter((entry) => entry && typeof entry === 'object'
+    && typeof entry.resource === 'string' && typeof entry.id === 'string'
+    && typeof entry.noteId === 'string' && typeof entry.idempotencyKey === 'string'
+    // The shell's own submission key shape (admin-submission.js), never
+    // another string sent as a key (review Muse #883).
+    && /^v1\.\d{8}\.[0-9a-f]{32}$/.test(entry.idempotencyKey)
+    && (entry.spaceId === null || typeof entry.spaceId === 'string')
+    && Number.isFinite(entry.expiresAt) && entry.expiresAt > now);
+}
+
+/**
+ * The same withdrawal: space, record kind, customer and note (review Muse
+ * #883, P3) — never the note id alone.
+ * @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} a
+ * @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} b
+ */
+export function sameWithdrawal(a, b) {
+  return a.spaceId === b.spaceId && a.resource === b.resource && a.id === b.id && a.noteId === b.noteId;
+}
+
+/** @param {any} storage @param {StoredWithdrawal[]} list */
+export function writeStoredWithdrawals(storage, list) {
+  try {
+    if (list.length === 0) storage?.removeItem?.(NOTE_WITHDRAWALS_STORAGE_KEY);
+    else storage?.setItem?.(NOTE_WITHDRAWALS_STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Storage full or refused: the keepalive POST alone still goes.
+  }
+}
+
 /** The owner of the «Nota eliminata · Annulla» toast, for the shell's hideScope. */
 const NOTE_TOAST_SCOPE = 'scheda-nota';
 /** The LLM gate codes that mean «the AI is off here», not an outage. */
@@ -1155,6 +1222,7 @@ export function createCustomerCardView(deps) {
     const drafts = {};
     const note = root.querySelector('[name="noteBody"]');
     if (note && typeof note.value === 'string' && note.value !== '') drafts.note = note.value;
+    if (hasFocus(note)) drafts.noteFocused = true;
     // backlog:cb348c9fcaeb: what is typed in an open «Modifica».
     const noteEdit = root.querySelector('[name="noteEditBody"]');
     if (noteEdit && typeof noteEdit.value === 'string') {
@@ -3451,7 +3519,7 @@ export function createCustomerCardView(deps) {
     // window is already gone from the screen.
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
-      && pendingWithdrawals.has(`${timelineKey}#${item.id}`);
+      && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
@@ -3919,6 +3987,8 @@ export function createCustomerCardView(deps) {
       noteInput.setAttribute('aria-label', 'Nota da aggiungere alla cronologia del cliente');
       noteInput.setAttribute('placeholder', 'Scrivi una nota (massimo 1000 caratteri)');
       if (pendingDrafts && typeof pendingDrafts.note === 'string') noteInput.value = pendingDrafts.note;
+      // backlog:4eceae80a5ca: a repaint never takes the cursor out of the note.
+      if (pendingDrafts?.noteFocused === true) focusAtEnd(noteInput);
       const noteButton = el('button', undefined, 'Aggiungi nota');
       noteButton.setAttribute('type', 'button');
       noteButton.setAttribute('data-action', 'add-note');
@@ -3950,8 +4020,13 @@ export function createCustomerCardView(deps) {
           const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
             (loaded) => withNote(loaded, saved, written));
           toast('Nota aggiunta');
-          mount.querySelector('[name="noteBody"]')?.focus?.();
+          // backlog:4eceae80a5ca (production 14/11: after Invio the focus
+          // was on the page body, and a second note typed at once lost its
+          // letters): the cursor stays in the empty field, through the
+          // repaint of the copy and the one of the re-read.
+          focusAtEnd(mount.querySelector('[name="noteBody"]'));
           await refreshed;
+          focusAtEnd(mount.querySelector('[name="noteBody"]'));
         } catch (error) {
           const said = noteRefusalText(error);
           noteError.textContent = said;
@@ -4660,6 +4735,9 @@ export function createCustomerCardView(deps) {
       // with the same name re-narrows the crumb instead of staying silent.
       resetTitle();
     }
+    // backlog:4eceae80a5ca: what the previous page withdrew stays hidden —
+    // restored after the switch above sent what the last customer left.
+    restoreStoredWithdrawals(resource, id);
     const firstVisit = progressive;
     progressive = false;
     if (firstVisit) heldFailures = { token: renderToken, drops: [] };
@@ -4741,6 +4819,10 @@ export function createCustomerCardView(deps) {
     lastShown = { key, resource, id, loaded };
     paint(key, resource, id, loaded);
     markRead(resource, id, loaded.timeline);
+    // backlog:4eceae80a5ca: a withdrawal the previous page sent is done
+    // once the cronologia no longer lists its note, and sent again if it
+    // does — or if the cronologia could not be read.
+    settleStoredWithdrawals(resource, id, loaded.timelineError ? null : loaded.timeline);
   }
 
   /**
@@ -4875,9 +4957,18 @@ export function createCustomerCardView(deps) {
    * «Elimina» waiting for its «Annulla» window, by `<resource>/<id>#<noteId>`.
    * The note is hidden at once; the withdrawal leaves when the window ends,
    * or at once when the scheda opens another customer.
-   * @type {Map<string, { resource: string, id: string, noteId: string, state: 'waiting' | 'sending' }>}
+   * @type {Map<string, { resource: string, id: string, noteId: string, spaceId: string | null, idempotencyKey?: string, restored?: boolean, state: 'waiting' | 'sending' | 'restored' }>}
    */
   const pendingWithdrawals = new Map();
+  /**
+   * The key of a withdrawal in the view: space, customer and note (review
+   * Muse #883, P2) — the same record id in another space is another key.
+   * @param {string | null} spaceId @param {string} resource @param {string} id @param {string} noteId
+   */
+  const withdrawalKey = (spaceId, resource, id, noteId) => `${spaceId ?? ''}|${resource}/${id}#${noteId}`;
+  /** A withdrawal of this customer in the space on screen. @param {any} pending @param {string} resource @param {string} id */
+  const withdrawalHere = (pending, resource, id) => pending.spaceId === activeSpaceId()
+    && pending.resource === resource && pending.id === id;
   /**
    * The id this host signs the operator's writes with (`/api/spine/context`
    * `actor.id`): a note is the operator's own when its `teamAuthorId` is
@@ -4948,10 +5039,14 @@ export function createCustomerCardView(deps) {
       await client.request('/api/customer-hub/notes/withdraw', {
         method: 'POST',
         body: JSON.stringify({ resource, id, noteId }),
+        // One key per withdrawal (backlog:4eceae80a5ca): a send again from
+        // the next page is the same submission, replayed by the server.
+        idempotencyKey: pending.idempotencyKey,
         // Sent while the page goes away: the request outlives it.
         ...(keepalive ? { keepalive: true } : {}),
       });
       pendingWithdrawals.delete(pendingKey);
+      forgetStoredWithdrawal(pending);
       // The note stays out of the cronologia; then only the cronologia is
       // read again, so the screen is the server's answer.
       if (lastShown !== null && lastShown.key === key && shownKey === key) {
@@ -4959,7 +5054,22 @@ export function createCustomerCardView(deps) {
       }
     } catch (error) {
       pendingWithdrawals.delete(pendingKey);
-      toast(noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
+      // A refused withdrawal is not tried again by the next page.
+      forgetStoredWithdrawal(pending);
+      const code = typeof error?.code === 'string' ? error.code : '';
+      if (pending.restored === true && (code === 'WORK_NOTE_WITHDRAWN' || code === 'WORK_NOTE_NOT_FOUND')) {
+        // The withdrawal the previous page sent already landed: done, quietly.
+        if (lastShown !== null && lastShown.key === key && shownKey === key) {
+          await refreshParts(resource, id, ['timeline'], (loaded) => withoutNote(loaded, noteId));
+        }
+        return;
+      }
+      // backlog:4eceae80a5ca: a send again from the next page that fails for
+      // any other reason (the pilot refusing the same key, 502) never keeps
+      // the note hidden in silence: it comes back, and the toast says so.
+      toast(pending.restored === true
+        ? 'Non sono riuscito a eliminare la nota: riprova.'
+        : noteChangeRefusalText(error, 'Nota non eliminata. Riprova più tardi.', 'withdraw'), true);
       // The note comes back where it was, then the cronologia is read again.
       repaintIfShown(resource, id);
       if (lastShown !== null && lastShown.key === key && shownKey === key) {
@@ -4974,9 +5084,16 @@ export function createCustomerCardView(deps) {
    * @param {{ keepalive?: boolean }} [options]
    */
   function flushWithdrawals(options = {}) {
-    if (pendingWithdrawals.size === 0) return;
-    hideToast(NOTE_TOAST_SCOPE);
-    for (const pendingKey of [...pendingWithdrawals.keys()]) void commitWithdrawal(pendingKey, options);
+    const unsent = [...pendingWithdrawals.entries()]
+      .filter(([, pending]) => pending.state === 'waiting' || pending.state === 'restored');
+    if (unsent.length === 0) return;
+    if (unsent.some(([, pending]) => pending.state === 'waiting')) hideToast(NOTE_TOAST_SCOPE);
+    // Review Muse #883 (P2): a withdrawal restored from the previous page
+    // and not settled yet leaves too, never hidden until it expires.
+    for (const [pendingKey, pending] of unsent) {
+      pending.state = 'waiting';
+      void commitWithdrawal(pendingKey, options);
+    }
   }
   // backlog:fe9be5f0af4a (production 13/11): a reload inside the «Annulla»
   // window lost the withdrawal — the timer died with the page and the note
@@ -4985,8 +5102,93 @@ export function createCustomerCardView(deps) {
   // with keepalive. Hiding it (another browser tab) does nothing (review
   // Muse #878, P2): the «Annulla» window stays whole while the page lives.
   const pageWindow = deps.pageWindow ?? (typeof window === 'undefined' ? null : window);
+  const sessionStore = deps.sessionStorage
+    ?? (typeof globalThis.sessionStorage === 'undefined' ? null : globalThis.sessionStorage);
+  const nowMs = typeof deps.now === 'function' ? deps.now : () => Date.now();
+  /** @param {{ spaceId: string | null, resource: string, id: string, noteId: string }} pending */
+  function forgetStoredWithdrawal(pending) {
+    const list = readStoredWithdrawals(sessionStore, nowMs());
+    const kept = list.filter((entry) => !sameWithdrawal(entry, pending));
+    if (kept.length !== list.length) writeStoredWithdrawals(sessionStore, kept);
+  }
+  /**
+   * backlog:4eceae80a5ca: what leaves with the page is written down first,
+   * for the next page — the withdrawals still in their Annulla window and
+   * the ones this page restored and has not settled yet (review Muse #883).
+   */
+  function storeWaitingWithdrawals() {
+    const unsent = [...pendingWithdrawals.values()]
+      .filter((pending) => pending.state === 'waiting' || pending.state === 'restored');
+    if (unsent.length === 0) return;
+    const fresh = unsent.map((pending) => ({
+      spaceId: pending.spaceId, resource: pending.resource, id: pending.id, noteId: pending.noteId,
+      idempotencyKey: pending.idempotencyKey, expiresAt: nowMs() + NOTE_WITHDRAWAL_KEEP_MS,
+    }));
+    const others = readStoredWithdrawals(sessionStore, nowMs())
+      .filter((entry) => !fresh.some((item) => sameWithdrawal(item, entry)));
+    writeStoredWithdrawals(sessionStore, [...others, ...fresh]);
+  }
   if (pageWindow && typeof pageWindow.addEventListener === 'function') {
-    pageWindow.addEventListener('pagehide', () => flushWithdrawals({ keepalive: true }));
+    pageWindow.addEventListener('pagehide', () => {
+      storeWaitingWithdrawals();
+      flushWithdrawals({ keepalive: true });
+    });
+  }
+  /**
+   * backlog:4eceae80a5ca — at the start of a scheda read: the withdrawals the
+   * previous page sent for this customer in this space are hidden at once
+   * (the cronologia may still list them for a moment).
+   * @param {string} resource @param {string} id
+   */
+  function restoreStoredWithdrawals(resource, id) {
+    const spaceId = activeSpaceId();
+    for (const entry of readStoredWithdrawals(sessionStore, nowMs())) {
+      if (entry.spaceId !== spaceId || entry.resource !== resource || entry.id !== id) continue;
+      const pendingKey = withdrawalKey(entry.spaceId, resource, id, entry.noteId);
+      if (pendingWithdrawals.has(pendingKey)) continue;
+      pendingWithdrawals.set(pendingKey, {
+        resource, id, noteId: entry.noteId, idempotencyKey: entry.idempotencyKey, restored: true, spaceId: entry.spaceId,
+        state: /** @type {'waiting' | 'sending' | 'restored'} */ ('restored'),
+      });
+    }
+  }
+  /**
+   * Once the cronologia is read: a stored withdrawal whose note is gone is
+   * done — its entry leaves; one whose note is still listed is sent again
+   * with its own key.
+   * @param {string} resource @param {string} id @param {any} timeline
+   */
+  function settleStoredWithdrawals(resource, id, timeline) {
+    const items = timeline?.entries?.items;
+    if (!Array.isArray(items)) {
+      // Review Muse #883 (P2): an unreadable cronologia cannot say the
+      // withdrawal is done — it is sent again (same key), never left hidden.
+      for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+        if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
+        pending.state = 'waiting';
+        void commitWithdrawal(pendingKey);
+      }
+      return;
+    }
+    const listed = new Set(items.filter((item) => item?.entry === 'note').map((item) => item.id));
+    // Review Muse #883 (P1): a cut cronologia (only its newest page) cannot
+    // say an older note is gone — a note it does not list may sit further
+    // back, so the withdrawal is sent again (same key), never dropped.
+    const complete = timeline?.entries?.truncated !== true;
+    const spaceId = activeSpaceId();
+    const stored = readStoredWithdrawals(sessionStore, nowMs());
+    const kept = stored.filter((entry) => !(complete && entry.spaceId === spaceId && entry.resource === resource
+      && entry.id === id && !listed.has(entry.noteId)));
+    if (kept.length !== stored.length) writeStoredWithdrawals(sessionStore, kept);
+    for (const [pendingKey, pending] of [...pendingWithdrawals.entries()]) {
+      if (pending.state !== 'restored' || !withdrawalHere(pending, resource, id)) continue;
+      if (complete && !listed.has(pending.noteId)) {
+        pendingWithdrawals.delete(pendingKey);
+        continue;
+      }
+      pending.state = 'waiting';
+      void commitWithdrawal(pendingKey);
+    }
   }
   /**
    * «Elimina» on the operator's own note: hidden at once, «Annulla» in the
@@ -4994,9 +5196,16 @@ export function createCustomerCardView(deps) {
    * @param {string} resource @param {string} id @param {string} noteId
    */
   function withdrawNote(resource, id, noteId) {
-    const pendingKey = `${resource}/${id}#${noteId}`;
+    const pendingKey = withdrawalKey(activeSpaceId(), resource, id, noteId);
     if (pendingWithdrawals.has(pendingKey)) return;
-    const pending = { resource, id, noteId, state: /** @type {'waiting' | 'sending'} */ ('waiting') };
+    const pending = {
+      resource, id, noteId,
+      // backlog:4eceae80a5ca: the submission key is chosen now, so the next
+      // page can send the same withdrawal again under it.
+      idempotencyKey: submissions.issueKey(),
+      spaceId: activeSpaceId(),
+      state: /** @type {'waiting' | 'sending' | 'restored'} */ ('waiting'),
+    };
     pendingWithdrawals.set(pendingKey, pending);
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
