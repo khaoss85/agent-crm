@@ -595,6 +595,40 @@ test('flipping a switch confirms first, then runs set-permission', async () => {
   assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'true');
 });
 
+// backlog 3136d15da7bd: a confirmed flip wakes onSwitches at once, so the
+// top AI bar re-reads the master instead of keeping yesterday's words.
+test('a confirmed master flip tells onSwitches, never before the confirm', async () => {
+  const calls = [];
+  const overrides = [];
+  let switched = 0;
+  const docNode = createFakeDocument();
+  const mount = createMount();
+  const v = createSpaziAccessiView({
+    doc: docNode,
+    mount,
+    client: stubClient({ calls, overrides }),
+    navigate: () => {},
+    spaces: () => [{ id: SPACE, name: 'Negozio', initials: 'NE' }],
+    activeSpaceId: () => SPACE,
+    onPickSpace: () => {},
+    onSwitches: () => { switched += 1; },
+    toast: () => {},
+  });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'AI dello spazio');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Spegnere/, 'the master flip asks before writing');
+  assert.equal(switched, 0, 'no wake before the confirm');
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  await confirm.listeners.click[0]();
+  await flush(20);
+  const flip = calls.find((call) => call.path === '/api/space-permissions/set-permission');
+  assert.deepEqual(flip?.body, { spaceId: SPACE, permission: 'ai-enabled', enabled: 'off' });
+  assert.equal(switched, 1, 'one wake after the confirmed flip');
+});
+
 test('a refused flip renders the server refusal and keeps the screen usable', async () => {
   const refusing = {
     async request(path, options = {}) {
@@ -1930,4 +1964,9 @@ test('9d06eb1e174b: with the session unknown no row offers «Rimuovi»; known, o
   await flush();
   assert.equal(removes(mount).length, 3, 'every other row offers «Rimuovi», never the own one');
   assert.doesNotMatch(text(mount), /Rimuovi non è disponibile/);
+});
+
+test('backlog:3136d15d a disabled child switch reads not-allowed, knob included', () => {
+  const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-spazi-toggle:disabled\s*,\s*\.bo-spazi-toggle:disabled \.bo-spazi-knob\s*\{[^}]*cursor:\s*not-allowed/);
 });
