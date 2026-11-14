@@ -1858,20 +1858,20 @@ const ROSTER_SELF = [
   { subject: 'google|3003', role: 'operator', status: 'active', displayName: 'Marta Esempio', email: 'marta@esempio.invalid', operatorAccountId: 'acc-2' },
 ];
 
-test('9d06eb1e174b: the session\'s own adopted member folds into its row; nobody else merges on a name', () => {
+// Review Muse #897 P1: a name is never a proof of identity, not even the
+// session's own. A same-named subject with no mailbox and no person key
+// stays a row of its own, with its «Rimuovi», told apart by its access kind.
+test('9d06eb1e174b: a same-named subject without a mailbox stays its own row, with its access kind and «Rimuovi»', () => {
   const rows = buildTeamRows(ROSTER_SELF, { selfSubject: 'google|2002' });
+  assert.equal(rows.length, 4, 'no name-only merge, not even for the session\'s own name');
   const self = rows.find((row) => row.subjects.includes('google|2002'));
-  assert.deepEqual(self.subjects, ['broker+adopted-aa11@accordo.invalid', 'google|2002'], 'the adopted broker member is the same person');
+  assert.deepEqual(self.subjects, ['google|2002']);
   assert.equal(self.self, true);
-  assert.equal(rows.length, 3, 'the GitHub login without a person key or a name in common stays apart');
-  // Without the verified self, the #644 rule alone: no name-only merge.
-  assert.equal(buildTeamRows(ROSTER_SELF).length, 4);
-  // A homonym of someone else never folds into them.
-  const others = buildTeamRows([
-    ...ROSTER_SELF,
-    { subject: 'broker+adopted-bb22@accordo.invalid', role: 'operator', status: 'active', displayName: 'Marta Esempio', email: 'broker+adopted-bb22@accordo.invalid' },
-  ], { selfSubject: 'google|2002' });
-  assert.equal(others.filter((row) => row.name === 'Marta Esempio').length, 2, 'only the verified self merges on its name');
+  const homonym = rows.find((row) => row.subjects.includes('broker+adopted-aa11@accordo.invalid'));
+  assert.equal(homonym.self, false, 'the homonym is not the session');
+  assert.equal(homonym.access, 'Accesso aggiunto dal pilota');
+  assert.equal(rows.find((row) => row.subjects.includes('github|1001')).access, 'Accesso GitHub');
+  assert.ok(!JSON.stringify(rows.map((row) => row.access)).includes('|'), 'never a technical id');
 });
 
 test('9d06eb1e174b: no «Rimuovi» on one\'s own row; the others keep it', async () => {
@@ -1880,16 +1880,29 @@ test('9d06eb1e174b: no «Rimuovi» on one\'s own row; the others keep it', async
   await v.render();
   await flush();
   const items = mount.findAll('div').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member'));
-  const rowOf = (name) => items.find((node) => node.textContent.includes(name));
+  const rowOf = (needle) => items.find((node) => node.textContent.includes(needle));
   const removeIn = (node) => node.findAll('button').filter((button) => button.textContent === 'Rimuovi');
-  assert.equal(items.length, 3, 'three people: self (Google + adopted member), the GitHub login, Marta');
+  assert.equal(items.length, 4, 'every subject without a proof of identity is a row of its own');
   assert.equal(removeIn(rowOf('Marta Esempio')).length, 1, 'another person keeps «Rimuovi»');
-  const selfRows = items.filter((node) => /dario esempio/i.test(node.textContent) && !node.textContent.includes('Marta'));
-  assert.ok(selfRows.length >= 1);
-  for (const node of selfRows) assert.equal(removeIn(node).length, 0, 'never «Rimuovi» on one\'s own account');
+  assert.equal(removeIn(rowOf('dario@esempio.invalid')).length, 0, 'never «Rimuovi» on one\'s own account');
+  const homonym = rowOf('Accesso aggiunto dal pilota');
+  assert.ok(homonym, 'the same-named row reads its access kind');
+  assert.equal(removeIn(homonym).length, 1, 'a homonym keeps its «Rimuovi»');
 });
 
 test('8618ad3f72db: a child switch paused by the space AI shows not-allowed, never the wait cursor', () => {
   const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
+});
+
+// Review Muse #897 P2: an empty identity subject never switches off the
+// protection — the membership subject still names who «Tu» is.
+test('9d06eb1e174b: an empty identity subject falls back to the membership subject', async () => {
+  const context = { identity: { subject: '' }, membership: { role: 'owner', subject: 'google|2002' }, roles: { owner: [], operator: [], observer: [] } };
+  const { mount, view: v } = view({ client: stubClient({ context, members: ROSTER_SELF }) });
+  await v.render();
+  await flush();
+  const own = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-spazi-member')
+    && node.textContent.includes('dario@esempio.invalid'));
+  assert.equal(own.findAll('button').filter((button) => button.textContent === 'Rimuovi').length, 0);
 });

@@ -324,8 +324,24 @@ function nameInitials(name) {
  */
 function selfSubjectOf(settled) {
   if (!settled || settled.ok !== true) return null;
-  const value = settled.value?.identity?.subject ?? settled.value?.membership?.subject;
-  return typeof value === 'string' && value !== '' ? value : null;
+  // Review Muse #897 P2: an empty identity subject never hides the
+  // membership one — each candidate is checked for a non-empty value.
+  for (const value of [settled.value?.identity?.subject, settled.value?.membership?.subject]) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return null;
+}
+
+/** The sign-in kind of a person's subjects, or null (never a technical id). */
+const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso aggiunto dal pilota']]);
+/** @param {Array<string>} subjects */
+function accessLabel(subjects) {
+  const kinds = [];
+  for (const subject of subjects) {
+    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
+    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
+  }
+  return kinds.length > 0 ? kinds.join(' · ') : null;
 }
 
 /**
@@ -358,7 +374,7 @@ function selfSubjectOf(settled) {
 export function buildTeamRows(members = [], { selfSubject = null } = {}) {
   // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
   // teamPeople (admin-labels.js), the same rows the Calendario team reads.
-  let people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
+  const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
     subjects: row.subjects,
     keys: row.keys,
     live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
@@ -368,27 +384,11 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
     statuses: row.members.map((member) => member.status),
     self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
   }));
-  // backlog:9d06eb1e174b (verifica 13-14/11): the session's own person read
-  // twice — the verified login («daniele pelleri», real mailbox, person
-  // key) and the pilot's adopted broker member («Daniele Pelleri», only an
-  // internal mailbox). Only for the verified self: a subject with NO real
-  // mailbox and NO person key of its own, carrying the self row's very
-  // name (trimmed, case-insensitive), folds into the self row. Never for
-  // two other people — the #644 rule (mailbox AND name, or the person key)
-  // stays the only merge between anyone else.
-  const self = people.find((person) => person.self) ?? null;
-  const nameKey = (name) => (typeof name === 'string' ? name.trim().replace(/\s+/g, ' ').toLowerCase() : '');
-  if (self !== null && nameKey(self.displayName) !== '') {
-    people = people.filter((person) => {
-      if (person === self || person.email !== null || person.keys.length > 0) return true;
-      if (nameKey(person.displayName) !== nameKey(self.displayName)) return true;
-      self.subjects = [...self.subjects, ...person.subjects];
-      self.live = [...self.live, ...person.live];
-      self.roles = [...self.roles, ...person.roles];
-      self.statuses = [...self.statuses, ...person.statuses];
-      return false;
-    });
-  }
+  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
+  // identity — not even the session's own name. Without a person key or a
+  // server link a same-named subject stays a row of its own, with its own
+  // «Rimuovi», told apart by its access kind (accessLabel below): one row
+  // too many beats a person hidden.
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
@@ -420,6 +420,9 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
         role: spaceRoleLabel(role),
         // The session's own person: never offered «Rimuovi» on themself.
         self: person.self,
+        // How this person signs in, when no real mailbox names them: two
+        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
+        access: accessLabel(person.subjects),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
       };
     })
@@ -1130,7 +1133,10 @@ export function createSpaziAccessiView(deps) {
         const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
         names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
       } else {
-        names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+        // backlog:9d06eb1e174b: no real mailbox — the access kind tells
+        // same-named rows apart, beside the status.
+        const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
+        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
       }
       names.appendChild(renderTeamConns(conns));
       identity.appendChild(names);
