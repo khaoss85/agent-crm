@@ -10,8 +10,8 @@
 //
 // Views: Kanban columns plus a Lista table over the same filtered records.
 // Search plus the Referente, Creata and Stati pills filter both views
-// client-side; "Azzera filtri" resets them. Apri navigates to the offer
-// detail page (#/offerte/<id>) — the card never expands in place. The
+// client-side; "Azzera filtri" resets them. Apri opens the offer panel over
+// the board (Dan 11/11) — the card never expands in place. The
 // summary (count + per-currency totals) and the forecast always describe the
 // filtered set. The forecast is a declared heuristic — won and paid at face
 // value plus 60% of the open ones — labeled as a stima, never a commitment.
@@ -26,21 +26,32 @@
 // to a won or lost stage — from Sposta or a drop — never posts straight:
 // it reveals the card's Conferma panel (Persa adds the mandatory reason
 // input) and only Conferma posts. The Lista rows are read-only; moves
-// happen on Kanban cards. Apri navigates to the offer detail page
-// (#/offerte/<id>), where its three commercial facts (importo, chiusura,
-// referente) are read and edited through PATCH.
+// happen on Kanban cards. Apri opens a side panel over the board (the
+// composer window of the scheda): offer, customer, value, stage, Cambia
+// fase and the links to the scheda cliente and the full offer page
+// (#/offerte/<id>, where importo, chiusura and referente are edited through
+// PATCH). Closing it (×, Esc, a click outside) never re-renders the board,
+// so the scroll stays where it was.
+//
+// Drag placeholder (Dan 11/11): while a card flies, the column under the
+// pointer shows a dashed slot as tall as the card, at the top — where the
+// card really lands: the list reads `updated_at desc` and a move bumps it.
+// There is no stored position yet, so the source column offers no slot (a
+// reorder would not survive a reload). On drop the card moves into the slot
+// at once and waits there (aria-busy); a failure puts it back where it was
+// with the reason. Esc or a release outside a column only fires dragend,
+// which removes the slot: nothing moves.
 //
 // BO-F6-10 fetta Lista (backlog:31bed527): testi esatti C7/C16/C21, intestazioni
 // C19 nell'ordine del prototipo, pill di stato con pallino e percentuale di
 // probabilità C20, `Azzera filtri` solo a filtri attivi C11, ganci di stile
 // `drop-target`/`dragging` per il trascinamento C18 (il tratteggio visivo è CSS).
 
-import { formatAmount, humanReadError } from './admin-core.js';
+import { formatAmount, humanReadError, italianDay, logWriteFailure, wakeWaitText } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { offerStageLabel } from './admin-labels.js';
+import { offerCustomer, offerStageLabel, personLabel, teamPeople, upperFirst } from './admin-labels.js';
 
 const BOARD_LIMIT = 200;
-/** Backlog 1e939a362c7c: how many off-board offers the unfolded list names. */
 const OFF_PIPELINE_LISTED = 50;
 
 /**
@@ -59,12 +70,59 @@ const MONTHS_IT = [
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
 ];
 
+const ROME_DAY_KEY = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/Rome', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+
+/**
+ * Rome calendar day (YYYY-MM-DD) of a stored day or instant, null when
+ * absent/unparseable or an impossible day («2026-99-99», «2026-02-30»):
+ * the same day the screen prints with italianDay (review #761), never the
+ * UTC day. One rule with the sort key: it delegates to romeDayKey.
+ * @param {unknown} value
+ */
+function romeDayOf(value) {
+  return romeDayKey(value);
+}
+
+/**
+ * Review #789: the sort key of a date column is the same Rome day the cell
+ * shows (italianDay's rule: a bare YYYY-MM-DD is that day, an instant is its
+ * day in Europe/Rome), as YYYY-MM-DD so it sorts as text. Null when absent.
+ * @param {unknown} value
+ */
+export function romeDayKey(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const bareDay = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const time = Date.parse(bareDay ? `${value}T12:00:00Z` : value);
+  if (Number.isNaN(time)) return null;
+  const day = ROME_DAY_KEY.format(new Date(time));
+  // A bare day must exist: V8 rolls «2026-02-30» over to 2 March, so the
+  // day must read back unchanged (review #761 P1: fail closed).
+  return bareDay && day !== value ? null : day;
+}
+
 /** Day (YYYY-MM-DD) of an ISO timestamp, or null when absent/unparseable. */
 function dayOf(value) {
   if (typeof value !== 'string' || !value) return null;
   const time = Date.parse(value);
   if (Number.isNaN(time)) return null;
   return new Date(time).toISOString().slice(0, 10);
+}
+
+/**
+ * BO-F6-10 C8: whether a record created at `createdAt` falls in the last
+ * `days` Rome calendar days: today and the `days - 1` days before it, on the
+ * same Rome day the Creata column shows. Fail closed on an unreadable day.
+ * @param {unknown} createdAt @param {number} days @param {Date} [now]
+ */
+export function createdWithin(createdAt, days, now = new Date()) {
+  const day = romeDayOf(createdAt);
+  const today = now instanceof Date && !Number.isNaN(now.getTime()) ? ROME_DAY_KEY.format(now) : null;
+  if (!days || day === null || today === null) return false;
+  const [year, month, date] = today.split('-').map(Number);
+  const cutoff = new Date(Date.UTC(year, month - 1, date - days + 1)).toISOString().slice(0, 10);
+  return day >= cutoff;
 }
 
 /**
@@ -77,6 +135,23 @@ function dayOf(value) {
 function ownerInitials(name) {
   const words = String(name ?? '').trim().split(/\s+/).filter((word) => /\p{L}/u.test(word));
   return words.slice(0, 2).map((word) => (word.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('') || '·';
+}
+
+/**
+ * The customer an offer is for, as the scheda names it (backlog:fb47ab99b6ee):
+ * the contact, else the company — never a placeholder company standing in
+ * for a contact. Null when the offer names nobody.
+ * @param {Record<string, any>} record
+ */
+export function customerOf(record) {
+  const contact = typeof record?.contactName === 'string' ? record.contactName.trim() : '';
+  if (contact !== '') return contact;
+  const company = typeof record?.companyName === 'string' ? record.companyName.trim() : '';
+  // «Senza azienda» is the scheda's placeholder company, not a customer —
+  // in any case or spacing, the same normalization as the scheda's
+  // shownCompanyName (NFC, collapsed spaces, lower case; review #789, #799).
+  const placeholder = company.normalize('NFC').replace(/\s+/gu, ' ').toLowerCase() === 'senza azienda';
+  return company !== '' && !placeholder ? company : null;
 }
 
 /**
@@ -99,12 +174,7 @@ function matchesFilters(record, filters) {
   // matches nothing rather than silently lifting the filter.
   if (filters.created) {
     const days = filters.created === '7d' ? 7 : filters.created === '30d' ? 30 : 0;
-    const day = dayOf(record.createdAt);
-    if (!days || !day) return false;
-    const now = new Date();
-    const cutoff = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days))
-      .toISOString().slice(0, 10);
-    if (day < cutoff) return false;
+    if (!createdWithin(record.createdAt, days)) return false;
   }
   return true;
 }
@@ -123,6 +193,38 @@ const CREATED_OPTIONS = [
 
 /** How long a stage move may stay in flight before the card says it is not confirmed yet. */
 export const MOVE_PENDING_MS = 15000;
+/** backlog:2f72000d4a4d: how long the «Annulla» toast stays at least (the shell pauses it under the pointer). */
+export const UNDO_TOAST_MS = 10000;
+/** backlog:3d811389bb4c: after this long a move still being written says so on its card. */
+export const MOVE_SLOW_MS = 3000;
+/** d3910a25dbc0: the pause before the single retry of a write that met another one. */
+export const MOVE_RETRY_MS = 250;
+const MOVE_SLOW = 'Ancora un momento: il salvataggio è lento.';
+/** backlog:fd0adcded1c3: the same signal for a board read past MOVE_SLOW_MS. */
+const LOAD_SLOW = 'Ancora un momento: il caricamento è lento.';
+
+/**
+ * 67a3116f4f65 (pilot #562): the place code of a move-stage receipt when the
+ * stage was saved but the place was not — 'refused' or 'unavailable' — else
+ * null. The pilot answers { saved: { …row, placement }, spaceId }, which
+ * the /bo write client unwraps to the row (unwrapBoWriteAnswer); both shapes
+ * are read. The core's own move-stage writes stage and place together and
+ * carries no such code.
+ * @param {unknown} answer
+ */
+export function placementNotSaved(answer) {
+  const record = answer !== null && typeof answer === 'object' ? /** @type {any} */ (answer) : {};
+  const row = record.saved !== null && typeof record.saved === 'object' ? record.saved : record;
+  const code = row?.placement;
+  return code === 'refused' || code === 'unavailable' ? code : null;
+}
+
+/** d3910a25dbc0: the server's «two writes met» answer (PostgreSQL 40001/40P01 → 409 CONFLICT, transient). */
+export function isTransientConflict(error) {
+  const record = error !== null && typeof error === 'object' ? /** @type {any} */ (error) : {};
+  return record.code === 'CONFLICT' && (record.status === 409 || record.status === undefined)
+    && record.details !== null && typeof record.details === 'object' && record.details.transient === true;
+}
 const MOVE_IN_FLIGHT = 'Spostamento in corso…';
 const MOVE_UNCONFIRMED = 'Non ancora confermato';
 
@@ -191,7 +293,7 @@ export function readStageConfirm(panel, target) {
 }
 
 /**
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, toast?: (message: string, error?: boolean, options?: {action?: {label: string, run: () => void}}) => void, navigate?: (hash: string) => void, onAskAi?: (screenId: string, description: string) => void, wait?: (ms: number) => Promise<void>}} deps
  */
 export function createPipelineBoard(deps) {
   const { doc, mount } = deps;
@@ -210,13 +312,27 @@ export function createPipelineBoard(deps) {
       if (timer && typeof timer.unref === 'function') timer.unref();
     });
 
+  /** d3910a25dbc0: the short pause before the one retry of a met write (injectable for tests). */
+  const retryPause = typeof deps.retryWait === 'function'
+    ? () => deps.retryWait(MOVE_RETRY_MS)
+    : () => new Promise((resolve) => {
+      const timer = /** @type {any} */ (setTimeout(resolve, MOVE_RETRY_MS));
+      if (timer && typeof timer.unref === 'function') timer.unref();
+    });
+
   /** Guard against stale async responses overwriting a newer board. */
   let renderToken = 0;
 
   /** Toolbar + view state; records are cached so filtering never refetches. */
   const state = { view: 'kanban', q: '', owner: '', stage: '', created: '' };
+  /** Lista sort (backlog:fb47ab99b6ee): the clicked header and its direction; null = server order. */
+  const listSort = { key: /** @type {string | null} */ (null), dir: /** @type {'asc' | 'desc'} */ ('asc') };
   /** @type {{pipeline: any, pipelines: Array<Record<string, any>>, records: Array<Record<string, any>>}} */
   let cached = { pipeline: null, pipelines: [], records: [] };
+  /** The team as people (famiglia F5): names the referente, never its id. */
+  let people = [];
+  /** @param {unknown} owner */
+  const ownerText = (owner) => personLabel(owner, people) ?? 'Membro del team';
   /** Name of the pipeline the current filter state belongs to. A filter set
    * on pipeline A must never silently empty pipeline B after a switch. */
   let filteredPipeline = null;
@@ -233,8 +349,219 @@ export function createPipelineBoard(deps) {
     for (const column of columnNodes) toggleHook(column, 'drop-target', false);
   }
 
+  /**
+   * The card in flight (Dan 11/11): its id, source stage and height, set on
+   * dragstart and dropped on dragend. Null while nothing is dragged (or a
+   * drag comes from outside the board): columns then behave as before.
+   * @type {{ id: string, fromStage: string, height: number } | null}
+   */
+  let drag = null;
+  /** Record id → its card's Apri button, where closing the panel hands focus back. */
+  const openButtons = new Map();
+  /**
+   * backlog:07d29c0d1b06: each column's count and per-currency totals, kept
+   * with the records they describe, so a card that moves before the server
+   * answers (a drop, an Annulla) takes its count and value along — and a
+   * failure brings both back together.
+   * @type {Map<string, { records: Array<Record<string, any>>, count: any, totals: any }>}
+   */
+  const columnSummaries = new Map();
+
+  /** Repaint one column's count and totals from its records. */
+  function paintColumnSummary(stageKey) {
+    const summary = columnSummaries.get(stageKey);
+    if (!summary) return;
+    summary.count.textContent = String(summary.records.length);
+    while (summary.totals.firstChild) summary.totals.removeChild(summary.totals.firstChild);
+    /** @type {Map<string, number>} */
+    const totals = new Map();
+    for (const record of summary.records) {
+      if (!Number.isSafeInteger(record.valueCents)) continue;
+      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
+    }
+    for (const [currency, total] of [...totals.entries()].sort()) {
+      summary.totals.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
+    }
+  }
+
+  /**
+   * Move one card on screen, before the server answers: the card to the top
+   * of the target column and its record from one column's count and totals
+   * to the other's. Returns `undo` that puts card and numbers back together,
+   * or null when the card is not on the board (a filter hides it).
+   * @param {string} id @param {string} fromStage @param {string} toStage
+   */
+  function placeCardNow(id, fromStage, toStage, placement = null) {
+    const card = cardElements.get(id) ?? null;
+    const from = columnSummaries.get(fromStage);
+    const to = columnSummaries.get(toStage);
+    const target = columnOfStage(toStage);
+    if (!card || !card.parentNode || !from || !to || !target || typeof target.insertBefore !== 'function') return null;
+    const record = from.records.find((candidate) => String(candidate.id) === id);
+    if (!record) return null;
+    const home = { parent: card.parentNode, next: card.nextSibling ?? null };
+    // 67a3116f4f65: the card lands right after `afterId`, or first.
+    const afterCard = placement?.afterId ? cardElements.get(placement.afterId) ?? null : null;
+    let reference;
+    if (afterCard && afterCard.parentNode === target) {
+      reference = afterCard.nextSibling ?? null;
+      if (reference === card) reference = card.nextSibling ?? null;
+    } else {
+      reference = cardsIn(target).find((node) => node !== card) ?? slotAnchors.get(target) ?? null;
+      if (reference && reference.parentNode !== target) reference = null;
+    }
+    target.insertBefore(card, reference);
+    const at = from.records.indexOf(record);
+    from.records.splice(at, 1);
+    const afterIndex = placement?.afterId ? to.records.findIndex((candidate) => String(candidate.id) === placement.afterId) : -1;
+    to.records.splice(afterIndex + 1, 0, record);
+    paintColumnSummary(fromStage);
+    if (toStage !== fromStage) paintColumnSummary(toStage);
+    syncEmptyLine(target);
+    syncEmptyLine(home.parent);
+    return () => {
+      if (typeof home.parent.insertBefore === 'function') {
+        home.parent.insertBefore(card, home.next && home.next.parentNode === home.parent && home.next !== card ? home.next : null);
+      }
+      const back = to.records.indexOf(record);
+      if (back >= 0) to.records.splice(back, 1);
+      from.records.splice(Math.min(at, from.records.length), 0, record);
+      paintColumnSummary(fromStage);
+      if (toStage !== fromStage) paintColumnSummary(toStage);
+      syncEmptyLine(home.parent);
+      syncEmptyLine(target);
+    };
+  }
+
+  /**
+   * backlog:fd0adcded1c3: «Trascina qui un'offerta» only on a column with
+   * no card — gone the moment a card lands there (not after the save), back
+   * when its last card leaves.
+   */
+  function syncEmptyLine(column) {
+    if (!column || !column.childNodes || typeof column.getAttribute !== 'function' || column.getAttribute('data-stage') === null) return;
+    const line = [...column.childNodes].find((node) => typeof node.getAttribute === 'function' && node.getAttribute('data-empty-line') === 'true') ?? null;
+    if (cardsIn(column).length) {
+      if (line) line.setAttribute('class', 'empty hidden');
+      return;
+    }
+    if (line) {
+      line.setAttribute('class', 'empty');
+      return;
+    }
+    const fresh = emptyLine();
+    column.appendChild(fresh);
+    const anchor = slotAnchors.get(column);
+    if (!anchor || anchor.parentNode !== column) slotAnchors.set(column, fresh);
+  }
+  /** The line of a column with no card. */
+  function emptyLine() {
+    return el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta", attrs: { 'data-empty-line': 'true' } });
+  }
+
+  /** Record id → its card node, for every card on the board (open or closed). */
+  const cardElements = new Map();
+  /** The live column of a stage, or null. */
+  function columnOfStage(stageKey) {
+    return columnNodes.find((node) => node.getAttribute('data-stage') === stageKey) ?? null;
+  }
+  /** The cards of a column in screen order (never the slot, never the empty line). */
+  function cardsIn(column) {
+    const children = column?.childNodes ? [...column.childNodes] : [];
+    return children.filter((node) => typeof node.getAttribute === 'function'
+      && node.getAttribute('data-record') !== null
+      && String(node.getAttribute('class') ?? '').split(/\s+/).includes('pipeline-card'));
+  }
+  /** Where a card sits in its column: the card before it, or first. */
+  function placementOf(id) {
+    const card = cardElements.get(id) ?? null;
+    if (!card || !card.parentNode) return { afterId: null };
+    const cards = cardsIn(card.parentNode);
+    const at = cards.indexOf(card);
+    return { afterId: at > 0 ? String(cards[at - 1].getAttribute('data-record')) : null };
+  }
+  /** Whether this board stores a card's place in its column (the opportunity module). */
+  const positionsOf = (pipeline) => pipeline?.module === 'opportunity';
+  /** The last placement the slot showed: its column and the card it follows. */
+  let slotPlacement = null;
+
+  /** Column → the node the slot sits before: the first card, or the empty line. */
+  const slotAnchors = new Map();
+  /** The dashed placeholder, one for the whole board, built on first use. */
+  let slot = null;
+  function dropSlot() {
+    if (!slot) {
+      slot = el(doc, 'div', { class: 'pipeline-drop-slot', attrs: { 'aria-hidden': 'true', 'data-drop-slot': 'true' } });
+    }
+    return slot;
+  }
+  /**
+   * Seat the placeholder where the card would land, as tall as the dragged
+   * card. 67a3116f4f65: between two cards, under the pointer — the first
+   * card whose middle is below it; with no measure (or no positions on this
+   * board) on top, like before. Remembers the card it follows for the drop.
+   */
+  function showSlot(column, clientY = null, positions = true) {
+    const node = dropSlot();
+    const height = drag && drag.height > 0 ? Math.round(drag.height) : 0;
+    if (height > 0) node.setAttribute('style', `height: ${height}px`);
+    else node.removeAttribute('style');
+    const cards = cardsIn(column).filter((card) => card.getAttribute('data-record') !== drag?.id);
+    let index = 0;
+    if (positions && Number.isFinite(clientY)) {
+      index = cards.length;
+      for (const [at, card] of cards.entries()) {
+        const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+        if (!box || !Number.isFinite(box.top) || !Number.isFinite(box.height)) { index = 0; break; }
+        if (clientY < box.top + box.height / 2) { index = at; break; }
+      }
+    }
+    const before = index < cards.length ? cards[index] : null;
+    const reference = before
+      ?? (cards.length ? cards[cards.length - 1].nextSibling ?? null : slotAnchors.get(column) ?? null);
+    slotPlacement = {
+      stage: column.getAttribute('data-stage'),
+      afterId: index > 0 ? String(cards[index - 1].getAttribute('data-record')) : null,
+    };
+    if (node.parentNode === column && node.nextSibling === reference) return;
+    column.insertBefore(node, reference && reference.parentNode === column ? reference : null);
+  }
+  /** Take the placeholder off the board (idempotent: drop and dragend both call it). */
+  function hideSlot() {
+    if (slot && slot.parentNode) slot.parentNode.removeChild(slot);
+  }
+
   function clear() {
-    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    // The offer panel stays over the board while it reloads (Dan 11/11).
+    const keep = drawer ? drawer.node : null;
+    for (const child of [...mount.childNodes]) {
+      if (child !== keep) mount.removeChild(child);
+    }
+  }
+
+  /**
+   * backlog:3d811389bb4c: while the board loads, a skeleton of columns and
+   * cards — the shape of what is coming, like Trello — never a bare
+   * «Caricamento…». The words stay for a screen reader (role=status).
+   */
+  function showSkeleton() {
+    clear();
+    const panel = el(doc, 'section', {
+      class: 'panel panel-wide pipeline-board-panel pipeline-skeleton',
+      attrs: { 'aria-busy': 'true', 'data-skeleton': 'board' },
+    });
+    const status = el(doc, 'p', { class: 'sr-only', text: 'Caricamento…', attrs: { role: 'status' } });
+    panel.appendChild(status);
+    const board = el(doc, 'div', { class: 'pipeline-board', attrs: { 'aria-hidden': 'true' } });
+    for (const cards of [3, 2, 2, 1]) {
+      const column = el(doc, 'div', { class: 'pipeline-column pipeline-skeleton-column' });
+      column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-bar' }));
+      for (let index = 0; index < cards; index += 1) column.appendChild(el(doc, 'div', { class: 'pipeline-skeleton-card' }));
+      board.appendChild(column);
+    }
+    panel.appendChild(board);
+    mount.appendChild(panel);
+    return { panel, status };
   }
 
   /** @param {string} message @param {{retry?: () => void}} [options] */
@@ -250,14 +577,239 @@ export function createPipelineBoard(deps) {
     mount.appendChild(box);
   }
 
+  /**
+   * Review #774 (P2): one lock per offer, shared by the card (Sposta, drop)
+   * and the Apri panel, and kept across re-renders and panel reopenings.
+   * 'flight' while the request runs; 'queued' once the server answered
+   * BO_CRM_PENDING, until the next board read says where the card is.
+   * @type {Map<string, 'flight' | 'queued'>}
+   */
+  const moveLocks = new Map();
+
+  /**
+   * The views of one offer that show a move: its card and, when open on the
+   * same offer, the panel. Each answers start / unconfirmed / fail.
+   * @param {string} id
+   */
+  function moveViewsOf(id) {
+    const views = [];
+    const card = cardNodes.get(id)?.view;
+    if (card) views.push(card);
+    if (drawer && drawer.recordId === id && drawer.moveView) views.push(drawer.moveView);
+    return views;
+  }
+
+  /**
+   * Run one stage move for every entry point (review #774, P2): the lock,
+   * «Spostamento in corso…», a slow signal after MOVE_SLOW_MS, the bounded
+   * «Non ancora confermato» + Riprova once MOVE_PENDING_MS goes by, the toast,
+   * and the quiet board re-read. A queued move (BO_CRM_PENDING) stays locked:
+   * only a board read (Riprova) releases it, never a second POST.
+   *
+   * backlog:3d811389bb4c: the card is seated in its new column first (drop,
+   * Sposta, Cambia fase alike), and only then the toast speaks — the
+   * message never runs ahead of the card. backlog:fd0adcded1c3: while the
+   * write runs it says «Spostamento in …»; «Spostata in …» only after the
+   * server's yes. «Annulla» puts card and message back at once, whatever the
+   * write is still doing (see undoMove).
+   * @param {{ undo?: boolean, done?: string | null, seated?: boolean, quietToast?: boolean }} [options]
+   * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, undone?: true, message?: string }>}
+   */
+  async function runMove(pipeline, recordId, fromStage, toStage, reason, { undo = true, done = null, seated = false, quietToast = false, placement = null } = {}) {
+    const id = String(recordId);
+    if (moveLocks.has(id)) return { busy: true };
+    moveLocks.set(id, 'flight');
+    const reorder = toStage === fromStage;
+    // Where the card was, for «Annulla» (67a3116f4f65): the card before it, or first.
+    const origin = placementOf(id);
+    // The card and its column numbers move first; `restore` brings both back.
+    let restore = seated ? null : placeCardNow(id, fromStage, toStage, placement);
+    for (const view of moveViewsOf(id)) view.start();
+    const working = (key) => {
+      const type = pipeline.stages.find((candidate) => candidate.key === key)?.type;
+      return type === 'open' || type === 'renewal';
+    };
+    // A reorder inside a column can always go back; a stage move only
+    // between working stages (a won or lost offer never reopens).
+    const undoable = undo && (reorder || (working(fromStage) && working(toStage)));
+    /** Set by «Annulla»: the card is already back; this move only finishes its write. */
+    const intent = { undone: false };
+    /** @type {(outcome: any) => void} */
+    let settle = () => {};
+    const outcomeOf = new Promise((resolve) => { settle = resolve; });
+    /** The «Annulla» toast options — reused when a later toast replaces the first one. */
+    function undoOptions() {
+      return undoable ? {
+        action: {
+          label: 'Annulla',
+          run: () => {
+            intent.undone = true;
+            // Card, numbers and message go back together, now — on the
+            // board as it is (a re-read may have replaced the card node),
+            // to the very place the card left (67a3116f4f65).
+            restore = null;
+            placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+            void undoMove(pipeline, id, fromStage, toStage, outcomeOf, positionsOf(pipeline) ? origin : null, placement);
+          },
+        },
+        duration: UNDO_TOAST_MS,
+      } : undefined;
+    }
+    // backlog:fd0adcded1c3: while the write runs the toast only says what is
+    // happening — «Spostata in …» waits for the server's yes, so a failure
+    // never follows a message that said the opposite. «Annulla» is there
+    // from the first moment, as before.
+    if (!quietToast) {
+      const where = stageLabel(pipeline, toStage);
+      toast(reorder ? `Aggiornamento dell'ordine in ${where}…` : `Spostamento in ${where}…`, false, undoOptions());
+    }
+    let settled = false;
+    void wait(MOVE_SLOW_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.slow?.();
+    });
+    void wait(MOVE_PENDING_MS).then(() => {
+      if (!settled && moveLocks.get(id) === 'flight') for (const view of moveViewsOf(id)) view.unconfirmed();
+    });
+    try {
+      let answer;
+      try {
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      } catch (error) {
+        // d3910a25dbc0: two moves in one column met on the server
+        // (PostgreSQL SERIALIZABLE answers 409 CONFLICT, transient): one
+        // quiet retry, then the person hears it in plain words.
+        if (!isTransientConflict(error)) throw error;
+        await retryPause();
+        answer = await postMove(pipeline, id, fromStage, toStage, reason, placement);
+      }
+      // 67a3116f4f65 (pilot #562): the stage is saved but the place is not —
+      // the receipt says so ('refused': the column changed in between;
+      // 'unavailable': this space cannot store places). Never a silent
+      // «saved»: after the re-read below the card sits on top, and we say so.
+      const unplaced = placement !== null ? placementNotSaved(answer) : null;
+      settled = true;
+      moveLocks.delete(id);
+      // An undone move does not repaint its landing: the reverse write is
+      // next, and the board re-reads after it.
+      if (!intent.undone) await renderBoard(pipeline.name, { quiet: true }); // re-render: server state is the truth
+      // Review Muse #852 (P2): «Annulla» may land while that re-read is in
+      // flight — its repaint just put the card back on the landing column.
+      // The undo wins: card and numbers go back to the place they left,
+      // and only then does the reverse write follow (undoMove).
+      if (intent.undone) placeCardNow(id, toStage, fromStage, positionsOf(pipeline) ? origin : null);
+      if (!intent.undone && !quietToast) {
+        const where = stageLabel(pipeline, toStage);
+        // The server said yes: now, and only now, «Spostata in …». «Annulla»
+        // stays: the write stands, so it can still go back.
+        if (unplaced === null) toast(done ?? (reorder ? `Ordine aggiornato in ${where}.` : `Spostata in ${where}.`), false, undoOptions());
+        else {
+          toast(unplaced === 'refused'
+            ? `Spostata in ${where}, ma la colonna era cambiata: la card è in cima.`
+            : `Spostata in ${where}, ma qui il posto nella colonna non si salva: la card è in cima.`, false, undoOptions());
+        }
+      }
+      settle({ moved: true });
+      return { moved: true, ...(intent.undone ? { undone: true } : {}) };
+    } catch (error) {
+      settled = true;
+      if (isMovePending(error)) {
+        // Still queued on the server: the outcome is unknown, never
+        // «non riuscito». The move stays locked (review #657): only
+        // Riprova, a board re-read, is offered — a second POST would
+        // queue a duplicate or meet a stale-stage refusal.
+        console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
+        moveLocks.set(id, 'queued');
+        const views = moveViewsOf(id);
+        for (const view of views) view.unconfirmed();
+        // A card no view shows (filtered out) still says where it stands.
+        if (!views.length && !intent.undone) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+        settle({ pending: true });
+        return { pending: true };
+      }
+      moveLocks.delete(id);
+      const message = moveFailureText(error);
+      if (error?.code === 'STALE_POSITION') {
+        // Review Muse #852 (P2): the column changed under this drop. On the
+        // pilot the stage write may already have landed before the place was
+        // refused (two writes, not one): never guess by putting the card
+        // back — the fresh board says where it is.
+        restore = null;
+        await renderBoard(pipeline.name, { quiet: true });
+      } else if (restore) {
+        restore();
+        restore = null;
+      }
+      for (const view of moveViewsOf(id)) view.fail(message);
+      // The toast that said «Spostata» is replaced by the truth — unless the
+      // person already undid it: the card is where they wanted it.
+      if (!intent.undone) toast(message, true);
+      const waking = wakeWaitText(error) !== null;
+      settle({ failed: true, message, waking });
+      return { failed: true, message, waking };
+    }
+  }
+
+  /**
+   * «Annulla» (review Muse #799, P2; backlog:3d811389bb4c): card, column
+   * numbers and «Riportata in …» are already back when this runs (runMove's
+   * action did it at the click). Here the server follows: once the first
+   * write lands, the reverse write runs; every outcome that disagrees with
+   * the screen says so and puts the card where the server has it.
+   */
+  async function undoMove(pipeline, id, fromStage, toStage, outcomeOf, origin = null, landed = null) {
+    toast(toStage === fromStage ? 'Ordine ripristinato.' : `Riportata in ${stageLabel(pipeline, fromStage)}.`);
+    const first = await outcomeOf;
+    if (first?.failed) return; // the first move never landed: the card is right where it is
+    if (first?.pending) {
+      // Review Muse #809: a move the server still holds cannot be undone yet
+      // — never a silent drop of the undo: say so; the card shows where the
+      // queued move will land, the board re-read (Riprova) tells the truth.
+      placeCardNow(id, fromStage, toStage, landed);
+      toast(`${MOVE_UNCONFIRMED}: lo spostamento è ancora in coda, non posso annullarlo adesso. Ricarica la pipeline tra poco e riprova.`, true);
+      return;
+    }
+    if (!first?.moved) return;
+    const back = await runMove(pipeline, id, toStage, fromStage, undefined, {
+      undo: false, seated: true, quietToast: true, placement: origin,
+    });
+    if (back.failed || back.busy) {
+      // The server kept the card where the first move put it: card and
+      // column numbers go back there together, and the toast says what
+      // happened in plain words (backlog:3d811389bb4c).
+      placeCardNow(id, fromStage, toStage, landed);
+      if (back.busy) {
+        toast('Questa offerta si sta già spostando: riprova tra poco.', true);
+      } else {
+        const resta = `Non sono riuscito a riportarla in ${stageLabel(pipeline, fromStage)}: resta in ${stageLabel(pipeline, toStage)}.`;
+        toast(back.waking ? `${resta} Il servizio si sta avviando: riprova tra qualche secondo.` : resta, true);
+      }
+    }
+    // Review Muse #809: a queued undo is announced whether or not its card is on screen.
+    if (back.pending) toast(`${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.`, true);
+  }
+
   /** POST one move-stage transition — shared by the Move button and drops. */
-  async function postMove(pipeline, recordId, fromStage, toStage, reason) {
+  async function postMove(pipeline, recordId, fromStage, toStage, reason, placement = null) {
     const input = { toStage, fromStage };
     if (reason) input.reason = reason;
-    await client.request(
-      `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`,
-      { method: 'POST', body: JSON.stringify(input) },
-    );
+    // 67a3116f4f65: the place in the column rides the same write.
+    if (placement && positionsOf(pipeline)) {
+      if (placement.afterId) input.afterId = placement.afterId;
+      else input.first = true;
+    }
+    const path = `/api/modules/${encodeURIComponent(pipeline.module)}/records/${encodeURIComponent(recordId)}/actions/move-stage`;
+    try {
+      // The answer is the receipt: the pilot says there whether the place was saved.
+      return await client.request(path, { method: 'POST', body: JSON.stringify(input) });
+    } catch (error) {
+      // The failure log names the request (backlog:2f72000d4a4d) even when
+      // the client did not stamp it.
+      if (error !== null && typeof error === 'object' && Object.isExtensible(error)) {
+        if (typeof error.method !== 'string') error.method = 'POST';
+        if (typeof error.path !== 'string') error.path = path;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -266,8 +818,16 @@ export function createPipelineBoard(deps) {
    * would 409 SAME_STAGE); drops onto a won or lost stage never post
    * directly — they reveal the card's Conferma panel (with the mandatory
    * reason input for lost), like the Sposta button.
+   *
+   * Dan 11/11: with the column at hand, a direct move seats the card where
+   * the placeholder was (the top of the column) before the write answers,
+   * marked as waiting; a failure puts it back in its old place and says why.
    */
-  async function handleDrop(pipeline, toStage, payload) {
+  async function handleDrop(pipeline, toStage, payload, column = null) {
+    // The slot only previews: whatever happens next, it leaves the board.
+    const shown = slot && slot.parentNode === column && slotPlacement?.stage === toStage ? slotPlacement : null;
+    hideSlot();
+    slotPlacement = null;
     let parsed;
     try {
       parsed = JSON.parse(payload);
@@ -276,7 +836,14 @@ export function createPipelineBoard(deps) {
     }
     const recordId = typeof parsed?.id === 'string' ? parsed.id : null;
     const fromStage = typeof parsed?.fromStage === 'string' ? parsed.fromStage : null;
-    if (!recordId || !fromStage || toStage === fromStage) return;
+    if (!recordId || !fromStage) return;
+    const positions = positionsOf(pipeline);
+    // 67a3116f4f65: the place the slot showed (first, or after a card).
+    const placement = positions ? { afterId: shown?.afterId ?? null } : null;
+    if (toStage === fromStage) {
+      // A drop back where the card already is changes nothing: no write, no message.
+      if (!positions || placementOf(recordId).afterId === placement.afterId) return;
+    }
     const record = cached.records.find((candidate) => candidate.id === recordId);
     if (!record || record.pipelineStage !== fromStage) {
       toast('Questa card è cambiata nel frattempo — la pagina si aggiorna.', true);
@@ -285,8 +852,15 @@ export function createPipelineBoard(deps) {
     }
     const target = pipeline.stages.find((stage) => stage.key === toStage);
     if (!target) return;
-    if (stageNeedsConfirm(target)) {
-      const revealed = revealConfirm(pipeline, record, fromStage, toStage);
+    const source = pipeline.stages.find((stage) => stage.key === fromStage);
+    if (toStage !== fromStage && source && source.type !== 'open' && source.type !== 'renewal') {
+      // A refused drop says why instead of bouncing in silence.
+      toast(`Un'offerta chiusa non cambia più fase: resta in ${stageLabel(pipeline, fromStage)}.`, true);
+      return;
+    }
+    if (toStage !== fromStage && stageNeedsConfirm(target)) {
+      // Review Muse #852 (P2): the place the slot showed rides Conferma too.
+      const revealed = revealConfirm(pipeline, record, fromStage, toStage, placement);
       if (!revealed) {
         toast(target.type === 'lost'
           ? 'Per la perdita serve un motivo — apri prima la card.'
@@ -296,29 +870,38 @@ export function createPipelineBoard(deps) {
     }
     // Review #657: a drop rides the card's own move — the same lock,
     // «Spostamento in corso…» and pending «Non ancora confermato» + Riprova
-    // as Sposta, so a queued move never reads as a failure.
-    const controls = cardNodes.get(recordId);
-    if (controls && typeof controls.move === 'function') {
-      await controls.move(toStage);
-      return;
-    }
-    try {
-      await postMove(pipeline, recordId, fromStage, toStage);
-      toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-      await renderBoard(pipeline.name); // re-render: server state is the truth
-    } catch (error) {
-      toast(isMovePending(error) ? `${MOVE_UNCONFIRMED}: ricarica la pipeline tra poco.` : moveFailureText(error), true);
-    }
+    // as Sposta. runMove seats the card and its numbers where the slot was,
+    // then speaks (backlog:3d811389bb4c), and brings both back on a failure.
+    await runMove(pipeline, recordId, fromStage, toStage, undefined, { placement });
   }
 
   /**
    * @param {string | null} pipelineName null for the bare #/pipeline link
    *   (backlog 2a075e2d9250): the first composed pipeline, the same rule
    *   as the sidebar voice (buildShellNav).
+   * @param {{ quiet?: boolean }} [options] quiet: the re-read after a move —
+   *   the board stays on screen (the moved card already sits in its new place)
+   *   instead of «Caricamento…» for the seconds the read takes (giro UX 11/11:
+   *   on the pilot a read takes 2,5-4 s).
    */
-  async function renderBoard(pipelineName) {
+  async function renderBoard(pipelineName, { quiet = false } = {}) {
     const token = ++renderToken;
-    showMessage('Caricamento…');
+    // A panel the router took off the page (the view was left) never comes
+    // back on its own: only a reload of this same board keeps it.
+    // Review #774 (P2): `mount` is the shell's gated handle (a Proxy), never
+    // the parent node itself — ask it whether it holds the panel.
+    if (drawer && !mount.contains(drawer.node)) closeOfferDrawer({ refocus: false });
+    if (!quiet || !mount.firstChild) {
+      const skeleton = showSkeleton();
+      // backlog:fd0adcded1c3: a read still running after MOVE_SLOW_MS says
+      // so in words, like a slow move does on its card — never only the
+      // skeleton for seconds.
+      void wait(MOVE_SLOW_MS).then(() => {
+        if (token !== renderToken || !mount.contains(skeleton.panel)) return;
+        skeleton.status.textContent = LOAD_SLOW;
+        skeleton.status.setAttribute('class', 'pipeline-skeleton-slow');
+      });
+    }
     let pipeline;
     let records;
     let composed = [];
@@ -342,15 +925,29 @@ export function createPipelineBoard(deps) {
       // The board currently supports the core opportunity module's list
       // endpoint; a generated staged module would use its records route.
       const listPath = pipeline.module === 'opportunity'
-        ? `/api/opportunities?limit=${BOARD_LIMIT}`
+        // 67a3116f4f65: the board order — position, then newest first.
+        ? `/api/opportunities?limit=${BOARD_LIMIT}&order=board`
         : `/api/modules/${encodeURIComponent(pipeline.module)}/records?limit=${BOARD_LIMIT}`;
       records = (await client.request(listPath)).items ?? [];
+      try {
+        const team = await client.request('/api/spine/memberships');
+        people = teamPeople(Array.isArray(team?.items) ? team.items : []);
+      } catch (error) {
+        // The board renders without names: the referente reads as the
+        // operator typed it or «Membro del team», never a slug.
+        if (typeof console !== 'undefined' && typeof console.error === 'function') {
+          console.error('[bo] team non leggibile', { code: error?.code ?? null });
+        }
+        people = [];
+      }
     } catch (error) {
       if (token !== renderToken) return;
       showMessage(humanReadError(error, { failed: 'La pipeline non si è potuta leggere. Riprova più tardi.' }), { retry: () => renderBoard(pipelineName) });
       return;
     }
     if (token !== renderToken) return;
+    // An offer panel of another board never survives a switch.
+    if (drawer && drawer.pipelineName !== pipeline.name) closeOfferDrawer({ refocus: false });
     if (filteredPipeline !== pipeline.name) {
       // New pipeline: drop the previous board's filters so a stage, owner
       // or creation interval from pipeline A cannot silently empty pipeline B.
@@ -359,8 +956,13 @@ export function createPipelineBoard(deps) {
       state.owner = '';
       state.stage = '';
       state.created = '';
+      // Review #789: the Lista sort is part of the board's view state too.
+      listSort.key = null;
+      listSort.dir = 'asc';
     }
     cached = { pipeline, pipelines: composed, records };
+    // A fresh read is the truth a queued move waited for: it releases it.
+    for (const [id, lock] of [...moveLocks]) if (lock === 'queued') moveLocks.delete(id);
     // A fresh server read may have moved the records: a pending Conferma
     // from the previous read is stale, never replayed onto the new truth.
     pendingConfirm.clear();
@@ -371,7 +973,11 @@ export function createPipelineBoard(deps) {
     const { pipeline, pipelines, records } = cached;
     clear();
     cardNodes.clear();
+    cardElements.clear();
     columnNodes.length = 0;
+    slotAnchors.clear();
+    columnSummaries.clear();
+    openButtons.clear();
 
     const onBoard = records.filter((record) => record.pipelineKey === pipeline.name);
     const stageKeys = new Set(pipeline.stages.map((stage) => stage.key));
@@ -382,7 +988,7 @@ export function createPipelineBoard(deps) {
     const placed = onBoard.filter((record) => stageKeys.has(record.pipelineStage));
     const offPipeline = records.length - onBoard.length;
     // Backlog 13f43804: the board reads at most BOARD_LIMIT records, so when
-    // the read hits the cap every count below is a lower bound, never exact.
+    // the read is truncated the counts below are lower bounds.
     const truncated = records.length >= BOARD_LIMIT;
     const visible = placed.filter((record) => matchesFilters(record, state));
 
@@ -461,7 +1067,70 @@ export function createPipelineBoard(deps) {
       panel.appendChild(drift);
     }
     mount.appendChild(panel);
+    // The offer panel lives over the board: a re-render (a filter, a move)
+    // brings it back with the fresh record, or closes it when the offer
+    // left the board.
+    if (drawer) {
+      const fresh = records.find((candidate) => String(candidate.id) === drawer.recordId);
+      if (!fresh || fresh.pipelineKey !== pipeline.name) closeOfferDrawer({ refocus: false });
+      else {
+        if (!mount.contains(drawer.node)) mount.appendChild(drawer.node);
+        if (drawer.paintedFrom !== fresh) paintOfferDrawer(pipeline, fresh);
+        // The fresh board starts unscrolled: the open card's column (maybe
+        // a new one, after Cambia fase) comes out from under the panel again.
+        keepOpenColumnInView();
+      }
+    }
     return panel;
+  }
+
+  /** The board that holds room for the offer panel, if any. */
+  let roomBoard = null;
+  /** Space kept between the open card's column and the panel. */
+  const OFFER_ROOM_GAP = 16;
+  /**
+   * backlog:fd0adcded1c3 (seguito di 23f92c6a72ea): beside the board (above
+   * 700 px) the offer panel covered the open card's own column — at 1024
+   * Proposta, at 1280 Pagato — and the board could not scroll it out. Now
+   * the board keeps its column widths, gains room at its end as wide as the
+   * panel, and scrolls just enough to set the column left of the panel.
+   * The full-width sheet (≤700 px) covers the board by design: nothing here.
+   */
+  function keepOpenColumnInView() {
+    if (!drawer) return;
+    const card = cardElements.get(drawer.recordId) ?? null;
+    const column = card?.parentNode ?? null;
+    const board = column?.parentNode ?? null;
+    const measurable = (node) => node && typeof node.getBoundingClientRect === 'function';
+    if (!measurable(column) || !measurable(board) || !measurable(drawer.node)) return;
+    const sheet = drawer.node.getBoundingClientRect();
+    const frame = board.getBoundingClientRect();
+    if (![sheet.left, sheet.width, frame.left, frame.right].every(Number.isFinite) || sheet.width <= 0) return;
+    if (sheet.left <= frame.left + OFFER_ROOM_GAP) { freeOfferRoom(); return; }
+    const covered = frame.right - sheet.left + OFFER_ROOM_GAP;
+    if (covered > 0 && roomBoard !== board) {
+      freeOfferRoom();
+      const width = column.getBoundingClientRect().width;
+      if (Number.isFinite(width) && width > 0) {
+        board.setAttribute('style', `--pipeline-column-width: ${Math.round(width)}px; --pipeline-offer-room: ${Math.ceil(covered)}px`);
+        board.setAttribute('data-offer-room', 'true');
+        roomBoard = board;
+      }
+    }
+    const box = column.getBoundingClientRect();
+    if (![box.left, box.right].every(Number.isFinite)) return;
+    const limit = sheet.left - OFFER_ROOM_GAP;
+    let shift = 0;
+    if (box.right > limit) shift = Math.min(box.right - limit, box.left - frame.left);
+    else if (box.left < frame.left) shift = box.left - frame.left;
+    if (shift !== 0) board.scrollLeft = Math.max(0, Number(board.scrollLeft ?? 0) + shift);
+  }
+  /** Give the board back its own width once the panel closes. */
+  function freeOfferRoom() {
+    if (!roomBoard) return;
+    roomBoard.removeAttribute('data-offer-room');
+    roomBoard.removeAttribute('style');
+    roomBoard = null;
   }
 
   /**
@@ -681,10 +1350,10 @@ export function createPipelineBoard(deps) {
     toolbar.appendChild(renderFilterMenu({
       key: 'owner',
       label: 'Referente',
-      valueText: state.owner || 'Tutti',
+      valueText: state.owner ? ownerText(state.owner) : 'Tutti',
       filterLabel: 'Filtra per referente',
       current: state.owner,
-      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: owner }))],
+      voices: [{ value: '', title: 'Tutti' }, ...owners.map((owner) => ({ value: owner, title: ownerText(owner) }))],
       onPick: (picked) => { state.owner = picked; },
     }));
     toolbar.appendChild(renderFilterMenu({
@@ -741,17 +1410,27 @@ export function createPipelineBoard(deps) {
   }
 
   /**
-   * Pipeline switch (backlog:1cb4cc48): records of other pipelines are
-   * excluded by documented behavior, never silently hidden. The count
-   * still names how many offers live on the other boards, and when the
-   * space composes more than one pipeline a selector replaces the old
-   * "(non mostrata)" line — every composed pipeline is one choice away.
-   * With a single composed pipeline the legacy links stay, so an
-   * out-of-band record still names where the operator can go see it. A
-   * key outside the route grammar cannot be linked: it stays in the
-   * count, never in an href. Every value renders as text, never HTML.
+   * Pipeline switch (backlog:1cb4cc48, review accordo-muse-review on #727):
+   * records of other pipelines are excluded by documented behavior, never
+   * silently hidden. The count still names how many offers live on the other
+   * boards (renderOffPipeline, one click per offer to its #/offerte page),
+   * and when the space composes more than one pipeline a selector offers
+   * every composed pipeline — each one renders a real board, one choice away.
+   * A key the schema does not compose (unknown, keyless, or outside the route
+   * grammar) never becomes a pipeline choice or a #/pipelines link: the
+   * destination would not render (renderBoard resolves against `composed`
+   * only). Those offers stay reachable through the disclosure list. Choices
+   * come from the schema, never from the truncated record read, so a
+   * BOARD_LIMIT read cannot make them partial; the lower-bound wording
+   * («almeno N») lives on the counts (backlog 13f43804). Every value renders
+   * as text, never HTML.
+   * DECISION (to be confirmed): with a single composed pipeline and only
+   * unresolvable off-board offers there is no one-choice selector — the
+   * disclosure list is the actionable path to the offer pages.
    * @param {Array<Record<string, any>>} pipelines
    * @param {Array<Record<string, any>>} records
+   * @param {string} pipelineName
+   * @param {number} offPipeline
    * @param {boolean} truncated whether the read hit BOARD_LIMIT (counts are lower bounds)
    */
   function renderPipelineSwitch(pipelines, records, pipelineName, offPipeline, truncated) {
@@ -759,11 +1438,12 @@ export function createPipelineBoard(deps) {
     if (offPipeline > 0) {
       box.appendChild(renderOffPipeline(pipelines, records, pipelineName, offPipeline, truncated));
     }
-    if (composedPipelineNames(pipelines).length > 1) {
+    const composed = composedPipelineNames(pipelines);
+    if (composed.length > 1) {
       const selectId = 'pipeline-switch';
       box.appendChild(el(doc, 'label', { text: 'Pipeline: ', attrs: { for: selectId } }));
       const select = el(doc, 'select', { attrs: { id: selectId } });
-      for (const name of composedPipelineNames(pipelines)) {
+      for (const name of composed) {
         const defined = pipelines.find((candidate) => candidate?.name === name);
         const label = typeof defined?.label === 'string' && defined.label !== '' ? defined.label : name;
         select.appendChild(el(doc, 'option', { text: label, attrs: { value: name } }));
@@ -776,17 +1456,7 @@ export function createPipelineBoard(deps) {
         }
       });
       box.appendChild(select);
-      return box;
     }
-    const others = [...new Set(records.map((record) => (typeof record?.pipelineKey === 'string' ? record.pipelineKey : '')))]
-      .filter((key) => key !== pipelineName && /^[a-z][a-z0-9-]*$/.test(key))
-      .sort();
-    others.forEach((key, index) => {
-      box.appendChild(el(doc, 'span', { text: index === 0 ? '' : ' · ' }));
-      const link = el(doc, 'a', { attrs: { href: `#/pipelines/${encodeURIComponent(key)}` } });
-      link.textContent = `Vedi ${key}`;
-      box.appendChild(link);
-    });
     return box;
   }
 
@@ -816,18 +1486,21 @@ export function createPipelineBoard(deps) {
     const list = el(doc, 'ul', { class: 'pipeline-off-list hidden', attrs: { 'data-off-pipeline': 'list' } });
     const others = records.filter((record) => record.pipelineKey !== pipelineName).slice(0, OFF_PIPELINE_LISTED);
     for (const record of others) {
-      const item = el(doc, 'li');
+      // Backlog 169cd4bc988c: one row per offer in the /bo dress — its name
+      // opens its page, then who it is for (never «Senza azienda») and its
+      // stato capitalised («Proposta», never the bare «proposta»).
+      const item = el(doc, 'li', { class: 'pipeline-off-item' });
       const id = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
       const name = typeof record?.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
-      const stage = offerStageLabel(pipelines, record);
-      const text = stage ? `${name} · ${stage}` : name;
       if (id === null) {
-        item.appendChild(el(doc, 'span', { text }));
+        item.appendChild(el(doc, 'span', { class: 'pipeline-off-name', text: name }));
       } else {
-        const link = el(doc, 'a', { attrs: { href: `#/offerte/${encodeURIComponent(id)}` } });
-        link.textContent = text;
-        item.appendChild(link);
+        item.appendChild(el(doc, 'a', { class: 'pipeline-off-name', text: name, attrs: { href: `#/offerte/${encodeURIComponent(id)}` } }));
       }
+      const customer = offerCustomer(record);
+      const stage = upperFirst(offerStageLabel(pipelines, record));
+      const facts = [customer?.name ?? null, stage].filter((part) => typeof part === 'string' && part !== '');
+      if (facts.length > 0) item.appendChild(el(doc, 'span', { class: 'pipeline-off-meta', text: ` · ${facts.join(' · ')}` }));
       list.appendChild(item);
     }
     if (offPipeline > others.length) {
@@ -915,9 +1588,9 @@ export function createPipelineBoard(deps) {
     // without exchange rates, so the risk line shows only when every valued
     // open offer shares one currency (Codex P2 on #467).
     const riskName = openCurrencies.size === 1 && typeof riskiest?.owner === 'string' && riskiest.owner
-      ? riskiest.owner
-      : openCurrencies.size === 1 && typeof riskiest?.companyName === 'string' && riskiest.companyName
-        ? riskiest.companyName
+      ? ownerText(riskiest.owner)
+      : openCurrencies.size === 1 && customerName(riskiest)
+        ? customerName(riskiest)
         : null;
     if (riskName) {
       box.appendChild(el(doc, 'p', { class: 'hint', text: `Il rischio più alto è ${riskName}.` }));
@@ -927,27 +1600,50 @@ export function createPipelineBoard(deps) {
 
   /**
    * Read-only Lista table over the same filtered records (moves stay on Kanban).
-   * Headers follow the prototype order (BO-F6-10 C19); every row shows the
-   * state pill with its dot, the value, the stage probability, the expected
-   * close, the creation day and the referente (BO-F6-10 C20). Values are set
-   * through textContent/setAttribute only, never innerHTML.
+   * Headers follow the prototype order (BO-F6-10 C19) plus Cliente
+   * (backlog:fb47ab99b6ee); every row shows the state pill with its dot, the
+   * value, the stage probability, the expected close, the creation day and the
+   * referente by the person's name (BO-F6-10 C20). Dates read «11 nov 2026».
+   * Each header sorts the list (click again to reverse), like a spreadsheet;
+   * the sort lives in the view and survives filters. Values are set through
+   * textContent/setAttribute only, never innerHTML.
    */
   function renderList(pipeline, visible) {
     const wrap = el(doc, 'div', { class: 'pipeline-list', attrs: { 'data-listview': 'records' } });
     const table = el(doc, 'table', { class: 'pipeline-table' });
     const head = el(doc, 'thead');
     const headRow = el(doc, 'tr');
-    for (const label of ['Offerta', 'Stato', 'Valore', 'Probabilità', 'Chiusura', 'Creata', 'Referente']) {
-      headRow.appendChild(el(doc, 'th', { text: label }));
+    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
+    const stageRank = new Map(pipeline.stages.map((stage, index) => [stage.key, index]));
+    const columns = listColumns(stageOf, stageRank);
+    for (const column of columns) {
+      const active = listSort.key === column.key;
+      const th = el(doc, 'th', {
+        attrs: { 'aria-sort': active ? (listSort.dir === 'asc' ? 'ascending' : 'descending') : 'none', 'data-sort-key': column.key },
+      });
+      const button = el(doc, 'button', {
+        class: 'pipeline-sort',
+        text: column.label,
+        attrs: { type: 'button', 'data-action': 'sort-list', 'data-sort': column.key },
+      });
+      button.addEventListener('click', () => {
+        if (listSort.key === column.key) listSort.dir = listSort.dir === 'asc' ? 'desc' : 'asc';
+        else {
+          listSort.key = column.key;
+          listSort.dir = 'asc';
+        }
+        renderAll(renderToken);
+      });
+      th.appendChild(button);
+      headRow.appendChild(th);
     }
     head.appendChild(headRow);
     table.appendChild(head);
     const body = el(doc, 'tbody');
-    const stageOf = new Map(pipeline.stages.map((stage) => [stage.key, stage]));
     // Dan 06/11: a row of the Lista opens the offer like Apri on the Kanban
     // card — the name is the link (keyboard, new tab), the whole row clicks.
     const detailed = pipeline.module === 'opportunity';
-    for (const record of visible) {
+    for (const record of sortedForList(visible, columns)) {
       const stage = stageOf.get(record.pipelineStage);
       const row = el(doc, 'tr', { attrs: { 'data-record': String(record.id) } });
       const name = String(record.name ?? record.id);
@@ -975,14 +1671,15 @@ export function createPipelineBoard(deps) {
       } else {
         row.appendChild(el(doc, 'td', { text: name }));
       }
+      row.appendChild(el(doc, 'td', { text: customerOf(record) ?? '—' }));
       const stateCell = el(doc, 'td');
       stateCell.appendChild(renderStagePill(stage, record.pipelineStage));
       row.appendChild(stateCell);
       row.appendChild(el(doc, 'td', { text: formatAmount(record.valueCents, record.currency) }));
       row.appendChild(el(doc, 'td', { text: probabilityText(stage) }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.expectedCloseDate) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: dayOf(record.createdAt) ?? '—' }));
-      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? record.owner : '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.expectedCloseDate) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: italianDay(record.createdAt) ?? '—' }));
+      row.appendChild(el(doc, 'td', { text: typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—' }));
       body.appendChild(row);
     }
     table.appendChild(body);
@@ -993,6 +1690,47 @@ export function createPipelineBoard(deps) {
     return wrap;
   }
 
+  /**
+   * The Lista columns: label, sort key and the value each one sorts by
+   * (null sorts last whatever the direction, like a spreadsheet's blanks).
+   * @param {Map<string, any>} stageOf @param {Map<string, number>} stageRank
+   */
+  function listColumns(stageOf, stageRank) {
+    const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim().toLocaleLowerCase('it') : null);
+    return [
+      { key: 'name', label: 'Offerta', value: (record) => text(record.name) },
+      { key: 'customer', label: 'Cliente', value: (record) => text(customerOf(record)) },
+      { key: 'stage', label: 'Stato', value: (record) => stageRank.get(record.pipelineStage) ?? null },
+      { key: 'value', label: 'Valore', value: (record) => (Number.isSafeInteger(record.valueCents) ? record.valueCents : null) },
+      { key: 'probability', label: 'Probabilità', value: (record) => stageProbability(stageOf.get(record.pipelineStage)) },
+      { key: 'close', label: 'Chiusura', value: (record) => romeDayKey(record.expectedCloseDate) },
+      { key: 'created', label: 'Creata', value: (record) => romeDayKey(record.createdAt) },
+      {
+        key: 'owner', label: 'Referente',
+        value: (record) => (typeof record.owner === 'string' && record.owner ? text(ownerText(record.owner)) : null),
+      },
+    ];
+  }
+
+  /** The visible records in the chosen Lista order; the server order without a sort. */
+  function sortedForList(visible, columns) {
+    const column = columns.find((candidate) => candidate.key === listSort.key);
+    if (!column) return visible;
+    const sign = listSort.dir === 'desc' ? -1 : 1;
+    return visible
+      .map((record, index) => ({ record, index, value: column.value(record) }))
+      .sort((left, right) => {
+        if (left.value === null && right.value === null) return left.index - right.index;
+        if (left.value === null) return 1;
+        if (right.value === null) return -1;
+        const order = typeof left.value === 'number' && typeof right.value === 'number'
+          ? left.value - right.value
+          : String(left.value).localeCompare(String(right.value), 'it');
+        return order === 0 ? left.index - right.index : sign * order;
+      })
+      .map((entry) => entry.record);
+  }
+
   /** State pill with its dot (BO-F6-10 C12/C20): the dot color is CSS, the hook is markup. */
   function renderStagePill(stage, stageKey) {
     const pill = el(doc, 'span', { class: 'pill' });
@@ -1001,11 +1739,16 @@ export function createPipelineBoard(deps) {
     return pill;
   }
 
+  /** A stage's probability when it is a real percentage (0-100), else null: one rule for the cell and its sort. */
+  function stageProbability(stage) {
+    const probability = stage?.probability;
+    return typeof probability === 'number' && probability >= 0 && probability <= 100 ? probability : null;
+  }
+
   /** Stage probability as `NN%`, or an em dash when the stage is unknown. */
   function probabilityText(stage) {
-    const probability = stage?.probability;
-    if (typeof probability !== 'number' || probability < 0 || probability > 100) return '—';
-    return `${probability}%`;
+    const probability = stageProbability(stage);
+    return probability === null ? '—' : `${probability}%`;
   }
 
   /**
@@ -1029,10 +1772,16 @@ export function createPipelineBoard(deps) {
     const code = typeof record.code === 'string' ? record.code : '';
     const field = record.details && typeof record.details.field === 'string' ? record.details.field : '';
     const message = typeof record.message === 'string' ? record.message : '';
-    if (typeof console !== 'undefined' && typeof console.error === 'function') {
-      console.error('[bo] spostamento non riuscito', { code: code || 'UNKNOWN', status: record.status ?? null, message });
-    }
+    // The shared /bo write-failure line (admin-core, #808).
+    logWriteFailure(error);
+    // backlog:3d811389bb4c: a waking workspace (503 «Spazio di lavoro in
+    // avvio») is a wait, said in plain words — never «Riprova più tardi».
+    const wake = wakeWaitText(error);
+    if (wake !== null) return wake;
     if (code === 'SAME_STAGE') return 'Questa offerta è già in questo stato.';
+    if (code === 'TERMINAL_STAGE') return "Un'offerta chiusa non cambia più fase.";
+    if (code === 'STALE_POSITION') return 'La colonna è cambiata nel frattempo: la pipeline si aggiorna, riprova.';
+    if (isTransientConflict(error)) return 'Un altro spostamento è arrivato nello stesso momento: riprova.';
     if (field === 'reason' || /reason is required/i.test(message)) return "Per segnare un'offerta come persa serve il motivo.";
     return 'Spostamento non riuscito. Riprova più tardi.';
   }
@@ -1058,48 +1807,57 @@ export function createPipelineBoard(deps) {
     header.appendChild(el(doc, 'span', { class: `stage-dot type-${stage.type}` }));
     header.appendChild(el(doc, 'h3', { text: stage.label }));
     header.appendChild(el(doc, 'span', { class: `stage-type stage-${stage.type}`, text: badge }));
-    header.appendChild(el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } }));
+    const count = el(doc, 'span', { class: 'stage-count', text: String(records.length), attrs: { 'data-count': stage.key } });
+    header.appendChild(count);
     column.appendChild(header);
 
-    // Per-currency totals — deliberately one line per currency.
-    /** @type {Map<string, number>} */
-    const totals = new Map();
-    for (const record of records) {
-      if (!Number.isSafeInteger(record.valueCents)) continue;
-      totals.set(record.currency, (totals.get(record.currency) ?? 0) + record.valueCents);
-    }
-    for (const [currency, total] of [...totals.entries()].sort()) {
-      column.appendChild(el(doc, 'p', { class: 'stage-total', text: formatAmount(total, currency) }));
-    }
+    // Per-currency totals — deliberately one line per currency — in a box
+    // the column repaints when a card moves before the server answers.
+    const totalsBox = el(doc, 'div', { class: 'stage-totals', attrs: { 'data-totals': stage.key } });
+    column.appendChild(totalsBox);
+    columnSummaries.set(stage.key, { records: [...records], count, totals: totalsBox });
+    paintColumnSummary(stage.key);
 
     // BO-F6-10 C18: the drop target is marked while a card hovers it, so CSS
     // can paint the dashed outline; the dragged card is attenuated the same way.
     columnNodes.push(column);
     column.addEventListener('dragover', (event) => {
+      // Dan 11/11: without stored positions the source column takes no drop
+      // — a reorder would not survive a reload. Without preventDefault the
+      // browser shows «not allowed» and a release there moves nothing.
+      // 67a3116f4f65: on a board that stores positions the source column
+      // takes the drop too — a reorder now survives a reload.
+      if (drag && drag.fromStage === stage.key && !positionsOf(pipeline)) return;
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       toggleHook(column, 'drop-target', true);
+      if (drag) showSlot(column, Number(event?.clientY), positionsOf(pipeline));
     });
     column.addEventListener('dragleave', (event) => {
       // Entering a child card still hovers this column: only a true exit
       // unmarks it, otherwise the marker flickers while crossing children.
       if (event?.relatedTarget && column.contains(event.relatedTarget)) return;
       toggleHook(column, 'drop-target', false);
+      if (slot && slot.parentNode === column) hideSlot();
     });
     column.addEventListener('drop', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       unmarkDropTargets();
       const payload = event?.dataTransfer?.getData?.('text/plain') ?? '';
-      void handleDrop(pipeline, stage.key, payload);
+      void handleDrop(pipeline, stage.key, payload, column);
     });
     // Test hook: drive a drop without a real DataTransfer.
-    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload);
+    column.__drop = (payload) => handleDrop(pipeline, stage.key, payload, column);
 
     if (!records.length) {
-      column.appendChild(el(doc, 'p', { class: 'empty', text: "Trascina qui un'offerta" }));
+      const empty = emptyLine();
+      column.appendChild(empty);
+      slotAnchors.set(column, empty);
       return column;
     }
-    for (const record of records) {
-      column.appendChild(renderCard(pipeline, stage, record, token));
+    for (const [index, record] of records.entries()) {
+      const card = renderCard(pipeline, stage, record, token);
+      if (index === 0) slotAnchors.set(column, card);
+      column.appendChild(card);
     }
     return column;
   }
@@ -1110,20 +1868,26 @@ export function createPipelineBoard(deps) {
       class: 'pipeline-card',
       attrs: { 'data-record': String(record.id), draggable: 'true' },
     });
+    cardElements.set(String(record.id), card);
     card.appendChild(el(doc, 'strong', { text: String(record.name ?? record.id) }));
-    card.appendChild(el(doc, 'p', { class: 'card-company', text: String(record.companyName ?? record.companyId ?? '—') }));
+    // backlog:7b2203e69826: the customer the offer is for — the contact,
+    // else the company — never «Senza azienda».
+    card.appendChild(el(doc, 'p', { class: 'card-company', text: customerName(record) ?? '—' }));
     card.appendChild(el(doc, 'p', { class: 'card-value', text: formatAmount(record.valueCents, record.currency) }));
     // BO-F6-10 C15: the referente badge shows the initials; the accessible
     // title carries the full name. Class hook unchanged (supervisor owns CSS).
     if (typeof record.owner === 'string' && record.owner) {
+      // backlog:7b2203e69826: the initials name the person — on hover and
+      // for a screen reader («Referente: Guido Presti»).
+      const who = `Referente: ${ownerText(record.owner)}`;
       card.appendChild(el(doc, 'p', {
         class: 'card-owner',
-        text: ownerInitials(record.owner),
-        attrs: { title: record.owner },
+        text: ownerInitials(ownerText(record.owner)),
+        attrs: { title: who, 'aria-label': who },
       }));
     }
     // BO-F6-10 C13: the close line follows the spec pattern `chiusura <data>`.
-    const closeDay = dayOf(record.expectedCloseDate);
+    const closeDay = italianDay(record.expectedCloseDate);
     if (closeDay) {
       card.appendChild(el(doc, 'p', { class: 'card-close', text: `chiusura ${closeDay}` }));
     }
@@ -1131,16 +1895,28 @@ export function createPipelineBoard(deps) {
       card.appendChild(el(doc, 'p', { class: 'card-reason', text: String(record.closeReason) }));
     }
     card.addEventListener('dragstart', (event) => {
+      // A card whose move is still being written stays put.
+      if (card.getAttribute('aria-busy') === 'true') {
+        if (typeof event?.preventDefault === 'function') event.preventDefault();
+        return;
+      }
       event?.dataTransfer?.setData?.('text/plain', JSON.stringify({ id: record.id, fromStage: stage.key }));
+      if (event?.dataTransfer && 'effectAllowed' in event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      const box = typeof card.getBoundingClientRect === 'function' ? card.getBoundingClientRect() : null;
+      const height = Number(box?.height ?? card.offsetHeight ?? 0);
+      drag = { id: String(record.id), fromStage: stage.key, height: Number.isFinite(height) ? height : 0 };
       toggleHook(card, 'dragging', true);
     });
     card.addEventListener('dragend', () => {
+      // Drop, Esc or a release outside a column: the slot and the marks go.
+      drag = null;
+      hideSlot();
       toggleHook(card, 'dragging', false);
       unmarkDropTargets();
     });
 
-    // Backlog ef92f728: Apri navigates to the offer detail page
-    // (#/offerte/<id>) — the card never expands in place. Only the
+    // Dan 11/11: Apri opens the offer panel over the board — the card never
+    // expands in place and the board stays where it was. Only the
     // opportunity board offers it: a generated staged module has its own
     // record screen behind its rows.
     const detailed = pipeline.module === 'opportunity';
@@ -1148,14 +1924,25 @@ export function createPipelineBoard(deps) {
       const open = el(doc, 'button', {
         class: 'small secondary',
         text: 'Apri',
-        attrs: { type: 'button', 'data-action': 'open-offer' },
+        attrs: { type: 'button', 'data-action': 'open-offer', 'aria-haspopup': 'dialog' },
       });
-      const go = () => {
-        if (typeof deps.navigate === 'function') deps.navigate(`#/offerte/${encodeURIComponent(String(record.id))}`);
-      };
+      openButtons.set(String(record.id), open);
+      const go = () => openOfferDrawer(pipeline, String(record.id), open);
       open.addEventListener('click', go);
       card.appendChild(open);
       card.__open = go; // test hook
+      // backlog:7b2203e69826: the whole card opens the panel, like a Trello
+      // card; its own controls (Apri, Sposta, Conferma, Riprova) keep their
+      // click, and a click that ends a text selection stays on the board.
+      card.setAttribute('data-openable', 'true');
+      card.addEventListener('click', (event) => {
+        const target = event?.target ?? null;
+        if (target && typeof target.closest === 'function'
+          && target.closest('button, a, select, input, textarea, label, .card-confirm')) return;
+        const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+        if (selection && selection.isCollapsed === false && String(selection) !== '') return;
+        go();
+      });
     }
 
     // Terminal stages have no move control (server enforces it regardless).
@@ -1195,54 +1982,50 @@ export function createPipelineBoard(deps) {
       yes: confirmYes, no: confirmNo, error: confirmError,
     } = confirmPanel;
 
-    let busy = false;
-    const doPost = async (toStage, reason) => {
-      if (busy) return;
-      busy = true;
-      moveButton.disabled = true;
-      moveButton.setAttribute('aria-busy', 'true');
-      confirmYes.disabled = true;
-      errorNode.textContent = '';
-      errorNode.setAttribute('class', 'field-error hidden');
-      confirmError.textContent = '';
-      confirmError.setAttribute('class', 'field-error hidden');
-      showStatus(MOVE_IN_FLIGHT, false);
-      let settled = false;
-      void wait(MOVE_PENDING_MS).then(() => {
-        if (!settled) showStatus(MOVE_UNCONFIRMED, true);
-      });
-      try {
-        await postMove(pipeline, record.id, stage.key, toStage, reason);
-        settled = true;
-        toast(`Spostata in ${stageLabel(pipeline, toStage)}.`);
-        await renderBoard(pipeline.name); // re-render: server state is the truth
-      } catch (error) {
-        settled = true;
-        if (isMovePending(error)) {
-          // Still queued on the server: the outcome is unknown, never
-          // «non riuscito». The move stays locked (review #657): only
-          // Riprova, a board re-read, is offered — a second POST would
-          // queue a duplicate or meet a stale-stage refusal.
-          console.warn('[bo] spostamento in attesa', { code: error?.code ?? 'UNKNOWN', status: error?.status ?? null });
-          showStatus(MOVE_UNCONFIRMED, true);
-          return;
-        }
-        busy = false;
-        moveButton.disabled = false;
-        moveButton.setAttribute('aria-busy', 'false');
-        confirmYes.disabled = false;
-        showStatus('', false);
-        errorNode.textContent = moveFailureText(error);
-        errorNode.setAttribute('class', 'field-error');
-      }
+    const id = String(record.id);
+    /** Dan 11/11: the card itself shows the wait, wherever the move began. */
+    const markCardBusy = (on) => {
+      card.setAttribute('aria-busy', on ? 'true' : 'false');
+      moveButton.disabled = on;
+      moveButton.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmYes.disabled = on;
     };
+    const cardView = {
+      start() {
+        markCardBusy(true);
+        errorNode.textContent = '';
+        errorNode.setAttribute('class', 'field-error hidden');
+        confirmError.textContent = '';
+        confirmError.setAttribute('class', 'field-error hidden');
+        showStatus(MOVE_IN_FLIGHT, false);
+      },
+      slow() { showStatus(MOVE_SLOW, false); },
+      unconfirmed() { showStatus(MOVE_UNCONFIRMED, true); },
+      fail(message) {
+        markCardBusy(false);
+        showStatus('', false);
+        errorNode.textContent = message;
+        errorNode.setAttribute('class', 'field-error');
+      },
+    };
+    // A card painted while its offer still has a move running (a filter, a
+    // reopened panel) shows the same wait and stays locked.
+    const lock = moveLocks.get(id);
+    if (lock) {
+      markCardBusy(true);
+      showStatus(lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT, lock === 'queued');
+    }
+    /**
+     * @returns {Promise<{ moved?: true, pending?: true, busy?: true, failed?: true, message?: string }>}
+     */
+    const doPost = (toStage, reason, placement = null) => runMove(pipeline, record.id, stage.key, toStage, reason, { placement });
     const confirm = async () => {
       const pending = pendingConfirm.get(String(record.id));
       if (!pending) return;
       const target = pipeline.stages.find((candidate) => candidate.key === pending.toStage);
       const answer = readStageConfirm(confirmPanel, target);
       if (!answer.ok) return;
-      await doPost(pending.toStage, answer.reason);
+      await doPost(pending.toStage, answer.reason, pending.placement ?? null);
     };
     const cancelConfirm = () => {
       pendingConfirm.delete(String(record.id));
@@ -1251,7 +2034,7 @@ export function createPipelineBoard(deps) {
       renderAll(renderToken);
     };
     const submit = async () => {
-      if (busy) return;
+      if (moveLocks.has(id)) return;
       errorNode.textContent = '';
       errorNode.setAttribute('class', 'field-error hidden');
       const toStage = select.value;
@@ -1268,13 +2051,17 @@ export function createPipelineBoard(deps) {
     controls.appendChild(label);
     controls.appendChild(select);
     controls.appendChild(moveButton);
-    controls.appendChild(errorNode);
-    controls.appendChild(statusNode);
-    controls.appendChild(retryButton);
     card.appendChild(controls);
+    // Dan 11/11: the wait, the failure and Riprova sit on the card itself,
+    // outside the keyboard-only «Sposta in» row (visually hidden to the
+    // mouse), so a dropped card shows them too.
+    card.appendChild(errorNode);
+    card.appendChild(statusNode);
+    card.appendChild(retryButton);
     card.appendChild(confirmBox);
     cardNodes.set(String(record.id), {
-      select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      card, select, errorNode, confirmPanel, confirmBox, confirmQuestion, confirmReason, confirmYes, confirmNo, confirmError,
+      view: cardView,
       move: (toStage) => doPost(toStage, undefined),
     });
     card.__move = submit; // test hook
@@ -1294,15 +2081,283 @@ export function createPipelineBoard(deps) {
    * @param {any} pipeline @param {Record<string, any>} record
    * @param {string} fromStage @param {string} toStage
    */
-  function revealConfirm(pipeline, record, fromStage, toStage) {
+  function revealConfirm(pipeline, record, fromStage, toStage, placement = null) {
     const controls = cardNodes.get(String(record.id));
     if (!controls) return false;
     const target = pipeline.stages.find((candidate) => candidate.key === toStage);
     if (!target) return false;
-    pendingConfirm.set(String(record.id), { fromStage, toStage });
+    pendingConfirm.set(String(record.id), { fromStage, toStage, placement });
     controls.select.value = toStage;
     showStageConfirm(controls.confirmPanel, String(record.name ?? record.id), target);
     return true;
+  }
+
+  /**
+   * The open offer panel (Dan 11/11): the composer window of the scheda
+   * (`bo-scheda-composer`, dark head, ✕) over the board. One at a time.
+   * @type {null | { node: any, body: any, title: any, close: any, recordId: string, pipelineName: string, opener: any, paintedFrom: any, moveView?: any, detach: () => void }}
+   */
+  let drawer = null;
+
+  /** Scheda cliente of the offer: the contact when named, else its company. */
+  function customerHref(record) {
+    const contactId = typeof record?.contactId === 'string' && record.contactId !== '' ? record.contactId : null;
+    if (contactId) return `#/customer-card/contact/${encodeURIComponent(contactId)}`;
+    const companyId = typeof record?.companyId === 'string' && record.companyId !== '' ? record.companyId : null;
+    return companyId ? `#/customer-card/company/${encodeURIComponent(companyId)}` : null;
+  }
+
+  /** The customer's name as the scheda shows it: the contact, else the company. */
+  function customerName(record) {
+    // One rule with the Lista (review Muse #799): customerOf.
+    return customerOf(record);
+  }
+
+
+  /**
+   * Apri on a card: the offer panel over the board. Opening never
+   * re-renders the board, closing never does either, so the scroll stays.
+   * @param {any} pipeline @param {string} recordId @param {any} opener
+   */
+  function openOfferDrawer(pipeline, recordId, opener) {
+    const record = cached.records.find((candidate) => String(candidate.id) === recordId);
+    if (!record) return;
+    closeOfferDrawer({ refocus: false });
+    const node = el(doc, 'div', {
+      class: 'bo-scheda-composer bo-pipeline-offer',
+      attrs: { role: 'dialog', 'aria-modal': 'false', 'data-offer-drawer': recordId },
+    });
+    const head = el(doc, 'div', { class: 'bo-composer-head' });
+    const title = el(doc, 'h4', { class: 'bo-composer-title' });
+    head.appendChild(title);
+    const close = el(doc, 'button', {
+      class: 'bo-composer-icon',
+      text: '✕',
+      attrs: { type: 'button', 'aria-label': 'Chiudi', 'data-action': 'offer-drawer-close' },
+    });
+    close.addEventListener('click', () => closeOfferDrawer({ refocus: true }));
+    head.appendChild(close);
+    node.appendChild(head);
+    const body = el(doc, 'div', { class: 'bo-composer-body bo-pipeline-offer-body' });
+    node.appendChild(body);
+
+    const onKey = (event) => {
+      if (event?.key !== 'Escape' || !drawer || drawer.node !== node) return;
+      // Esc inside an open Conferma or a select is still a close: the panel
+      // is the only layer the pipeline opens over the board.
+      closeOfferDrawer({ refocus: true });
+    };
+    const onPointer = (event) => {
+      if (!drawer || drawer.node !== node) return;
+      // A panel the router took off the page only lets go of its listeners.
+      if (!node.parentNode) { closeOfferDrawer({ refocus: false }); return; }
+      const target = event?.target ?? null;
+      if (target && node.contains(target)) return;
+      closeOfferDrawer({ refocus: false });
+    };
+    node.addEventListener('keydown', onKey);
+    const docListens = typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function';
+    // pointerdown, not click: the click that opened the panel has already
+    // gone by, so it can never close it on the way up.
+    if (docListens) {
+      doc.addEventListener('keydown', onKey);
+      doc.addEventListener('pointerdown', onPointer);
+    }
+    drawer = {
+      node, body, recordId, pipelineName: pipeline.name, opener, paintedFrom: null,
+      title, close,
+      detach: () => {
+        if (docListens) {
+          doc.removeEventListener('keydown', onKey);
+          doc.removeEventListener('pointerdown', onPointer);
+        }
+      },
+    };
+    paintOfferDrawer(pipeline, record);
+    mount.appendChild(node);
+    keepOpenColumnInView();
+    if (typeof close.focus === 'function') close.focus();
+    node.__close = () => closeOfferDrawer({ refocus: true }); // test hook
+  }
+
+  /** Close the offer panel; with `refocus`, focus goes back to its Apri. */
+  function closeOfferDrawer({ refocus }) {
+    if (!drawer) return;
+    const { node, opener, recordId, detach } = drawer;
+    drawer = null;
+    detach();
+    if (node.parentNode) node.parentNode.removeChild(node);
+    freeOfferRoom();
+    if (!refocus) return;
+    const live = opener && mount.contains(opener) ? opener : openButtons.get(recordId) ?? null;
+    if (live && typeof live.focus === 'function') live.focus();
+  }
+
+  /**
+   * The panel's content from one record: who, how much, which stage, the
+   * stage change (open stages only, the same move-stage action and Conferma
+   * as the card) and the way to the scheda cliente and the full offer.
+   * @param {any} pipeline @param {Record<string, any>} record
+   */
+  function paintOfferDrawer(pipeline, record) {
+    if (!drawer) return;
+    const { body, title, node } = drawer;
+    drawer.paintedFrom = record;
+    // A closed stage paints no Cambia fase: no stale move view either.
+    drawer.moveView = null;
+    const name = typeof record.name === 'string' && record.name.trim() !== '' ? record.name : 'Offerta senza nome';
+    const customer = customerName(record);
+    title.textContent = name;
+    if (customer) title.appendChild(el(doc, 'span', { class: 'bo-composer-to-name', text: ` · ${customer}` }));
+    node.setAttribute('aria-label', `Offerta ${name}`);
+    while (body.firstChild) body.removeChild(body.firstChild);
+
+    const stage = pipeline.stages.find((candidate) => candidate.key === record.pipelineStage);
+    const facts = el(doc, 'div', { class: 'offer-facts' });
+    for (const [label, value] of [
+      ['Cliente', customer ?? '—'],
+      ['Valore', Number.isSafeInteger(record.valueCents) ? formatAmount(record.valueCents, record.currency) : '—'],
+      ['Fase', stageLabel(pipeline, record.pipelineStage)],
+      ['Chiusura prevista', dayOf(record.expectedCloseDate) ?? '—'],
+      ['Referente', typeof record.owner === 'string' && record.owner ? ownerText(record.owner) : '—'],
+    ]) {
+      const cell = el(doc, 'p', { class: 'offer-fact' });
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-label', text: label }));
+      cell.appendChild(el(doc, 'span', { class: 'offer-fact-value', text: value }));
+      facts.appendChild(cell);
+    }
+    body.appendChild(facts);
+
+    if (stage && stage.type === 'open') body.appendChild(drawerStageChange(pipeline, record, stage));
+
+    const links = el(doc, 'div', { class: 'bo-pipeline-offer-links' });
+    const href = customerHref(record);
+    if (href) {
+      links.appendChild(el(doc, 'a', {
+        class: 'ui-btn ui-btn-primary ui-btn-small',
+        text: 'Apri scheda cliente',
+        attrs: { href, 'data-action': 'open-customer-card' },
+      }));
+    }
+    links.appendChild(el(doc, 'a', {
+      class: 'ui-btn ui-btn-secondary ui-btn-small',
+      text: 'Vedi tutta l’offerta',
+      attrs: { href: `#/offerte/${encodeURIComponent(String(record.id))}`, 'data-action': 'open-offer-page' },
+    }));
+    body.appendChild(links);
+  }
+
+  /** «Cambia fase» in the panel: the card's move, with its Conferma for won and lost. */
+  function drawerStageChange(pipeline, record, stage) {
+    const box = el(doc, 'div', { class: 'bo-pipeline-offer-move', attrs: { 'data-drawer-move': 'true' } });
+    const selectId = `drawer-move-${record.id}`;
+    box.appendChild(el(doc, 'label', { text: 'Cambia fase', attrs: { for: selectId } }));
+    const row = el(doc, 'div', { class: 'bo-pipeline-offer-move-row' });
+    // backlog:2f72000d4a4d: the menu starts on the offer's own stage (marked
+    // «attuale»), never on the first stage of the pipeline; Sposta waits
+    // until another stage is chosen.
+    const select = el(doc, 'select', { attrs: { id: selectId } });
+    for (const target of pipeline.stages) {
+      const current = target.key === stage.key;
+      const option = el(doc, 'option', {
+        text: current ? `${target.label ?? target.key} (attuale)` : (target.label ?? target.key),
+        attrs: { value: target.key },
+      });
+      if (current) option.setAttribute('selected', 'selected');
+      select.appendChild(option);
+    }
+    select.value = stage.key;
+    const go = el(doc, 'button', { class: 'small primary', text: 'Sposta', attrs: { type: 'button', 'data-action': 'drawer-move' } });
+    const syncGo = () => {
+      if (moveLocks.has(String(record.id))) return;
+      go.disabled = select.value === stage.key;
+    };
+    select.addEventListener('change', syncGo);
+    syncGo();
+    row.appendChild(select);
+    row.appendChild(go);
+    box.appendChild(row);
+    const status = el(doc, 'small', { class: 'card-status hidden', attrs: { role: 'status', 'aria-live': 'polite' } });
+    const error = el(doc, 'small', { class: 'field-error hidden', attrs: { role: 'alert' } });
+    box.appendChild(status);
+    box.appendChild(error);
+    const confirmPanel = createStageConfirm(doc);
+    box.appendChild(confirmPanel.box);
+    const retry = el(doc, 'button', {
+      class: 'small secondary hidden', text: 'Riprova', attrs: { type: 'button', 'data-action': 'drawer-move-retry' },
+    });
+    // Riprova re-reads the board, never a second POST (review #657).
+    retry.addEventListener('click', () => { void renderBoard(pipeline.name); });
+    box.appendChild(retry);
+    let pending = null;
+    const id = String(record.id);
+    const say = (node, text) => {
+      node.textContent = text;
+      const base = node === status ? 'card-status' : 'field-error';
+      node.setAttribute('class', text ? base : `${base} hidden`);
+    };
+    const lockControls = (on) => {
+      go.disabled = on || select.value === stage.key;
+      go.setAttribute('aria-busy', on ? 'true' : 'false');
+      confirmPanel.yes.disabled = on;
+    };
+    // Review #774 (P2): the panel shows the same move as the card — one lock
+    // per offer, the bounded «Non ancora confermato» with Riprova.
+    drawer.moveView = {
+      start() {
+        lockControls(true);
+        say(error, '');
+        say(status, MOVE_IN_FLIGHT);
+        retry.setAttribute('class', 'small secondary hidden');
+      },
+      slow() { say(status, MOVE_SLOW); },
+      unconfirmed() {
+        say(status, MOVE_UNCONFIRMED);
+        retry.setAttribute('class', 'small secondary');
+      },
+      fail(message) {
+        lockControls(false);
+        say(status, '');
+        retry.setAttribute('class', 'small secondary hidden');
+        say(error, message);
+      },
+    };
+    const lock = moveLocks.get(id);
+    if (lock) {
+      lockControls(true);
+      say(status, lock === 'queued' ? MOVE_UNCONFIRMED : MOVE_IN_FLIGHT);
+      if (lock === 'queued') retry.setAttribute('class', 'small secondary');
+    }
+    const post = async (toStage, reason) => {
+      const outcome = await runMove(pipeline, record.id, record.pipelineStage, toStage, reason);
+      // The board re-read repaints this panel; focus, whose button the
+      // repaint replaced, lands on its ✕.
+      if (outcome.moved && drawer && typeof drawer.close?.focus === 'function') drawer.close.focus();
+    };
+    go.addEventListener('click', () => {
+      if (moveLocks.has(id)) return;
+      const toStage = select.value;
+      if (toStage === stage.key) return; // the current stage is where it is
+      const target = pipeline.stages.find((candidate) => candidate.key === toStage);
+      if (!target) return;
+      if (stageNeedsConfirm(target)) {
+        pending = target;
+        showStageConfirm(confirmPanel, String(record.name ?? 'questa offerta'), target);
+        return;
+      }
+      void post(toStage, undefined);
+    });
+    confirmPanel.yes.addEventListener('click', () => {
+      if (!pending) return;
+      const answer = readStageConfirm(confirmPanel, pending);
+      if (!answer.ok) return;
+      void post(pending.key, answer.reason);
+    });
+    confirmPanel.no.addEventListener('click', () => {
+      pending = null;
+      confirmPanel.box.setAttribute('class', 'card-confirm hidden');
+    });
+    return box;
   }
 
   return { renderBoard };

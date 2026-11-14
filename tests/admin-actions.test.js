@@ -186,6 +186,31 @@ test('a rejected action surfaces the server message and leaves state untouched',
   assert.ok(panel.findAll('dd').map((n) => n.textContent).includes('new'));
 });
 
+// cta-loading (review Muse #775 giro 2): Run reads «In corso…» while the
+// action posts and, after a refusal, is «Run» and pressable again.
+test('cta-loading: a refused action with inputs gives Run back, pressable', async () => {
+  const record = { id: 'l1', firstName: 'Dana', status: 'new', qualifiedAt: null, createdAt: 'x', updatedAt: 'x' };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(record, {
+    failWith: { message: 'lead.qualify is not allowed from state "qualified"', status: 409, code: 'INVALID_STATE', details: { field: 'status' } },
+  });
+  const admin = createModuleAdmin({ doc, mount, client, navigate: () => {} });
+  await admin.renderDetail('lead', 'l1');
+  const forms = panelOf(mount).findAll('form').filter((form) => typeof form.__run === 'function');
+  const form = forms.find((candidate) => Object.keys(candidate.__inputs ?? {}).length > 0);
+  assert.ok(form, 'an action with inputs renders its form');
+  for (const input of Object.values(form.__inputs)) input.value = '2026-08-12T09:00:00Z';
+  const run = form.findAll('button').find((node) => node.getAttribute('type') === 'submit');
+  const pending = form.__run();
+  assert.equal(run.textContent, 'In corso…', 'Run says it is working');
+  assert.equal(run.disabled, true);
+  await pending;
+  assert.equal(run.textContent, 'Run', 'the label is back after the refusal');
+  assert.equal(run.disabled, false, 'Run is pressable again to retry');
+  assert.equal(run.getAttribute('aria-busy'), null);
+});
+
 test('integer action inputs render as number controls and post JSON numbers', async () => {
   const record = { id: 'l1', firstName: 'Dana', status: 'qualified', qualifiedAt: 'x', createdAt: 'x', updatedAt: 'x' };
   const meta = {

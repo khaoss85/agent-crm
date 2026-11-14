@@ -31,7 +31,7 @@ import { createAgentOperations } from './operations.js';
  */
 
 export const AGENTS_RESOURCES = Object.freeze([
-  'teammate-agent', 'teammate-assignment', 'teammate-run',
+  'teammate-agent', 'teammate-assignment', 'teammate-run', 'teammate-squad',
 ]);
 
 /**
@@ -61,7 +61,11 @@ export function createAgentsPackage(options = {}) {
     // approval-gated proposals, versioned artifacts, spending caps.
     // 2: backlog:fd36da512b0e — «Da fare» decisions on a proposed run:
     // reject-run (outcome `rejected`) and revise-run (edit one proposal).
-    version: 2,
+    // 3: backlog:1f7cb20d3c30 — hand-written agents: one @name per space
+    // (AGENT_NAME_TAKEN) and run-due's `runnable` seam (engine-less agents wait).
+    // 4: backlog:0d2d8f2e — squads: create-squad (template, brief or plan)
+    // and the per-squad overview (backlog A, routines, backlog B, metrics).
+    version: 4,
     label: 'Agenti teammate',
     description:
       'Teammate agents: named agents with roles and instructions, assignments created from a human phrase '
@@ -120,7 +124,8 @@ export function createAgentsPackage(options = {}) {
         label: 'Run due assignments',
         description:
           'Run every due active assignment through the execute seam and record each execution with cost '
-          + 'and outcome. Agents over their monthly cap record a capped run and never execute.',
+          + 'and outcome. Agents over their monthly cap record a capped run and never execute. '
+          + 'Agents the deployment cannot run (the runnable seam) wait: no run, no failure.',
         input: [
           { name: 'spaceId', type: 'string', hint: 'Optional: run one space only.' },
         ],
@@ -183,6 +188,47 @@ export function createAgentsPackage(options = {}) {
           return (request) => ops.reviseRun(request);
         },
       },
+      {
+        operationContract: 1,
+        name: 'create-squad',
+        appMethod: 'createTeammateSquad',
+        label: 'Create an agent squad',
+        description:
+          'Create a squad from a ready-made template, from a free-text brief matched to a template, or from an '
+          + 'explicit plan: objective with metric, member agents with roles, phases with an approval mode, sources '
+          + 'with a time, outputs and an optional monthly spending cap. Members and routines are created through '
+          + 'the existing agent operations. Idempotent by the caller-supplied source key.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'sourceKey', type: 'string', hint: 'Caller-supplied idempotency identity for the squad.' },
+          { name: 'templateSlug', type: 'string', hint: 'Optional: one of lead-generation, social-posting, sales-outreach, discovery, contenuti.' },
+          { name: 'brief', type: 'string', hint: 'Optional: free-text description matched to a template by keywords.' },
+          { name: 'plan', type: 'json', hint: 'Optional: the explicit squad spec (the fake-AI seam).' },
+          { name: 'name', type: 'string', hint: 'Optional: overrides the template name.' },
+          { name: 'spendingCapCents', type: 'integer', hint: 'Optional monthly cap in cents.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.createSquad(request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'read-squad-overview',
+        appMethod: 'readTeammateSquadOverview',
+        label: 'Read the per-squad view',
+        description:
+          'Backlog A (active assignments of the member agents), routines, backlog B (proposed runs waiting for '
+          + 'a human decision) and the advisor metric against the objective. Counts come from rows, never stored.',
+        input: [
+          { name: 'spaceId', type: 'string', hint: 'The Accordo space id — always explicit, never inferred.' },
+          { name: 'squadSourceKey', type: 'string', hint: 'The squad to read.' },
+        ],
+        create(runtime) {
+          const ops = opsFor(runtime);
+          return (request) => ops.readSquadOverview(request);
+        },
+      },
     ],
   });
   return graph;
@@ -191,3 +237,9 @@ export function createAgentsPackage(options = {}) {
 export { AGENT_APPLY_PERMISSION };
 // backlog:33782ba68747: the ready-made agents the backoffice «Catalogo» offers.
 export { AGENT_CATALOG, catalogAgentSourceKey } from './catalog.js';
+// backlog:1f7cb20d3c30: hand-written agents («Nuovo agente») and the one
+// @mention name rule both the backoffice and create-agent use.
+export { CUSTOM_AGENT_KEY_PATTERN, agentMentionName, customAgentSourceKey } from './catalog.js';
+// backlog:0d2d8f2e: the squad templates the «Squadre» screen offers, and the
+// squad source-key rule the create route uses.
+export { PHASE_APPROVAL_LABEL, PHASE_APPROVALS, SQUAD_TEMPLATES, squadSourceKey } from './squads.js';

@@ -45,7 +45,7 @@ test('memberLabel names the subject from the roster, or nothing', () => {
   assert.equal(memberLabel(BROKER, []), null, 'no roster: never the broker mailbox');
   assert.equal(memberLabel(GOOGLE, []), null, 'no roster: never the provider id');
   assert.equal(memberLabel('Marco', []), 'Marco', 'a plain word an operator typed still reads');
-  assert.equal(memberLabel('marco@esempio.it', []), null, 'an address outside the roster is not a name');
+  assert.equal(memberLabel('marco@esempio.it', []), 'marco@esempio.it', 'a real address outside the roster reads as itself, like personLabel (backlog:e52c5e0dd49f)');
 });
 
 test('Oggi › Agenda: the chi line is the member name, never the raw id', () => {

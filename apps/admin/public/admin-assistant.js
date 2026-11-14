@@ -29,10 +29,11 @@
 import { formatMinorUnits } from './admin-core.js';
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
 import {
-  PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
+  AGENT_CAP_USE_CARD_NOTE, PHRASE_UNCLEAR_NOTE, assignAttempt, assignErrorText, assignToAgent, describeSchedule, findMentionedAgent,
   isPhraseUnclear, loadSpaceAgents,
 } from './admin-agenti.js';
-import { callOutcomeLabel, italianDateTime, romeClock } from './admin-labels.js';
+import { callOutcomeLabel, italianDateTime, plural, romeClock } from './admin-labels.js';
+import { messagePreview } from './admin-message-preview.js';
 
 /** Probe path for the future assistant backend (status + free-question ask). */
 export const ASSISTANT_STATUS_PATH = '/api/assistant/status';
@@ -55,6 +56,8 @@ const ASSISTANT_ASK_PATH = '/api/assistant/ask';
  */
 export const FREE_QUESTION_DISABLED_NOTICE = 'Le domande libere arrivano con la chiave: finché la chiave OpenAI non è configurata, il pannello resta utilizzabile con i suggerimenti (Suggerisci), che leggono dati reali.';
 export const ASSISTANT_SPACE_DISABLED_NOTICE = 'Assistente non attivo in questo spazio: chiedi al titolare di attivarlo per questo spazio.';
+/** backlog:1968c3320cd3: the titolare is told where to turn it on, never to ask themself. */
+export const ASSISTANT_SPACE_DISABLED_OWNER_NOTICE = 'Assistente non attivo in questo spazio: puoi accenderlo da Spazi e accessi.';
 export const ASSISTANT_SUGGEST_ONLY_NOTICE = 'In questo spazio l’assistente suggerisce le risposte ai messaggi (Suggerisci): le domande libere non sono attive.';
 
 /** Free-question box limits: one line of intent, never a pasted document. */
@@ -589,7 +592,7 @@ async function answerChiamate(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [outcome, count] of [...byOutcome.entries()].sort((a, b) => b[1] - a[1]).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${outcome}: ${count}`);
   }
@@ -994,7 +997,7 @@ async function answerSlot(client) {
   // status enum). Done is history, not a slot to propose; cancelled and
   // no-show are out; a missing status is never counted as booked.
   const booked = appointments.filter((row) => row?.status === 'booked' || row?.status === 'confirmed');
-  answer.lines.push(`${booked.length} appuntamenti fissati letti. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
+  answer.lines.push(`${plural(booked.length, 'appuntamento fissato letto', 'appuntamenti fissati letti')}. Il blocco da 45 minuti si propone al cliente nel thread, dopo conferma.`);
   // Backlog 5a1e6d8dc42e: the slot reads «7 nov, 14:30», never the ISO
   // stamp; a bare day keeps its day and never invents a time.
   const whenOf = (row) => italianDateTime(row?.startsAt) || italianDay(row?.date) || shortText(row?.date, 24) || 'appuntamento';
@@ -1025,14 +1028,14 @@ async function answerLeadSito(client) {
     answer.lines.push('Nessun messaggio dal form del sito tra gli ultimi letti.');
     return answer;
   }
-  answer.lines.push(`${inboundAll.length} messaggi dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
+  answer.lines.push(`${plural(inboundAll.length, 'messaggio', 'messaggi')} dal form del sito${messages.length !== inboundAll.length ? ` (tra ${messages.length} letti)` : ''}:`);
   // Voce a684ecf5: due messaggi senza testo non sono la stessa riga.
   const listedSite = inbound.slice(0, SUGGESTION_MAX_LISTED);
-  const distinctSite = uniqueLabels(listedSite.map((row) => shortText(row?.body, 60) || '(senza testo)'));
+  const distinctSite = uniqueLabels(listedSite.map((row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
   listedSite.forEach((row, index) => {
     answer.lines.push(`• ${distinctSite[index]}`);
   });
-  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => shortText(row?.body, 60) || '(senza testo)'));
+  answer.sources.push(...takeSources(inbound, 'interaction-message', (row) => messagePreview(row?.body, { subject: row?.mailSubject, max: 60 }) || '(senza testo)'));
   const first = inbound[0];
   if (isSafeRecordId(first?.conversationId)) {
     const conversationId = /** @type {string} */ (first.conversationId);
@@ -1084,7 +1087,7 @@ async function answerCallReport(client) {
   // Honest bounds: at the read cap the page may hide more rows — the
   // headline says which page it counts, never a total.
   const capped = calls.length >= CALL_READ_LIMIT;
-  answer.lines.push(`${calls.length} chiamate registrate${capped ? ` (prime ${calls.length} lette)` : ''}.`);
+  answer.lines.push(`${plural(calls.length, 'chiamata registrata', 'chiamate registrate')}${capped ? ` (prime ${calls.length} lette)` : ''}.`);
   for (const [member, entry] of [...byMember.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, SUGGESTION_MAX_LISTED)) {
     answer.lines.push(`• ${shortText(member, 30)}: ${entry.total} (${entry.completed} riuscite)`);
   }
@@ -1553,6 +1556,23 @@ export async function runSuggestion(client, suggestionId, customer = null) {
 }
 
 /**
+ * The gate code an /api/assistant/status answer (or its rejection) carries,
+ * or null. One reader for every surface that asks «is the AI off here?»
+ * (the Assistente panel, the composer «Scrivi al cliente»), over both
+ * shapes in use: `{ freeQuestions, code | reason }` and the pilot bridge's
+ * `{ spaceId, enabled, reason }` (accordo-arvo-pilot
+ * src/shared/bo-assistant.js, mapGateObserved). Reads `code`, `reason`
+ * and `errorCode`, mirroring packages/llm error codes.
+ * @param {unknown} status
+ * @returns {string|null}
+ */
+export function assistantStatusCode(status) {
+  if (status === null || typeof status !== 'object') return null;
+  const code = /** @type {any} */ (status).code ?? /** @type {any} */ (status).reason ?? /** @type {any} */ (status).errorCode;
+  return typeof code === 'string' && code !== '' ? code : null;
+}
+
+/**
  * Which dry-run notice tells the truth about a non-live status: the key
  * sentence only for a really missing key, the off-in-this-space sentence
  * for a disabled space, the suggest-only line for anything else (absent
@@ -1561,9 +1581,7 @@ export async function runSuggestion(client, suggestionId, customer = null) {
  * @param {unknown} status
  */
 export function assistantDisabledNotice(status) {
-  const code = status !== null && typeof status === 'object'
-    ? status.code ?? status.reason ?? status.errorCode
-    : null;
+  const code = assistantStatusCode(status);
   if (code === 'LLM_SECRET_UNAVAILABLE') return FREE_QUESTION_DISABLED_NOTICE;
   if (code === 'LLM_SPACE_DISABLED') return ASSISTANT_SPACE_DISABLED_NOTICE;
   return ASSISTANT_SUGGEST_ONLY_NOTICE;
@@ -1829,10 +1847,11 @@ import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
  * clickable sources, linked actions with the confirmation gate, the
  * execution trace of every answer (BO-F4-04, kept in the session history),
  * and the free-question box (disabled with the key message in dry-run).
- * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void }} options
+ * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void, spaceId?: any, role?: (() => unknown) | null, win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null }} options
  */
-export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null } = {}) {
+export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null, role = null, win = null } = {}) {
   if (!doc || !mount || !client) throw new Error('Il pannello assistente richiede doc, mount e client.');
+  const readRole = typeof role === 'function' ? role : () => null;
   // backlog:33782ba68747: «@Agente …» writes through the mutation-bound
   // client (Idempotency-Key), scoped to the shell's active space.
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
@@ -1862,6 +1881,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // Review #596 P2: a top-bar question asked while an answer is still
     // running waits here (only the newest one) and starts when it ends.
     queued: null,
+    /** backlog:be99004b06e4: the question echoed while the probe runs. @type {string | null} */
+    waiting: null,
     // Voce 34fd687c: the last free data answer's context (lead-day list),
     // so «e ieri?» and «chi è il primo?» keep the thread. In-session only,
     // like the history — never persisted.
@@ -2116,8 +2137,25 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   function doClose() {
     state.open = false;
     state.queued = null;
+    state.waiting = null;
     openGeneration += 1;
     render();
+  }
+
+  // backlog:1968c3320cd3: Esc closes the open panel, like the ✕. An Esc
+  // another overlay already took (a menu, a popover) stays theirs, and
+  // focus in a field outside the panel (a form, the composer) is left alone.
+  if (win != null && typeof win.addEventListener === 'function') {
+    win.addEventListener('keydown', (event) => {
+      if (!state.open || event?.key !== 'Escape' || event.defaultPrevented === true) return;
+      const active = doc?.activeElement ?? null;
+      const idle = active === null || active === doc?.body;
+      const ours = active !== null && typeof mount.contains === 'function' && mount.contains(active);
+      const bar = active !== null && typeof active.getAttribute === 'function'
+        && String(active.getAttribute('class') ?? '').split(/\s+/).includes('bo-ai-input');
+      if (!idle && !ours && !bar) return;
+      doClose();
+    });
   }
 
   /** Start the question that waited for the running answer, if any. */
@@ -2139,10 +2177,20 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       return;
     }
     const generation = (openGeneration += 1);
+    // backlog:be99004b06e4: a question asked from ⌘K shows at once, with a
+    // waiting line, while the status probe runs (production 11/11: 4.8 s of
+    // nothing). Only the waiting echo changes here — review #596 P2 still
+    // holds: screen, draft and answer move only after the probe.
+    if (typed !== '') {
+      state.open = true;
+      state.waiting = typed;
+      render();
+    }
     // Review #596 P2: nothing shared changes before the probe answers — a
     // run started meanwhile keeps its screen, draft and asked header.
     const status = await probeAssistantBackend(client);
     if (generation !== openGeneration) return;
+    state.waiting = null;
     if (state.busy && typed !== '') {
       state.open = true;
       state.queued = { screenId, draft, customer, question: typed };
@@ -2229,6 +2277,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       if (!found || !found.agent) {
         const word = found?.typedName ?? '';
         state.mention = { typed, status: 'unknown', agents, rest: typed.slice(1 + word.length).trim(), space };
+      } else if (Number.isInteger(found.agent.spendingCapCents)) {
+        // backlog:1f7cb20d3c30: a capped agent needs the cost of one run,
+        // which this bar does not ask — never a post bound to refuse.
+        state.mention = { typed, status: 'capped', agent: found.agent, space };
       } else if (found.instruction === '') {
         state.mention = { typed, status: 'empty', agent: found.agent, space };
       } else {
@@ -2302,7 +2354,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       case 'unknown': {
         const agents = Array.isArray(mention.agents) ? mention.agents : [];
         if (agents.length === 0) {
-          say('Non hai ancora agenti nel team: aggiungine uno dal catalogo.');
+          say('Non hai ancora agenti nel team: aggiungine uno dal catalogo o creane uno nuovo in Agenti.');
           box.appendChild(agentsLink());
           break;
         }
@@ -2320,6 +2372,10 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
         box.appendChild(chips);
         break;
       }
+      case 'capped':
+        say(AGENT_CAP_USE_CARD_NOTE);
+        box.appendChild(agentsLink());
+        break;
       case 'empty':
         say(`Cosa deve fare ${mention.agent.name}? Scrivi «@${mention.agent.name}» e l’incarico nella barra in alto.`);
         break;
@@ -2385,17 +2441,29 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (state.asked && typeof state.asked.text === 'string') {
       const asked = el(doc, 'div', 'bo-assistant-asked');
       asked.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.asked.text, 140)}»`));
-      asked.appendChild(el(doc, 'p', 'bo-assistant-asked-note', state.asked.matched
+      scroll.appendChild(asked);
+      // backlog:1968c3320cd3: the system's reply is its own bubble, never
+      // a line inside the person's question.
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-reply', state.asked.matched
         ? `Le domande libere non sono ancora attive: rispondo con «${state.asked.matched}».`
         : 'Le domande libere non sono ancora attive: scegli una delle domande qui sotto.'));
-      scroll.appendChild(asked);
     }
     if (state.queued !== null) {
       const waiting = el(doc, 'div', 'bo-assistant-asked');
       waiting.setAttribute('data-queued', 'true');
       waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.queued.question, 140)}»`));
-      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-note', 'Finisco la risposta in corso, poi rispondo a questa.'));
       scroll.appendChild(waiting);
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-reply', 'Finisco la risposta in corso, poi rispondo a questa.'));
+    }
+    if (typeof state.waiting === 'string' && state.waiting !== '') {
+      const waiting = el(doc, 'div', 'bo-assistant-asked');
+      waiting.setAttribute('data-waiting', 'true');
+      waiting.appendChild(el(doc, 'p', 'bo-assistant-asked-text', `«${shortText(state.waiting, 140)}»`));
+      scroll.appendChild(waiting);
+      scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Chiedo all\u2019assistente…'));
+      panel.appendChild(scroll);
+      mount.appendChild(panel);
+      return;
     }
     const mentionBox = renderMention();
     if (mentionBox) scroll.appendChild(mentionBox);
@@ -2437,10 +2505,26 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     // status reported. The key sentence appears only for a really missing
     // key, never as the default.
     if (!live) {
-      const notice = typeof state.status?.notice === 'string' && state.status.notice !== ''
-        ? state.status.notice
-        : ASSISTANT_SUGGEST_ONLY_NOTICE;
-      panel.appendChild(el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice));
+      // The probe's notice is one of this module's constants: the
+      // space-off one is the only reason the titolare can fix themself.
+      const owner = state.status?.notice === ASSISTANT_SPACE_DISABLED_NOTICE && readRole() === 'owner';
+      const notice = owner
+        ? ASSISTANT_SPACE_DISABLED_OWNER_NOTICE
+        : (typeof state.status?.notice === 'string' && state.status.notice !== ''
+          ? state.status.notice
+          : ASSISTANT_SUGGEST_ONLY_NOTICE);
+      const foot = el(doc, 'p', 'bo-assistant-notice bo-assistant-foot', notice);
+      // backlog:1968c3320cd3: the titolare gets the way there, one click.
+      if (owner) {
+        const where = el(doc, 'a', 'bo-assistant-source-link', 'Apri Spazi e accessi');
+        where.setAttribute('href', '#/spazi-accessi');
+        where.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          navigate('#/spazi-accessi');
+        });
+        foot.appendChild(where);
+      }
+      panel.appendChild(foot);
       // BO-F5-01 draft handoff ("+ Nuovo modulo" -> assistant): with no live
       // backend there is no free-question field, but the caller's draft must
       // not vanish silently — show it as inert read-only text (text only via

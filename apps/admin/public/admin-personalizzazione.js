@@ -27,10 +27,12 @@
 // usa solo DOM API — createElement + textContent/setAttribute — mai innerHTML
 // con dati, così un nome o un blurb ostile resta testo, mai markup.
 
-import { CHANNEL_CONNECT_ROUTES } from './admin-channels-count.js';
+import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { plural } from './admin-labels.js';
+import { readProfile } from './admin-profilo.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
@@ -121,9 +123,13 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   return list;
 }
 
-/** @param {unknown} count @param {string} singular @param {string} plural */
-export function pluralize(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
+/**
+ * Kept for its callers and tests: the shared plural() of admin-labels
+ * (famiglia F8, backlog:9236684c96a7).
+ * @param {unknown} count @param {string} singular @param {string} many
+ */
+export function pluralize(count, singular, many) {
+  return plural(count, singular, many);
 }
 
 /**
@@ -155,7 +161,7 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * The open toolbar menu, if any (Aggiungi, Stato, Ordina per). One menu per
@@ -360,11 +366,11 @@ export const CONNETTORI_SECTIONS = Object.freeze([
         lines: Object.freeze(['Ogni invio del form crea o aggiorna un contatto.', 'di Accordo · ← in entrata']),
       },
       {
-        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, href: CHANNEL_CONNECT_ROUTES.calendar,
+        key: 'calendar', label: 'Google Calendar', chip: 'CAL', channel: null, countAs: 'calendar', href: CHANNEL_CONNECT_ROUTES.calendar,
         lines: Object.freeze(['Appuntamenti del team e disponibilità condivisa.', 'di Google · ↔ bidirezionale']),
       },
       {
-        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, href: null,
+        key: 'stripe', label: 'Stripe', chip: 'S', channel: null, countAs: 'stripe', href: null,
         lines: Object.freeze(['Pagamenti, abbonamenti e rinnovi.', 'di Stripe · ↔ pagamenti e link']),
       },
     ]),
@@ -388,21 +394,29 @@ export function connettoriHref(entry) {
 }
 
 /**
- * The card state from the live rows: `collegato` when an active row serves
- * the entry's channel, `da-collegare` otherwise (and for entries without
- * a channel that still have a destination, such as Google Calendar on
- * Profilo); `non-disponibile` for an entry with neither (Stripe).
- * @param {{ channel?: unknown }} entry
+ * The card state from the live rows, read through the one shared channel
+ * state (`channelState`, backlog:e381c48581fa): `collegato` when the
+ * channel is linked — the same predicate as «<n> di 9 collegati», so a
+ * Google Calendar linked on Profilo is in «I tuoi» too (`countAs` names the
+ * counted channel of a card the guided flow does not serve); `da-collegare`
+ * otherwise when the card has a destination; `non-disponibile` for a card
+ * with neither (Stripe).
+ * @param {{ channel?: unknown, countAs?: unknown, href?: unknown }} entry
  * @param {unknown} connectors
+ * @param {unknown} [profile] the /api/profile answer, null when unread
  */
-export function connettoriCardState(entry, connectors) {
-  const channel = entry && typeof entry.channel === 'string' ? entry.channel : '';
-  if (channel === '') {
-    // No channel and no destination (Stripe): nothing here connects it.
-    return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
+export function connettoriCardState(entry, connectors, profile = null) {
+  const guided = entry && typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : '';
+  const counted = guided !== '' ? guided
+    : entry && typeof entry.countAs === 'string' ? entry.countAs : '';
+  // The profile (GET /api/profile) merges like the shared count: a link
+  // that lives only on Profilo is one of yours too (review #782 P1).
+  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [], profile }).state === 'collegato') {
+    return 'collegato';
   }
-  const rows = matchConnections(channel, Array.isArray(connectors) ? connectors : []);
-  return rows.some((row) => row && row.status === 'active') ? 'collegato' : 'da-collegare';
+  if (guided !== '') return 'da-collegare';
+  // No guided channel: connectable only where its destination leads.
+  return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
 }
 
 /**
@@ -414,12 +428,12 @@ export function connettoriCardState(entry, connectors) {
  * order (no usage counts exist server-side, so the catalog order is the
  * honest ranking), `stato` sorts connected cards first.
  */
-export function filterConnettori({ connectors = [], query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
+export function filterConnettori({ connectors = [], profile = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
   const needle = String(query ?? '').trim().toLowerCase();
   return CONNETTORI_SECTIONS.map((section) => {
     const cards = [];
     for (const entry of section.entries) {
-      const state = connettoriCardState(entry, connectors);
+      const state = connettoriCardState(entry, connectors, profile);
       if (view === 'tuoi' && state !== 'collegato') continue;
       if (stato === 'attivi' && state !== 'collegato') continue;
       if (stato === 'da-attivare' && state !== 'da-collegare') continue;
@@ -479,6 +493,7 @@ export function createPersonalizzazioneView(deps) {
     /** @type {string | null} human text for a failed catalog read, with a retry */
     unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
+    /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
     connectorsMissing: false,
     connectorsForbidden: false,
     /** @type {string | null} */ previewFor: null,
@@ -559,6 +574,9 @@ export function createPersonalizzazioneView(deps) {
     state.connectorsMissing = false;
     state.connectorsForbidden = false;
     if (space === '') return;
+    // The profile links merge like the shared count (review #782 P1);
+    // readProfile never throws — an unreadable profile adds nothing.
+    state.profile = await readProfile(deps.client);
     try {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(space)}`);
       state.connectors = Array.isArray(sync?.connectors) ? sync.connectors : [];
@@ -586,6 +604,7 @@ export function createPersonalizzazioneView(deps) {
 
   async function mutate(path, body) {
     state.busy = true;
+    busyWrite = `${path}|${body?.unit ?? ''}`; // cta-loading: the pressed button reads «…» on the re-render
     render();
     try {
       const answer = await client.request(path, { method: 'POST', body });
@@ -594,6 +613,8 @@ export function createPersonalizzazioneView(deps) {
       state.busy = false;
     }
   }
+  let busyWrite = '';
+  const busyOn = (path, unit) => state.busy && busyWrite === `${path}|${unit ?? ''}`;
 
   /** @param {string} hash */
   function go(hash) {
@@ -978,6 +999,7 @@ export function createPersonalizzazioneView(deps) {
       const cell = el(doc, 'td');
       const toggle = el(doc, 'button', { text: 'Disattiva', attrs: { type: 'button' } });
       toggle.disabled = state.busy;
+      if (busyOn('/api/space-packages/deactivate', entry.name)) uiMarkBusy(toggle, 'Disattivo…');
       toggle.addEventListener('click', async () => {
         try {
           await mutate('/api/space-packages/deactivate', { spaceId: readSpace().trim(), unit: entry.name });
@@ -1026,6 +1048,7 @@ export function createPersonalizzazioneView(deps) {
       const active = unitStatus({ entry, row }) === 'attiva';
       const add = el(doc, 'button', { text: active ? '✓' : '+', attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` } });
       add.disabled = state.busy || active;
+      if (busyOn('/api/space-packages/activate', entry.name)) uiMarkBusy(add, 'Attivo…');
       if (!active) {
         add.addEventListener('click', async () => {
           try {
@@ -1110,10 +1133,12 @@ export function createPersonalizzazioneView(deps) {
       box.appendChild(el(doc, 'p', { text: 'Lettura dei collegamenti…', cls: 'muted' }));
       return;
     }
-    renderConnettoriHero(box);
+    // backlog:e381c48581fa: the hero invites to connect; «I tuoi» lists
+    // what is already linked, so it shows the cards alone.
+    if (state.view !== 'tuoi') renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
     const groups = filterConnettori({
-      connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+      connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
     });
     const sections = el(doc, 'div', { cls: 'connettori-sections' });
     let shown = 0;
@@ -1207,7 +1232,7 @@ export function createPersonalizzazioneView(deps) {
     head.appendChild(el(doc, 'span', {
       text: String(group.cards.length),
       cls: 'ui-conn-count',
-      attrs: { 'aria-label': `${group.cards.length} canali` },
+      attrs: { 'aria-label': plural(group.cards.length, 'canale', 'canali') },
     }));
     const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
     all.addEventListener('click', () => {
@@ -1333,7 +1358,7 @@ export function createPersonalizzazioneView(deps) {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
       count = filterConnettori({
-        connectors: state.connectors, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+        connectors: state.connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(toolRow, count);

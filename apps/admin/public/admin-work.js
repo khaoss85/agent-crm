@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { humanReadError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -155,7 +155,7 @@ export function createWorkView(deps) {
     const panel = el('section', 'panel panel-wide work-queue');
     const heading = el('div', 'panel-heading');
     const titleBox = el('div');
-    titleBox.appendChild(el('p', 'kicker', 'Work package'));
+    titleBox.appendChild(el('p', 'kicker', 'Pacchetto di lavoro'));
     titleBox.appendChild(el('h2', undefined, 'Tasks'));
     titleBox.appendChild(el('p', 'lede',
       'Follow-up work a person must do, and the record of what happened to it. '
@@ -246,7 +246,7 @@ export function createWorkView(deps) {
     panel.setAttribute('data-task', task.id);
     const heading = el('div', 'panel-heading');
     const titleBox = el('div');
-    titleBox.appendChild(el('p', 'kicker', 'Work task'));
+    titleBox.appendChild(el('p', 'kicker', 'Attività'));
     titleBox.appendChild(el('h2', undefined, task.title ?? '—'));
     heading.appendChild(titleBox);
     panel.appendChild(heading);
@@ -306,7 +306,7 @@ export function createWorkView(deps) {
       cancel.setAttribute('data-action', 'cancel');
       const all = [complete, cancel, completeNote, cancelReason];
 
-      complete.addEventListener('click', () => withBusy(all, async () => {
+      complete.addEventListener('click', () => uiBusy(complete, 'Salvo…', () => withBusy(all, async () => {
         controlError.textContent = '';
         try {
           await runAction(task.id, 'complete', completeNote.value ? { note: completeNote.value } : {});
@@ -314,8 +314,8 @@ export function createWorkView(deps) {
         } catch (error) {
           controlError.textContent = error?.message ?? 'The server refused this move.';
         }
-      }));
-      cancel.addEventListener('click', () => withBusy(all, async () => {
+      })));
+      cancel.addEventListener('click', () => uiBusy(cancel, 'Annullo…', () => withBusy(all, async () => {
         controlError.textContent = '';
         try {
           await runAction(task.id, 'cancel', { reason: cancelReason.value });
@@ -323,7 +323,7 @@ export function createWorkView(deps) {
         } catch (error) {
           controlError.textContent = error?.message ?? 'The server refused this move.';
         }
-      }));
+      })));
       controls.appendChild(completeNote);
       controls.appendChild(complete);
       controls.appendChild(cancelReason);
@@ -382,7 +382,7 @@ export function createWorkView(deps) {
     const noteButton = el('button', 'primary', 'Add note');
     noteButton.setAttribute('data-action', 'add-note');
     const noteError = el('small', 'field-error', '');
-    noteButton.addEventListener('click', () => withBusy([noteButton, noteInput], async () => {
+    noteButton.addEventListener('click', () => uiBusy(noteButton, 'Salvo…', () => withBusy([noteButton, noteInput], async () => {
       noteError.textContent = '';
       try {
         await runAction(task.id, 'add-note', { body: noteInput.value });
@@ -390,7 +390,7 @@ export function createWorkView(deps) {
       } catch (error) {
         noteError.textContent = error?.message ?? 'The server refused this note.';
       }
-    }));
+    })));
     noteBox.appendChild(noteInput);
     noteBox.appendChild(noteButton);
     noteBox.appendChild(noteError);

@@ -473,7 +473,7 @@ test('recap follows the prototype sentence with real counts', () => {
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
 
-test('agenda rows link the scheda when it resolves, the record otherwise', () => {
+test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
   assert.equal(agenda[0].time, '10:00');
@@ -481,7 +481,9 @@ test('agenda rows link the scheda when it resolves, the record otherwise', () =>
   const packaged = buildTodayAgenda([{
     ...APPT_TODAY, subjectOwner: 'package', subjectOwnerPackage: 'lifecycle', subjectLabel: 'Seq-9',
   }], OGGI_NOW);
-  assert.equal(packaged[0].href, '#/modules/appointment/appt-1', 'package subjects fall back to the record');
+  // backlog:bd5e84545021: never the technical record page.
+  assert.equal(packaged[0].href, '#/calendario', 'package subjects fall back to the calendar');
+  assert.deepEqual(packaged[0].calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'on the event, in its week');
 });
 
 test('next appointment is the upcoming one, null when the day holds nothing else', () => {
@@ -495,7 +497,10 @@ test('brief quotes records and every source opens its record', () => {
   assert.ok(brief.bullets.some((line) => line.includes('Ciao, posso passare giovedì')), 'message quoted');
   assert.ok(brief.bullets.some((line) => line.includes('Interessata')), 'call quoted');
   const hrefs = brief.sources.map((source) => source.href);
-  assert.ok(hrefs.includes('#/modules/appointment/appt-1'), 'appointment source');
+  assert.ok(!hrefs.includes('#/modules/appointment/appt-1'), 'never the technical appointment page (bd5e84545021)');
+  const appointmentSource = brief.sources.find((source) => source.label === 'Appuntamento delle 10:00');
+  assert.equal(appointmentSource?.href, '#/calendario', 'the appointment source opens the calendar');
+  assert.deepEqual(appointmentSource?.calendarEvent, { id: 'appt-1', day: '2026-10-19' }, 'with the event selected');
   assert.ok(hrefs.includes('#/modules/interaction-message/msg-1'), 'message source');
   assert.ok(hrefs.includes('#/modules/interaction-call/call-1'), 'call source');
   assert.ok(hrefs.includes('#/customer-card/lead/lead-1'), 'card source');
@@ -503,7 +508,7 @@ test('brief quotes records and every source opens its record', () => {
 
   const bare = buildPreCallBrief({ appointment: APPT_TODAY, messages: [], calls: [] });
   assert.ok(bare.bullets.some((line) => line.includes('Nessun messaggio o chiamata registrati')));
-  assert.ok(bare.sources.some((source) => source.href === '#/modules/appointment/appt-1'));
+  assert.ok(bare.sources.some((source) => source.href === '#/calendario' && source.calendarEvent?.id === 'appt-1'));
   assert.equal(buildPreCallBrief({ appointment: null }), null);
 });
 
@@ -567,7 +572,7 @@ test('full home renders every section with clickable sources', () => {
   }
 
   const byHref = (href) => mount.findAll('a').find((node) => node.getAttribute('href') === href);
-  for (const href of ['#/modules/appointment/appt-1', '#/modules/interaction-message/msg-1',
+  for (const href of ['#/calendario', '#/modules/interaction-message/msg-1',
     '#/customer-card/lead/lead-1', '#/connettori']) {
     assert.ok(byHref(href), `source opens its record: ${href}`);
   }
@@ -941,7 +946,27 @@ test('no technical resource-id label reaches the Oggi screen', () => {
   });
   const text = mount.textContent;
   assert.ok(!text.includes('lead · lead-1'), 'no technical label on screen');
-  assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
+  // Backlog 1f846205b9a3: one fallback only — the agenda and the advisor
+  // read «un ospite da confermare», never «il cliente».
+  assert.ok(text.includes('un ospite da confermare'), 'the one fallback names the wait');
+  assert.ok(!text.includes('il cliente'), 'no second fallback on screen');
+});
+
+test('1f846205b9a3: a nameless appointment reads one fallback in every card', () => {
+  const nameless = {
+    id: 'appt-noname', status: 'booked', startsAt: '2026-10-19T08:00:00.000Z',
+    subjectResource: 'lead', subjectId: 'lead-9',
+  };
+  const agenda = buildTodayAgenda([nameless], OGGI_NOW);
+  assert.equal(agenda[0].title, 'un ospite da confermare', 'agenda reads the one fallback');
+  const { actions } = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW });
+  const prep = actions.find((action) => action?.kind === 'appointment-prep');
+  assert.ok(prep, 'the prep card exists');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare', 'prep reads the one fallback');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no second fallback on the prep card');
+  const brief = buildPreCallBrief({ appointment: nameless, now: OGGI_NOW });
+  assert.equal(brief.title, 'un ospite da confermare', 'brief reads the one fallback');
+  assert.ok(!brief.bullets.join(' ').includes('il cliente'), 'no second fallback on the brief card');
 });
 
 test('the greeting is the only h1 of the Oggi screen', () => {
@@ -1891,9 +1916,14 @@ test('7d30fb517785: the advisor names the linked customer once the names land, w
   await clock.runUntil(() => mount.textContent.includes('Richiama per il preventivo'));
   const row = () => mount.querySelector('div[data-action="bo04:appointment:appt-1"]');
   assert.ok(row(), 'the prep card is on screen');
-  assert.ok(row().textContent.includes('ospite da confermare'), 'before the names land, the neutral wait');
+  // backlog:bd5e84545021 (production 11/11): before the names land the card
+  // shows grey bars — never «un ospite da confermare» passing for data —
+  // and its buttons wait.
+  assert.ok(!row().textContent.includes('ospite da confermare'), 'no stand-in before the names land');
+  assert.ok(row().querySelector('span[data-skeleton="true"]'), 'a grey bar where the name goes');
   const advisor = mount.findAll('section')[0];
   const execute = row().querySelector('button[data-triage="execute"]');
+  assert.equal(execute.disabled, true, 'the action waits for the names');
   execute.focus();
 
   await clock.runUntil(() => rendered);
@@ -1906,6 +1936,9 @@ test('7d30fb517785: the advisor names the linked customer once the names land, w
   assert.equal(mount.findAll('section')[0], advisor, 'the advisor was not repainted');
   assert.equal(row().querySelector('button[data-triage="execute"]'), execute, 'the same button, focus kept');
   assert.equal(execute.__focused, true);
+  assert.equal(execute.disabled, false, 'the action is live once the names are in');
+  assert.equal(row().querySelector('span[data-skeleton="true"]'), null, 'no grey bar left');
+  assert.ok(row().querySelector('a[href="#/customer-card/lead/lead-1"]'), 'the title links the scheda again');
 });
 
 // Review #746 (P2): «oggi/ieri/domani» compare Rome calendar days, never
@@ -1934,4 +1967,35 @@ test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 
   assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
   assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
   assert.equal(romeDayKeyShift('not a date', 1), null);
+});
+
+// backlog:8763c6f1a9b0 (verifica Mac 10/11 08:43Z su Presti): the agenda and
+// «Prima della prossima call» said Fio Neri while the advisor card said «un
+// ospite da confermare». One name rule now feeds all three: for every way a
+// name can arrive (profile, stored label, both, a placeholder, nothing) the
+// three places say the same name, and the neutral wait only when none exists.
+test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for the same appointment', () => {
+  const linked = { ...APPT_TODAY, subjectResource: 'contact', subjectId: 'fio' };
+  const cases = [
+    { label: 'profile only', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'stored label only', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: {}, want: 'Fio Neri' },
+    { label: 'profile wins over a stale label', appt: { ...linked, subjectLabel: 'Fio' }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'placeholder profile, real label', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: { 'contact:fio': 'Unknown' }, want: 'Fio Neri' },
+    { label: 'no name anywhere', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Unknown Unknown' }, want: null },
+  ];
+  for (const { label, appt, names, want } of cases) {
+    const [prep] = buildAdvisorActions({ tasks: [], appointments: [appt], now: OGGI_NOW, names }).actions;
+    const [row] = buildTodayAgenda([appt], OGGI_NOW, names);
+    const brief = buildPreCallBrief({ appointment: appt, now: OGGI_NOW, names });
+    if (want === null) {
+      assert.equal(prep.title, 'Prepara la call con un ospite da confermare', `${label}: the neutral wait only without a name`);
+      assert.equal(brief.title, 'un ospite da confermare', label);
+      continue;
+    }
+    assert.equal(row.title, want, `${label}: agenda`);
+    assert.equal(brief.title, want, `${label}: Prima della prossima call`);
+    assert.equal(prep.title, `Prepara la call con ${want}`, `${label}: advisor card`);
+    assert.ok(prep.why.includes(`con ${want}.`), `${label}: advisor motive`);
+    assert.ok(!`${prep.title} ${prep.why}`.includes('ospite da confermare'), `${label}: no stand-in beside a known name`);
+  }
 });

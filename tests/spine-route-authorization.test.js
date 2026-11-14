@@ -104,6 +104,9 @@ const GUARDED = [
   // unverified caller and a viewer.
   ['PATCH', '/api/contacts/no-such-id', { firstName: 'A' }],
   ['POST', '/api/customer-hub/notes', { resource: 'contact', id: 'x', body: 'hi' }],
+  // backlog:82235e46e3e9: note correction and withdrawal gate records.write too.
+  ['POST', '/api/customer-hub/notes/revise', { resource: 'contact', id: 'x', noteId: 'n', body: 'hi' }],
+  ['POST', '/api/customer-hub/notes/withdraw', { resource: 'contact', id: 'x', noteId: 'n' }],
   ['GET', '/api/opportunities'],
   ['POST', '/api/opportunities', { companyId: 'x', name: 'D', valueCents: 1, currency: 'EUR', owner: 'o' }],
   ['GET', '/api/approvals'],
@@ -114,6 +117,10 @@ const GUARDED = [
   ['POST', '/api/demo/seed'],
   ['GET', '/api/modules/company/records'],
   ['POST', '/api/customer-data/bulk/apply', { action: 'govern-data-quality-issue', items: [] }],
+  // backlog:1f7cb20d3c30: «Nuovo agente» writes a teammate agent — only a
+  // caller who may write creates one, catalogue or hand-written.
+  ['POST', '/api/agents/create', { spaceId: 'presti', slug: 'riaggancio' }],
+  ['POST', '/api/agents/create', { spaceId: 'presti', key: 'v1.20261112.0123456789abcdef0123456789abcdef', name: 'Auguri', role: 'Auguri', instructions: 'Fa gli auguri.' }],
 ];
 
 test('no unauthenticated caller reaches any domain route in production mode', async (t) => {
@@ -176,6 +183,20 @@ test('the customer-data bulk and export routes honour the role boundary', async 
     { resource: 'data-quality-issue' }, as('vic'));
   assert.equal(viewerExport.status, 200, 'a viewer passes the export gate and the composed package serves the export');
   assert.deepEqual(JSON.parse(viewerExport.body).rows, []);
+});
+
+test('1f7cb20d3c30: only a caller who may write creates an agent, catalogue or hand-written', async (t) => {
+  const { app, call, as } = await scene(t, { roles: { vic: 'viewer', meg: 'member' } });
+  const body = { spaceId: 'presti', key: 'v1.20261112.0123456789abcdef0123456789abcdef', name: 'Auguri', role: 'Fa gli auguri', instructions: 'Prepara gli auguri.' };
+  const viewer = await call('POST', '/api/agents/create', body, as('vic'));
+  assert.equal(viewer.status, 403, 'a viewer may not create an agent');
+  const read = async (who) => JSON.parse((await call('GET', '/api/modules/teammate-agent/records?filter.spaceId=presti', undefined, as(who))).body).items;
+  assert.equal((await read('vic')).length, 0, 'nothing written by the refused viewer');
+  const member = await call('POST', '/api/agents/create', body, as('meg'));
+  assert.equal(member.status, 201, member.body.slice(0, 200));
+  assert.equal(JSON.parse(member.body).agent.actorId, 'meg');
+  assert.equal((await read('vic')).length, 1, 'a viewer still reads the team');
+  assert.ok(app);
 });
 
 test('the human approval boundary is authorization, not just a shaped actor', async (t) => {

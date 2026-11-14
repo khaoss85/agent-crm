@@ -1,7 +1,8 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { createCommandMenu } from './admin-cmdk.js';
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -45,9 +46,9 @@ export const SHELL_ITEMS = Object.freeze([
   { id: 'clienti', label: 'Clienti', group: 'native', route: '#/customer-data', story: 'BO-F1', icon: 'clienti' },
   { id: 'pipeline', label: 'Pipeline', group: 'native', route: null, story: 'BO-F2', icon: 'pipeline' },
   { id: 'calendario', label: 'Calendario', group: 'native', route: '#/calendario', story: 'BO-F3', icon: 'calendario' },
-  // backlog:33782ba68747: «Agenti» takes the place of Sequenze in the
-  // sidebar. Sequenze keep their route (#/sequenze, linked from Agenti and
-  // from the native-modules catalog) but no sidebar voice of their own.
+  // backlog:33782ba68747 put «Agenti» in the sidebar; backlog:b368bbf992ce
+  // (Dan 11/11) gives Sequenze its voice back when the sequences module is
+  // composed: `nav: false` here, and buildShellNav lifts it only then.
   { id: 'agenti', label: 'Agenti', group: 'native', route: null, story: 'backlog:33782ba68747', icon: 'agenti' },
   { id: 'sequenze', label: 'Sequenze', group: 'native', route: null, story: 'BO-F3', icon: 'sequenze', nav: false },
   { id: 'reporting', label: 'Reporting', group: 'custom', route: '#/reporting', story: 'BO-F5-01', icon: 'reporting' },
@@ -279,18 +280,20 @@ export function defaultSpaces() {
 }
 
 /**
- * Read user spaces from a storage-like object. Corrupt or missing data
- * falls back to the single local space — never an empty list.
+ * Read the spaces this browser actually stored — visited space mounts —
+ * without any fallback: missing, corrupt or empty data is an empty list,
+ * never a fictitious space. Use it when another source (the session
+ * profile) already names the person's spaces; the development fallback
+ * would leak a «Spazio locale» into a real session and persist it.
  * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
  */
-export function readSpaces(storage) {
-  const fallback = defaultSpaces();
+export function readStoredSpaces(storage) {
   try {
     const raw = storage?.getItem?.(SPACES_KEY);
-    if (typeof raw !== 'string' || raw === '') return fallback;
+    if (typeof raw !== 'string' || raw === '') return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-    const cleaned = parsed
+    if (!Array.isArray(parsed)) return [];
+    return parsed
       .filter((entry) => entry != null && typeof entry.id === 'string' && entry.id !== ''
         && typeof entry.name === 'string' && entry.name !== '')
       .map((entry) => ({
@@ -300,10 +303,60 @@ export function readSpaces(storage) {
           ? entry.initials.slice(0, 2).toUpperCase()
           : entry.name.slice(0, 2).toUpperCase(),
       }));
-    return cleaned.length > 0 ? cleaned : fallback;
   } catch {
-    return fallback;
+    return [];
   }
+}
+
+/**
+ * Read user spaces from a storage-like object. Corrupt or missing data
+ * falls back to the single local space — never an empty list. Sessionless
+ * shell only: under a session use readStoredSpaces so the fallback never
+ * merges into the person's real spaces.
+ * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
+ */
+export function readSpaces(storage) {
+  const stored = readStoredSpaces(storage);
+  return stored.length > 0 ? stored : defaultSpaces();
+}
+
+/**
+ * Join two space lists into one menu list (backlog:029409ff): the primary
+ * source first (the session profile's spaces), then any extra the secondary
+ * source names (spaces this browser already opened, under a session that
+ * only carries the current space). Entries keep the readSpaces shape;
+ * blanks are dropped, duplicates collapse on id, order is stable — the
+ * menu never renders a blank or doubled row, and the result is never
+ * empty: with nothing usable it falls back to the single local space.
+ * @param {unknown} primary
+ * @param {unknown} secondary
+ */
+export function mergeSpaces(primary, secondary) {
+  const clean = (value) => {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (entry === null || typeof entry !== 'object') continue;
+      const id = typeof /** @type {any} */ (entry).id === 'string'
+        ? /** @type {any} */ (entry).id.trim() : '';
+      const name = typeof /** @type {any} */ (entry).name === 'string'
+        ? /** @type {any} */ (entry).name.trim() : '';
+      if (id === '' || name === '') continue;
+      if (out.some((known) => known.id === id)) continue;
+      const initials = typeof /** @type {any} */ (entry).initials === 'string'
+        && /** @type {any} */ (entry).initials.trim() !== ''
+        ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
+        : name.slice(0, 2).toUpperCase();
+      out.push({ id, name, initials });
+    }
+    return out;
+  };
+  const merged = [...clean(primary)];
+  for (const entry of clean(secondary)) {
+    if (merged.some((known) => known.id === entry.id)) continue;
+    merged.push(entry);
+  }
+  return merged.length > 0 ? merged : defaultSpaces();
 }
 
 /**
@@ -394,7 +447,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
     }
     if (item.id === 'sequenze') {
       if (sequencesAvailable) {
-        return { ...item, route: '#/sequenze', available: true, disabledReason: '' };
+        return { ...item, route: '#/sequenze', available: true, disabledReason: '', nav: true };
       }
       return { ...item, route: null, available: false, disabledReason: 'In arrivo con BO-F3' };
     }
@@ -438,6 +491,8 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
  *   onAiSubmit?: ((text: string) => void) | null,
+ *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null>, agents?: () => Promise<Array<any> | null> } | null,
+ *   schedule?: (fn: () => void, ms: number) => any,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
  */
@@ -454,6 +509,8 @@ export function createShellView({
   onLogout = () => {},
   onPickSpace = () => {},
   onAiSubmit = null,
+  commandSearch = null,
+  schedule = undefined,
   win = null,
 } = {}) {
   const state = {
@@ -736,9 +793,48 @@ export function createShellView({
 
   /** @type {object | null} */
   let aiInput = null;
+  /** @type {any} */
+  let aiForm = null;
+  /** The space the ⌘K list last read for; undefined before the first bar. */
+  let commandSpaceId;
+
+  /**
+   * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
+   * shell's own voices and settings areas; customers, offers and (backlog
+   * 1f7cb20d3c30) the space's agents from the reads app.js already makes
+   * (commandSearch). The AI is the last row.
+   */
+  function commandPages() {
+    const customerData = state.items.some((item) => item.id === 'clienti' && item.available === true);
+    const pages = [];
+    for (const item of state.items) {
+      if (item.available === true && typeof item.route === 'string' && item.route.startsWith('#/')) {
+        pages.push({ label: item.label, href: item.route });
+      }
+    }
+    for (const area of SETTINGS_AREAS) {
+      if (area.id === 'stato-sync' && !customerData) continue;
+      pages.push({ label: area.label, href: area.route, sub: 'Impostazioni' });
+    }
+    pages.push({ label: 'Connettori', href: '#/connettori', sub: 'Impostazioni' });
+    pages.push({ label: 'Profilo', href: '#/profilo' });
+    return pages;
+  }
+
+  const commandMenu = createCommandMenu({
+    doc,
+    pages: commandPages,
+    search: commandSearch,
+    navigate: (href) => go(href),
+    ask: (text) => {
+      if (typeof onAiSubmit === 'function') onAiSubmit(text);
+      else notify('Barra AI: descrivi cosa fare e premi Invio.');
+    },
+    ...(typeof schedule === 'function' ? { schedule, cancel: () => {} } : {}),
+  });
 
   function focusAiEntry() {
-    if (aiInput !== null && typeof aiInput.focus === 'function') aiInput.focus();
+    commandMenu.focus();
   }
 
   function renderTopbar() {
@@ -784,6 +880,9 @@ export function createShellView({
     form.appendChild(hint);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      // backlog:be99004b06e4 (review #779): every submit path goes through
+      // the results list — the selected row opens, exactly once per Enter.
+      if (commandMenu.submit()) return;
       if (typeof onAiSubmit === 'function') {
         onAiSubmit(aiInput !== null && typeof aiInput.value === 'string' ? aiInput.value : '');
       } else {
@@ -791,6 +890,14 @@ export function createShellView({
       }
     });
     topbar.appendChild(form);
+    aiForm = form;
+    // Review #779: what the list read belongs to one space — a switch
+    // (menu, ⌘1/2/3, setSpaces) drops it before the bar is bound again.
+    if (commandSpaceId !== state.activeSpaceId) {
+      if (commandSpaceId !== undefined) commandMenu.invalidate();
+      commandSpaceId = state.activeSpaceId;
+    }
+    commandMenu.attach(form, aiInput);
   }
 
   function screenLabelFor(id) {
@@ -848,6 +955,7 @@ export function createShellView({
     // without this the tap that dismisses the menu would also press the
     // button underneath it.
     win.addEventListener('click', (event) => {
+      commandMenu.closeUnlessInside(event?.target ?? null, aiForm);
       if (!state.drawerOpen) return;
       const target = event?.target ?? null;
       if (sidebar.contains(target) || (menuToggle !== null && menuToggle.contains(target))) return;
@@ -913,6 +1021,12 @@ export function renderUnknownRoute({ doc, mount }) {
 }
 
 /**
+ * What the Impostazioni screen says when the «things to fix» count could not
+ * be read (backlog:1d33b335fba0): what is missing, and that it may not be zero.
+ */
+export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -920,22 +1034,56 @@ export function renderUnknownRoute({ doc, mount }) {
  * count above zero, never at zero and never when the count is unknown.
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
-  mount.appendChild(el(
+  const summary = el(
     doc,
     'p',
     'bo-muted',
     unknown
-      ? 'Non è stato possibile leggerle (non è detto che non ce ne siano).'
+      // backlog:1d33b335fba0: say what was not read, in plain words, with
+      // a way to try again — never «leggerle» with nothing it refers to.
+      ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
-  ));
+  );
+  mount.appendChild(summary);
+  if (unknown && typeof onRetry === 'function') {
+    summary.setAttribute('role', 'status');
+    const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'settings-retry');
+    retry.addEventListener('click', () => {
+      void uiBusy(retry, 'Riprovo…', async () => {
+        let count = null;
+        // Review #833 P2: the retry answers the live state, not only the
+        // count — Stato sync may have become available since the first
+        // paint. A bare number keeps the availability the panel had.
+        let available = customerDataAvailable;
+        try {
+          const answer = await onRetry();
+          if (answer !== null && typeof answer === 'object') {
+            count = answer.fixCount ?? null;
+            if (typeof answer.customerDataAvailable === 'boolean') available = answer.customerDataAvailable;
+          } else {
+            count = answer ?? null;
+          }
+        } catch {
+          count = null;
+        }
+        // The operator may have left meanwhile: repaint only the panel
+        // still on screen, never over the screen just opened.
+        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
+      });
+    });
+    mount.appendChild(retry);
+  }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');
@@ -965,6 +1113,38 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     list.appendChild(row);
   }
   mount.appendChild(list);
+}
+
+/**
+ * The routed views that sit under the Impostazioni tab row, by the area
+ * their tab opens (the `view` of parseModuleRoute → SETTINGS_AREAS id).
+ */
+export const SETTINGS_VIEW_AREAS = Object.freeze({
+  personalizzazione: 'personalizzazione',
+  catalog: 'catalogo',
+  sync: 'stato-sync',
+  'spazi-accessi': 'spazi-accessi',
+});
+
+/**
+ * Keep the Impostazioni tabs on screen while a tab's content loads
+ * (backlog:1cfc68175ab7). The router clears the shared mount and paints
+ * its loading line on every navigation, so switching tab blanked the whole
+ * page, tabs included, for the 3–5 s of the new tab's reads. For a settings
+ * view this puts the tab row back above the loading line, the new tab
+ * already underlined: only the content below reloads. Returns whether the
+ * row was painted (false for any other view, or with no loading line).
+ * @param {any} doc
+ * @param {{ mount: any, loading: any, view: unknown, fixCount?: unknown, navigate?: (hash: string) => void }} options
+ */
+export function keepSettingsTabs(doc, { mount, loading, view, fixCount = null, navigate = () => {} }) {
+  if (typeof view !== 'string' || !Object.hasOwn(SETTINGS_VIEW_AREAS, view)) return false;
+  if (!loading || !Array.from(mount.childNodes ?? []).includes(loading)) return false;
+  const tabs = settingsTabs(doc, { activeId: SETTINGS_VIEW_AREAS[view], fixCount, navigate });
+  mount.removeChild(loading);
+  mount.appendChild(tabs);
+  mount.appendChild(loading);
+  return true;
 }
 
 /**

@@ -29,6 +29,8 @@ import {
   formatSpaceStat,
   memberInitials,
   spaceRoleLabel,
+  teamCalendarState,
+  teamChannelTiles,
 } from '../apps/admin/public/admin-spazi-accessi.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import {
@@ -257,7 +259,7 @@ test('the screen lists spaces with roles, team, the master AI switch and the fiv
   // screen never says «postazione».
   assert.match(rendered, /Lo stesso team per tutta l’organizzazione/);
   assert.doesNotMatch(rendered, /postazione/);
-  assert.match(rendered, /marco/);
+  assert.match(rendered, /Marco/);
   assert.match(rendered, /Cosa pu\u00F2 fare l\u2019AI/);
   assert.equal(SPAZI_AI_MASTER.key, 'ai-enabled');
   assert.equal(SPAZI_AI_MASTER_DEFAULT, true);
@@ -292,6 +294,150 @@ test('with the master AI switch off the screen says spenta and locks the five (b
     if (node.getAttribute('aria-label') === SPAZI_AI_MASTER.label) continue;
     assert.equal(node.disabled, true, `${node.getAttribute('aria-label')} locks while the master is off`);
   }
+});
+
+// backlog:cb1a32dc46b2: with the AI off only the AI's actions become
+// proposals — a person's Conferma books, a person's save saves. The screen
+// never says «ogni azione» any more.
+test('cb1a32dc46b2: with the AI off the screen says only the AI\'s actions become proposals', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /le azioni dell\u2019AI diventano proposte da approvare/);
+  assert.match(rendered, /quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(rendered, /ogni azione diventa una proposta/);
+  assert.match(SPAZI_AI_MASTER.line, /le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è/);
+  assert.doesNotMatch(SPAZI_AI_MASTER.line, /ogni azione/);
+});
+
+// backlog:1cfc68175ab7 (giro UX 11/11, punto 34): with the AI off the five
+// stayed green (aria-checked=true, disabled). They decide nothing until the
+// AI is back on: grey and «in pausa», never on.
+test('1cfc68175ab7: with the space AI off the five read paused, never green', async () => {
+  const { mount, view: v } = view({
+    client: stubClient({ overrides: [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }] }),
+  });
+  await v.render();
+  await flush();
+  const toggles = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  const five = toggles.filter((node) => node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label);
+  assert.equal(five.length, 5);
+  for (const node of five) {
+    assert.equal(node.getAttribute('data-on'), 'false', `${node.getAttribute('aria-label')} is not green`);
+    assert.equal(node.getAttribute('aria-checked'), 'false', `${node.getAttribute('aria-label')} is not announced on`);
+    assert.equal(node.getAttribute('data-paused'), 'true');
+    assert.equal(node.disabled, true);
+  }
+  const rendered = text(mount);
+  assert.match(rendered, /In pausa/, 'each switch says it is paused');
+  // Back on: the five show their own values again, nothing paused.
+  const { mount: onMount, view: onView } = view({ client: stubClient({}) });
+  await onView.render();
+  await flush();
+  const onToggles = onMount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.ok(onToggles.some((node) => node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label && node.getAttribute('data-on') === 'true'),
+    'with the AI on a switch that is on reads green');
+  assert.equal(onToggles.filter((node) => node.getAttribute('data-paused') === 'true').length, 0);
+  assert.doesNotMatch(text(onMount), /In pausa/);
+});
+
+// backlog:1a96094db71d (giro UX 11/11): Spazi e accessi stayed on «Carico…»
+// for more than 10 s — eight reads one after the other, 2,5–4 s each. Now
+// the page paints at once with a skeleton, every read starts together, and
+// the data replaces the skeleton when the reads land.
+test('1a96094db71d: the page paints a skeleton at once and starts every read together', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ path, release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  // Nothing has answered yet: the page is already there.
+  const before = text(mount);
+  assert.match(before, /IMPOSTAZIONI/, 'the tabs paint at once');
+  assert.match(before, /Spazi di lavoro/, 'the header paints at once');
+  assert.match(before, /Team dell\u2019organizzazione/, 'the team card is there');
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'a skeleton, not «Carico…»');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 0,
+    'no switch to flip before its value is known');
+  const started = pending.map((entry) => entry.path);
+  for (const expected of ['/api/spine/context', '/api/spine/memberships', '/api/space-permissions/effective', '/api/connectors', '/api/customer-data/customers']) {
+    assert.ok(started.some((path) => path.startsWith(expected)), `${expected} starts before any answer`);
+  }
+  // Release everything (and whatever the answers start), then the data replaces the skeleton.
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the space card statistic arrives');
+});
+
+// Review #830 P2: a menu opened while the first reads are pending repaints
+// the mount from inside the view; when the reads land the data must still
+// replace the skeleton, never stay stuck behind it.
+test('1a96094db71d review: a menu opened during loading never leaves the skeleton on screen', async () => {
+  const pending = [];
+  const base = stubClient({
+    members: [{ subject: 'owner-1', role: 'owner', status: 'active' }, { subject: 'marco', role: 'operator', status: 'active' }],
+    connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
+  });
+  const client = {
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => {
+        pending.push({ release: () => base.request(path, options).then(resolve, reject) });
+      });
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const done = v.render();
+  await flush();
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is up');
+  const adder = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  assert.ok(adder, 'the new-space menu toggle is there while loading');
+  adder.dispatch('click', {});
+  assert.ok(mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'still loading after the menu opens');
+  for (let round = 0; round < 6 && pending.length > 0; round += 1) {
+    for (const entry of pending.splice(0)) entry.release();
+    await flush();
+  }
+  await done;
+  await flush();
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'the skeleton is gone');
+  assert.equal(mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch').length, 6, 'the switches arrive');
+  assert.match(text(mount), /1 canale · 2 persone · 3 clienti/, 'the statistic arrives');
+});
+
+test('1a96094db71d: a refresh after a write keeps the screen, never the skeleton', async () => {
+  const { mount, view: v } = view({ client: stubClient({}) });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('role') === 'switch' && node.getAttribute('aria-label') !== SPAZI_AI_MASTER.label);
+  toggle.dispatch('click', {});
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  assert.ok(confirm, 'the confirm step opens');
+  const writing = confirm.dispatch('click', {});
+  void writing;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(!mount.findAll('section').some((node) => node.getAttribute('data-skeleton') === 'true'), 'no skeleton flash after a write');
+  await flush();
 });
 
 test('a refused team read renders as a refusal, not an empty team', async () => {
@@ -379,8 +525,8 @@ test('inviting names subject, role and reason; removal asks twice with a reason'
   assert.equal(granted?.body?.reason, 'commesso del negozio');
 
   const lucaRow = text(mount);
-  assert.match(lucaRow, /luca/);
-  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('luca'));
+  assert.match(lucaRow, /Luca/);
+  const remove = mount.findAll('button').find((node) => node.textContent === 'Rimuovi' && node.parentNode?.textContent?.includes('Luca'));
   assert.ok(remove, 'each member has its own removal');
   await remove.listeners.click[0]();
   await flush();
@@ -615,11 +761,18 @@ test('formatSpaceStat speaks the prototype pattern with real counts, null when u
   assert.equal(formatSpaceStat({ channels: -1, members: 2, customers: 3 }), null);
 });
 
-test('countSpaceChannels counts active connections, countSpaceCustomers needs an exact total', () => {
+test('countSpaceChannels counts linked channels, countSpaceCustomers needs an exact total', () => {
   assert.equal(countSpaceChannels({ connectors: [
-    { connectionKey: 'a', status: 'active' },
-    { connectionKey: 'b', status: 'suspended' },
-    { connectionKey: 'c', status: 'active' },
+    { connectionKey: 'a', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'b', channel: 'instagram', status: 'suspended' },
+    { connectionKey: 'c', channel: 'calendar', status: 'active' },
+  ] }), 2);
+  // backlog:e381c48581fa: the shared count — two accounts on one channel
+  // are one channel, like «2 di 9» on Oggi and Stato sync.
+  assert.equal(countSpaceChannels({ connectors: [
+    { connectionKey: 'a', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'b', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'c', channel: 'google-calendar', status: 'active' },
   ] }), 2);
   assert.equal(countSpaceChannels({ connectors: [] }), 0);
   assert.equal(countSpaceChannels({}), null);
@@ -640,8 +793,8 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
       members,
       connectorsBySpace: {
         [SPACE]: [
-          { connectionKey: 'wa', status: 'active' },
-          { connectionKey: 'ig', status: 'active' },
+          { connectionKey: 'wa', channel: 'whatsapp', status: 'active' },
+          { connectionKey: 'ig', channel: 'instagram', status: 'active' },
         ],
       },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
@@ -650,6 +803,37 @@ test('space cards show the real statistic from the composed reads (BO-F6-17 slic
   await v.render();
   await flush();
   assert.match(text(mount), /2 canali · 2 persone · 3 clienti/);
+});
+
+// Review #782 P1: the raw GET /api/connectors carries no profile link; the
+// Google and Meta links live in GET /api/profile. The active space card
+// counts them like Oggi's «x di 9»; another space's card never borrows them.
+test('e381c48581fa: the active space card counts the profile links, another space does not', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const base = stubClient({
+    members,
+    connectorsBySpace: { [SPACE]: [], altro: [] },
+    customersBySpace: { [SPACE]: { total: 3, totalIsExact: true }, altro: { total: 3, totalIsExact: true } },
+  });
+  const profile = { connections: { available: true, items: [
+    { connector: 'calendar', status: 'connected', account: 'dan@presti.it' },
+    { connector: 'gmail', status: 'connected', account: 'dan@presti.it' },
+  ] } };
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') return profile;
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({
+    client,
+    spaces: [{ id: SPACE, name: 'Negozio', initials: 'NE' }, { id: 'altro', name: 'Altro', initials: 'AL' }],
+  });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /2 canali · 1 persona · 3 clienti/, 'the active space counts Calendar and Gmail');
+  assert.match(rendered, /0 canali · 1 persona · 3 clienti/, 'another space never borrows the profile links');
 });
 
 test('an unreadable count omits the statistic, never an invented row', async () => {
@@ -690,7 +874,7 @@ test('an inexact customer total omits the statistic instead of a floor', async (
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: false } },
     }),
   });
@@ -711,7 +895,7 @@ test('the statistic counts rendered team rows, not raw membership items', async 
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
     }),
   });
@@ -728,7 +912,7 @@ test('the card statistic qualifies the organization-wide numbers', async () => {
   const { mount, view: v } = view({
     client: stubClient({
       members,
-      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', status: 'active' }] },
+      connectorsBySpace: { [SPACE]: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }] },
       customersBySpace: { [SPACE]: { total: 3, totalIsExact: true } },
     }),
   });
@@ -880,7 +1064,7 @@ test('6b44b0e9fcdf: subjects sharing a mailbox read as one person; a shared name
   assert.equal(rows.filter((row) => row.name === 'Marco Rossi').length, 2);
   // Without enrichment the row reads exactly as before.
   const [bare] = buildTeamRows([{ subject: 'marco', role: 'operator', status: 'active' }]);
-  assert.equal(bare.name, 'marco');
+  assert.equal(bare.name, 'Marco');
   assert.equal(bare.email, null);
   assert.equal(bare.initials, 'MA');
   // A suspended subject is not suspended twice.
@@ -1274,7 +1458,7 @@ test('dd570f6d501e: an outside click closes the new-space menu without stealing 
   assert.notEqual(newSpaceToggle(mount).__focused, true, 'an outside click leaves focus where the user put it');
 });
 
-test('dd570f6d501e: the opening click does not close the new-space menu via the document handler', async () => {
+test('dd570f6d501e: the opening click stops propagation so the document closer never sees it', async () => {
   const docClicks = [];
   const doc = {
     ...createFakeDocument(),
@@ -1286,11 +1470,18 @@ test('dd570f6d501e: the opening click does not close the new-space menu via the 
   await v.render();
   await flush();
   // A real browser bubbles the opening click to the document after the
-  // toggle handler repainted: the target is inside the menu wrap.
-  await newSpaceToggle(mount).listeners.click[0]({ target: newSpaceToggle(mount), stopPropagation: () => {} });
-  for (const handler of docClicks) handler({ target: newSpaceToggle(mount) });
+  // toggle handler repainted: the toggle stops it, so the outside closer
+  // (which would shut anything outside the tracked menu wrap) never fires
+  // for the click that just opened the menu.
+  let stopped = 0;
+  await newSpaceToggle(mount).listeners.click[0]({ target: newSpaceToggle(mount), stopPropagation: () => { stopped += 1; } });
   await flush();
-  assert.equal(newSpaceMenus(mount).length, 1, 'the opening click leaves the menu open');
+  assert.equal(newSpaceMenus(mount).length, 1, 'click opens the menu');
+  assert.equal(stopped, 1, 'the opening click stops propagation');
+  await newSpaceToggle(mount).listeners.click[0]({ target: newSpaceToggle(mount), stopPropagation: () => {} });
+  await flush();
+  assert.equal(newSpaceMenus(mount).length, 0, 'clicking the toggle again closes the menu');
+  assert.equal(newSpaceToggle(mount).__focused, true, 'closing from the toggle keeps focus on it');
 });
 
 test('dd570f6d501e: a document-level Escape closes the menu when focus left the button', async () => {
@@ -1328,4 +1519,253 @@ test('dd570f6d501e: picking a voice closes the menu and focus returns to the but
   assert.equal(newSpaceMenus(mount).length, 0, 'picking a voice closes the menu');
   assert.match(text(mount), /control plane/, 'manual stays honest: no space is invented here');
   assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the button');
+});
+
+test('backlog:76ded4e3: the two menus never stay open together, Escape and a click outside close them', async () => {
+  // Second return of 6b44b0e9fcdf (supervisor 2026-11-07.md:58): «+ Nuovo
+  // spazio di lavoro» closed nothing (no Escape, no outside click) and both
+  // menus could sit open at once. The menus share the clienti and
+  // personalizzazione contract: opening one closes the other, Escape
+  // closes, a click outside closes.
+  const doc = createFakeDocument();
+  // The dependency-free fake document carries no listeners: give this one
+  // the listener surface a real document has, so the test exercises the
+  // view's own outside-click wiring instead of a copy of it.
+  const docListeners = Object.create(null);
+  doc.addEventListener = (type, handler) => { (docListeners[type] ??= []).push(handler); };
+  const fireDoc = (type, event) => { for (const handler of docListeners[type] ?? []) handler(event); };
+  const mount = createMount();
+  const seen = { toast: [], picked: [], navigated: [] };
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const v = createSpaziAccessiView({
+    doc,
+    mount,
+    client: stubClient({ members: [{ subject: 'owner-1', role: 'owner', status: 'active' }] }),
+    navigate: (hash) => seen.navigated.push(hash),
+    spaces: () => spaces,
+    activeSpaceId: () => SPACE,
+    onPickSpace: (id) => seen.picked.push(id),
+    toast: (message, error = false) => seen.toast.push({ message, error }),
+  });
+  await v.render();
+  await flush();
+  const newSpaceToggle = () => mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  const inviteToggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const newSpaceMenu = () => mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  const inviteMenu = () => mount.querySelector('div[aria-label="Invita persona"]');
+  assert.ok(newSpaceToggle() && inviteToggle(), 'both menu toggles render');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens');
+  assert.equal(newSpaceMenu(), null, 'opening Invita persona closes + Nuovo spazio: never two menus open');
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu reopens');
+  assert.equal(inviteMenu(), null, 'opening + Nuovo spazio closes Invita persona: never two menus open');
+
+  // Codex P2 on #763: after render() the focused toggle is gone, so in a
+  // real browser focus sits on the body and Escape only reaches the
+  // document. The view listens for Escape at document level; this dispatch
+  // proves the document path, not a node-local handler.
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'Escape closes the new-space menu');
+  assert.equal(newSpaceToggle().getAttribute('aria-expanded'), 'false', 'the toggle names the closed menu');
+  await inviteToggle().listeners.click[0]();
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens again');
+  fireDoc('keydown', { key: 'Escape' });
+  await flush();
+  assert.equal(inviteMenu(), null, 'Escape at document level closes the invite menu');
+
+  await newSpaceToggle().listeners.click[0]();
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens a third time');
+  fireDoc('click', { target: newSpaceMenu() });
+  await flush();
+  assert.ok(newSpaceMenu(), 'a click inside the menu keeps it open');
+  fireDoc('click', { target: mount });
+  await flush();
+  assert.equal(newSpaceMenu(), null, 'a click outside closes the new-space menu');
+  assert.equal(inviteMenu(), null, 'a click outside leaves no menu open');
+});
+
+test('the two menus open as popovers without moving the content below', async () => {
+  // Like the clienti and personalizzazione add menus: each menu is absolute
+  // on a relative anchor, so opening one paints over the page instead of
+  // pushing the grid, the team list or the panels below. The flow shape —
+  // every node but the popover itself, in order — is the same closed and
+  // open: the same position before and after.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const v = createSpaziAccessiView({
+    doc,
+    mount,
+    client: stubClient({ members: [{ subject: 'owner-1', role: 'owner', status: 'active' }] }),
+    navigate: () => {},
+    spaces: () => spaces,
+    activeSpaceId: () => SPACE,
+    onPickSpace: () => {},
+    toast: () => {},
+  });
+  await v.render();
+  await flush();
+  const shapeOf = () => {
+    const out = [];
+    const walk = (node) => {
+      for (const child of node.childNodes) {
+        const isMenu = child.getAttribute?.('role') === 'menu'
+          && (child.getAttribute?.('aria-label') === 'Nuovo spazio di lavoro'
+            || child.getAttribute?.('aria-label') === 'Invita persona');
+        if (isMenu) continue;
+        out.push(`${child.tagName}.${child.getAttribute?.('class') ?? ''}`);
+        walk(child);
+      }
+    };
+    walk(mount);
+    return out;
+  };
+  const anchorOf = (menu) => {
+    let node = menu.parentNode ?? null;
+    while (node) {
+      if (/position:\s*relative/.test(node.getAttribute?.('style') ?? '')) return node;
+      node = node.parentNode ?? null;
+    }
+    return null;
+  };
+  const newSpaceToggle = () => mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  const inviteToggle = () => mount.findAll('button').find((node) => node.textContent === 'Invita persona ▾');
+  const newSpaceMenu = () => mount.querySelector('div[aria-label="Nuovo spazio di lavoro"]');
+  const inviteMenu = () => mount.querySelector('div[aria-label="Invita persona"]');
+
+  const closed = shapeOf();
+  await newSpaceToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  assert.ok(newSpaceMenu(), 'the new-space menu opens');
+  assert.match(newSpaceMenu().getAttribute('style') ?? '', /position:\s*absolute/, 'the new-space menu is out of flow');
+  assert.ok(anchorOf(newSpaceMenu()), 'the new-space menu hangs off a relative anchor');
+  assert.deepEqual(shapeOf(), closed, 'opening + Nuovo spazio leaves every content node where it was');
+
+  await newSpaceToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  await inviteToggle().listeners.click[0]({ stopPropagation: () => {} });
+  await flush();
+  assert.ok(inviteMenu(), 'the invite menu opens');
+  assert.match(inviteMenu().getAttribute('style') ?? '', /position:\s*absolute/, 'the invite menu is out of flow');
+  assert.ok(anchorOf(inviteMenu()), 'the invite menu hangs off a relative anchor');
+  assert.deepEqual(shapeOf(), closed, 'opening Invita persona leaves every content node where it was');
+});
+// backlog:67e14a50efb6 (2° ritorno, supervisor 2026-11-07.md:58 NON PASSA
+// C13/C14): ogni riga del team mostra lo stato del calendario e le tessere
+// dei canali. Prima il rosso: sul codice di prima le righe non portano né
+// l'uno né le altre.
+test('67e14a50efb6: every team row names the shared calendar state and carries the channel tiles', async () => {
+  const members = [
+    { subject: 'owner-1', role: 'owner', status: 'active' },
+    { subject: 'marco', role: 'operator', status: 'active' },
+  ];
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', account: 'studio@example.test', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', account: '+39 02 1234567', status: 'active' },
+          { connectionKey: 'ig-1', channel: 'instagram', account: 'studio.esempio', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 2, 'two rendered team rows');
+  for (const row of rows) {
+    assert.match(row.textContent ?? '', /Calendario condiviso: collegato/, 'each row names the shared calendar state');
+    const tiles = row.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip'));
+    assert.deepEqual(tiles.map((node) => node.textContent).sort(), ['IG', 'WA'], 'each row carries the active channel tiles, never the calendar');
+  }
+});
+
+test('67e14a50efb6: teamCalendarState reads only the calendar entries, fail-closed', () => {
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'suspended' },
+  ]), 'Calendario condiviso: collegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'suspended' },
+  ]), 'Calendario condiviso: scollegato');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'pending' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+  ]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState([]), 'Calendario condiviso: da collegare');
+  assert.equal(teamCalendarState(null), null, 'unreadable connectors invent no calendar line');
+  assert.equal(teamCalendarState({}), null);
+});
+
+test('67e14a50efb6: teamChannelTiles lists one tile per active channel, never the calendar', () => {
+  assert.deepEqual(teamChannelTiles([
+    { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'wa-2', channel: 'whatsapp', status: 'active' },
+    { connectionKey: 'ig-1', channel: 'instagram', status: 'active' },
+    { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+    { connectionKey: 'old-1', channel: 'instagram', status: 'revoked' },
+    { connectionKey: 'no-channel', status: 'active' },
+  ]), [
+    { channel: 'instagram', tile: 'IG', tint: 'ui-chip-ig', label: 'Instagram' },
+    { channel: 'whatsapp', tile: 'WA', tint: 'ui-chip-wa', label: 'WhatsApp' },
+  ]);
+  assert.deepEqual(teamChannelTiles([]), []);
+  assert.deepEqual(teamChannelTiles(null), [], 'unreadable connectors tile nothing');
+  const [unknown] = teamChannelTiles([{ connectionKey: 'x-1', channel: 'carrier-pigeon', status: 'active' }]);
+  assert.equal(unknown.tile, '?', 'an unknown channel never invents a tile');
+});
+
+test('67e14a50efb6: unreadable connectors read honestly on every row, never silently bare', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const notFound = Object.assign(new Error('not found'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({ client: stubClient({ members, fail: { connectors: notFound } }) });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /non sono attivi in questo spazio/, 'each row says the channels are not active here');
+  assert.doesNotMatch(rows[0].textContent ?? '', /NOT_FOUND/, 'no technical code on the page');
+  assert.equal(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).length, 0, 'no invented tiles');
+});
+
+test('67e14a50efb6 Codex P2 on #756: a failed customer count keeps the team calendar and channel tiles', async () => {
+  // Repro: /api/connectors ok (active calendar + WA) but
+  // /api/customer-data/customers 404 — the shared Promise.all discarded the
+  // good connectors and every row read «non sono attivi». Red before, green
+  // after: the rows keep the indicators, only the card statistic is omitted.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const missing = Object.assign(new Error('no listCustomers'), { code: 'NOT_FOUND', status: 404 });
+  const { mount, view: v } = view({
+    client: stubClient({
+      members,
+      fail: { customers: missing },
+      connectorsBySpace: {
+        [SPACE]: [
+          { connectionKey: 'cal-1', channel: 'calendar', status: 'active' },
+          { connectionKey: 'wa-1', channel: 'whatsapp', status: 'active' },
+        ],
+      },
+    }),
+  });
+  await v.render();
+  await flush();
+  const rows = byClassIn(mount, 'div', 'bo-spazi-member');
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].textContent ?? '', /Calendario condiviso: collegato/, 'the row keeps the calendar state');
+  assert.deepEqual(rows[0].findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-chip')).map((node) => node.textContent), ['WA'], 'the row keeps the active channel tile');
+  assert.doesNotMatch(text(mount), /canali ·/, 'only the card statistic is omitted');
 });

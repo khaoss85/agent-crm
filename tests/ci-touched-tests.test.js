@@ -12,6 +12,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -33,6 +34,8 @@ import {
   fallbackPlan,
   hasCodeChange,
   listChangedFiles,
+  resolveDiffBase,
+  describeFallbackCore,
   loadCharacterizationDigests,
   parseArgs,
   planGate,
@@ -425,7 +428,9 @@ test('the step budget leaves gtm:check at least a minute inside the fast job cap
   // gtm:check took 7-15 s on the green fast runs of 2026-11-08: a minute
   // keeps four times that free. Raising the step budget past it fails here.
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-  const workflow = readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8');
+  // The fast step runs scripts/ci-fast-step.sh, which runs the gate under the wrapper.
+  const workflow = readFileSync(join(repoRoot, 'scripts/ci-fast-step.sh'), 'utf8');
+  assert.match(readFileSync(join(repoRoot, '.github/workflows/ci.yml'), 'utf8'), /run: bash scripts\/ci-fast-step\.sh/);
   const step = workflow.split('\n').find((line) => line.includes('scripts/ci-heavy.sh fast -- bash scripts/ci-fast.sh'));
   assert.ok(step, 'the fast step runs scripts/ci-fast.sh under scripts/ci-heavy.sh');
   const cap = Number(/HEAVY_JOB_MAX_SEC=(\d+)/.exec(step)?.[1]);
@@ -1176,6 +1181,25 @@ test('a diff on a single-suite file selects only that suite', () => {
   );
 });
 
+test('a changed baseline alone selects its own suite, and only that one (backlog:e03475513020)', () => {
+  // The source-hash realignment PR (`npm run characterize:realign-source`)
+  // touches nothing but `*-baseline.json`: no digest map records it and no
+  // test imports it, yet that PR's gate is what proves the realignment moved
+  // no observed value.
+  assert.deepEqual(
+    withCharacterizationTests(
+      [],
+      CHARACTERIZATION_HAVE(),
+      ['tests/characterization/commercial-baseline.json', 'tests/characterization/signature-baseline.json'],
+      CHARACTERIZATION_INDEX(),
+    ),
+    [
+      'tests/characterization/commercial-characterization.test.js',
+      'tests/characterization/signature-characterization.test.js',
+    ],
+  );
+});
+
 test('a docs-only diff never selects the characterization tests', () => {
   assert.deepEqual(
     withCharacterizationTests(
@@ -1880,17 +1904,353 @@ test('a timeout over core plus bonus drains the core and warns on the bonus rema
   // The queue the cure builds for an oversized selection: the core first,
   // the dropped remainder behind it. The bound hits mid-bonus with the core
   // finished and green: warn, naming the bonus files that remained.
-  const sleeper = "import test from 'node:test';\ntest('sleeps past the bound', async () => { await new Promise((resolve) => setTimeout(resolve, 30000)); });\n";
+  // No wall clock decides who is late (backlog:3d560518f3e2): under load a
+  // one-line core file once missed a 3 s bound. The bonus never ends (it
+  // waits on a promise nothing resolves, an interval keeps it alive) and the
+  // injected bound fires the moment the core file has finished — so the
+  // core is done and the bonus remains, whatever the machine's load.
+  const blocked = "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n";
   const dir = scratchTests({
     'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
-    'bonus.test.js': sleeper,
+    'bonus.test.js': blocked,
   });
   try {
-    const result = await runTestShards(['core.test.js', 'bonus.test.js'], { parts: 2, timeoutSec: 3, cwd: dir });
+    /** @type {() => void} */
+    let fireBound = () => {};
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
+      parts: 2,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fireBound = fire; return () => {}; },
+      onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+    });
     assert.equal(result.timedOut, true);
     assert.deepEqual(result.remaining, ['bonus.test.js']);
     assert.deepEqual(result.failedFiles, []);
     assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'warn');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the diff base is pinned to the merge-base of the base ref and HEAD, so main moving on adds nothing', () => {
+  // backlog:3d560518f3e2: main moved on after the PR branched (10 files on
+  // a two-dot diff against the new tip for #769's 4). The merge-base keeps
+  // the PR's own files, and the sha is pinned before any diff runs.
+  const directory = mkdtempSync(join(tmpdir(), 'touched-base-'));
+  try {
+    const git = (/** @type {string[]} */ args) => spawnGit(args, { cwd: directory });
+    const write = (/** @type {string} */ path, /** @type {string} */ body) => {
+      const full = join(directory, path);
+      mkdirSync(join(full, '..'), { recursive: true });
+      writeFileSync(full, body);
+    };
+    git(['init', '-b', 'main']);
+    git(['config', 'user.email', 'touched@example.invalid']);
+    git(['config', 'user.name', 'touched']);
+    write('packages/app/src/a.js', 'export const a = 1;\n');
+    git(['add', '.']);
+    git(['commit', '-m', 'root']);
+    const fork = git(['rev-parse', 'HEAD']).stdout.trim();
+    git(['checkout', '-b', 'pr']);
+    write('packages/app/src/a.js', 'export const a = 2;\n');
+    write('tests/a.test.js', "import '../packages/app/src/a.js';\n");
+    git(['add', '.']);
+    git(['commit', '-m', 'pr']);
+    git(['checkout', 'main']);
+    for (const name of ['b', 'c', 'd']) {
+      write(`packages/app/src/${name}.js`, `export const ${name} = 1;\n`);
+      write(`tests/${name}.test.js`, `import '../packages/app/src/${name}.js';\n`);
+    }
+    git(['add', '.']);
+    git(['commit', '-m', 'main moves on']);
+    const tip = git(['rev-parse', 'HEAD']).stdout.trim();
+    git(['checkout', 'pr']);
+
+    const { baseSha, mergeBase } = resolveDiffBase(git, 'main');
+    assert.equal(baseSha, tip);
+    assert.equal(mergeBase, fork);
+    const { allChanged } = listChangedFiles(git, mergeBase);
+    assert.deepEqual([...allChanged].sort(), ['packages/app/src/a.js', 'tests/a.test.js']);
+    // The two-dot diff against the moved tip is what a wrong base looks like.
+    const twoDot = git(['diff', '--name-only', tip, 'HEAD']).stdout.trim().split('\n');
+    assert.equal(twoDot.length, 8);
+    // Moving the ref afterwards changes nothing already pinned.
+    git(['branch', '-f', 'main', 'pr']);
+    assert.deepEqual([...listChangedFiles(git, mergeBase).allChanged].sort(), ['packages/app/src/a.js', 'tests/a.test.js']);
+    assert.throws(() => resolveDiffBase(git, 'no-such-ref'), /base revision no-such-ref is not present/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('the fallback core says how many tests the PR changed and how many filled the budget', () => {
+  // #769: 1 changed test plus 25 nearest used to read "26 changed test file(s)".
+  const core = ['tests/own.test.js', ...Array.from({ length: 25 }, (_, k) => `tests/near-${k}.test.js`)];
+  assert.equal(
+    describeFallbackCore(core, ['packages/core/src/x.js', 'tests/own.test.js']),
+    '1 changed test file(s), 25 nearest selected',
+  );
+  assert.equal(describeFallbackCore([], ['docs/x.md']), '0 changed test file(s), 0 nearest selected');
+});
+
+test('an injected bound that fires at once settles timed out, without a TDZ error', async () => {
+  const dir = scratchTests({ 'never.test.js': "import test from 'node:test';\ntest('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n" });
+  try {
+    let cancelled = 0;
+    const result = await runTestShards(['never.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fire(); return () => { cancelled += 1; }; },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['never.test.js']);
+    assert.equal(cancelled, 1, 'the cancel of an already-fired bound is still called once');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an onJobDone observer that throws never stalls its part', async () => {
+  const dir = scratchTests({
+    'a.test.js': "import test from 'node:test';\ntest('a', () => {});\n",
+    'b.test.js': "import test from 'node:test';\ntest('b', () => {});\n",
+  });
+  try {
+    /** @type {string[]} */
+    const seen = [];
+    const result = await runTestShards(['a.test.js', 'b.test.js'], {
+      parts: 1,
+      timeoutSec: 3600,
+      cwd: dir,
+      onJobDone: (files) => { seen.push(...files); throw new Error('observer boom'); },
+    });
+    assert.equal(result.timedOut, false);
+    assert.equal(result.status, 0);
+    assert.deepEqual(result.remaining, []);
+    assert.deepEqual(seen.sort(), ['a.test.js', 'b.test.js']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the bonus queue has a ceiling of one file-budget past the core', () => {
+  // backlog:d9d3336cf5b0: an unbounded bonus ate the whole run bound before
+  // the warn could name anything. The ceiling defaults to the file budget
+  // (50, the way the existing planGate tests spell it).
+  const distances = new Map([
+    ['tests/a.test.js', 1],
+    ['tests/b.test.js', 2],
+    ['tests/c.test.js', 3],
+    ['tests/d.test.js', 4],
+  ]);
+  assert.deepEqual(bonusQueue(distances, [], 2), ['tests/a.test.js', 'tests/b.test.js']);
+  assert.deepEqual(
+    bonusQueue(distances, ['tests/a.test.js'], 2),
+    ['tests/b.test.js', 'tests/c.test.js'],
+  );
+  assert.deepEqual(bonusQueue(distances, [], 0), []);
+  const wide = new Map(
+    Array.from({ length: 60 }, (_, k) => [`tests/t-${String(k).padStart(2, '0')}.test.js`, k]),
+  );
+  const capped = bonusQueue(wide, []);
+  assert.equal(capped.length, 50);
+  assert.deepEqual(capped, [...wide.keys()].slice(0, 50));
+});
+
+test('a timeout with nothing remaining fails red instead of warning green', () => {
+  // backlog:d9d3336cf5b0: the bound fired with nothing left to name — the
+  // drain raced the bound or bookkeeping lost a file — so only a red step
+  // plus the full suite on `main` is a safe answer, never exit 0.
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], [], []), 'fail');
+  assert.equal(timeoutVerdict([], [], []), 'fail');
+  assert.equal(timeoutVerdict(['tests/mine.test.js'], [], ['tests/mine.test.js']), 'fail');
+});
+
+test('a bound that lands mid-flight leaves the killed files unfinished, never failed', async () => {
+  // The bonus would fail if it ran to completion, but the bound kills it
+  // first: a SIGKILLed child counts as unfinished (named in `remaining`),
+  // never as failed — with no failure and only bonus unrun, the verdict
+  // still warns. The bonus needs seconds it never gets, so the kill always
+  // lands first; no wall clock is asserted.
+  const dir = scratchTests({
+    'core.test.js': "import test from 'node:test';\ntest('core passes', () => {});\n",
+    'bonus.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bonus fails late', async () => { await new Promise((r) => setTimeout(r, 10000)); assert.equal(1, 2); });\n",
+  });
+  try {
+    /** @type {() => void} */
+    let fireBound = () => {};
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
+      parts: 2,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fireBound = fire; return () => {}; },
+      onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.remaining, ['bonus.test.js']);
+    assert.deepEqual(result.failedFiles, []);
+    assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'warn');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a bonus failure just before the bound is recorded, never warned green', async () => {
+  // backlog:d9d3336cf5b0: the suite failed just before the time limit — its
+  // close may arrive only after the bound fires, and settling on a snapshot
+  // would lose it (warn-green over a red suite). The core sleeps past any
+  // spawn lag, so by the time its completion fires the bound the bonus has
+  // certainly exited on its own: its genuine close records the failure
+  // whether it was delivered before the bound or arrives after it.
+  const dir = scratchTests({
+    'core.test.js': "import test from 'node:test';\ntest('core slow pass', async () => { await new Promise((r) => setTimeout(r, 1200)); });\n",
+    'bonus.test.js': "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('bonus fails fast', () => { assert.equal(1, 2); });\n",
+  });
+  try {
+    /** @type {() => void} */
+    let fireBound = () => {};
+    const result = await runTestShards(['core.test.js', 'bonus.test.js'], {
+      parts: 2,
+      timeoutSec: 3600,
+      cwd: dir,
+      startTimer: (fire) => { fireBound = fire; return () => {}; },
+      onJobDone: (files) => { if (files.includes('core.test.js')) fireBound(); },
+    });
+    assert.equal(result.timedOut, true);
+    assert.deepEqual(result.failedFiles, ['bonus.test.js']);
+    assert.equal(timeoutVerdict(['core.test.js'], result.remaining, result.failedFiles), 'fail');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// main() end to end (backlog:d9d3336cf5b0): the wiring none of the unit
+// tests above covers — the bonus joins after the guards, the queue reaches
+// runTestShards, the warn branch exits 0, and --list prints the queue —
+// driven against a throwaway repository with real git, because a stubbed
+// git there would prove nothing.
+const touchedScript = fileURLToPath(new URL('../scripts/ci-touched-tests.js', import.meta.url));
+
+const E2E_STUB_PASS = "import test from 'node:test';\ntest('stub passes', () => {});\n";
+const E2E_PASS_BODY = "test('a passes', () => {});\n";
+const E2E_HANG_BODY = "test('never ends', async () => { setInterval(() => {}, 1000); await new Promise(() => {}); });\n";
+
+/**
+ * A throwaway repository shaped like the gate's wiring needs: every
+ * always-run and conditional list is present (as one-line passing stubs, so
+ * the missing-list checks pass and the guards join), the characterization
+ * baselines digest nothing, and the diff touches a source file one test
+ * reaches plus one changed test of its own.
+ */
+function scratchGateRepo({ bonusBody = E2E_PASS_BODY } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'touched-e2e-'));
+  const git = (/** @type {string[]} */ args) => spawnGit(args, { cwd: dir });
+  const write = (/** @type {string} */ rel, /** @type {string} */ body) => {
+    const full = join(dir, rel);
+    mkdirSync(join(full, '..'), { recursive: true });
+    writeFileSync(full, body);
+  };
+  git(['init', '-b', 'main', '--quiet']);
+  git(['config', 'user.email', 'touched-e2e@example.invalid']);
+  git(['config', 'user.name', 'touched-e2e']);
+  for (
+    const stub of [
+      ...REPO_WIDE_GUARDS,
+      ...KERNEL_BOUNDARY_TESTS,
+      ...PACKAGE_DECLARATION_FREEZE_TESTS,
+      ...CHARACTERIZATION_SUITES.map((suite) => suite.test),
+    ]
+  ) {
+    write(stub, E2E_STUB_PASS);
+  }
+  for (const { baseline } of CHARACTERIZATION_SUITES) {
+    write(baseline, '{"source": {}}\n');
+  }
+  write('src/widget.js', 'export const widget = 1;\n');
+  write(
+    'tests/own.test.js',
+    "import test from 'node:test';\nimport '../src/widget.js';\ntest('own passes', () => {});\n",
+  );
+  write('tests/a.test.js', `import test from 'node:test';\nimport '../src/widget.js';\n${bonusBody}`);
+  git(['add', '-A']);
+  git(['commit', '--quiet', '-m', 'base']);
+  const base = git(['rev-parse', 'HEAD']).stdout.trim();
+  write('src/widget.js', 'export const widget = 2;\n');
+  write(
+    'tests/own.test.js',
+    "import test from 'node:test';\nimport '../src/widget.js';\ntest('own passes v2', () => {});\n",
+  );
+  git(['add', '-A']);
+  git(['commit', '--quiet', '-m', 'pr']);
+  return { dir, base };
+}
+
+test('main() end to end: --list prints the queue, bonus after the guards', () => {
+  // --max-selected 1 oversizes the 2-file selection: the fallback core is
+  // the PR's own test plus the guards, the reaching test queues as bonus.
+  const { dir, base } = scratchGateRepo();
+  try {
+    const run = spawnSync(
+      process.execPath,
+      [touchedScript, '--base', base, '--list', '--max-selected', '1'],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(run.status, 0);
+    const lines = String(run.stdout).trim().split('\n').filter((line) => line.endsWith('.test.js'));
+    const coreSize = 1 + REPO_WIDE_GUARDS.length;
+    assert.equal(lines.length, coreSize + 1);
+    assert.ok(lines.includes('tests/own.test.js'));
+    for (const guard of REPO_WIDE_GUARDS) assert.ok(lines.includes(guard), `${guard} listed`);
+    assert.equal(lines[lines.length - 1], 'tests/a.test.js');
+    assert.match(
+      String(run.stderr),
+      new RegExp(`queuing 1 bonus test\\(s\\) behind the ${coreSize} core file\\(s\\)`),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('main() end to end: the queue runs, bonus included, exit 0', () => {
+  // Same oversized selection, really run: the core (own test plus guards)
+  // plus the 1-file bonus all pass, so the step exits 0 having run the bonus
+  // (not only listed it).
+  const { dir, base } = scratchGateRepo();
+  try {
+    const run = spawnSync(
+      process.execPath,
+      [touchedScript, '--base', base, '--max-selected', '1', '--timeout-sec', '60'],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(run.status, 0);
+    const coreSize = 1 + REPO_WIDE_GUARDS.length;
+    assert.match(
+      String(run.stdout),
+      new RegExp(`running ${coreSize + 1} test file\\(s\\) \\(${coreSize} core plus 1 bonus`),
+    );
+    assert.match(String(run.stdout), /ran tests\/a\.test\.js in/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('main() end to end: a timeout past a green core warns naming the bonus, exit 0', () => {
+  // The bonus never ends while the core is one line each: the 60 s run
+  // bound — the smallest the gate allows (runBudgetSec never drops below a
+  // minute, so even one slow file fits) — expires with only bonus unrun, and
+  // the warn branch exits 0 naming it. Slow on purpose (~1 minute).
+  const { dir, base } = scratchGateRepo({ bonusBody: E2E_HANG_BODY });
+  try {
+    const run = spawnSync(
+      process.execPath,
+      [touchedScript, '--base', base, '--max-selected', '1', '--timeout-sec', '60'],
+      { cwd: dir, encoding: 'utf8' },
+    );
+    assert.equal(run.status, 0);
+    assert.match(String(run.stdout), /core file\(s\) finished green/);
+    assert.match(String(run.stdout), /tests\/a\.test\.js/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

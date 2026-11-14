@@ -22,7 +22,8 @@ import { COMPOSER_TIMELINE_BODY_MAX, composerTimelineRefusal } from '../../../pa
 import { refuseWhatsAppFreeText } from '../../../packages/channels/src/composer-window.js';
 import { gmailThreadIdForSubject } from '../../../packages/channels/src/gmail.js';
 import { SPACE_PACKAGE_CATALOG } from '../../../packages/space-permissions/src/composition.js';
-import { AGENT_CATALOG, catalogAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { AGENT_CATALOG, catalogAgentSourceKey, customAgentSourceKey } from '../../../packages/agents/src/catalog.js';
+import { SQUAD_TEMPLATES, checkCallerKey, squadSourceKey } from '../../../packages/agents/src/squads.js';
 import { isNoCompany } from '../../../packages/customer-data/src/sender.js';
 import { compileReport, runReport } from '../../../packages/analytics/src/compiler.js';
 import {
@@ -510,6 +511,25 @@ export function buildRouter(app) {
     const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
     return await app.parseBookingPhrase({ ...stripServerControlledKeys(input) }, actor);
   });
+  router.add('POST', '/api/appointments/reschedule', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.rescheduleAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment reschedule');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.rescheduleAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  // The lifecycle's own cancellation with a reason, idempotent on a row
+  // already cancelled; the cancelled row stays in the customer history.
+  router.add('POST', '/api/appointments/cancel', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.cancelAppointmentBooking !== 'function') {
+      throw new NotFoundError('Operation', 'appointment cancellation');
+    }
+    const input = body && typeof body === 'object' && !Array.isArray(body) ? /** @type {any} */ (body) : {};
+    return await app.cancelAppointmentBooking({ ...stripServerControlledKeys(input) }, actor);
+  });
 
   // Voce backlog:1d0986a01a7b: the Sequenze screen's «Nuova sequenza» panel
   // and the «Crea con l'AI» confirmation create through the declared
@@ -534,9 +554,10 @@ export function buildRouter(app) {
   // - catalog: the checked-in ready-made agents, each with the agent source
   //   key it takes in the asked space (so the screen can say «già nel
   //   team» without restating the key rule);
-  // - create: adds ONE catalogue agent through create-agent — only
-  //   catalogue slugs, never a free-form agent; a second add replays as
-  //   `duplicate: true`;
+  // - create: adds ONE catalogue agent through create-agent (a `slug`), or
+  //   — backlog:1f7cb20d3c30 — one hand-written agent (no slug: name, role,
+  //   instructions, optional cap, keyed by the caller `key`); a second add
+  //   of the same slug or key replays as `duplicate: true`;
   // - assign: an instruction to an agent («@Riaggancio …») through
   //   create-assignment. An explicit `plan` is the user's own choice (the
   //   screen offers «una volta, adesso» after AGENT_PHRASE_UNCLEAR), never
@@ -568,6 +589,24 @@ export function buildRouter(app) {
     }
     const input = stripServerControlledKeys(recordInput(body));
     const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
+    // backlog:1f7cb20d3c30 — «Nuovo agente»: without a slug the body is a
+    // hand-written agent (name, role, instructions, optional monthly cap).
+    // The source key is made from the caller key by the package rule, never
+    // taken from the body, and never shaped like a catalogue key.
+    if (input.slug === undefined || input.slug === null) {
+      if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+      const sourceKey = customAgentSourceKey(spaceId, input.key);
+      if (sourceKey === null) throw new ValidationError('key must be a caller key of 8 to 80 safe characters', { field: 'key' });
+      return respond(201, await app.createTeammateAgent({
+        spaceId,
+        sourceKey,
+        name: input.name,
+        role: input.role,
+        instructions: input.instructions,
+        ...(input.spendingCapCents === undefined || input.spendingCapCents === null ? {} : { spendingCapCents: input.spendingCapCents }),
+        actor,
+      }));
+    }
     const slug = typeof input.slug === 'string' ? input.slug.trim().toLowerCase() : '';
     const entry = AGENT_CATALOG.find((candidate) => candidate.slug === slug);
     // The refusal echoes at most a short slug, never the raw input (review #661 P3).
@@ -589,6 +628,60 @@ export function buildRouter(app) {
     }
     const input = recordInput(body);
     return respond(201, await app.createTeammateAssignment({ ...stripServerControlledKeys(input), actor }));
+  });
+
+  // Voce backlog:0d2d8f2e — the «Squadre» screen. Three enumerated adapters
+  // over the declared squad operations, the same shape as the agents routes
+  // above: the kernel owns the path and gates the role, the package owns
+  // the rows, and without the agents package composed each answers an
+  // honest 404 naming the missing operation.
+  // - catalog: the checked-in squad templates (the five ready-made teams);
+  // - create: one squad from a template slug, from a free-text brief matched
+  //   to a template, or from an explicit plan. The source key is made from
+  //   the caller key by the package rule, never taken from the body;
+  // - overview: backlog A, routines, backlog B and the advisor metric of
+  //   one squad, counted from production rows. Approving a proposed run of
+  //   a squad reuses the existing approve/reject/revise routes of the
+  //   deployment that wires the applyAction seam.
+  router.add('GET', '/api/squads/catalog', async ({ identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.createTeammateSquad !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    return { squads: SQUAD_TEMPLATES };
+  });
+  router.add('POST', '/api/squads/create', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.createTeammateSquad !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    const input = stripServerControlledKeys(recordInput(body));
+    const spaceId = typeof input.spaceId === 'string' ? input.spaceId.trim() : '';
+    if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+    // Same caller-key rule as «Nuovo agente» (review #836 P3): the key is
+    // safe, never the name, and a retry with the same key replays.
+    const key = checkCallerKey(input.key);
+    return respond(201, await app.createTeammateSquad({
+      spaceId,
+      sourceKey: squadSourceKey(spaceId, key),
+      ...(input.templateSlug === undefined ? {} : { templateSlug: input.templateSlug }),
+      ...(input.brief === undefined ? {} : { brief: input.brief }),
+      ...(input.plan === undefined ? {} : { plan: input.plan }),
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.spendingCapCents === undefined ? {} : { spendingCapCents: input.spendingCapCents }),
+      actor,
+    }));
+  });
+  router.add('GET', '/api/squads/overview', async ({ query, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.read');
+    if (typeof app.readTeammateSquadOverview !== 'function') {
+      throw new NotFoundError('Operation', 'teammate squads');
+    }
+    const spaceId = typeof query.spaceId === 'string' ? query.spaceId.trim() : '';
+    const squad = typeof query.squad === 'string' ? query.squad.trim() : '';
+    if (spaceId === '') throw new ValidationError('spaceId is required', { field: 'spaceId' });
+    if (squad === '') throw new ValidationError('squad is required', { field: 'squad' });
+    return await app.readTeammateSquadOverview({ spaceId, squadSourceKey: squad });
   });
 
   // Signature provider events (ADR-017). A dedicated route, NOT a record
@@ -862,6 +955,38 @@ export function buildRouter(app) {
     }
     return respond(201, await app.recordSubjectNote({ ...stripServerControlledKeys(input), actor }));
   });
+
+  // Scheda cliente note «Modifica» and «Elimina» (backlog:82235e46e3e9):
+  // the same enumerated-adapter shape as the notes route above. Neither
+  // rewrites a row: the work operations append a correction or a withdrawal
+  // naming the original note, so the timeline shows the latest wording or
+  // hides the note while every version stays on record. Fixed paths with
+  // the note in the body, so a gateway allowlist names them one by one.
+  for (const [path, method, label] of [
+    ['/api/customer-hub/notes/revise', 'reviseSubjectNote', 'subject note revision'],
+    ['/api/customer-hub/notes/withdraw', 'withdrawSubjectNote', 'subject note withdrawal'],
+  ]) {
+    router.add('POST', path, async ({ body, actor, identity, organizationId }) => {
+      const decision = await gate(app, identity, organizationId, 'records.write');
+      if (typeof app[method] !== 'function') {
+        throw new NotFoundError('Operation', label);
+      }
+      const input = recordInput(body);
+      // The role is the authorization decision's, never the caller's: only
+      // the note's writer or the space owner may change a note.
+      delete input.actorRole;
+      if (input.resource === 'contact') {
+        await app.services.contacts.get(String(input.id ?? ''));
+      } else if (input.resource === 'company') {
+        await app.services.companies.get(String(input.id ?? ''));
+      } else {
+        throw new ValidationError(`a ${label} needs resource contact or company`, { field: 'resource' });
+      }
+      const actorRole = typeof decision?.role === 'string' ? decision.role : null;
+      return respond(method === 'withdrawSubjectNote' ? 200 : 201,
+        await app[method]({ ...stripServerControlledKeys(input), actor, actorRole }));
+    });
+  }
 
   // Scheda cliente "Aggiungi telefono" (voce 105563eea902): the operator
   // holds one callable number beside the customer, so the scheda can dial
@@ -1579,6 +1704,9 @@ export function buildRouter(app) {
         type: query.type,
         companyId: query.companyId,
         limit: parseLimit(query.limit),
+        // backlog:67a3116f4f65: the Pipeline board asks `order=board`
+        // (position, then newest first); every other reader keeps newest first.
+        order: query.order,
       }),
     };
   });
@@ -1630,7 +1758,9 @@ export function buildRouter(app) {
   // Reporting dashboard (BO-F5-02): the pipeline half of the "09 Reporting"
   // screen, read-only. Every number comes from the declared analytics
   // registry — compileReport/runReport over pipeline_value_by_stage and
-  // pipeline_close_schedule — plus the operator's own obiettivo row from the
+  // pipeline_close_schedule, or over their per-pipeline twins when the
+  // opportunity pipeline is composed (backlog 099c41c32355) — plus the
+  // operator's own obiettivo row from the
   // reporting bundle when composed. No storage query of its own, no write
   // surface: there is deliberately no POST under /api/reporting/*, so the
   // "Cosa noto" proposal the model carries can never reassign by itself.
@@ -1643,11 +1773,22 @@ export function buildRouter(app) {
   // storage through this route or through the facade.
   router.add('GET', '/api/reporting/dashboard', async ({ query, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
+    // Backlog 099c41c32355 (Reporting like the Pipeline board): the numbers
+    // read the composed opportunity pipeline — the same registry the board's
+    // `/api/schema` serves — so phases, open count and total match the board
+    // instead of the legacy core `stage` column (which a move-stage never
+    // touches). One pipeline per module, so the resolution is deterministic;
+    // with no composed pipeline the legacy grouping still answers.
+    const opportunityPipeline = typeof app.pipelines?.forModule === 'function'
+      ? app.pipelines.forModule('opportunity')
+      : null;
     const dashboardQuery = parseDashboardQuery({
       period: query.period,
       owner: query.owner,
       currency: query.currency,
+      pipeline: opportunityPipeline?.name ?? null,
     });
+    const pipelines = opportunityPipeline ? [opportunityPipeline] : [];
     const specs = dashboardSpecs(dashboardQuery);
     const executeReport = typeof app.runReportFromSpec === 'function'
       ? (spec) => app.runReportFromSpec(spec)
@@ -1673,7 +1814,7 @@ export function buildRouter(app) {
       const counted = await app.countCustomerChannelOrigins({});
       if (Array.isArray(counted?.origins)) channelOrigins = counted.origins;
     }
-    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins);
+    return buildDashboardModel({ byStage, schedule }, bundleRows, dashboardQuery, undefined, channelOrigins, pipelines);
   });
 
   router.add('GET', '/api/approvals', async ({ query, identity, organizationId }) => {
@@ -1784,7 +1925,7 @@ export function buildRouter(app) {
   // ---- Production Spine (ADR-038) --------------------------------------
   // Bounded on purpose: who am I, which tenant, who else is a member, and what
   // the roles mean. No token, no secret, no password, no invitation flow.
-  router.add('GET', '/api/spine/context', async ({ identity, organizationId }) => {
+  router.add('GET', '/api/spine/context', async ({ identity, organizationId, actor }) => {
     if (!app.spine) {
       throw new NotFoundError('Operation', 'production spine');
     }
@@ -1795,6 +1936,12 @@ export function buildRouter(app) {
     return {
       ...app.spine.describe(),
       identity: app.spine.identityEvidence(identity),
+      // backlog:cb348c9fcaeb: the actor this host signs the caller's writes
+      // with (`actorId` on a note), so the scheda offers «Modifica» and
+      // «Elimina» on the caller's own notes only. A host whose writes carry
+      // another id than the identity subject (a space binding) answers
+      // that id here.
+      actor: actor && typeof actor.id === 'string' ? { type: actor.type, id: actor.id } : null,
       organization,
       membership,
       permissions: membership ? membership.permissions : [],

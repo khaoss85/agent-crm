@@ -52,7 +52,7 @@ const PERIOD_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
 export const DASHBOARD_DEFAULT_CURRENCY = 'EUR';
-/** Monthly chart depth: the selected period plus the five before it. */
+/** Monthly chart depth: the selected period plus the five after it — expected closings only, never the past (backlog:b3d88f6e38ef). */
 export const DASHBOARD_MONTHS = 6;
 /** Weekly bars on the channel card: the four weeks opening the period month. */
 export const DASHBOARD_CHANNEL_WEEKS = 4;
@@ -92,12 +92,25 @@ export function isSupportedCurrency(currency) {
  * Strict dashboard query parsing. Everything refused is a 400, never a
  * silent default — except the period, which defaults to the current UTC
  * month because a bare GET must still answer something honest.
+ *
+ * `pipeline` names the composed pipeline the numbers read (backlog
+ * 099c41c32355): the HTTP route resolves it server-side from the registry
+ * (`pipelines.forModule('opportunity')`), never from caller input — one
+ * pipeline per module, so the resolution is deterministic. Callers that
+ * build the query object by hand (tests, the route) set the registered
+ * name here; anything else is a 400.
  * @param {unknown} input
  */
 export function parseDashboardQuery(input = {}) {
   const source = (input !== null && typeof input === 'object' && !Array.isArray(input))
     ? /** @type {Record<string, unknown>} */ (input)
     : {};
+  let pipeline = source.pipeline;
+  if (pipeline === undefined || pipeline === null || pipeline === '') {
+    pipeline = null;
+  } else if (typeof pipeline !== 'string' || !/^[a-z][a-z0-9-]*$/.test(pipeline) || pipeline.length > 200) {
+    throw new ValidationError('dashboard query: pipeline must be a composed pipeline name', { field: 'pipeline' });
+  }
   let period = source.period;
   if (period === undefined || period === null || period === '') {
     period = new Date().toISOString().slice(0, 7);
@@ -122,7 +135,7 @@ export function parseDashboardQuery(input = {}) {
   if (typeof currency !== 'string' || !CURRENCY_RE.test(currency) || !isSupportedCurrency(currency)) {
     throw new ValidationError('dashboard query: currency must be a supported ISO 4217 code', { field: 'currency' });
   }
-  return Object.freeze({ period, owner, currency });
+  return Object.freeze({ period, owner, currency, pipeline });
 }
 
 /**
@@ -146,10 +159,30 @@ export function monthOf(value) {
  * reach storage (backlog:0e3e67eb review: an unvalidated compiled entry
  * forwarded verbatim would bypass the registry allowlist for every future
  * in-process caller of the facade).
- * @param {{period: string, owner: string | null, currency: string}} query
+ * @param {{period: string, owner: string | null, currency: string, pipeline?: string | null}} query
  */
 export function dashboardSpecs(query) {
   const filters = query.owner === null ? {} : { 'opportunity.owner': query.owner };
+  // Backlog 099c41c32355: with a composed pipeline the dashboard reads the
+  // same placement the Pipeline board shows — per-pipeline stages, scoped to
+  // that pipeline's key — instead of the legacy core `stage` column. Without
+  // one the legacy specs below still answer, so spaces with no pipeline keep
+  // the numbers they have today.
+  if (typeof query.pipeline === 'string' && query.pipeline !== '') {
+    const scoped = Object.freeze({ 'opportunity.pipelineKey': query.pipeline, ...filters });
+    return Object.freeze({
+      byStage: Object.freeze({
+        metric: 'pipeline_value_by_pipeline_stage',
+        dimensions: Object.freeze(['opportunity.pipelineStage']),
+        filters: scoped,
+      }),
+      schedule: Object.freeze({
+        metric: 'pipeline_close_schedule_by_pipeline',
+        dimensions: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate']),
+        filters: scoped,
+      }),
+    });
+  }
   return Object.freeze({
     byStage: Object.freeze({
       metric: 'pipeline_value_by_stage',
@@ -169,7 +202,7 @@ export function dashboardSpecs(query) {
  * is a declared `owner` filter on both metrics; the period is NOT a storage
  * filter (the registry groups exact dates) — the builder buckets the exact
  * groups into months below, inside the fetched bound.
- * @param {{period: string, owner: string | null, currency: string}} query
+ * @param {{period: string, owner: string | null, currency: string, pipeline?: string | null}} query
  */
 export function dashboardCompilations(query) {
   const specs = dashboardSpecs(query);
@@ -177,6 +210,15 @@ export function dashboardCompilations(query) {
     byStage: compileReport(specs.byStage),
     schedule: compileReport(specs.schedule),
   });
+}
+
+/**
+ * A count with its Italian noun: only exactly one takes the singular
+ * («1 persa», «2 perse»), like admin-labels plural() on the client.
+ * @param {number} count @param {string} one @param {string} many
+ */
+function plural(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
 }
 
 /** @param {number} minor @param {string} currency */
@@ -188,7 +230,10 @@ export function formatMinor(minor, currency) {
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
   }
   try {
-    return new Intl.NumberFormat('it-IT', { style: 'currency', currency }).format(minor / 100);
+    // Thousands always grouped («1.080,00 €», never «1080,00 €»): it-IT's
+    // default minimum-grouping leaves four-digit amounts bare, which is how
+    // the Reporting cards read (backlog:9236684c96a7, review #761).
+    return new Intl.NumberFormat('it-IT', { style: 'currency', currency, useGrouping: 'always' }).format(minor / 100);
   } catch {
     // A runtime that cannot format an enumerated code still refuses as a 400.
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
@@ -325,15 +370,64 @@ function isOpenStage(value) {
 
 /**
  * Build the frozen dashboard model from executed registry reports.
+ *
+ * Backlog 099c41c32355 (Reporting like the Pipeline board): when `query`
+ * names a pipeline composed in `pipelines` (same shape as `/api/schema`
+ * `pipelines`, the board's own source), the funnel, the per-phase value and
+ * every open/won/lost sum read the per-pipeline placement — same phases,
+ * same open count, same total as the board. A move-stage touches only the
+ * placement, so grouping by the legacy core `stage` column would pile every
+ * offer under one label while the board moves on. Without a pipeline the
+ * legacy grouping below still answers, byte for byte as before.
  * @param {{byStage: any, schedule: any}} results runReport results
  * @param {unknown} bundleRows reporting-bundle rows for the obiettivo lookup
- * @param {{period: string, owner: string | null, currency: string}} query
+ * @param {{period: string, owner: string | null, currency: string, pipeline?: string | null}} query
  * @param {string} [nowIso] generation stamp (injectable for tests)
  * @param {Array<{system: string, week: string | null, count: number}>} [channelOrigins] channel aggregates (slice 2)
+ * @param {Array<{name?: unknown, stages?: unknown}>} [pipelines] composed pipeline definitions (`/api/schema` shape)
  */
-export function buildDashboardModel(results, bundleRows, query, nowIso, channelOrigins = []) {
-  const byStageRows = Array.isArray(results?.byStage?.rows) ? [...results.byStage.rows] : [];
-  const scheduleRows = Array.isArray(results?.schedule?.rows) ? [...results.schedule.rows] : [];
+export function buildDashboardModel(results, bundleRows, query, nowIso, channelOrigins = [], pipelines = []) {
+  const pipeline = typeof query.pipeline === 'string' && query.pipeline !== ''
+    ? (Array.isArray(pipelines) ? pipelines : []).find((entry) =>
+      entry !== null && typeof entry === 'object' && entry.name === query.pipeline && Array.isArray(entry.stages),
+    ) ?? null
+    : null;
+  // Pipeline stages in board order; off-definition rows (drift the board
+  // shows aside, never in a column or a total) stay out of every sum here
+  // too, so the totals match the board instead of exceeding it.
+  const ordered = pipeline
+    ? [...pipeline.stages]
+      .filter((stage) => stage !== null && typeof stage === 'object' && typeof stage.key === 'string')
+      .sort((a, b) => a.order - b.order)
+    : null;
+  const typeOf = ordered ? new Map(ordered.map((stage) => [stage.key, stage.type])) : null;
+  /** Same open rule as the board's working columns: open and renewal hold value. */
+  const isOpenValue = (/** @type {unknown} */ value) => pipeline
+    ? typeOf.get(value) === 'open' || typeOf.get(value) === 'renewal'
+    : isOpenStage(value);
+  /** Same close rule as the board: won and paid close at face value. */
+  const isWonValue = (/** @type {unknown} */ value) => pipeline
+    ? typeOf.get(value) === 'won' || typeOf.get(value) === 'paid'
+    : value === WON_STAGE;
+  const isLostValue = (/** @type {unknown} */ value) => pipeline
+    ? typeOf.get(value) === 'lost'
+    : value === LOST_STAGE;
+  const nameOf = (/** @type {unknown} */ value) => {
+    if (!pipeline) return stageLabel(value);
+    const stage = ordered.find((entry) => entry?.key === value);
+    const label = stage && typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
+    return label ?? value;
+  };
+  const onBoard = (/** @type {Record<string, any>} */ row) => {
+    if (!pipeline) return row;
+    const stage = row['opportunity.pipelineStage'];
+    if (typeof stage !== 'string' || !typeOf.has(stage)) return null;
+    return { ...row, 'opportunity.stage': stage };
+  };
+  const byStageRows = (Array.isArray(results?.byStage?.rows) ? results.byStage.rows : [])
+    .map(onBoard).filter((row) => row !== null);
+  const scheduleRows = (Array.isArray(results?.schedule?.rows) ? results.schedule.rows : [])
+    .map(onBoard).filter((row) => row !== null);
   const inCurrency = (/** @type {Record<string, any>} */ row) => row['opportunity.currency'] === query.currency;
   const stageRows = byStageRows.filter(inCurrency);
   const dated = scheduleRows.filter(inCurrency);
@@ -343,17 +437,17 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       .filter((code) => typeof code === 'string' && code !== query.currency),
   )].sort();
 
-  const open = sumRows(stageRows, (row) => isOpenStage(row['opportunity.stage']));
-  const won = sumRows(stageRows, (row) => row['opportunity.stage'] === WON_STAGE);
-  const lost = sumRows(stageRows, (row) => row['opportunity.stage'] === LOST_STAGE);
+  const open = sumRows(stageRows, (row) => isOpenValue(row['opportunity.stage']));
+  const won = sumRows(stageRows, (row) => isWonValue(row['opportunity.stage']));
+  const lost = sumRows(stageRows, (row) => isLostValue(row['opportunity.stage']));
   const closed = won.count + lost.count;
   const winRate = closed === 0 ? null : won.count / closed;
 
   const inPeriod = (/** @type {Record<string, any>} */ row) =>
     monthOf(row['opportunity.expectedCloseDate']) === query.period;
-  const isOpen = (/** @type {Record<string, any>} */ row) => isOpenStage(row['opportunity.stage']);
+  const isOpen = (/** @type {Record<string, any>} */ row) => isOpenValue(row['opportunity.stage']);
   const openInPeriod = sumRows(dated, (row) => isOpen(row) && inPeriod(row));
-  const wonInPeriod = sumRows(dated, (row) => row['opportunity.stage'] === WON_STAGE && inPeriod(row));
+  const wonInPeriod = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && inPeriod(row));
   const staleOpen = sumRows(dated, (row) => {
     if (!isOpen(row)) return false;
     const month = monthOf(row['opportunity.expectedCloseDate']);
@@ -366,7 +460,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'open-value', label: 'Valore pipeline aperto',
       display: formatMinor(open.minor, query.currency),
-      sub: `${open.count} preventivi aperti`,
+      sub: plural(open.count, 'preventivo aperto', 'preventivi aperti'),
     }),
     Object.freeze({
       id: 'open-count', label: 'Preventivi aperti',
@@ -376,37 +470,48 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     Object.freeze({
       id: 'won-period', label: `Vinte in ${periodLabel}`,
       display: formatMinor(wonInPeriod.minor, query.currency),
-      sub: `${wonInPeriod.count} chiusure`,
+      sub: plural(wonInPeriod.count, 'chiusura', 'chiusure'),
     }),
     Object.freeze({
       id: 'win-rate', label: 'Tasso di chiusura',
       display: winRate === null ? 'n.d.' : `${Math.round(winRate * 100)}%`,
-      sub: `${won.count} vinte, ${lost.count} perse`,
+      sub: `${plural(won.count, 'vinta', 'vinte')}, ${plural(lost.count, 'persa', 'perse')}`,
     }),
     Object.freeze({
       id: 'closing-period', label: `In chiusura in ${periodLabel}`,
       display: formatMinor(openInPeriod.minor, query.currency),
       sub: undatedOpen.count > 0
-        ? `${openInPeriod.count} preventivi, ${undatedOpen.count} senza data attesa`
-        : `${openInPeriod.count} preventivi`,
+        ? `${plural(openInPeriod.count, 'preventivo', 'preventivi')}, ${undatedOpen.count} senza data attesa`
+        : plural(openInPeriod.count, 'preventivo', 'preventivi'),
     }),
   ]);
 
-  const funnel = Object.freeze([...FUNNEL_STAGES].map((stage) => {
+  // Same phases as the board: working stages in board order, then the
+  // closing stages — never the fixed legacy list when a pipeline is set.
+  const openKeys = pipeline
+    ? ordered.filter((stage) => stage.type === 'open' || stage.type === 'renewal').map((stage) => stage.key)
+    : [...OPEN_STAGES];
+  const wonKeys = pipeline
+    ? ordered.filter((stage) => stage.type === 'won' || stage.type === 'paid').map((stage) => stage.key)
+    : [WON_STAGE];
+  const funnel = Object.freeze([...openKeys, ...wonKeys].map((stage) => {
     const found = sumRows(stageRows, (row) => row['opportunity.stage'] === stage);
-    return Object.freeze({ stage, label: stageLabel(stage), count: found.count, minor: found.minor });
+    return Object.freeze({ stage, label: nameOf(stage), count: found.count, minor: found.minor });
   }));
 
-  const valueByStage = Object.freeze([...OPEN_STAGES].map((stage) => {
+  const valueByStage = Object.freeze([...openKeys].map((stage) => {
     const found = sumRows(stageRows, (row) => row['opportunity.stage'] === stage);
-    return Object.freeze({ stage, label: stageLabel(stage), count: found.count, minor: found.minor });
+    return Object.freeze({ stage, label: nameOf(stage), count: found.count, minor: found.minor });
   }));
 
+  // «Chiusure attese per mese» (backlog:b3d88f6e38ef): expected closings run
+  // from the selected period onward — a past month is never "atteso", it is
+  // either won or stale (stale stays visible in the KPIs and insights).
   const monthly = Object.freeze(
-    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index - DASHBOARD_MONTHS + 1))
+    Array.from({ length: DASHBOARD_MONTHS }, (_, index) => shiftMonth(query.period, index))
       .map((month) => {
         const expected = sumRows(dated, (row) => isOpen(row) && monthOf(row['opportunity.expectedCloseDate']) === month);
-        const closedRows = sumRows(dated, (row) => row['opportunity.stage'] === WON_STAGE && monthOf(row['opportunity.expectedCloseDate']) === month);
+        const closedRows = sumRows(dated, (row) => isWonValue(row['opportunity.stage']) && monthOf(row['opportunity.expectedCloseDate']) === month);
         return Object.freeze({
           month, label: formatMonth(month),
           openCount: expected.count, expectedMinor: expected.minor,
@@ -443,12 +548,12 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
       if (expected === null || expected < query.period) {
         entry.staleCount += row.count;
       }
-    } else if (row['opportunity.stage'] === WON_STAGE) {
+    } else if (isWonValue(row['opportunity.stage'])) {
       if (expectedInPeriod) {
         entry.wonCount += row.count;
         entry.wonMinor += row.totalMinor;
       }
-    } else if (row['opportunity.stage'] === LOST_STAGE) {
+    } else if (isLostValue(row['opportunity.stage'])) {
       if (expectedInPeriod) {
         entry.lostCount += row.count;
       }
@@ -495,7 +600,7 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
     // rates are accumulated for the queried month, so the baseline they are
     // measured against is the month's own close rate — never a lifetime rate
     // that would flag an owner who merely matches the period.
-    const lostInPeriod = sumRows(dated, (row) => row['opportunity.stage'] === LOST_STAGE && inPeriod(row));
+    const lostInPeriod = sumRows(dated, (row) => isLostValue(row['opportunity.stage']) && inPeriod(row));
     const periodDecided = wonInPeriod.count + lostInPeriod.count;
     const periodOverall = periodDecided === 0 ? null : wonInPeriod.count / periodDecided;
     const candidate = [...team]

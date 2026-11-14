@@ -17,15 +17,19 @@
  * that never reads the Meta surface shows no Meta group at all, and a
  * space whose control plane has no Meta app shows the rows without an
  * action, never a Collega that cannot complete.
- * Writes: none here. «Collega» is the pilot's own GET ../profile/collega
- * (the server turns the click into the Google consent), «Scollega» its
- * same-origin POST ../profile/scollega: both already exist and both come
- * back here. Without /api/profile the page still shows the session person
- * and says, in Italian, that the connections cannot be read now.
+ * Writes: PATCH /api/profile { name } through the submission controller
+ * (backlog:1cfc68175ab7: the profile name is editable in place). «Collega»
+ * is the pilot's own GET ../profile/collega (the server turns the click
+ * into the Google consent), «Scollega» its same-origin POST
+ * ../profile/scollega: both already exist and both come back here. Without
+ * /api/profile the page still shows the session person and says, in
+ * Italian, that the connections cannot be read now.
  */
 
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { CHANNEL_STATE_LABELS } from './admin-channels-count.js';
+import { el, uiBusy, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { sessionRoleLabel } from './admin-session.js';
+import { bindAdminMutations } from './admin-submission.js';
 
 export const PROFILO_ROUTE = '#/profilo';
 
@@ -50,9 +54,11 @@ export const META_CONNECTORS = Object.freeze([
 /** Google connectors only: a Meta account is a number or a page, not the person. */
 const GOOGLE_IDS = new Set(PROFILO_CONNECTORS.map((entry) => entry.connector));
 
+// Connected and not connected read the one shared channel words
+// (backlog:e381c48581fa), the same as Connettori and Personalizzazione.
 const STATUS_LABELS = Object.freeze({
-  connected: { text: 'Collegato', tone: 'ok' },
-  disconnected: { text: 'Da collegare', tone: 'muted' },
+  connected: CHANNEL_STATE_LABELS.collegato,
+  disconnected: CHANNEL_STATE_LABELS['da-collegare'],
   revoked: { text: 'Scollegato', tone: 'muted' },
   error: { text: 'Da ricollegare', tone: 'warn' },
 });
@@ -264,8 +270,31 @@ export function metaConnectionsCard({ doc, ready }) {
  *   member?: () => ({ name?: string | null, email?: string | null, role?: string | null } | null),
  *   log?: (...args: any[]) => void }} deps
  */
-export function createProfiloView({ doc, mount, client, member = () => null, log = () => {} }) {
+export const PROFILE_NAME_MAX = 120;
+
+/**
+ * Validate a profile name before any request leaves the browser.
+ * @param {unknown} value
+ * @returns {string | null} the trimmed name, or null when it cannot be saved
+ */
+export function cleanProfileName(value) {
+  const next = personText(value);
+  if (next === null) return null;
+  if (next.length > PROFILE_NAME_MAX) return null;
+  return next;
+}
+
+export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions } = {}) {
   let token = 0;
+  // backlog:1cfc68175ab7: the name edit is local view state, never stored.
+  // `draft` keeps what the user typed across saving, validation errors and
+  // request failures (Codex P2 on #844): a repaint never rebuilds the input
+  // from the old server value, so a retry sends the draft again.
+  let editing = false;
+  let editError = '';
+  let saving = false;
+  let draft = '';
+  const bound = bindAdminMutations(client, submissions ? { submissions } : {}).client;
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -273,12 +302,127 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
 
   const read = () => readProfile(client, log);
 
-  function header(page, person) {
+  function header(page, person, session) {
     const head = el(doc, 'header', 'bo-profilo-head');
     head.appendChild(el(doc, 'span', 'bo-profilo-avatar', profiloInitials(personText(person.name), personText(person.email))));
     const words = el(doc, 'div', 'bo-profilo-words');
     words.appendChild(el(doc, 'p', 'bo-kicker', 'Il tuo profilo'));
-    words.appendChild(el(doc, 'h2', 'bo-profilo-name', personText(person.name) ?? personText(person.email) ?? 'Il tuo profilo'));
+    const shown = personText(person.name) ?? personText(person.email) ?? 'Il tuo profilo';
+    words.appendChild(el(doc, 'h2', 'bo-profilo-name', shown));
+    if (!editing) {
+      const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
+        attrs: { type: 'button', 'data-action': 'modifica-nome' } });
+      edit.addEventListener('click', () => {
+        editing = true;
+        editError = '';
+        draft = personText(person.name) ?? '';
+        paintLast();
+      });
+      words.appendChild(edit);
+    } else {
+      const form = el(doc, 'div', 'ui-field-row bo-profilo-edit');
+      const label = el(doc, 'label', 'ui-label bo-profilo-edit-label', 'Nome');
+      label.setAttribute('for', 'bo-profilo-name-input');
+      const input = doc.createElement('input');
+      input.setAttribute('class', 'ui-field');
+      input.setAttribute('type', 'text');
+      input.setAttribute('name', 'profile-name');
+      input.setAttribute('id', 'bo-profilo-name-input');
+      input.setAttribute('aria-label', 'Nome');
+      input.setAttribute('maxlength', String(PROFILE_NAME_MAX));
+      input.value = draft;
+      form.appendChild(label);
+      form.appendChild(input);
+      const actions = el(doc, 'div', 'bo-profilo-edit-actions');
+      const save = uiButton(doc, { variant: 'cta', label: saving ? 'Salvo…' : 'Salva', small: true,
+        attrs: { type: 'button', 'data-action': 'salva-nome' } });
+      const cancel = uiButton(doc, { variant: 'secondary', label: 'Annulla', small: true,
+        attrs: { type: 'button', 'data-action': 'annulla-nome' } });
+      save.disabled = saving;
+      cancel.disabled = saving;
+      const doSave = () => {
+        if (saving) return;
+        draft = input.value;
+        const next = cleanProfileName(draft);
+        if (next === null) {
+          if (draft.trim() === '') {
+            editError = 'Scrivi un nome prima di salvare.';
+          } else if (personText(draft) === null) {
+            editError = 'Scrivi un nome leggibile, senza codici.';
+          } else {
+            editError = `Il nome è troppo lungo: al massimo ${PROFILE_NAME_MAX} caratteri.`;
+          }
+          paintLast();
+          return;
+        }
+        if (next === (personText(person.name) ?? '')) {
+          editing = false;
+          editError = '';
+          draft = '';
+          paintLast();
+          return;
+        }
+        saving = true;
+        editError = '';
+        // The /bo write wait (#775, #831): «Salvo…» and disabled on this
+        // button while the name is written, Annulla off beside it — never a
+        // second click on a write in flight.
+        cancel.disabled = true;
+        void uiBusy(save, 'Salvo…', () => bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
+          async () => {
+            // The write stays in flight until the reread lands: saving drops
+            // only then, with uiBusy, so no second PATCH slips in meanwhile.
+            const mine = ++token;
+            const fresh = await read();
+            saving = false;
+            if (mine !== token) return;
+            if (fresh === null) {
+              editError = 'Il nome è stato salvato, ma la rilettura non è riuscita. Riprova più tardi.';
+              paintLast();
+              return;
+            }
+            editing = false;
+            draft = '';
+            editError = '';
+            paint(session, fresh);
+          },
+          (error) => {
+            log('bo-profilo profile save failed:', error?.code ?? 'Error');
+            saving = false;
+            editError = 'Il nome non si è potuto salvare. Riprova più tardi.';
+            paintLast();
+          },
+        ));
+      };
+      const doCancel = () => {
+        if (saving) return;
+        editing = false;
+        editError = '';
+        draft = '';
+        paintLast();
+      };
+      save.addEventListener('click', doSave);
+      cancel.addEventListener('click', doCancel);
+      input.addEventListener('keydown', (event) => {
+        if (event?.isComposing) return;
+        if (event?.key === 'Enter') {
+          event.preventDefault?.();
+          doSave();
+        } else if (event?.key === 'Escape') {
+          event.preventDefault?.();
+          doCancel();
+        }
+      });
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      form.appendChild(actions);
+      if (editError !== '') form.appendChild(el(doc, 'p', 'field-error', editError));
+      words.appendChild(form);
+      // Opening Modifica hands the Nome field over ready to type: focus it
+      // with the current name selected, so typing replaces it at once.
+      if (typeof input.focus === 'function') input.focus();
+      if (typeof input.select === 'function') input.select();
+    }
     const meta = el(doc, 'div', 'bo-profilo-meta');
     const email = personText(person.email);
     if (email !== null && email !== personText(person.name)) meta.appendChild(el(doc, 'span', 'bo-profilo-email', email));
@@ -289,11 +433,18 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     page.appendChild(head);
   }
 
+  let lastSession = {};
+  let lastAnswer;
+  let lastAnswerSet = false;
+
   /**
    * The whole page for one state: `answer` is undefined while reading, null
    * when /api/profile cannot be read, the payload otherwise.
    */
   function paint(session, answer) {
+    lastSession = session;
+    lastAnswer = answer;
+    lastAnswerSet = true;
     clear();
     const page = el(doc, 'div', 'bo-profilo');
     mount.appendChild(page);
@@ -307,7 +458,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       : null;
     const person = { ...session, ...fromServer };
     if (personText(person.email) === null && linked) person.email = personText(linked.account);
-    header(page, person);
+    header(page, person, session);
     const card = el(doc, 'section', 'panel bo-profilo-card');
     card.appendChild(el(doc, 'h3', 'bo-profilo-card-title', 'I tuoi collegamenti'));
     card.appendChild(el(doc, 'p', 'bo-profilo-card-lede',
@@ -318,6 +469,11 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       card.appendChild(el(doc, 'p', 'bo-profilo-group', 'Canali Meta'));
       paintMetaConnections(doc, card, answer);
     }
+  }
+
+  function paintLast() {
+    if (!lastAnswerSet) return;
+    paint(lastSession, lastAnswer);
   }
 
   async function render() {

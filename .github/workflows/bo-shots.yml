@@ -1,7 +1,6 @@
 # Backoffice screenshots for visual review (BO-F6-02, backlog:c8364e59).
 #
-# What it does: on every PR that touches the /bo static assets or the shots
-# script, it renders every backoffice screen at 1440px and 390px with
+# What it does: on demand (label «shots» on a PR, or workflow_dispatch), it renders every backoffice screen at 1440px and 390px with
 # `npm run bo:shots` and uploads the PNGs as the `bo-shots` artifact, so a
 # reviewer can compare each changed screen against the approved prototype
 # without painting locally. This workflow is review evidence only: it never
@@ -9,21 +8,23 @@
 #
 # Where it runs: the self-hosted accordo-ci Mac runner, the only runner with
 # a working Chromium (the billing lock rejects GitHub-hosted jobs for this
-# account, and sandboxes refuse Chromium's Mach bootstrap, so the script
-# skips cleanly anywhere else). When no runnable Chromium exists the render
-# exits 0 with a skip message and the upload warns instead of failing.
+# account). On sandbox-less Linux the script retries Chromium with
+# --no-sandbox (backlog:cd0ad69b); when no runnable Chromium exists at all
+# the render fails loudly (exit 1) instead of skipping in silence, and the
+# upload warns instead of failing.
 
 name: bo-shots
 
+# On demand only (13/11, supervisor with the Leader's ok): add the label «shots»
+# to a PR, or `gh workflow run bo-shots.yml`. It used to run on every push of a
+# PR touching apps/admin/public/**: 60 runs in 24 h of 2.5-4 min each on the 2
+# self-hosted runners (about 3 runner hours a day, one run out of two per push
+# of an interface PR), while it is not a required check, its artifacts were not
+# uploaded (account quota full) so nobody could look at them, and it found no
+# defect. Design checks stay as they are: local shots of the exact head.
 on:
   pull_request:
-    paths:
-      - 'apps/admin/public/**'
-      - 'scripts/bo-shots.js'
-      - '.github/workflows/bo-shots.yml'
-  # Manual evidence renders (BO-F6-02, backlog:c8364e59): the upload step is
-  # lossy while the account artifact quota is full, so a reviewer can
-  # re-render the PNGs on demand with `gh workflow run bo-shots.yml`.
+    types: [labeled]
   workflow_dispatch:
 
 # One run per PR, always the newest; a superseded run is cancelled.
@@ -33,6 +34,7 @@ concurrency:
 
 jobs:
   shots:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'shots'
     # Self-hosted while the account billing lock rejects every GitHub-hosted
     # job at start (0 steps, "account is locked due to a billing issue").
     runs-on: [self-hosted, accordo-ci]

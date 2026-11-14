@@ -1184,3 +1184,82 @@ test('an over-wide window reports the expansion cut instead of a silent short pa
   assert.equal(listed.items.length, 1000, 'the expansion stops at the cap');
   assert.equal(listed.truncated, true, 'the cut is signalled, never mistaken for a complete window');
 });
+
+// backlog:5346ab531538 (review #781): the cancel operation names a calendar.
+// A cancelled booking is never exported as an active Google event; an event
+// an earlier export left unlinked is cancelled; a linked event is cancelled
+// through the existing «cancellation wins» path. Each retry writes nothing.
+async function bookForCancel(ctx, sourceKey) {
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: ctx.sync,
+  });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey,
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'calendar-import' },
+  });
+  return { handle, appointment };
+}
+
+test('a booking cancelled before any export never becomes an active Google event (review #781)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const { handle, appointment } = await bookForCancel(ctx, 'gym:cancel:never-exported');
+  const before = ctx.provider.eventCount(CAL);
+  const out = await handle.cancelAppointment({
+    id: appointment.id, reason: 'Disdetto', spaceId: 's-presti', calendar: { calendarId: CAL },
+  });
+  assert.equal(out.appointment.status, 'cancelled');
+  assert.equal(out.pushError, null);
+  assert.equal(out.push.status, 'noop', 'nothing to create on Google');
+  assert.equal(ctx.provider.eventCount(CAL), before, 'no event inserted');
+  assert.equal(ctx.linkRows().length, 0, 'no link stored for an event that does not exist');
+  const again = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(again.status, 'noop');
+  assert.equal(ctx.provider.eventCount(CAL), before, 'a later push inserts nothing either');
+});
+
+test('cancelling a booking whose export lost its link cancels the Google event (review #781)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const { handle, appointment } = await bookForCancel(ctx, 'gym:cancel:lost-link');
+  const lost = ctx.provider.insertEvent({
+    calendarId: CAL,
+    summary: 'Appointment pt-single',
+    start: { dateTime: appointment.startsAt },
+    end: { dateTime: appointment.endsAt },
+    extendedProperties: { accordoSourceKey: appointment.sourceKey },
+  });
+  const out = await handle.cancelAppointment({
+    id: appointment.id, reason: 'Disdetto', spaceId: 's-presti', calendar: { calendarId: CAL },
+  });
+  assert.equal(out.push.status, 'pushed');
+  assert.equal(out.push.change, 'cancelled');
+  assert.equal(ctx.provider.getEvent(CAL, lost.id).status, 'cancelled', 'the Google event is cancelled, never left active');
+  assert.equal(ctx.linkRows().length, 1, 'the link is healed');
+  const again = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(again.status, 'noop', 'the retry writes nothing');
+});
+
+test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const { handle, appointment } = await bookForCancel(ctx, 'gym:cancel:linked');
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey);
+  assert.equal(exported.status, 'exported');
+  const out = await handle.cancelAppointment({
+    id: appointment.id, reason: 'Disdetto', spaceId: 's-presti', calendar: { calendarId: CAL },
+  });
+  assert.equal(out.push.status, 'pushed');
+  assert.equal(out.push.change, 'cancelled');
+  assert.equal(ctx.provider.getEvent(CAL, exported.eventId).status, 'cancelled');
+  const replay = await handle.cancelAppointment({
+    id: appointment.id, reason: 'Doppio clic', spaceId: 's-presti', calendar: { calendarId: CAL },
+  });
+  assert.equal(replay.cancelled, false);
+  assert.equal(replay.push.status, 'noop', 'the replay converges nothing twice');
+});

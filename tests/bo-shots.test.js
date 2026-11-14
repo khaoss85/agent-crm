@@ -5,19 +5,22 @@
  * What it must prove:
  * - one PNG per screen at 1440px and at 390px, none empty (the full run
  *   counts the files and checks every width and byte floor);
- * - the run works fully offline (loopback only) and exits 0 with a skip
- *   message where no runnable Chromium exists;
+ * - the run works fully offline (loopback only); where no runnable Chromium
+ *   exists, even with --no-sandbox, the command fails loudly (exit 1) and
+ *   says why instead of skipping in silence (backlog:cd0ad69b);
  * - the screen registry is exactly the fourteen delivered /bo screens plus the
  *   componenti catalog, and
  *   every harness page serves its real view module.
  *
- * The full render runs only where Chromium actually runs (the probe below
- * is the same one the `*-shots` tests use): elsewhere those tests skip and
- * the skip-path test below still proves the clean exit.
+ * The full render runs wherever Chromium runs, with or without the sandbox
+ * (the flags probe below retries once with --no-sandbox): elsewhere the
+ * render tests skip and the failure-path test below still proves the loud
+ * exit.
  */
 
 import test from 'node:test';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
+import { formatMinor } from '../packages/analytics/src/dashboard.js';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -29,14 +32,22 @@ import {
   BO_SCREENS,
   SCREENS,
   SHELL_SCREENS,
+  SHOT_MAX_ATTEMPTS,
   USAGE,
   assertProbe,
+  checkShotSize,
+  chromiumFlags,
   chromiumRuns,
   findChromium,
   harnessHtml,
   parseArgs,
   readPngSize,
   readProbe,
+  reportingBundleRows,
+  reportingModelFor,
+  reportingMonthLabel,
+  reportingShiftMonth,
+  shotFloor,
 } from '../scripts/bo-shots.js';
 
 const root = join(fileURLToPath(import.meta.url), '..', '..');
@@ -204,6 +215,153 @@ test('parseArgs refuses unknown screens and flags', () => {
   assert.throws(() => parseArgs(['--bogus']), /unknown argument/);
 });
 
+test('parseArgs reads --period and --theme (backlog:c0726d0f6d13)', () => {
+  const defaults = parseArgs([], { root: '/repo' });
+  assert.equal(defaults.period, null);
+  assert.equal(defaults.theme, 'light');
+  const asked = parseArgs(['--screen', 'reporting', '--period', '2026-10', '--theme', 'dark'], { root: '/repo' });
+  assert.equal(asked.period, '2026-10');
+  assert.equal(asked.theme, 'dark');
+  assert.throws(() => parseArgs(['--period', '2026-13']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--period', 'ottobre']), /--period needs YYYY-MM/);
+  assert.throws(() => parseArgs(['--theme', 'sepia']), /--theme needs light or dark/);
+  assert.throws(() => parseArgs(['--theme']), /--theme needs light or dark/);
+});
+
+test('the reporting harness photographs the asked month (backlog:c0726d0f6d13)', () => {
+  const page = harnessHtml('reporting', publicDir, { period: '2026-10' });
+  assert.ok(page.includes('"period":"2026-10"'), 'the harness model answers October');
+  assert.ok(page.includes('"periodLabel":"ottobre 2026"'), 'the harness labels October');
+  const other = harnessHtml('reporting', publicDir, { period: '2026-11' });
+  assert.ok(other.includes('"period":"2026-11"'), 'the harness model answers November');
+  assert.ok(other.includes('"periodLabel":"novembre 2026"'), 'the harness labels November');
+});
+
+test('below-floor shots are retaken once, never lowered (backlog:418b90704674)', () => {
+  // One retry only: the first shot plus exactly one retake, then the run
+  // fails naming the screen. The floors themselves never move down.
+  assert.equal(SHOT_MAX_ATTEMPTS, 2, 'first shot plus exactly one retry');
+  assert.equal(shotFloor('desktop'), 20000, 'the desktop floor stays at 20000 bytes');
+  assert.equal(shotFloor('phone'), 10000, 'the phone floor stays at 10000 bytes');
+  assert.throws(() => shotFloor('tablet'), /no byte floor/, 'unknown viewports have no floor');
+});
+
+test('checkShotSize gates existence and dimensions, never the floor', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-size-'));
+  const header = Buffer.from('89504e470d0a1a0a', 'hex');
+  const length = Buffer.alloc(4);
+  const kind = Buffer.from('IHDR', 'ascii');
+  const dimensions = Buffer.alloc(8);
+  dimensions.writeUInt32BE(1440, 0);
+  dimensions.writeUInt32BE(1800, 4);
+  const file = join(dir, 'shot.png');
+  writeFileSync(file, Buffer.concat([header, length, kind, dimensions]));
+  const shot = checkShotSize(file, 'oggi', 'desktop', { width: 1440, height: 1800 });
+  assert.equal(shot.width, 1440);
+  assert.equal(shot.height, 1800);
+  // A wrong size is deterministic from --window-size, never a paint race:
+  // it throws at once and names the screen, without consuming the retake.
+  assert.throws(
+    () => checkShotSize(file, 'oggi', 'phone', { width: 390, height: 1600 }),
+    /oggi phone: the PNG is 1440x1800, expected 390x1600/,
+  );
+  assert.throws(
+    () => checkShotSize(join(dir, 'missing.png'), 'oggi', 'desktop', { width: 1440, height: 1800 }),
+    /oggi desktop: .* without writing the screenshot/,
+  );
+});
+
+test('the reporting demo follows the asked period (backlog:06d4b855fac4)', () => {
+  // Like the real server (formatMonth(query.period)): period, labels, the
+  // monthly window, the channel weeks and the CSV name follow the period
+  // the screen asks for, never a fixed October.
+  assert.equal(reportingMonthLabel('2026-10'), 'ottobre 2026');
+  assert.equal(reportingMonthLabel('2026-11'), 'novembre 2026');
+  assert.equal(reportingShiftMonth('2026-11', -1), '2026-10');
+  assert.equal(reportingShiftMonth('2026-01', -1), '2025-12');
+  const october = reportingModelFor('2026-10');
+  assert.equal(october.period, '2026-10');
+  assert.equal(october.periodLabel, 'ottobre 2026');
+  assert.ok(
+    october.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in ottobre 2026'),
+    'the won card names October',
+  );
+  assert.deepEqual(october.monthly.map((entry) => entry.month), ['2026-09', '2026-10']);
+  assert.equal(october.monthly.at(-1).label, 'ottobre 2026');
+  assert.equal(october.csv.filename, 'reporting-2026-10.csv');
+  assert.ok(october.csv.content.startsWith('reporting;2026-10;'), 'the CSV names October');
+  const november = reportingModelFor('2026-11');
+  assert.equal(november.period, '2026-11');
+  assert.equal(november.periodLabel, 'novembre 2026');
+  assert.ok(
+    november.kpis.some((kpi) => kpi.id === 'won-period' && kpi.label === 'Vinte in novembre 2026'),
+    'the won card names November with November asked',
+  );
+  assert.deepEqual(november.monthly.map((entry) => entry.month), ['2026-10', '2026-11']);
+  assert.equal(november.csv.filename, 'reporting-2026-11.csv');
+  // The four Monday-start weeks opening the asked month (1 Nov 2026 is a
+  // Sunday, so the first week starts Mon 26 Oct), never the fixed October set.
+  assert.deepEqual(november.channels.weeks.map((week) => week.week), [
+    '2026-10-26',
+    '2026-11-02',
+    '2026-11-09',
+    '2026-11-16',
+  ]);
+  assert.deepEqual(october.channels.weeks.map((week) => week.week), [
+    '2026-09-28',
+    '2026-10-05',
+    '2026-10-12',
+    '2026-10-19',
+  ]);
+  // An invalid period falls back to the fixture's own month, never garbage.
+  assert.equal(reportingModelFor('nope').period, '2026-10');
+  // The bundle summary rows follow the same month as the cards.
+  assert.deepEqual(reportingBundleRows('2026-11'), [
+    { id: 'r1', metric: 'chiamate', period: '2026-11', value: 20, unit: 'call' },
+  ]);
+});
+
+test('the reporting demo uses one money scale with totals that add up (backlog:6e927ba9dd16)', () => {
+  // Cards, funnel, monthly, forecast, team and CSV all read minor cents on
+  // the same scale: open stages add up to the open-value KPI, won to the
+  // won-period KPI, the team splits both, and the forecast closes on won.
+  const model = reportingModelFor('2026-10');
+  const kpi = (id) => model.kpis.find((entry) => entry.id === id);
+  const openStages = model.funnel.filter((entry) => entry.stage !== 'won');
+  const openMinor = openStages.reduce((sum, entry) => sum + entry.minor, 0);
+  const openCount = openStages.reduce((sum, entry) => sum + entry.count, 0);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-value').display);
+  assert.equal(formatMinor(openMinor, 'EUR'), kpi('open-count').sub);
+  assert.equal(openCount, Number(kpi('open-count').display));
+  const won = model.funnel.find((entry) => entry.stage === 'won');
+  assert.equal(formatMinor(won.minor, 'EUR'), kpi('won-period').display);
+  assert.equal(model.forecast.closedMinor, won.minor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openMinor, 0), openMinor);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.openCount, 0), openCount);
+  assert.equal(model.team.reduce((sum, entry) => sum + entry.wonMinor, 0), won.minor);
+  assert.equal(model.monthly.at(-1).wonMinor, won.minor);
+  const csvRows = model.csv.content.trim().split('\n').slice(1).map((line) => line.split(';'));
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[1]), 0), openCount);
+  assert.equal(csvRows.reduce((sum, row) => sum + Number(row[2]), 0), openMinor);
+});
+
+test('the reporting harness answers the current period end to end', async () => {
+  // The fixture the page serves is built for the same currentPeriod() the
+  // screen asks for, so the painted month and the card labels coincide.
+  const { currentPeriod } = await import('../apps/admin/public/admin-reporting.js');
+  const asked = currentPeriod();
+  const page = harnessHtml('reporting', publicDir);
+  assert.ok(
+    page.includes(`"period":"${asked}"`),
+    `the harness model answers the asked period (${asked})`,
+  );
+  assert.ok(
+    page.includes(`"periodLabel":"${reportingMonthLabel(asked)}"`),
+    'the harness model labels the asked month',
+  );
+});
+
 test('readPngSize reads dimensions and refuses non-PNG output', () => {
   const dir = mkdtempSync(join(tmpdir(), 'bo-shots-unit-'));
   const header = Buffer.from('89504e470d0a1a0a', 'hex');
@@ -325,7 +483,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('sequenze', {
     rows: 2, names: ['Bentornato in palestra', 'Promemoria appuntamento'],
     detail: 'Bentornato in palestra', steps: 2, firstDay: 'Subito',
-    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Attivare questa sequenza?',
+    firstChannel: 'WhatsApp · Ciao, ci manchi', confirm: 'Avviare questa sequenza?',
   }));
   assert.doesNotThrow(() => assertProbe('reporting', { kpis: 3 }));
   assert.doesNotThrow(() => assertProbe('personalizzazione', { hero: true, sections: 2, connected: 2, toConnect: 7 }));
@@ -419,11 +577,12 @@ test('assertProbe fails an empty render the substring expects would pass', () =>
   assert.throws(() => assertProbe('import', { back: 0, title: false, crumb: false, drop: 0, rows: 0 }), /back links/);
 });
 
-test('without a runnable Chromium the command skips cleanly with exit 0', () => {
+test('without a runnable Chromium the command fails loudly, never skips silently', () => {
   // A non-executable file stands in for a missing or unrunnable Chromium:
-  // findChromium returns it (it exists), the runnable probe rejects it, and
-  // the command must exit 0 with a skip message instead of failing the gate.
-  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-skip-'));
+  // findChromium returns it (it exists), both probes reject it, and the
+  // command must exit non-zero and say why: missing PNGs must never look
+  // like a pass (backlog:cd0ad69b).
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-nochromium-'));
   const inert = join(dir, 'not-a-browser');
   writeFileSync(inert, 'this file is not a browser\n');
   const out = join(dir, 'out');
@@ -433,13 +592,60 @@ test('without a runnable Chromium the command skips cleanly with exit 0', () => 
     cwd: root,
     env: { ...process.env, CHROMIUM_BIN: inert, HOME: mkdtempSync(join(tmpdir(), 'bo-shots-nohome-')) },
   });
-  assert.equal(run.status, 0, `a missing Chromium is a skip, not a failure (stderr: ${(run.stderr ?? '').slice(-300)})`);
-  assert.ok(String(run.stdout ?? '').includes('Skipping bo:shots'), 'the skip says why');
-  assert.ok(!existsSync(out) || readdirSync(out).filter((name) => name.endsWith('.png')).length === 0, 'no PNGs on a skip');
+  assert.notEqual(run.status, 0, `no runnable Chromium is a failure, never a silent skip (stdout: ${(run.stdout ?? '').slice(-300)})`);
+  assert.ok(String(run.stderr ?? '').includes('no runnable Chromium'), 'the failure says why');
+  assert.ok(!existsSync(out) || readdirSync(out).filter((name) => name.endsWith('.png')).length === 0, 'no PNGs on a failure');
+});
+
+test('a Chromium that only runs with --no-sandbox is used, not skipped (backlog:cd0ad69b)', () => {
+  // Repro for the Ubuntu server: Chromium dies with "No usable sandbox"
+  // without the flag but paints fine with it. The old plain probe called
+  // that "no runnable Chromium" and the command exited 0 with a skip; the
+  // flags probe must retry with --no-sandbox and the command must get past
+  // the gate instead of reporting "no runnable Chromium".
+  const dir = mkdtempSync(join(tmpdir(), 'bo-shots-sandbox-'));
+  const fake = join(dir, 'fake-chromium');
+  writeFileSync(fake, [
+    '#!/bin/sh',
+    '# Fake Chromium with the sandbox-less-server shape: without --no-sandbox',
+    '# every launch dies like the Ubuntu zygote failure; with the flag the',
+    '# --dump-dom probe returns a page.',
+    'sandbox=0',
+    'dumpdom=0',
+    'for arg in "$@"; do',
+    '  case "$arg" in --no-sandbox) sandbox=1;; --dump-dom) dumpdom=1;; esac',
+    'done',
+    'if [ "$sandbox" = "0" ]; then',
+    "  echo '[FATAL:zygote_host_impl_linux.cc] No usable sandbox!' >&2",
+    '  exit 1',
+    'fi',
+    'if [ "$dumpdom" = "1" ]; then',
+    "  printf '<html><head></head><body></body></html>\\n'",
+    '  exit 0',
+    'fi',
+    'exit 0',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  assert.equal(chromiumRuns(fake), false, 'the plain probe still rejects the sandbox death (that was the old skip)');
+  assert.deepEqual(chromiumFlags(fake), ['--no-sandbox'], 'the flags probe retries without the sandbox');
+  assert.deepEqual(chromiumFlags(null), null, 'a missing binary has no flags');
+  assert.deepEqual(chromiumFlags(join(dir, 'does-not-exist')), null, 'a missing path has no flags');
+  // The command itself must get past the runnable gate with this binary: it
+  // cannot paint PNGs (the fake writes none), but it must fail at the render
+  // stage, never with "no runnable Chromium".
+  const out = join(dir, 'out');
+  const run = spawnSync(process.execPath, [join(root, 'scripts', 'bo-shots.js'), '--out', out, '--screen', 'login'], {
+    encoding: 'utf8',
+    timeout: 120_000,
+    cwd: root,
+    env: { ...process.env, CHROMIUM_BIN: fake, HOME: mkdtempSync(join(tmpdir(), 'bo-shots-fakehome-')) },
+  });
+  assert.notEqual(run.status, 0, 'the fake cannot paint, so the run still fails');
+  assert.ok(!String(run.stderr ?? '').includes('no runnable Chromium'), 'but it tried with --no-sandbox instead of gating out');
 });
 
 const CHROMIUM = findChromium();
-const SHOTS_SKIP = chromiumRuns(CHROMIUM)
+const SHOTS_SKIP = chromiumFlags(CHROMIUM) !== null
   ? false
   : 'Chromium binary missing or unrunnable here (set CHROMIUM_BIN); the Mac CI runner produces the PNGs';
 
@@ -509,4 +715,18 @@ test('bo:shots photographs the production pipeline, not a demo invention', () =>
   assert.ok(page.includes("'Proposta'") || page.includes('Proposta'), 'the photographed board names a production stage');
   const pipeline = SCREENS.find((screen) => screen.name === 'pipeline');
   assert.ok(pipeline.expect.includes('Proposta'), 'the render gate watches a production stage label');
+});
+
+// backlog:d30d17880f63: the Linux CI runner's Playwright layout
+// (chrome-headless-shell-linux64) — missed before, so every browser proof
+// on that runner skipped as «no runnable Chromium».
+test('findChromium finds the Linux Playwright headless shell, as on the CI runner', () => {
+  const home = mkdtempSync(join(tmpdir(), 'bo-shots-home-'));
+  const dir = join(home, '.cache', 'ms-playwright', 'chromium_headless_shell-1248', 'chrome-headless-shell-linux64');
+  mkdirSync(dir, { recursive: true });
+  const binary = join(dir, 'chrome-headless-shell');
+  writeFileSync(binary, '');
+  assert.equal(findChromium({ env: {}, home, system: [] }), binary);
+  assert.equal(findChromium({ env: { CHROMIUM_BIN: binary }, home: join(home, 'none'), system: [] }), binary, 'CHROMIUM_BIN still wins');
+  assert.equal(findChromium({ env: {}, home: join(home, 'none'), system: [] }), null);
 });

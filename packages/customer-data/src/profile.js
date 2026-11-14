@@ -363,6 +363,11 @@ async function readOneSection(section, { modules, references, subject, opportuni
         pipelineStage: typeof row.pipelineStage === 'string' ? row.pipelineStage : null,
         amountCents: Number.isSafeInteger(row.valueCents) ? row.valueCents : null,
         currency: typeof row.currency === 'string' ? row.currency : null,
+        // backlog:82235e46e3e9: the scheda cronologia tells when each offer
+        // was created, and «Storia stati» names the referente beside the
+        // roster — both read from the record itself, never invented.
+        createdAt: typeof row.createdAt === 'string' ? row.createdAt : null,
+        owner: typeof row.owner === 'string' && row.owner.trim() !== '' ? row.owner.trim() : null,
       } : {}),
     }))),
     truncated: rows.length > 50,

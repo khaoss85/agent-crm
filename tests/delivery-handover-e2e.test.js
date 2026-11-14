@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import {
   ACTIVATION_INPUT, DELIVERY_MODULES, DELIVERY_POLICY, POLICY,
   activatedContract, boot, project, signedOrder,
-} from './helpers/contracts-project.js';
+} from './helpers/contracts-project-cache.js';
 
 /**
  * Milestone 13 e2e: an activated contract's pending delivery obligations

@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +13,7 @@ import { createAccordoApp } from '../packages/app/src/index.js';
 import { createMcpServer } from '../packages/mcp/src/index.js';
 import { CORE_MIGRATIONS_FOR_CHARACTERIZATION } from '../packages/core/src/database.js';
 import createWorkPackage from '../packages/work/src/index.js';
+import { assertSyncChildExited, awaitChildExit, hangGuardMs, spawnTracked } from './helpers/child-exit.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const cli = join(root, 'packages/cli/bin/accordo.js');
@@ -129,11 +130,15 @@ test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, n
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-')));
   try {
     const shapedInput = 'postgresql://sentinel.invalid/accordo';
+    // The child runs real migrations: on a loaded shared runner that exceeds
+    // 10 s (seen 10.4 s on 2026-11-10), so the bound keeps headroom. The pin
+    // below is the receipt and the SQLite semantics, never the wall time.
     const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {
       cwd: workspace,
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: hangGuardMs(),
     });
+    assertSyncChildExited(result, 'M0 db:migrate with PostgreSQL-shaped --db');
     assert.equal(result.status, 0, result.stderr);
     const sqlitePath = join(workspace, 'postgresql:', 'sentinel.invalid', 'accordo');
     assert.equal(existsSync(sqlitePath), true, 'legacy --db resolves the string as a local filesystem path');
@@ -200,8 +205,14 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   // deliberately here, the way #380 moved it for `postpone`.
   assert.deepEqual(
     (work.operations ?? []).map(({ name, operationContract, appMethod }) => ({ name, operationContract, appMethod })),
-    [{ name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' }],
-    'Work v1 declares exactly the operator-note application operation',
+    [
+      { name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' },
+      // backlog:82235e46e3e9: «Modifica» and «Elimina» on a scheda note,
+      // both append-only — moved here deliberately, like the note itself.
+      { name: 'revise-subject-note', operationContract: 1, appMethod: 'reviseSubjectNote' },
+      { name: 'withdraw-subject-note', operationContract: 1, appMethod: 'withdrawSubjectNote' },
+    ],
+    'Work v1 declares the operator-note operations',
   );
   assert.deepEqual(
     work.operations[0].input.map(({ name, type }) => ({ name, type })),
@@ -278,7 +289,7 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
   const env = { ...process.env };
   delete env.CRM_DB_PATH;
-  const child = spawn(process.execPath, ['--no-warnings', mcpBin], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', mcpBin], {
     cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -288,25 +299,14 @@ test('M0 freezes the MCP stdio executable composition and JSON-line transport', 
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.stdin.end(input);
-  const exitCode = await new Promise((resolve, reject) => {
-    let timedOut = false;
-    let force;
-    const terminate = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-      force = setTimeout(() => {
-        child.kill('SIGKILL');
-        reject(new Error(`MCP stdio did not stop after input EOF: ${stderr}`));
-      }, 1_000);
-    }, 10_000);
-    child.once('exit', (code) => {
-      clearTimeout(terminate);
-      if (force) clearTimeout(force);
-      if (timedOut) reject(new Error(`MCP stdio required SIGTERM after input EOF (exit ${code}): ${stderr}`));
-      else resolve(code);
-    });
+  // The property is how the process ended, not how fast: it must exit on its own
+  // after input EOF (code 0, no terminating signal, no signal sent by the test).
+  // awaitChildExit's only timer is a hang guard, not a speed budget.
+  const exit = await awaitChildExit(child, {
+    label: 'M0 MCP stdio exit after input EOF',
+    diagnostics: () => stderr,
   });
-  assert.equal(exitCode, 0, stderr);
+  assert.deepEqual(exit, { code: 0, signal: null, signalSent: null }, `MCP stdio did not exit on its own after input EOF: ${stderr}`);
   const responses = stdout.trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(responses.map(({ id }) => id), [1, 2]);
   assert.equal(responses[0].result.serverInfo.name, 'accordo');
@@ -320,8 +320,9 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   for (const command of ['db:migrate', 'seed', 'demo', 'doctor', 'workflow:list', 'trace:list']) {
     const dbPath = join(directory, `${command.replace(':', '-')}.sqlite`);
     const run = spawnSync(process.execPath, ['--no-warnings', cli, command, '--db', dbPath], {
-      cwd: root, encoding: 'utf8', timeout: 30_000,
+      cwd: root, encoding: 'utf8', timeout: hangGuardMs(),
     });
+    assertSyncChildExited(run, `M0 ${command}`);
     assert.equal(run.status, 0, `${command}: ${run.stderr}`);
     const receipt = JSON.parse(run.stdout);
     assert.equal(typeof receipt, 'object', `${command} writes one JSON object`);
@@ -337,7 +338,7 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   }
 
   const servePath = join(directory, 'serve.sqlite');
-  const child = spawn(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
+  const child = spawnTracked(process.execPath, ['--no-warnings', cli, 'serve', '--db', servePath, '--port', '0'], {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -352,8 +353,8 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`serve did not start: ${stderr}`));
-    }, 30_000);
+      reject(new Error(`M0 serve did not start within its hang guard: ${stderr}`));
+    }, hangGuardMs());
     child.stdout.on('data', () => {
       if (!stdout.includes('Accordo running at')) return;
       clearTimeout(timeout);
@@ -363,21 +364,13 @@ test('M0 freezes every application CLI command on SQLite, including serve shutdo
   });
   const advertised = stdout.match(/Accordo running at (http:\/\/[^\s]+)/)?.[1];
   assert.ok(advertised, stdout);
-  const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(`${advertised}/api/schema`, { signal: AbortSignal.timeout(hangGuardMs()) });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).generatedResourceContract, 1);
   child.kill('SIGTERM');
-  const exitCode = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`serve did not stop after SIGTERM: ${stderr}`));
-    }, 10_000);
-    child.once('exit', (code) => {
-      clearTimeout(timeout);
-      resolve(code);
-    });
-  });
-  assert.equal(exitCode, 0, stderr);
+  // Graceful shutdown is how serve ends after our SIGTERM (code 0), not how fast.
+  const stopped = await awaitChildExit(child, { label: 'M0 serve stop after SIGTERM', diagnostics: () => stderr });
+  assert.deepEqual(stopped, { code: 0, signal: null, signalSent: 'SIGTERM' }, stderr);
   assert.match(stdout, /Database: .*serve\.sqlite/);
   assertMigrated(servePath, 'serve');
 });

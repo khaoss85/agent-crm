@@ -45,7 +45,7 @@ const REFERENCE_LABEL_FETCH_BUDGET = 25;
  * @param {string} tag
  * @param {{text?: string, class?: string, attrs?: Record<string, string>}} [options]
  */
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the generated-module screens. Injecting `doc`, `client`
@@ -188,7 +188,7 @@ export function createModuleAdmin(deps) {
     const panel = el(doc, 'section', { class: 'panel panel-wide' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
-    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Generated module' }));
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Modulo generato' }));
     titleBox.appendChild(el(doc, 'h2', { text: humanizeLabel(meta.name) }));
     if (meta.description) titleBox.appendChild(el(doc, 'p', { class: 'lede', text: meta.description }));
     heading.appendChild(titleBox);
@@ -521,10 +521,12 @@ export function createModuleAdmin(deps) {
     panel.appendChild(form);
 
     let inFlight = false;
+    const idleLabel = submit.textContent; // cta-loading: «Creo…» while it works
     function setBusy(busy) {
       inFlight = busy;
       submit.disabled = busy;
       submit.setAttribute('aria-busy', busy ? 'true' : 'false');
+      submit.textContent = busy ? 'Creo…' : idleLabel;
     }
     function clearErrors() {
       generalError.textContent = '';
@@ -767,7 +769,7 @@ export function createModuleAdmin(deps) {
     const panel = el(doc, 'section', { class: 'panel actions-panel' });
     const heading = el(doc, 'div', { class: 'panel-heading' });
     const titleBox = el(doc, 'div');
-    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Lifecycle' }));
+    titleBox.appendChild(el(doc, 'p', { class: 'kicker', text: 'Ciclo di vita' }));
     titleBox.appendChild(el(doc, 'h2', { text: 'Actions' }));
     heading.appendChild(titleBox);
     panel.appendChild(heading);
@@ -825,10 +827,12 @@ export function createModuleAdmin(deps) {
 
     const inputs = Array.isArray(action.input) ? action.input : [];
     let busy = false;
+    const idleLabel = trigger.textContent; // cta-loading: «In corso…» while it works
     const setBusy = (value) => {
       busy = value;
       trigger.disabled = value;
       trigger.setAttribute('aria-busy', value ? 'true' : 'false');
+      trigger.textContent = value ? 'In corso…' : idleLabel;
     };
 
     if (!inputs.length) {
@@ -937,7 +941,7 @@ export function createModuleAdmin(deps) {
       }
       if (Object.keys(clientErrors).length) return showFieldErrors(clientErrors);
       setBusy(true);
-      await submitAction(meta, action, id, values, setBusy, panelError, showFieldErrors);
+      await uiBusy(runButton, 'In corso…', () => submitAction(meta, action, id, values, setBusy, panelError, showFieldErrors));
     }
     form.addEventListener('submit', handleRun);
     form.__run = handleRun;
@@ -1068,10 +1072,12 @@ export function createModuleAdmin(deps) {
     form.appendChild(submit);
 
     let inFlight = false;
+    const idleLabel = submit.textContent; // cta-loading: «Salvo…» while it works
     function setBusy(busy) {
       inFlight = busy;
       submit.disabled = busy || options.readOnly === true;
       submit.setAttribute('aria-busy', busy ? 'true' : 'false');
+      submit.textContent = busy ? 'Salvo…' : idleLabel;
     }
     function clearErrors() {
       generalError.textContent = '';

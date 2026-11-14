@@ -236,7 +236,7 @@ button[aria-busy="true"] { opacity: .6; }
 .action-row .action-trigger { align-self: flex-start; }
 .action-row .hint { color: var(--dim); font-size: 12px; }
 .action-form { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface-soft); border-radius: 9px; }
-.pipeline-board { display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
+.pipeline-board { position: relative; display: flex; gap: 14px; overflow-x: auto; align-items: flex-start; padding-bottom: 8px; }
 .pipeline-column { min-width: 200px; flex: 1 1 200px; background: var(--surface-soft); border-radius: 9px; padding: 12px; }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
@@ -266,6 +266,16 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pipeline-table th, .pipeline-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .pipeline-table th { font-size: 11px; color: var(--dim); }
+/* backlog:fb47ab99b6ee: ogni intestazione della Lista ordina; la freccia dice
+   quale colonna e in che verso, il resto resta un'etichetta grigia. */
+.pipeline-table th .pipeline-sort.ui-btn { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; font-weight: 700; letter-spacing: inherit; text-transform: inherit; cursor: pointer; transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:hover { color: var(--ink); transform: none; }
+.pipeline-table th .pipeline-sort.ui-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pipeline-table th .pipeline-sort.ui-btn::after { content: "↕"; opacity: .35; font-size: 10px; }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="ascending"] .pipeline-sort.ui-btn::after { content: "↑"; opacity: 1; }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn { color: var(--ink); }
+.pipeline-table th[aria-sort="descending"] .pipeline-sort.ui-btn::after { content: "↓"; opacity: 1; }
 .pipeline-table tr[data-openable="true"] { cursor: pointer; transition: background-color .12s ease; }
 .pipeline-table tbody tr[data-openable="true"]:hover { background: var(--surface-soft); }
 .pipeline-row-link { color: inherit; font-weight: 600; text-decoration: none; }
@@ -316,8 +326,11 @@ button[aria-busy="true"] { opacity: .6; }
 .pipeline-toolbar input[type="search"], .pipeline-toolbar input[type="text"] { flex: 0 1 240px; }
 .pipeline-toolbar .ui-btn { height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13px; }
 .pipeline-toolbar .pipeline-summary { margin: 0 0 0 auto; font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
-.pipeline-board { gap: 14px; }
-.pipeline-column { min-width: 200px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
+/* backlog:930b3bc9ba24: a 1280 le cinque colonne stanno nella pagina
+   (prima 5×200 px + spazi = 1056 su 952 e la colonna Perso tagliata):
+   colonne a parti uguali, minimo 168 px; sotto quel minimo la board scorre. */
+.pipeline-board { gap: 12px; }
+.pipeline-column { flex: 1 1 0; min-width: 168px; border-radius: 16px; padding: 14px 12px; background: var(--pending-soft); }
 .pipeline-column.type-won { background: var(--accent-soft); }
 .pipeline-column.type-lost { background: var(--human-soft); }
 .pipeline-column-header h3 { font-size: 14px; display: flex; align-items: center; gap: 8px; }
@@ -371,9 +384,38 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
 .bo-offer .offer-quote:first-of-type { border-top: 0; }
+/* Review Muse #871: the place of the price books and of each quote while they read. */
+.bo-offer .offer-quote-create-wait { padding: 4px 0 8px; }
+.bo-offer .offer-quote[data-loading="true"] > * + *, .bo-offer .offer-quote-create-wait > * + * { margin-top: 6px; }
 .bo-offer .offer-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .bo-offer .offer-quote-total { margin: 0; flex: 1 1 auto; min-width: 150px; font-size: 16px; font-weight: 700; color: var(--ink); }
 .bo-offer .offer-quote-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+/* backlog 169cd4bc988c: the offer page is never a dead end — the customer
+ * opens their scheda, «Cambia stato» sits beside Modifica as a small menu
+ * card, «Crea preventivo» heads the quotes. */
+.bo-offer-customer { color: inherit; text-decoration: underline; text-decoration-color: var(--line-dashed); text-underline-offset: 3px; }
+.bo-offer-customer:hover { text-decoration-color: var(--ink); }
+.bo-offer .bo-offer-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; margin-top: 16px; }
+.bo-offer .bo-offer-actions .offer-edit { margin-top: 0; }
+.bo-offer-stage-menu { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+/* In the flow under its button: the sheet clips (its accent stripe needs overflow hidden). */
+.bo-offer-stage-voices { min-width: 200px; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.bo-offer-stage-voices.hidden { display: none; }
+.bo-offer-stage-voices .bo-offer-stage-voice { justify-content: flex-start; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font-size: 13.5px; font-weight: 600; text-align: left; }
+.bo-offer-stage-voices .bo-offer-stage-voice:hover, .bo-offer-stage-voices .bo-offer-stage-voice:focus-visible { background: var(--surface-soft); }
+.bo-offer .offer-quotes-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+.bo-offer .offer-quotes-head h3 { margin: 0; }
+.bo-offer .offer-quote-create { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bo-offer .offer-quote-create-line { margin: 6px 0 0; font-size: 13px; }
+.bo-offer .offer-quote-create-line:empty { display: none; }
+/* backlog:a2ea75f705fd: «Apri il preventivo» is a link that reads as the main button. */
+.bo-offer a.offer-quote-open-main { display: inline-flex; align-items: center; text-decoration: none; }
+/* backlog:d8175e1c3495: the offer page skeleton keeps the page's frame; bars fill the room their values take. */
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton { height: 18px; margin: 8px 0 0; }
+.bo-offer-skeleton .bo-offer-hero-words .ui-skeleton:first-of-type { height: 30px; }
+.bo-offer-skeleton .bo-offer-value .ui-skeleton { height: 36px; }
+.bo-offer-skeleton .offer-fact .ui-skeleton { height: 14px; margin-top: 4px; }
+.bo-offer-skeleton .offer-quotes .ui-skeleton, .bo-offer-skeleton .offer-history .ui-skeleton { height: 14px; margin: 10px 0 0; }
 .bo-offer .offer-quote-open::after { content: " →"; }
 .bo-offer .quote-status { display: inline-block; padding: 4px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; background: var(--surface-soft); color: var(--ink); }
 .bo-offer .quote-status-approved { background: var(--accent-soft); color: var(--accent); }
@@ -401,6 +443,9 @@ button[aria-busy="true"] { opacity: .6; }
 /* Preventivo (Dan 06/11): un piccolo documento curato a sinistra, il flusso (approvazione, firma, storico) a destra. */
 .quote-back { display: inline-flex; align-items: center; gap: 6px; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
 .quote-back:hover { color: var(--ink); }
+/* backlog:a2ea75f705fd: from the quote to its offer page. */
+.quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-offer-link:hover { text-decoration: underline; }
 .bo-quote { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 20px; align-items: start; margin-top: 4px; }
 .bo-quote-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 24px; box-shadow: var(--shadow-pop); overflow: hidden; }
 .bo-quote-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--accent); }
@@ -596,6 +641,19 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   font-family: var(--mono); font-size: 11px; color: var(--muted);
   border: none; border-radius: 6px; padding: 3px 7px; background: var(--surface-soft);
 }
+/* backlog:be99004b06e4: the ⌘K results under the bar — the add-menu card
+ * (.ui-add-menu) at the bar's width: groups, rows, the ask row last. */
+.bo-ai { position: relative; }
+.bo-ai .bo-cmdk { position: absolute; top: calc(100% + 6px); left: 0; right: 0; width: auto; max-width: none; max-height: min(70vh, 460px); overflow-y: auto; z-index: 40; }
+.bo-cmdk-group { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); }
+.bo-cmdk-status { margin: 6px 10px; font-size: 12px; color: var(--muted); }
+.bo-cmdk-row, .bo-cmdk-row.ui-btn { display: flex; align-items: baseline; gap: 8px; width: 100%; min-height: 0; height: auto; padding: 8px 10px; border: none; border-radius: 8px; background: transparent; box-shadow: none; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: left; text-decoration: none; cursor: pointer; justify-content: flex-start; }
+.bo-cmdk-row:hover, .bo-cmdk-row[aria-selected="true"] { background: var(--surface-soft); transform: none; }
+.bo-cmdk-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bo-cmdk-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--muted); }
+.bo-cmdk-ask { margin-top: 4px; border-top: 1px solid var(--line-soft); border-radius: 0 0 8px 8px; color: var(--agent-ink); }
+.bo-cmdk-ask:hover, .bo-cmdk-ask[aria-selected="true"] { background: var(--agent-card); }
+.bo-cmdk-spark { color: var(--agent); flex: none; }
 .bo-kicker { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--accent); text-transform: uppercase; }
 /* The sidebar controls are flat like the prototype: the ui-btn defaults
  * (border, surface fill) would box them, so these win by specificity. */
@@ -633,15 +691,15 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 8px; margin: 0 -12px; padding: 6px 12px; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; font-weight: 750; }
-  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 24px; height: 24px; font-size: 10px; }
-  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 13px; line-height: 1.25; }
-  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 11px; line-height: 1.3; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 14px 12px 0; }
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar .bo-phonebar-space .bo-space-badge { width: 28px; height: 28px; font-size: 11px; }
+  .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 14px; line-height: 1.2; }
+  .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
   .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
-  .bo-main > .bo-topbar + * { margin-top: 4px; }
+  .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
 
@@ -662,7 +720,11 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .bo-scheda-badge { display: inline-block; font-size: 12px; font-weight: 700; border: none; border-radius: 99px; padding: 3px 10px; background: var(--line-soft); color: var(--ink); }
 .bo-scheda-sub { margin: 0; font-size: 14px; color: var(--muted); }
-.bo-scheda-grid { display: grid; grid-template-columns: minmax(0, 292px) minmax(0, 1fr) minmax(0, 300px); gap: 18px; align-items: start; }
+/* backlog:f32824784d04: «Tutti i contatti» holds at least half the grid at
+ * every desktop width (1280 px gave it 324 px, as narrow as the sides). The
+ * side columns shrink first (Azioni keeps room for its 2x2 tiles), then
+ * stop at their old width. */
+.bo-scheda-grid { display: grid; grid-template-columns: minmax(224px, 292px) minmax(50%, 1fr) minmax(180px, 300px); gap: 18px; align-items: start; }
 .bo-scheda-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* Dan 06/11: a sinistra azioni e dettagli, a destra AI e prossimi passi restano fermi; scorre solo la conversazione. */
 .bo-scheda-col-side { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
@@ -695,6 +757,8 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-scheda-entry .bo-scheda-entry-more { justify-self: start; min-height: 0; margin: 0; padding: 4px 14px 0; border: 0; border-left: 1px solid var(--line-soft); border-right: 1px solid var(--line-soft); border-radius: 0; background: var(--surface); color: var(--accent); font-size: 12.5px; font-weight: 600; cursor: pointer; width: 100%; text-align: left; }
 .bo-scheda-timeline .bo-scheda-older { align-self: center; margin-top: 6px; min-height: 0; padding: 8px 16px; border-radius: 99px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 600; cursor: pointer; }
 .bo-scheda-timeline .bo-scheda-older:hover { border-color: var(--ink); }
+/* backlog:947260f9f036: the grey row where the stage moves arrive. */
+.bo-scheda-timeline .bo-scheda-moves-wait { margin: 0; display: grid; gap: 6px; font-size: 13px; }
 .bo-scheda-sync { margin: 0; padding: 6px 14px 12px; font-family: var(--mono); font-size: 11px; color: var(--data-ink); border: 1px solid var(--line-soft); border-top: none; border-radius: 0 0 14px 14px; background: var(--surface); }
 .bo-scheda-step, .bo-scheda-appt { margin: 0; padding: 8px 0; border-top: 1px solid var(--line-faint); font-size: 14px; }
 .bo-scheda-offer { margin: 0; font-size: 14px; }
@@ -738,14 +802,17 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
  * so it carries the card's own inner margins (like .bo-scheda-timeline);
  * field and button stay inside, the help sentence below them too. */
 .bo-scheda-note-form { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 14px 20px 20px; }
-.bo-scheda-note-form input { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
+.bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-scheda-error { display: grid; gap: 8px; }
 
-@media (max-width: 1100px) {
+/* backlog:f32824784d04: below 1280 px three columns no longer fit with the
+ * central one at half the grid: the timeline goes full width on top. */
+@media (max-width: 1279px) {
   .bo-scheda-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bo-scheda-grid > .bo-scheda-col:nth-child(2) { grid-column: 1 / -1; order: -1; }
   .bo-scheda-col-side { position: static; max-height: none; overflow: visible; }
@@ -860,6 +927,11 @@ a.bo-oggi-title:hover { text-decoration: underline; }
 .bo-oggi-invite { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 14px; border: 1px dashed var(--line-dashed); font-size: 14px; font-weight: 400; color: var(--muted); text-decoration: none; }
 .bo-oggi-invite:hover { border-color: var(--ink); color: var(--ink); }
 .bo-oggi-invite strong { flex: none; white-space: nowrap; }
+.bo-oggi-skeleton .bo-oggi-row { min-height: 74px; }
+.bo-oggi-skeleton .bo-oggi-mono { background: var(--line-soft); }
+.bo-oggi-title .ui-skeleton { height: 16px; }
+.bo-oggi-notifications-toggle { align-self: flex-start; }
+.bo-oggi-notifications .bo-oggi-row { padding: 10px 18px; }
 
 @media (max-width: 700px) {
   .bo-oggi-btns { width: 100%; }
@@ -915,13 +987,14 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-row[data-selected="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .bo-seq-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bo-seq-name { margin: 0; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; background: var(--accent-soft); color: var(--accent); }
+/* The tint comes from the ui-chip-* class the state picks (backlog:bd9ae1482194). */
+.bo-seq-row .bo-seq-status { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700; }
 .bo-seq-stats { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .bo-seq-open.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
 .bo-seq-card { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 16px; padding: 18px 20px; }
 .bo-seq-headcard { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
 .bo-seq-headtext { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; background: var(--data-soft); color: var(--data-ink); }
+.bo-seq-headcard .bo-seq-status { align-self: flex-start; padding: 4px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; }
 .bo-seq-headactions { display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .bo-seq-headactions .ui-btn { height: 38px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 700; }
 .bo-seq-confirm { margin: 0; font-size: 13px; font-weight: 700; }
@@ -948,8 +1021,18 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-seq-person-name { margin: 0; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
 .bo-seq-person-step { margin: 0; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
 .bo-seq-person-status { margin: 0; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; white-space: nowrap; background: var(--data-soft); color: var(--data-ink); }
+/* backlog:c6759700e359: Nuova sequenza — each label above its own field;
+ * a step names itself once, then Canale · Attesa · Messaggio in a row. */
+.bo-seq-panel .bo-seq-field { margin-bottom: 14px; }
+.bo-seq-panel .bo-seq-field .ui-label { margin-bottom: 0; }
+.bo-seq-panel .bo-seq-field .ui-select { display: flex; }
+.bo-seq-step-edit { display: grid; grid-template-columns: minmax(0, 1fr) 130px minmax(0, 2fr) auto; gap: 0 12px; align-items: end; margin-bottom: 6px; }
+.bo-seq-step-title { grid-column: 1 / -1; margin: 6px 0 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.bo-seq-step-edit > .ui-btn { margin-bottom: 14px; }
 
 @media (max-width: 700px) {
+  .bo-seq-step-edit { grid-template-columns: minmax(0, 1fr); }
+  .bo-seq-step-edit > .ui-btn { justify-self: start; }
   .bo-seq-btns button { flex: 1; }
   .bo-seq-left { max-width: none; }
   .bo-seq-step { grid-template-columns: 52px 34px minmax(0, 1fr); gap: 8px; }
@@ -966,26 +1049,50 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 .bo-agenti-section > h3, .bo-agenti-sectionhead h3 { margin: 0; font-size: 22px; letter-spacing: -.02em; }
 .bo-agenti-sectionhead { display: flex; align-items: center; gap: 10px; }
 .bo-agenti-count { min-width: 24px; height: 24px; padding: 0 7px; border-radius: 99px; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--pending-soft); color: var(--pending-ink); }
-.bo-agent-grid, .bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+.bo-catalog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 12px; }
+/* Backlog «Agenti: layout delle card»: auto-fit, so one agent takes the
+   whole width and never sits in a narrow column; more agents share it. */
+.bo-agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .bo-agent-card, .bo-catalog-item, .bo-dafare-item { min-width: 0; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
 .bo-agent-card { border-color: var(--agent-line); }
 .bo-agent-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .bo-agent-avatar { width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center; font-size: 13px; font-weight: 800; background: var(--agent-soft); color: var(--agent-ink); }
 .bo-agent-avatar-sm { width: 34px; height: 34px; border-radius: 10px; font-size: 12px; }
 .bo-agent-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.bo-agent-name { margin: 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
+.bo-agent-name { margin: 0; font-size: 17px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
 .bo-agent-role { margin: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .bo-agent-status { flex: none; padding: 3px 9px; border-radius: 99px; font-size: 12px; font-weight: 700; }
 .bo-agent-status-active { background: var(--accent-soft); color: var(--accent); }
 .bo-agent-status-paused { background: var(--surface-soft); color: var(--muted); }
-.bo-agent-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.bo-agent-fact { min-width: 0; padding: 8px 10px; border-radius: 10px; background: var(--paper); }
-.bo-agent-fact dt { margin: 0; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
-.bo-agent-fact dd { margin: 2px 0 0; font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
-.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.bo-agent-assignment { padding: 8px 10px; border-left: 3px solid var(--agent-line); }
-.bo-agent-phrase { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
-.bo-agent-when { margin: 2px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+/* backlog:1f7cb20d3c30: a hand-written agent nothing runs yet — waiting, never «Attivo». */
+.bo-agent-status-waiting { background: var(--pending-soft); color: var(--pending-ink); }
+.bo-agent-noengine { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agenti-sectionhead > .ui-btn { margin-left: auto; }
+.bo-agent-talk .bo-agent-cost { flex: 0 0 96px; min-width: 0; }
+.bo-agent-new-hint { margin: 4px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--muted); }
+.bo-agent-new { display: flex; flex-direction: column; padding: 16px 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); }
+.bo-agent-new > h3 { margin: 0 0 12px; font-size: 17px; }
+.bo-agent-new .bo-seq-create-error { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--danger); }
+.bo-agent-new .bo-seq-field { max-width: 640px; gap: 4px; }
+.bo-agent-new textarea.ui-field { width: 100%; resize: vertical; font-family: inherit; line-height: 1.45; }
+/* One metric per line: small label, clear value, never a broken word. */
+.bo-agent-facts { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); display: flex; flex-wrap: wrap; gap: 6px 22px; }
+.bo-agent-fact { min-width: 0; max-width: 100%; display: flex; align-items: baseline; gap: 8px; }
+.bo-agent-fact dt { margin: 0; flex: none; font-family: var(--mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; }
+.bo-agent-fact dd { margin: 0; min-width: 0; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The incarichi: compact rows, secondary to the agent name. */
+.bo-agent-assignments { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.bo-agent-assignment { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line-faint); }
+.bo-agent-assignment:first-child { border-top: 0; padding-top: 2px; }
+.bo-agent-run-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bo-agent-phrase.ui-btn { display: block; width: 100%; min-width: 0; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--ink); font-size: 13.5px; font-weight: 500; line-height: 1.35; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.bo-agent-phrase.ui-btn.is-open { white-space: normal; overflow-wrap: anywhere; }
+.bo-agent-when { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-agent-run-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.bo-agent-outcome.ui-badge { padding: 3px 8px; font-size: 10.5px; white-space: nowrap; }
+.bo-agent-outcome:not([class*="ui-badge-"]) { background: var(--surface-soft); color: var(--muted); }
+.bo-agent-run-date { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.bo-agent-runs-toggle.ui-btn { align-self: flex-start; height: auto; margin: -4px 0 0; padding: 2px 0; border: 0; background: transparent; box-shadow: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
 .bo-agent-noassign { margin: 0; }
 .bo-agent-talk { display: flex; gap: 8px; align-items: center; }
 .bo-agent-talk .bo-agent-input { flex: 1; min-width: 0; }
@@ -1012,7 +1119,6 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 @media (max-width: 420px) {
   .bo-agent-talk { flex-wrap: wrap; }
   .bo-agent-talk .ui-btn { flex: 1 1 100%; }
-  .bo-agent-facts { grid-template-columns: 1fr 1fr; }
 }
 
 /*
@@ -1100,11 +1206,18 @@ select.bo-spazi-input { flex: none; }
   border: none; cursor: pointer; background: var(--line);
 }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
+/* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
+.bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
   position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
   border-radius: 50%; background: var(--paper); transition: left .2s;
 }
 .bo-spazi-toggle[data-on="true"] .bo-spazi-knob { left: 21px; }
+/* backlog:1cfc68175ab7: with the space AI off the five read paused, never green. */
+.bo-spazi-toggle[data-paused="true"] { background: var(--line); opacity: .6; cursor: not-allowed; }
+.bo-spazi-paused { font-size: 12px; color: var(--muted); }
+/* backlog:e381c48581fa: the connector detail's buttons sit in one row. */
+.bo-connector-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 /* Supervisor design pass: Spazi e accessi like prototype 08. */
 .bo-spazi-title { margin: 0; font-size: clamp(34px, 4.4vw, 46px); line-height: 1; letter-spacing: -.03em; }
 .bo-spazi-lede { max-width: 640px; margin: 12px 0 0; font-size: 16px; line-height: 1.5; }
@@ -1148,6 +1261,11 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
 .bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bo-spazi-names { overflow: hidden; }
+/* backlog:67e14a50efb6: the calendar-and-channels line of every team row —
+   shared state with the Connettori tile vocabulary, small enough to wrap. */
+.bo-spazi-conns { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.bo-spazi-calendar { font-size: 12px; color: var(--muted); }
+.bo-spazi-tile.ui-chip { font-size: 10px; padding: 3px 7px; }
 .bo-spazi-invite-toggle.ui-btn { white-space: nowrap; flex: none; }
 @media (max-width: 700px) {
   .bo-spazi-adder { min-height: 88px; }
@@ -1266,6 +1384,7 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-tool { display: inline-flex; align-items: center; gap: 6px; }
 .bo-clienti-tool .ui-icon { width: 18px; height: 18px; }
 .bo-clienti-toolcount { font-family: var(--mono); font-size: 12px; font-weight: 700; }
+.bo-clienti-toolword { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .bo-clienti-toolbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 99px; display: inline-grid; place-items: center; background: var(--accent); color: var(--paper); font-size: 11px; font-weight: 700; }
 .bo-clienti-menubutton.ui-btn:has(.bo-clienti-tool) { min-width: 40px; justify-content: center; }
 .bo-clienti-menu { position: absolute; right: 0; z-index: 15; margin-top: 8px; width: 290px; max-width: min(78vw, 320px); border: 1px solid var(--line); border-radius: 14px; background: var(--surface); padding: 6px; box-shadow: var(--shadow); }
@@ -1274,11 +1393,15 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-item.ui-chip { display: block; width: 100%; text-align: left; font-size: 14px; border: 0; background: transparent; color: var(--ink); padding: 7px 10px; border-radius: 8px; }
 .bo-clienti-item.ui-chip:hover { background: var(--surface-soft); }
 .bo-clienti-item.active { font-weight: 700; }
+/* backlog:754918ad8da7: the active order or filter carries a ✓ in a fixed slot, like the Pipeline voices. */
+.bo-clienti-check { display: inline-block; width: 1.25em; color: var(--accent); font-weight: 700; }
+/* A reload keeps the rows on screen, only quieter, so the bar never jumps. */
+.bo-clienti-body[aria-busy="true"] { opacity: .55; transition: opacity .12s; pointer-events: none; }
 .bo-clienti-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .bo-clienti-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; border-radius: 99px; padding: 5px 8px 5px 10px; background: var(--line-soft); }
 .bo-clienti-chipx.ui-chip { border: 0; background: transparent; color: var(--muted); font-size: 14px; padding: 0 2px; }
 .bo-clienti-clear.ui-btn { font-size: 12px; border: 0; background: transparent; color: var(--accent); }
-.bo-clienti-table { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow-x: auto; }
+.bo-clienti-table { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; overflow-x: auto; }
 .bo-clienti-thead { display: grid; gap: 16px; padding: 12px 20px; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); min-width: 760px; }
 .bo-clienti-list { display: flex; flex-direction: column; }
 .bo-clienti-row { display: grid; gap: 16px; align-items: center; padding: 14px 20px; border-top: 1px solid var(--line-faint); min-width: 760px; }
@@ -1287,6 +1410,8 @@ select.bo-spazi-input { flex: none; }
 .bo-clienti-avatar { width: 38px; height: 38px; border-radius: 50%; background: var(--line-soft); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
 .bo-clienti-who { min-width: 0; display: flex; flex-direction: column; }
 .bo-clienti-who a { font-size: 15px; font-weight: 700; color: var(--ink); text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* backlog:930b3bc9ba24: a 1280 il nome non si taglia («UX Esplorativo 111…»): va a capo, due righe al massimo. */
+.bo-clienti-who a { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; line-height: 1.25; }
 .bo-clienti-sub { font-size: 12px; color: var(--muted); }
 .bo-clienti-fact { margin: 0; font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bo-clienti-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1350,6 +1475,11 @@ select.bo-spazi-input { flex: none; }
 .cal-wrap .actions .ui-btn-cta { padding: 0 14px 0 16px; }
 .cal-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 18px; align-items: start; }
 .cal-rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* backlog:930b3bc9ba24: fra 701 e 1400 px la colonna di sinistra si stringe
+   e la settimana prende lo spazio (a 1280 la griglia era 634 su 952). */
+@media (min-width: 701px) and (max-width: 1400px) {
+  .cal-layout { grid-template-columns: 252px minmax(0, 1fr); gap: 14px; }
+}
 .cal-main { min-width: 0; position: relative; }
 .cal-wrap .panel { box-shadow: none; border-radius: 16px; border-color: var(--line-soft); padding: 18px; }
 .cal-wrap .panel > h2 { margin: 0 0 10px; font-size: 16px; letter-spacing: 0; }
@@ -1379,25 +1509,46 @@ select.bo-spazi-input { flex: none; }
 .cal-manual .cal-form input { flex-basis: 100%; }
 .cal-filter { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .cal-filter input { flex: 1 1 220px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
-.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); margin-top: 14px; }
+.cal-grid { display: grid; grid-template-columns: 46px repeat(5, minmax(0, 1fr)); grid-template-rows: auto repeat(18, 30px); margin-top: 14px; }
 .cal-corner { grid-column: 1; grid-row: 1; }
 .cal-hour { grid-column: 1; font-family: var(--mono); font-size: 10px; color: var(--dim); text-align: right; padding-right: 8px; align-self: start; transform: translateY(-50%); }
 .cal-day-head { grid-row: 1; margin: 0 0 8px; font-size: 12px; color: var(--muted); text-align: center; }
 .cal-day-head .cal-today { display: inline-block; background: var(--ink); color: var(--paper); border-radius: 999px; min-width: 44px; padding: 2px 8px; font-weight: 700; }
-.cal-day { position: relative; display: grid; grid-template-rows: repeat(18, minmax(30px, auto)); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
+/* backlog:7587307d5215: fixed quarter-hour rows (60px an hour) — a row that
+ * grew with its content made hours uneven across columns, so a block no
+ * longer covered its own time. Content clips inside its block instead. */
+.cal-day { position: relative; display: grid; grid-template-rows: repeat(36, 15px); grid-template-columns: repeat(var(--lanes, 1), minmax(0, 1fr)); border-left: 1px solid var(--line); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 60px); min-width: 0; }
 .cal-day:last-child { border-right: 1px solid var(--line); }
 /* backlog:5fbebe8559e9: the compact empty-day row exists only on the phone stack. */
 .cal-day-compact { display: none; }
-.cal-grid .cal-event { display: block; width: 100%; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
+.cal-grid .cal-event { display: block; width: 100%; min-height: 0; box-sizing: border-box; margin: 1px; padding: 4px 6px; border: 1px solid transparent; border-radius: 8px; text-align: left; font: inherit; cursor: pointer; overflow: hidden; }
 .cal-grid .cal-event strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
+.cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }
 .cal-m3 { background: var(--pending-soft); color: var(--ink); }
 .cal-m4 { background: var(--surface-soft); color: var(--ink); }
+/* backlog:7587307d5215: a booking block is a button, and the later
+ * `.ui-btn-secondary` surface painted every block white — a quarter-hour
+ * block vanished into the grid. The block keeps its member tint. */
+.cal-grid .cal-event.cal-m0 { background: var(--data-soft); }
+.cal-grid .cal-event.cal-m1 { background: var(--human-soft); }
+.cal-grid .cal-event.cal-m2 { background: var(--accent-soft); }
+.cal-grid .cal-event.cal-m3 { background: var(--pending-soft); }
+.cal-grid .cal-event.cal-m4 { background: var(--surface-soft); }
 .cal-grid .cal-event.cal-selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .cal-grid .cal-event.cal-cancelled { opacity: .55; }
+/* backlog:7587307d5215: the week and the team while they load — grey
+ * placeholders that pulse (the ui-skeleton rhythm), never an empty week. */
+.cal-skeleton { margin: 2px 4px; border-radius: 8px; background: var(--line-soft); }
+.cal-grid.is-loading { cursor: progress; }
+.cal-team-skeleton { padding: 8px 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .cal-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
+}
 .cal-day-foot { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
 .cal-avatar { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; border-radius: 999px; background: rgba(0, 0, 0, .14); font-size: 10px; font-weight: 700; text-align: center; }
 .cal-wa { display: inline-block; border-radius: 999px; background: var(--ink); color: var(--paper); font-size: 9px; font-weight: 700; padding: 1px 5px; letter-spacing: .02em; }
@@ -1414,6 +1565,22 @@ select.bo-spazi-input { flex: none; }
  * half hours read as one accent block, the form opens beside it. */
 .cal-day { cursor: cell; touch-action: none; user-select: none; }
 .cal-day .cal-event, .cal-day .bo-add-button { cursor: pointer; }
+/* backlog:3d0fbe7dc8d1: movable events drag (grab) and stretch from the
+ * bottom edge (ns-resize); the drag never starts a page scroll or a text
+ * selection, on desktop or on the 390 px phone. The «Sposta» form in the
+ * detail card is the same move as named fields. */
+.cal-grid .cal-event.is-movable { cursor: grab; touch-action: none; user-select: none; }
+/* backlog:7587307d5215: the stretch handle sits on the block's real bottom
+ * edge, whatever the block's height, never in the middle of a long block. */
+.cal-grid .cal-event.is-movable { position: relative; }
+.cal-resize { position: absolute; left: 0; right: 0; bottom: 0; display: block; height: 8px; margin: 0; border-radius: 0 0 8px 8px; cursor: ns-resize; touch-action: none;
+  background: linear-gradient(to bottom, transparent 4px, rgba(0, 0, 0, .28) 4px, rgba(0, 0, 0, .28) 6px, transparent 6px); }
+.cal-move { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cal-move-title { font-size: 13px; margin: 0 0 8px; }
+.cal-move-field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.cal-move-field input { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 10px; background: var(--surface); color: var(--ink); font-size: 13px; }
+.cal-move-note { font-size: 13px; }
 .cal-pick { z-index: 3; margin: 1px 3px; padding: 4px 8px; border-radius: 8px; border: 2px solid var(--accent);
   background: var(--accent-soft); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700;
   pointer-events: none; box-shadow: 0 6px 16px rgba(23, 107, 42, .14); }
@@ -1429,6 +1596,44 @@ select.bo-spazi-input { flex: none; }
 .cal-pop .cal-manual .actions, .cal-pop .cal-manual .cal-form-actions { margin-top: 4px; }
 .cal-pop .ui-search, .cal-pop .ui-select { display: flex; width: 100%; }
 .cal-pop .ui-search .ui-search-input { padding-left: 36px; }
+/* The event popover (Dan 11/11, like Google Calendar and Outlook): actions
+ * on top, a larger title with the event colour square, then when, customer,
+ * person, note and origin. Placed beside the event by eventPopoverPlacement. */
+.cal-event-pop { padding: 10px 18px 16px; max-height: calc(100vh - 16px); overflow-y: auto; box-sizing: border-box; }
+.cal-event-pop:focus { outline: none; }
+.cal-event-pop:focus-visible { box-shadow: 0 24px 60px rgba(23, 25, 18, .18), 0 0 0 1px var(--ink); }
+.cal-pop-tools { display: flex; justify-content: flex-end; gap: 4px; margin: 0 -8px 4px 0; }
+.cal-pop-tools .cal-pop-tool { display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: none;
+  border-radius: 8px; background: transparent; color: var(--muted); line-height: 1; box-shadow: none; cursor: pointer; }
+.cal-pop-tools .cal-pop-tool:hover, .cal-pop-tools .cal-pop-tool[aria-expanded="true"] { background: var(--surface-soft); color: var(--ink); }
+.cal-event-pop .cal-detail-title { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 4px; font-size: 20px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
+.cal-swatch { flex: none; width: 14px; height: 14px; margin-top: 5px; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .12); }
+.cal-pop-when { margin: 0 0 12px 24px; font-size: 14px; color: var(--muted); }
+.cal-event-pop .cal-move-note { margin: 0 0 10px 24px; }
+.cal-event-pop .cal-move { margin: 0 0 12px; }
+.cal-pop-row { display: flex; align-items: center; gap: 8px; margin: 0 0 8px 24px; font-size: 14px; color: var(--ink); }
+.cal-pop-link { color: var(--ink); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.cal-pop-person .cal-avatar { min-width: 24px; height: 24px; line-height: 24px; color: var(--ink); }
+.cal-pop-note { color: var(--muted); }
+.cal-event-pop .cal-sync { margin-left: 24px; }
+/* backlog:5346ab531538: «Annullare l'appuntamento?» asked inside the popover. */
+.cal-pop-confirm { margin: 0 0 12px; padding: 12px; border-radius: 12px; background: var(--danger-soft); }
+.cal-pop-question { margin: 0 0 8px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.cal-pop-hint { margin: 0 0 8px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.cal-pop-confirm .cal-move-field input { background: var(--surface); }
+.cal-pop-actions { display: flex; gap: 8px; }
+.cal-pop-confirm .ui-btn-danger { background: var(--danger); color: var(--paper); border-color: var(--danger); }
+/* backlog:6e6750ff8163: «Nuovo appuntamento» lives only in this popover.
+ * Opened without a slot it sits at the top right of the grid; every field
+ * carries its label; a long form scrolls inside, never off screen. */
+.cal-form-pop[data-anchor="grid"] { top: 12px; right: 12px; }
+.cal-form-pop { max-height: calc(100vh - 24px); overflow-y: auto; box-sizing: border-box; }
+/* backlog:3582d91635cb: the homonym hint beside a suggested customer. */
+.cal-customer-hint { font-weight: 400; color: var(--muted); }
+.cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
+.cal-form .cal-field-wide { flex-basis: 100%; }
+.cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
 .cal-now::before { content: ''; position: absolute; left: -4px; top: -3px; width: 8px; height: 8px; border-radius: 999px; background: var(--danger); }
@@ -1437,6 +1642,13 @@ select.bo-spazi-input { flex: none; }
 .cal-slots { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .cal-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .cal-form input { flex: 1 1 160px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); color: var(--ink); font-size: 13px; }
+/* backlog:c2f21b5debdd: the customer search keeps room for its magnifier on
+ * every width — `.cal-form input`'s 12px left padding put the lens over the
+ * placeholder on the desktop form too (the phone rule was the first cure,
+ * for one width only) — and takes the whole row, so its placeholder reads
+ * whole instead of being cut in a content-sized box. */
+.cal-form .ui-search .ui-search-input { padding-left: 36px; }
+.cal-form .ui-search { display: flex; flex: 1 1 100%; width: 100%; }
 .cal-ok { color: var(--accent); font-weight: 700; font-size: 13px; }
 
 @media (max-width: 700px) {
@@ -1459,16 +1671,15 @@ select.bo-spazi-input { flex: none; }
   .cal-wrap .actions > .ui-btn { flex: none; }
   .cal-wrap .actions [data-role="week-interval"] { flex: 1; text-align: center; }
   /* backlog:5fbebe8559e9 (spec 390): one column in the prototype order —
-   * detail, «Fissa con una frase», the week, Team, the manual form, online
-   * booking — so the grid is not pushed under every rail card. The rail
-   * dissolves into the column and each card takes its place by order. */
+   * «Fissa con una frase», the week, Team, online booking — so the grid
+   * is not pushed under every rail card. The rail dissolves into the column
+   * and each card takes its place by order. The «Nuovo appuntamento» form
+   * is the bottom sheet popover (backlog:6e6750ff8163), never a card here. */
   .cal-layout { display: flex; flex-direction: column; gap: 14px; }
   .cal-layout > .cal-rail { display: contents; }
-  .cal-rail > [data-role="event-detail"] { order: 1; }
   .cal-rail > .cal-ai { order: 2; }
   .cal-layout > .cal-main { order: 3; }
   .cal-rail > .cal-team { order: 4; }
-  .cal-rail > .cal-manual { order: 5; }
   .cal-rail > .cal-booking { order: 6; }
   /* backlog:5fbebe8559e9: an empty day is one compact row (day, «Nessun
    * appuntamento», «+ Prenota») instead of a 540px empty timeline; a day
@@ -1477,7 +1688,8 @@ select.bo-spazi-input { flex: none; }
   .cal-grid .cal-day-compact { display: flex; align-items: center; gap: 10px; grid-column: 1; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; font-size: 13px; }
   .cal-day-compact-name { font-weight: 700; text-transform: capitalize; }
   .cal-day-compact > span:not(.cal-day-compact-name) { color: var(--muted); flex: 1; min-width: 0; }
-  .cal-grid .cal-day { grid-template-rows: repeat(18, minmax(22px, auto)); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
+  .cal-grid { grid-template-rows: none; }
+  .cal-grid .cal-day { grid-template-rows: repeat(36, 11px); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px 44px); margin-bottom: 8px; }
 }
 
 /*
@@ -1758,11 +1970,20 @@ button.catalog-ai-open:hover { border-color: var(--agent-ink); }
 .catalog-create-form { display: grid; gap: 6px; }
 .catalog-create-label { font-size: 12px; color: var(--muted); }
 .catalog-create-form input { font-size: 13px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 6px 10px; max-width: 220px; }
+/* backlog:0bbd62834c5a: the open AI voice takes the bar's width, the sentence field reads its placeholder whole. */
+/* The button stays in the bar's row; the field opens on its own row below, sentence and «Proponi» side by side. */
+.catalog-create-wrap[data-open="true"] { display: contents; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form { flex: 1 1 100%; max-width: 640px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; }
+.catalog-create-wrap[data-open="true"] > .catalog-create-form > :not(input):not(button) { grid-column: 1 / -1; }
+.catalog-create-form input[name="ai-phrase"] { max-width: none; width: 100%; box-sizing: border-box; }
 .catalog-readonly { margin: 4px 0 0; font-size: 11.5px; color: var(--data-ink); }
 .catalog-empty { margin: 6px 0; font-size: 13px; color: var(--dim); }
 .catalog-offer { padding: 0; margin: 0; }
 .catalog-offer + .catalog-offer { margin-top: 6px; }
 .catalog-offer-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+/* backlog:0bbd62834c5a: several offers name each price, the name muted before the amount. */
+.catalog-offer-named { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.catalog-offer-named .catalog-offer-name { position: static; width: auto; height: auto; overflow: visible; clip: auto; margin: 0; font-size: 13px; font-weight: 500; color: var(--muted); }
 .catalog-price { margin: 0; font-size: 14px; font-weight: 600; }
 .catalog-ineligible { margin: 2px 0; font-size: 12px; color: var(--pending-ink); }
 .catalog-edit-wrap, .catalog-toggle-wrap { margin-top: 6px; display: grid; gap: 8px; }
@@ -1829,6 +2050,7 @@ button.catalog-remove:hover { color: var(--danger); background: var(--surface-so
   .catalog-filters input, .catalog-filters select { width: 100%; box-sizing: border-box; }
   .catalog-edit-form input { max-width: none; width: 100%; box-sizing: border-box; }
   .catalog-create-form input { max-width: none; width: 100%; box-sizing: border-box; }
+  .catalog-create-wrap[data-open="true"] > .catalog-create-form { grid-template-columns: minmax(0, 1fr); }
   .catalog-row { overflow-wrap: anywhere; }
 }
 
@@ -1913,6 +2135,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .ui-empty strong { font-size: 14px; }
 .ui-empty span { font-size: 13px; color: var(--muted); line-height: 1.45; }
 .ui-loading { padding: 24px 0; font-size: 13px; color: var(--muted); }
+.ui-skeleton { display: inline-block; max-width: 100%; height: .9em; border-radius: 6px; background: var(--line-soft); vertical-align: middle; }
+.ui-skeleton-block { display: block; }
+@media (prefers-reduced-motion: no-preference) {
+  .ui-skeleton { animation: ui-skeleton-pulse 1.4s ease-in-out infinite; }
+  @keyframes ui-skeleton-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+}
 .ui-section { margin: 34px 0 0; }
 .ui-section-title { margin: 0 0 16px; font-size: 22px; letter-spacing: -.024em; }
 .ui-icon { display: inline-flex; width: 16px; height: 16px; flex-shrink: 0; vertical-align: -3px; }
@@ -1976,6 +2204,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-rep-top .actions .badge:nth-child(2) { background: var(--agent-soft); color: var(--agent-ink); }
 .bo-rep .pipeline-forecast .forecast-total { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0; margin: 8px 0 0; }
 .bo-rep .pipeline-forecast .bo-rep-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 4px; margin: 12px 0 10px; }
+/* Review #761: a label that wraps («In chiusura in novembre 2026») must not
+   push its amount below the others: each card spans three rows of the
+   metrics grid (label, amount, sub) and shares them, so amounts line up. */
+.bo-rep .metric { display: grid; grid-row: span 3; grid-template-rows: subgrid; row-gap: 0; align-content: start; }
 .bo-rep .metric strong { font-size: clamp(20px, 2.2vw, 26px); line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .bo-rep-grid .forecast-total { font-size: 15px; letter-spacing: 0; }
 .bo-rep-grid > .pipeline-forecast .lede, .bo-rep-grid > .pipeline-forecast p:not(.forecast-total) { font-size: 13px; }
@@ -2023,6 +2255,62 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .pipeline-card:focus-within .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
 @media (hover: none) {
   .pipeline-card .card-move { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; }
+}
+/* Pipeline (Dan 11/11): il segnaposto tratteggiato dove la card atterra, la
+   card in attesa mentre la scrittura è in corso, il pannello «Apri». */
+/* backlog:7b2203e69826: tutta la card apre il pannello; il toast ha «Annulla». */
+.pipeline-card[data-openable="true"] { cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
+.pipeline-card[data-openable="true"]:hover { border-color: var(--line); box-shadow: var(--shadow); }
+.ui-toast-action { margin-left: 10px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 750; text-decoration: underline; cursor: pointer; }
+.ui-toast-action:focus-visible { outline: 2px solid var(--surface); outline-offset: 2px; }
+/* backlog:07d29c0d1b06: i totali di colonna stanno in un contenitore che si ridisegna con la card; il layout resta quello delle righe .stage-total. */
+.pipeline-column .stage-totals { display: contents; }
+/* backlog:3d811389bb4c: lo scheletro della Pipeline mentre carica. */
+.pipeline-skeleton .pipeline-skeleton-bar { height: 14px; width: 60%; margin: 2px 0 14px; border-radius: 7px; background: var(--line-soft); }
+.pipeline-skeleton .pipeline-skeleton-card { height: 84px; margin-bottom: 10px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line-faint); }
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-skeleton .pipeline-skeleton-bar, .pipeline-skeleton .pipeline-skeleton-card { animation: pipeline-skeleton-pulse 1.2s ease-in-out infinite; }
+  @keyframes pipeline-skeleton-pulse { 50% { opacity: .55; } }
+}
+/* backlog:fd0adcded1c3: dopo 3 s di caricamento lo scheletro lo dice a parole. */
+.pipeline-skeleton .pipeline-skeleton-slow { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+/* backlog:fd0adcded1c3: con il pannello offerta aperto la board tiene le sue colonne e guadagna spazio in fondo, così la colonna della card aperta scorre fuori da sotto il pannello. */
+.pipeline-board[data-offer-room="true"] .pipeline-column { flex: 0 0 var(--pipeline-column-width); min-width: var(--pipeline-column-width); }
+.pipeline-board[data-offer-room="true"]::after { content: ""; flex: 0 0 var(--pipeline-offer-room); }
+.pipeline-drop-slot { min-height: 48px; margin-bottom: 10px; border: 2px dashed var(--line-dashed); border-radius: 12px; background: var(--surface-soft); box-sizing: border-box; }
+.pipeline-card.dragging { opacity: .45; }
+.pipeline-card[aria-busy="true"] { opacity: .6; cursor: progress; }
+/* backlog:67a3116f4f65 (verifica-38): lo spostamento dura 2-3 s sul pilota; la
+   card in attesa ha una barra che scorre in basso, visibile anche senza leggere. */
+.pipeline-card[aria-busy="true"] { overflow: hidden; }
+.pipeline-card[aria-busy="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent); background-size: 50% 100%; background-repeat: no-repeat; }
+@media (prefers-reduced-motion: no-preference) {
+  .pipeline-card[aria-busy="true"]::after { animation: pipeline-card-wait 1.1s linear infinite; }
+  @keyframes pipeline-card-wait { from { background-position: -50% 0; } to { background-position: 150% 0; } }
+}
+.pipeline-card > .card-status { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.pipeline-card > .field-error { display: block; margin-top: 6px; }
+.pipeline-card > [data-action="move-retry"] { margin-top: 6px; }
+.bo-scheda-composer.bo-pipeline-offer { top: 72px; bottom: 16px; width: min(420px, calc(100vw - 48px)); max-height: none; border-bottom: 1px solid var(--line); border-radius: 14px; }
+.bo-pipeline-offer .bo-composer-body.bo-pipeline-offer-body { gap: 16px; padding: 18px 18px 18px; }
+.bo-pipeline-offer .offer-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+.bo-pipeline-offer .offer-fact { display: flex; flex-direction: column; gap: 3px; margin: 0; min-width: 0; }
+.bo-pipeline-offer .offer-fact-label { font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.bo-pipeline-offer .offer-fact-value { font-size: 14px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.bo-pipeline-offer-move { display: flex; flex-direction: column; gap: 6px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-move label { font-size: 11px; font-weight: 700; color: var(--dim); }
+.bo-pipeline-offer-move-row { display: flex; gap: 8px; }
+.bo-pipeline-offer-move-row select { flex: 1 1 auto; min-width: 0; }
+.bo-pipeline-offer-links { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line-faint); }
+.bo-pipeline-offer-links a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
+/* backlog:23f92c6a72ea: fino a 700 px (la Pipeline da telefono) il pannello
+   e' un foglio a tutta larghezza; prima, a 606 px, una finestra da 420 px
+   stava a meta' e copriva la prima colonna della kanban. */
+@media (max-width: 700px) {
+  .bo-scheda-composer.bo-pipeline-offer { top: 56px; right: 8px; left: 8px; bottom: 8px; width: auto; }
+}
+@media (max-width: 560px) {
+  .bo-pipeline-offer .offer-facts { grid-template-columns: 1fr; }
 }
 .pipeline-toolbar [data-view].ui-btn { background: transparent; border: 1px solid transparent; color: var(--muted); font-weight: 600; }
 .pipeline-toolbar [data-view][aria-pressed="true"].ui-btn { background: var(--surface); border-color: var(--line-soft); color: var(--ink); }
@@ -2153,6 +2441,12 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-campo-add-cancel:hover { color: var(--ink); }
 .bo-campo-add > small.field-error:empty { display: none; }
 .bo-cliente-nuovo-actions { display: flex; gap: 8px; margin-top: 6px; padding-top: 16px; border-top: 1px solid var(--line-faint); }
+/* backlog:ff8bb60f417f: Nuovo cliente in the scheda's window frame (bo-scheda-composer), not a page card. */
+.bo-cliente-panel .bo-cliente-nuovo { max-width: none; margin: 0; padding: 14px 0 18px; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+.bo-cliente-panel .bo-cliente-nuovo-actions { position: sticky; bottom: 0; background: var(--surface); padding-bottom: 4px; }
+.bo-cliente-nuovo-discard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 12px; background: var(--surface-soft); border: 1px solid var(--line-soft); }
+.bo-cliente-nuovo-discard > p { flex: 1 1 100%; margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.bo-cliente-nuovo-discard.hidden, .bo-cliente-nuovo-actions.hidden { display: none; }
 @media (max-width: 640px) {
   .bo-cliente-nuovo { padding: 20px 16px; border-radius: 16px; margin-top: 0; }
   .bo-cliente-nuovo-grid, .bo-cliente-nuovo-custom { grid-template-columns: 1fr; }
@@ -2269,7 +2563,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer-channels { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 0 10px; border-bottom: 1px solid var(--line-faint); }
 .bo-scheda-composer-channel { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 550; cursor: pointer; user-select: none; transition: border-color .12s, background .12s; }
 .bo-scheda-composer-channel input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.bo-scheda-composer-channel:hover { border-color: var(--ink); }
+/* backlog:f48593bb06d4: an off chip never answers the hover like a live one. */
+.bo-scheda-composer-channel:not([data-off="true"]):hover { border-color: var(--ink); }
 .bo-scheda-composer-channel[data-selected="true"] { background: var(--ink); border-color: var(--ink); color: var(--surface); }
 .bo-scheda-composer-channel[data-selected="true"]::before { content: "✓"; font-size: 11px; }
 .bo-scheda-composer-channel[data-off="true"] { color: var(--dim); background: transparent; border-style: dashed; border-color: var(--line-dashed); cursor: not-allowed; font-weight: 450; }
@@ -2289,9 +2584,18 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-ai-mark { color: var(--agent); font-size: 13px; line-height: 1; }
 .bo-scheda-composer .bo-composer-ai-input { flex: 1; min-width: 0; min-height: 0; padding: 7px 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 13.5px; color: var(--agent-ink); outline: none; }
 .bo-scheda-composer .bo-composer-ai-input::placeholder { color: var(--agent-ink); opacity: .6; }
+/* backlog:d30d17880f63: AI off — the request field reads off, its words stay selectable to copy. */
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"] { color: var(--muted); cursor: default; }
+.bo-scheda-composer .bo-composer-ai-input[aria-disabled="true"]::placeholder { color: var(--muted); opacity: 1; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-field { background: var(--paper); border-color: var(--line); cursor: not-allowed; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-mark { color: var(--muted); }
 .bo-scheda-composer .bo-composer-ai-go { flex: none; min-height: 0; padding: 7px 14px; border: 0; border-radius: 9px; background: var(--agent); color: var(--surface); font-size: 13px; font-weight: 650; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-go:hover { background: var(--agent-ink); }
 .bo-scheda-composer .bo-composer-ai-go[disabled] { opacity: .6; cursor: progress; }
+/* backlog:f48593bb06d4: AI off or no channel — Genera reads switched off, the reason sits on the line below. */
+.bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"], .bo-scheda-composer .bo-composer-ai-go[aria-disabled="true"]:hover { opacity: 1; background: var(--line); color: var(--muted); cursor: not-allowed; }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line { color: var(--muted); }
+.bo-composer-ai[data-off="true"] .bo-composer-ai-line a { color: var(--accent); font-weight: 600; }
 .bo-composer-ai-line { margin: 6px 2px 0; font-size: 12.5px; color: var(--agent-ink); }
 .bo-composer-ai-line:empty { display: none; }
 .bo-scheda-composer .bo-composer-ai-undo { min-height: 0; padding: 0; border: 0; background: none; color: var(--agent-ink); font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
@@ -2301,7 +2605,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-scheda-composer .bo-composer-ai-pick { min-height: 0; padding: 4px 12px; border: 1px solid var(--agent-soft); border-radius: 999px; background: var(--surface); color: var(--agent-ink); font: inherit; font-weight: 600; cursor: pointer; }
 .bo-scheda-composer .bo-composer-ai-pick:hover { border-color: var(--agent); }
 .bo-scheda-composer .bo-composer-ai-pick[aria-pressed="true"] { border-color: var(--agent); background: var(--agent); color: var(--surface); }
-.bo-composer-ai-off { margin: 0; font-size: 12.5px; color: var(--muted); }
+/* Voce 1ca42058: ogni versione mostra l'anteprima del testo sotto l'etichetta, leggibile prima della scelta. */
+.bo-scheda-composer .bo-composer-ai-pick { text-align: left; max-width: 230px; border-radius: 12px; }
+.bo-composer-ai-pick-label { display: block; font-weight: 600; }
+.bo-composer-ai-preview { display: block; margin-top: 2px; font-weight: 400; font-size: 11.5px; line-height: 1.4; opacity: .85; white-space: normal; }
 .bo-scheda-composer-text { flex: 1; width: 100%; min-height: 180px; padding: 12px 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-size: 14.5px; line-height: 1.55; color: var(--ink); resize: none; outline: none; }
 .bo-scheda-composer-subject::placeholder, .bo-scheda-composer-text::placeholder { color: var(--dim); }
 .bo-composer-body .field-error:empty { display: none; }
@@ -2324,7 +2631,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-composer-foot [data-action="composer-send"] { min-width: 96px; border-radius: 999px; }
 .bo-composer-limit { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--dim); }
 .bo-composer-hint { font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.bo-composer-body .bo-composer-reply-on { flex: none; margin: 0 0 6px; }
+/* backlog:d30d17880f63: «Rispondi su» keeps room under the dark header, never flush against it. */
+.bo-composer-body .bo-composer-reply-on { flex: none; margin: 12px 0 6px; line-height: 1.4; }
 @media (max-width: 700px) {
   .bo-scheda-composer { inset: 0; width: auto; max-height: none; border-radius: 0; border: 0; }
   .bo-scheda-composer[data-minimized="true"] { inset: auto 0 0 0; width: auto; }
@@ -2337,7 +2645,10 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* Assistente (05/11): domanda della barra in testa alla colonna, nota di fondo con margine. */
 .bo-assistant-asked { display: flex; flex-direction: column; gap: 4px; align-self: flex-end; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 4px 14px; background: var(--ink); color: var(--surface); }
 .bo-assistant-asked-text { margin: 0; font-size: 14px; line-height: 1.45; }
-.bo-assistant-asked-note { margin: 0; font-size: 11.5px; line-height: 1.4; opacity: .75; }
+/* backlog:1968c3320cd3: the system reply is its own bubble, on the
+ * assistant's side, like the answer card. */
+.bo-assistant-reply { margin: 0; align-self: flex-start; max-width: 88%; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--agent-card); border: 1px solid var(--agent-line); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.bo-assistant-foot .bo-assistant-source-link { margin-left: 6px; }
 .bo-assistant .bo-assistant-foot { margin: 0; padding: 12px 20px 16px; border-top: 1px solid var(--line-faint); background: var(--surface); }
 .bo-assistant-draft.bo-assistant-foot { padding-top: 0; border-top: 0; color: var(--ink); font-size: 13px; }
 
@@ -2360,9 +2671,27 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* A note reads as a note: a pencil mark and one paper card in the pending
    tone, never a channel bubble; the Note chip and its writer chips filter. */
 .bo-scheda-chan.bo-tile-note { background: var(--pending-soft); color: var(--pending-ink); font-family: inherit; font-size: 15px; }
+/* backlog:5346ab531538: a cancelled appointment in the cronologia — the
+   note card shape, in the neutral tone, with an × mark. */
+.bo-scheda-chan.bo-tile-cancelled { background: var(--surface-soft); color: var(--muted); font-family: inherit; font-size: 15px; }
+.bo-scheda-entry-cancelled .bo-scheda-note-paper { border-color: var(--line-soft); background: var(--surface-soft); }
+.bo-scheda-entry .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head, .bo-scheda-entry-cancelled .bo-scheda-note-paper .bo-scheda-entry-head { color: var(--ink); }
 .bo-scheda-note-paper { grid-column: 2; border: 1px solid color-mix(in srgb, var(--pending) 45%, var(--line-soft)); border-radius: 14px; background: color-mix(in srgb, var(--pending-soft) 55%, var(--surface)); padding: 10px 14px 12px; }
 .bo-scheda-entry .bo-scheda-note-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--pending-ink); font-weight: 600; }
 .bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-body { padding: 4px 0 0; border: 0; background: transparent; white-space: pre-line; overflow-wrap: anywhere; color: var(--ink); }
+/* backlog:cb348c9fcaeb: «Modifica» and «Elimina» under the operator's own note, quiet text commands; the editor sits in the note itself. */
+.bo-scheda-entry .bo-scheda-note-paper p.bo-scheda-note-actions { display: flex; gap: 14px; margin: 0; padding: 6px 0 0; border: 0; background: transparent; }
+button.bo-scheda-note-action { min-height: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pending-ink); font-size: 12.5px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+button.bo-scheda-note-action:hover { transform: none; color: var(--ink); }
+.bo-scheda-note-paper .bo-scheda-note-form.bo-scheda-note-edit { padding: 6px 0 0; }
+.bo-scheda-note-edit .bo-scheda-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.bo-scheda-note-edit .bo-scheda-form-actions button { padding: 8px 16px; }
+.bo-scheda-entry .bo-scheda-note-paper .bo-scheda-note-edit p.bo-muted { padding: 0; border: 0; background: transparent; font-size: 12.5px; }
+/* backlog:82235e46e3e9: offers and stage moves in «Tutti i contatti» — a quiet system line, not a bubble. */
+.bo-scheda-chan.bo-tile-event { background: var(--agent-soft); color: var(--agent-ink); font-family: inherit; font-size: 14px; }
+.bo-scheda-event-paper { grid-column: 2; border: 1px dashed var(--line); border-radius: 14px; background: var(--surface); padding: 8px 14px 10px; }
+.bo-scheda-entry .bo-scheda-event-paper .bo-scheda-entry-head { padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-weight: 600; }
+.bo-scheda-entry .bo-scheda-event-paper p.bo-scheda-event-body { margin: 2px 0 0; padding: 0; border: 0; background: transparent; color: var(--ink); overflow-wrap: anywhere; }
 .bo-scheda-chips .bo-scheda-chip-note { height: 30px; padding: 0 12px; border-radius: 99px; font-size: 12.5px; font-weight: 600; border: 1px dashed color-mix(in srgb, var(--pending) 70%, var(--line)); background: var(--pending-soft); color: var(--pending-ink); cursor: pointer; }
 .bo-scheda-chips .bo-scheda-chip-note[data-active="true"] { border-style: solid; border-color: var(--pending-ink); background: var(--pending-ink); color: var(--surface); }
 .bo-scheda-chips-authors { display: inline-flex; flex-wrap: wrap; gap: 6px; padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line-soft); }
@@ -2394,10 +2723,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 /* B5 — real phone pass (backlog:d7c78e9cdf53): send from the scheda, book
  * without dragging, no zoom and no sideways scroll on a 390px phone. */
 @media (max-width: 700px) {
-  /* The inline new-appointment form (phone, no popover): its customer search
-   * kept `.cal-form input`'s 12px left padding, so the magnifier sat on the
-   * placeholder. Same 36px the popover already gives it; desktop untouched. */
-  .cal-form .ui-search .ui-search-input { padding-left: 36px; }
+  /* The customer search's 36px lens room is a rule for every width now
+   * (backlog:c2f21b5debdd), above. */
   /* iOS Safari zooms the page when a field under 16px takes focus, and the
    * page stays zoomed (sideways scroll included): on a phone every typed
    * field reads at 16px. `!important` because the desktop sizes ride
@@ -2426,7 +2753,8 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 .bo-offer-field:focus-within { border-bottom-color: var(--ink); }
 .bo-offer-label { font-size: 11.5px; font-weight: 600; letter-spacing: .01em; color: var(--muted); }
 .bo-scheda-composer .bo-offer-input { width: 100%; min-height: 0; padding: 4px 0 2px; border: 0; border-radius: 0; box-shadow: none; background: transparent; font: inherit; font-size: 15px; color: var(--ink); outline: none; }
-.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); }
+/* backlog 0c9a27bb9ac0: a placeholder reads as a hint, never as a typed value. */
+.bo-scheda-composer .bo-offer-input::placeholder { color: var(--dim); opacity: .5; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"] { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .bo-scheda-composer .bo-offer-input[name="offer-title"]::placeholder { font-weight: 450; }
 .bo-scheda-composer .bo-offer-input[name="offer-value"] { font-variant-numeric: tabular-nums; }
@@ -2454,5 +2782,11 @@ button.ui-chip { cursor: pointer; font-family: var(--mono); }
 }
 /* Backlog 1e939a362c7c: «N offerte di altre pipeline» reads as a link and unfolds the offers. */
 .pipeline-switch .link-button { padding: 0; border: none; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
-.pipeline-off-list { margin: 6px 0 0; padding-left: 18px; }
-.pipeline-off-list li { margin: 2px 0; }
+/* backlog 169cd4bc988c: the offers of other pipelines in the /bo dress —
+ * ink names that open the offer, muted customer and stato, no browser blue. */
+.pipeline-off-list { margin: 8px 0 0; padding: 6px; list-style: none; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 12px; }
+.pipeline-off-list li { margin: 0; padding: 6px 8px; border-radius: 8px; font-size: 13px; color: var(--muted); }
+.pipeline-off-list li:hover { background: var(--surface-soft); }
+.pipeline-off-list .pipeline-off-name { color: var(--ink); font-weight: 600; text-decoration: none; }
+.pipeline-off-list a.pipeline-off-name:hover { text-decoration: underline; }
+.pipeline-off-list .pipeline-off-meta { color: var(--muted); }

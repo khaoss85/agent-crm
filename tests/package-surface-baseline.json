@@ -5,29 +5,29 @@
       "name": "agents",
       "dir": "agents",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
+      "version": 4,
+      "fingerprint": "549d6a3c4c05d6553de84b4d7554a6f3e66605ff9cb7f02d078e80f03eda9d69"
     },
     {
       "name": "agents",
       "dir": "agents",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "5be32a42ab3d7d61e8e4bac590a32100d821ce8a5781c6fa9e3b874fe28eef31"
+      "version": 4,
+      "fingerprint": "549d6a3c4c05d6553de84b4d7554a6f3e66605ff9cb7f02d078e80f03eda9d69"
     },
     {
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "5fcabe52dd10f2b2eef51958955ec7d0ca981975c2450dcb7fce9c39765e0072"
+      "version": 4,
+      "fingerprint": "11541bcb381d7acf9851343f8d533881d1981a27fc68b4214ed31207b8db0800"
     },
     {
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "8336fba211cdcbeb2ca653c723ebede2dc8c9d78491803d627749bb885021512"
+      "version": 4,
+      "fingerprint": "c0c03650d14a39b66f69b86f5cfdd6873409e8999041c0d984c33732bd8e30d3"
     },
     {
       "name": "calendar-sync",
@@ -306,15 +306,15 @@
       "name": "work",
       "dir": "work",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "4a723ff7e8d5557f68005bafaff09e627eb2519e758b9488f80c54e3db3e9aa2"
+      "version": 2,
+      "fingerprint": "716471060f2efe5786baf5c929d6f02debdff1e51e5b42cbe739ffcc084fdff2"
     },
     {
       "name": "work",
       "dir": "work",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "482be3190a2afe4fec4675eab3395be814220582a5e4baca6b514e7e588503a2"
+      "version": 2,
+      "fingerprint": "8f74a4977a3596c353e4acdf16186e84cffd915c91fade2567c86fdb0b92f15e"
     }
   ]
 }

@@ -12,7 +12,8 @@
 //   modules of packages/agents, scoped with `filter.spaceId`, plus the
 //   checked-in catalogue at `GET /api/agents/catalog` (whose 404 means
 //   «the agents package is not composed here»);
-// - writes: `POST /api/agents/create` (create-agent, catalogue slugs only)
+// - writes: `POST /api/agents/create` (create-agent: a catalogue slug, or —
+//   backlog:1f7cb20d3c30 — a hand-written agent from «Nuovo agente»)
 //   and `POST /api/agents/assign` (create-assignment), posted through the
 //   bound submission client so the Admin mutation gate sees an
 //   Idempotency-Key. Nothing else writes from here.
@@ -40,13 +41,42 @@
 // phrases or proposals stay inert text.
 
 import { bindAdminMutations, issueAdminKey } from './admin-submission.js';
-import { formatAmount, humanWriteError } from './admin-core.js';
-import { el, uiBadge, uiButton, uiEmpty } from './admin-ui.js';
+import { formatAmount, humanWriteError, parseEuroToCents } from './admin-core.js';
+import { el, uiBadge, uiButton, uiEmpty, uiHold, uiMarkBusy } from './admin-ui.js';
 
 /** How many rows each module read takes: one page, said out loud. */
 export const AGENTI_READ_LIMIT = 200;
 
+/**
+ * Backlog 2df6a513cc4d: the worker runs an assignment after Affida, so the
+ * card reads «In attesa di partire» until the first run lands. The screen
+ * reads again on its own: every AGENTI_POLL_MS while it is shown, plus one
+ * read at each AGENTI_FOLLOWUP_MS delay after an Affida that succeeded.
+ */
+export const AGENTI_POLL_MS = 20_000;
+export const AGENTI_FOLLOWUP_MS = Object.freeze([10_000, 30_000]);
+
 export const AGENT_STATUS_LABEL = Object.freeze({ active: 'Attivo', paused: 'In pausa' });
+
+/**
+ * backlog:1f7cb20d3c30 — an agent written by hand has no engine in this
+ * space: the deployment runs only the catalogue agents it wired an
+ * executor for (the catalogue read names their keys). The card says so and
+ * never reads «Attivo» for an agent nothing runs. When a deployment gets a
+ * generic engine, the catalogue read (or a field on the row) must carry
+ * that signal; until then the catalogue is the whole truth.
+ */
+export const AGENT_NO_ENGINE_LABEL = 'Pronto, in attesa del motore';
+export const AGENT_NO_ENGINE_NOTE = 'È nel tuo team, ma in questo spazio non c’è ancora un motore che lo fa lavorare.';
+
+/** An incarico of an agent with no engine: kept, never «Non riuscito», it waits (run-due `runnable`). */
+export const ASSIGNMENT_NO_ENGINE_LABEL = 'In attesa del motore';
+
+/** A capped agent needs the cost of one run on every incarico (package rule requireCostEstimate). */
+export const AGENT_COST_NEEDED_NOTE = 'Questo agente ha un tetto di spesa: scrivi quanto costa più o meno un giro, in euro.';
+
+/** The ⌘K bar cannot ask for the cost of a run: a capped agent is instructed from its card. */
+export const AGENT_CAP_USE_CARD_NOTE = 'Questo agente ha un tetto di spesa: dagli l’incarico dalla sua scheda in Agenti, dove scrivi anche quanto costa un giro.';
 
 /** The one autonomy the package supports: proposals always wait. */
 export const AGENT_AUTONOMY_LABEL = 'Chiede sempre il tuo ok';
@@ -71,6 +101,24 @@ export const RUN_OUTCOME_LABEL = Object.freeze({
   failed: 'non riuscito',
   rejected: 'rifiutato',
 });
+
+/**
+ * Backlog «Agenti: layout delle card»: the outcome of a run as a short chip
+ * on its row — the label the operator reads and the authority tone of the
+ * design system (uiBadge). `artifact` has no authority: it reads neutral.
+ */
+export const RUN_OUTCOME_CHIP = Object.freeze({
+  started: Object.freeze({ label: 'In corso', tone: 'agent' }),
+  proposed: Object.freeze({ label: 'Da approvare', tone: 'pending' }),
+  applied: Object.freeze({ label: 'Applicato', tone: 'accord' }),
+  artifact: Object.freeze({ label: 'Niente da proporre', tone: 'neutral' }),
+  capped: Object.freeze({ label: 'Tetto di spesa', tone: 'pending' }),
+  failed: Object.freeze({ label: 'Non riuscito', tone: 'fault' }),
+  rejected: Object.freeze({ label: 'Rifiutato', tone: 'human' }),
+});
+
+/** How many incarichi a card shows before «Mostra tutti (N)». */
+export const AGENT_RUNS_VISIBLE = 2;
 
 export const ASSIGNMENT_STATUS_LABEL = Object.freeze({
   active: 'Attivo',
@@ -149,13 +197,21 @@ export function agentInitials(name) {
  * (newest first), its spend this month and how many proposals wait.
  * @param {{ agents?: Array<any>, assignments?: Array<any>, runs?: Array<any>, nowIso: string }} input
  */
-export function buildAgentCards({ agents = [], assignments = [], runs = [], nowIso }) {
+export function buildAgentCards({ agents = [], assignments = [], runs = [], nowIso, catalog = null }) {
+  // backlog:1f7cb20d3c30: the agents this space can run are the catalogue
+  // agents (their keys come with the catalogue read). Without a catalogue
+  // read the screen knows nothing either way and keeps «Attivo».
+  const engines = Array.isArray(catalog)
+    ? new Set(catalog.map((entry) => entry?.agentSourceKey).filter((key) => typeof key === 'string'))
+    : null;
   const cards = [];
   for (const agent of agents) {
     const key = text(agent?.sourceKey);
     const name = text(agent?.name);
     if (key === null || name === null) continue;
-    const status = agent.status === 'paused' ? 'paused' : 'active';
+    const engine = engines === null || engines.has(key);
+    const status = agent.status === 'paused' ? 'paused' : engine ? 'active' : 'waiting';
+    const capCents = Number.isInteger(agent.spendingCapCents) && agent.spendingCapCents >= 0 ? agent.spendingCapCents : null;
     const own = assignments
       .filter((row) => row && row.agentSourceKey === key && text(row.phrase) !== null)
       .slice()
@@ -164,8 +220,12 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
         sourceKey: String(row.sourceKey ?? ''),
         phrase: String(row.phrase).trim(),
         schedule: describeSchedule(row),
-        status: assignmentStatusLabel(row, runs),
+        // backlog:1f7cb20d3c30: an active incarico of an agent nothing runs
+        // waits for the engine; paused or done still say so.
+        status: !engine && row.status === 'active' ? ASSIGNMENT_NO_ENGINE_LABEL : assignmentStatusLabel(row, runs),
         lastRun: lastRunLine(runs, String(row.sourceKey ?? '')),
+        lastOutcome: lastRunOf(runs, String(row.sourceKey ?? ''))?.outcome ?? null,
+        lastStamp: lastRunStamp(runs, String(row.sourceKey ?? '')),
       }));
     const spentCents = spentThisMonthCents(runs, key, nowIso);
     cards.push({
@@ -174,7 +234,10 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
       role: text(agent.role) ?? '',
       initials: agentInitials(name),
       status,
-      statusLabel: AGENT_STATUS_LABEL[status],
+      statusLabel: status === 'waiting' ? AGENT_NO_ENGINE_LABEL : AGENT_STATUS_LABEL[status],
+      engine,
+      capCents,
+      capLabel: capCents === null ? null : formatAmount(capCents, 'EUR'),
       autonomy: AGENT_AUTONOMY_LABEL,
       spentCents,
       spentLabel: formatAmount(spentCents, 'EUR'),
@@ -215,14 +278,32 @@ export function assignmentStatusLabel(assignment, runs) {
  * @returns {string | null}
  */
 export function lastRunLine(runs, assignmentSourceKey) {
-  if (assignmentSourceKey === '') return null;
-  const at = (run) => String(run?.decidedAt ?? run?.startedAt ?? '');
-  const last = (Array.isArray(runs) ? runs : [])
-    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
-    .sort((a, b) => at(b).localeCompare(at(a)))[0];
+  const last = lastRunOf(runs, assignmentSourceKey);
   if (!last) return null;
-  const stamp = romeStamp(at(last) || null);
+  const stamp = lastRunStamp(runs, assignmentSourceKey);
   return `Ultimo giro: ${RUN_OUTCOME_LABEL[last.outcome]}${stamp === '' ? '' : `, ${stamp}`}`;
+}
+
+/** @param {any} run */
+function runAt(run) {
+  return String(run?.decidedAt ?? run?.startedAt ?? '');
+}
+
+/**
+ * The newest run with a known outcome of one assignment, or null.
+ * @param {Array<any>} runs @param {string} assignmentSourceKey
+ */
+function lastRunOf(runs, assignmentSourceKey) {
+  if (assignmentSourceKey === '') return null;
+  return (Array.isArray(runs) ? runs : [])
+    .filter((run) => run && run.assignmentSourceKey === assignmentSourceKey && Object.hasOwn(RUN_OUTCOME_LABEL, String(run.outcome)))
+    .sort((a, b) => runAt(b).localeCompare(runAt(a)))[0] ?? null;
+}
+
+/** The Rome date of the last run, '' when it never ran. @param {Array<any>} runs @param {string} assignmentSourceKey */
+function lastRunStamp(runs, assignmentSourceKey) {
+  const last = lastRunOf(runs, assignmentSourceKey);
+  return last ? romeStamp(runAt(last) || null) : '';
 }
 
 /**
@@ -478,15 +559,18 @@ export async function loadAgentiData(client, spaceId) {
  * a double submit, therefore never creates a second incarico. A different
  * phrase, agent or space is a new intent with new identities.
  * @param {any} previous the attempt kept from the last try, or null
- * @param {{ spaceId: string, agentSourceKey: string, phrase: string }} intent
+ * @param {{ spaceId: string, agentSourceKey: string, phrase: string, costPerRunCents?: number }} intent
  */
 export function assignAttempt(previous, intent) {
+  const cost = Number.isInteger(intent.costPerRunCents) && intent.costPerRunCents > 0 ? intent.costPerRunCents : 0;
   if (previous && previous.spaceId === intent.spaceId && previous.agentSourceKey === intent.agentSourceKey
-    && previous.phrase === intent.phrase) return previous;
+    && previous.phrase === intent.phrase && previous.costPerRunCents === cost) return previous;
   return {
     spaceId: intent.spaceId,
     agentSourceKey: intent.agentSourceKey,
     phrase: intent.phrase,
+    // backlog:1f7cb20d3c30: the cost of one run, for an agent with a cap.
+    costPerRunCents: cost,
     sourceKey: `bo-agent-assign:${issueAdminKey()}`,
     runAt: null,
     keys: { plain: null, once: null },
@@ -510,6 +594,7 @@ export async function assignToAgent(bound, attempt, options = {}) {
     sourceKey: attempt.sourceKey,
     agentSourceKey: attempt.agentSourceKey,
     phrase: attempt.phrase,
+    ...(attempt.costPerRunCents > 0 ? { costPerRunCents: attempt.costPerRunCents } : {}),
     ...(options.once ? { plan: { cadence: 'once', runAt: attempt.runAt } } : {}),
   };
   const answer = await bound.request('/api/agents/assign', {
@@ -532,8 +617,72 @@ export const PHRASE_UNCLEAR_NOTE = 'Non ho capito ogni quanto farlo. Puoi scrive
 
 /** Italian message for a refused instruction. @param {unknown} error */
 export function assignErrorText(error) {
+  if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_COST_ESTIMATE_REQUIRED') return AGENT_COST_NEEDED_NOTE;
   return humanWriteError(error, {
     failed: 'Non riesco a dare l’incarico adesso: riprova tra poco.',
+    notComposed: 'Gli agenti non sono attivi in questo spazio.',
+  });
+}
+
+/** The bounds create-agent applies (packages/agents checkAgentInput). */
+export const NEW_AGENT_LIMITS = Object.freeze({ name: 120, role: 120, instructions: 4000 });
+
+/** The example under «Come lavora»: what an instruction looks like. */
+export const NEW_AGENT_EXAMPLE = 'Es. Ogni mattina guarda chi compie gli anni tra i clienti e prepara un messaggio di auguri. '
+  + 'Ogni messaggio aspetta il mio ok.';
+
+/** The locked panel after a lost answer (review #836 P2). */
+export const NEW_AGENT_PENDING_NOTE = 'Non so se l’agente è stato creato. Riprova: se c’è già, lo ritrovo senza crearne un altro.';
+
+/** Two agents of one space never answer to the same @name (create-agent AGENT_NAME_TAKEN). */
+export const AGENT_NAME_TAKEN_NOTE = 'C’è già un agente con questo nome nel tuo team: scegline un altro.';
+
+/** @param {unknown} error */
+function isNameTaken(error) {
+  return Boolean(error && typeof error === 'object' && /** @type {any} */ (error).code === 'AGENT_NAME_TAKEN');
+}
+
+/**
+ * backlog:1f7cb20d3c30 — check the «Nuovo agente» panel before it posts:
+ * every refusal in Italian, the body only when it is complete. The name
+ * loses a leading «@» (it is how the operator will type it) and may not
+ * fold to the name of an agent already in the space.
+ * @param {{ name?: unknown, role?: unknown, instructions?: unknown, cap?: unknown }} form
+ * @param {Array<any>} [agents]
+ * @returns {{ error: string } | { error?: undefined, body: { name: string, role: string, instructions: string, spendingCapCents?: number } }}
+ */
+export function checkNewAgent(form, agents = []) {
+  const line = (value) => String(value ?? '').replace(/\s+/g, ' ').trim();
+  const name = line(form?.name).replace(/^@+\s*/, '');
+  const role = line(form?.role);
+  // create-agent keeps instructions on one line: the lines of the textarea
+  // join with a space, never a 400 for an Enter the operator typed.
+  const instructions = line(form?.instructions);
+  if (name === '') return { error: 'Dagli un nome: è quello che scrivi dopo la @.' };
+  if (name.length > NEW_AGENT_LIMITS.name) return { error: `Il nome è troppo lungo: al massimo ${NEW_AGENT_LIMITS.name} caratteri.` };
+  if (role === '') return { error: 'Scrivi in poche parole di cosa si occupa.' };
+  if (role.length > NEW_AGENT_LIMITS.role) return { error: `«Di cosa si occupa» è troppo lungo: al massimo ${NEW_AGENT_LIMITS.role} caratteri.` };
+  if (instructions === '') return { error: 'Scrivi come lavora: cosa guarda e cosa ti propone.' };
+  if (instructions.length > NEW_AGENT_LIMITS.instructions) return { error: `Le istruzioni sono troppo lunghe: al massimo ${NEW_AGENT_LIMITS.instructions} caratteri.` };
+  const wanted = foldName(name);
+  if ((Array.isArray(agents) ? agents : []).some((row) => typeof row?.name === 'string' && foldName(row.name) === wanted)) {
+    return { error: AGENT_NAME_TAKEN_NOTE };
+  }
+  const rawCap = line(form?.cap).replace(/\s*€$/, '');
+  if (rawCap === '') return { body: { name, role, instructions } };
+  const cents = parseEuroToCents(rawCap);
+  if (cents === null) return { error: 'Il tetto di spesa va scritto in euro, per esempio 10 o 7,50. Oppure lascialo vuoto.' };
+  if (cents <= 0) return { error: 'Il tetto di spesa deve essere più di 0 €. Oppure lascialo vuoto.' };
+  return { body: { name, role, instructions, spendingCapCents: cents } };
+}
+
+/** Italian text for a refused «Nuovo agente». @param {unknown} error */
+export function newAgentErrorText(error) {
+  if (isNameTaken(error)) return AGENT_NAME_TAKEN_NOTE;
+  const status = error && typeof error === 'object' ? /** @type {any} */ (error).status : null;
+  if (status === 403) return 'Non hai il permesso di creare agenti in questo spazio: chiedilo a chi gestisce il team.';
+  return humanWriteError(error, {
+    failed: 'Non riesco a creare l’agente adesso: riprova tra poco. Quello che hai scritto resta qui.',
     notComposed: 'Gli agenti non sono attivi in questo spazio.',
   });
 }
@@ -588,11 +737,85 @@ function romeStamp(iso) {
  * The Agenti screen.
  * @param {{ doc?: any, mount: any, client: any, submissions?: any, storage?: any, spaceId?: () => (string | null), navigate?: (hash: string) => void, now?: () => string }} deps
  */
-export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString() }) {
+export function createAgentiView({ doc = null, mount, client, submissions, storage, spaceId, navigate = () => {}, now = () => new Date().toISOString(), setTimer, clearTimer }) {
   const documentNode = doc ?? (typeof document !== 'undefined' ? document : null);
   const { client: bound } = bindAdminMutations(client, { submissions, storage });
   const readSpace = typeof spaceId === 'function' ? spaceId : () => null;
+  const later = typeof setTimer === 'function' ? setTimer : (fn, ms) => setTimeout(fn, ms);
+  const forget = typeof clearTimer === 'function' ? clearTimer : (id) => clearTimeout(id);
   let renderToken = 0;
+  /** Backlog 2df6a513cc4d: the self-refresh below lives here. */
+  let polling = false;
+  let pollTimer = null;
+  const followupTimers = new Set();
+  function arm(fn, ms) {
+    let handle = null;
+    try {
+      handle = later(fn, ms);
+    } catch {
+      handle = null;
+    }
+    try {
+      handle?.unref?.();
+    } catch {
+      // Browsers answer a number: nothing to release.
+    }
+    return handle;
+  }
+  function stopAutoRefresh() {
+    polling = false;
+    if (pollTimer !== null) {
+      try {
+        forget(pollTimer);
+      } catch {
+        // Stopping is best-effort.
+      }
+      pollTimer = null;
+    }
+    for (const handle of [...followupTimers]) {
+      try {
+        forget(handle);
+      } catch {
+        // Stopping is best-effort.
+      }
+    }
+    followupTimers.clear();
+  }
+  function schedulePoll() {
+    if (!polling || pollTimer !== null) return;
+    pollTimer = arm(() => {
+      pollTimer = null;
+      if (!polling) return;
+      pollOnce();
+    }, AGENTI_POLL_MS);
+  }
+  async function pollOnce() {
+    try {
+      if (!polling || !state.space || readSpace() !== state.space) return;
+      if (documentNode && documentNode.visibilityState === 'hidden') return;
+      if (await reload()) paint();
+    } catch {
+      // A failed poll only waits for the next one, never breaks the screen.
+    } finally {
+      schedulePoll();
+    }
+  }
+  function scheduleFollowups() {
+    if (!polling) return;
+    for (const ms of AGENTI_FOLLOWUP_MS) {
+      const handle = arm(async () => {
+        followupTimers.delete(handle);
+        if (!polling) return;
+        try {
+          if (!state.space || readSpace() !== state.space) return;
+          if (await reload()) paint();
+        } catch {
+          // The next follow-up or poll still comes.
+        }
+      }, ms);
+      if (handle !== null && handle !== undefined) followupTimers.add(handle);
+    }
+  }
   const state = {
     loaded: false,
     available: false,
@@ -611,6 +834,18 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addKeys: new Map(),
     addError: '',
     notice: '',
+    /**
+     * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
+     * `pending` is the body of a create whose answer was lost: the panel
+     * is locked and «Riprova» sends exactly that body under its key
+     * (review #836 P2), never the fields as they are now.
+     * @type {{ key: string, name: string, role: string, instructions: string, cap: string, error: string, busy: boolean, pending: any } | null}
+     */
+    newAgent: null,
+    /** Agents whose card lists every incarico («Mostra tutti»). @type {Set<string>} */
+    expandedRuns: new Set(),
+    /** Incarichi whose phrase is shown whole. @type {Set<string>} */
+    openPhrases: new Set(),
     /**
      * Backlog 31a76b6f19a3: one Approva per run id — busy while the request
      * flies (a double click sends one request), then a done/pending/error
@@ -639,10 +874,11 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
 
   function invalidate() {
     renderToken += 1;
+    stopAutoRefresh();
   }
 
   function draftOf(key) {
-    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', busy: false, error: '', unclear: false, done: '', attempt: null });
+    if (!state.drafts.has(key)) state.drafts.set(key, { text: '', cost: '', busy: false, error: '', unclear: false, done: '', attempt: null });
     return /** @type {any} */ (state.drafts.get(key));
   }
 
@@ -688,7 +924,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (await reload()) paint();
     } catch (error) {
       state.adding = null;
-      state.addError = humanWriteError(error, {
+      state.addError = isNameTaken(error) ? AGENT_NAME_TAKEN_NOTE : humanWriteError(error, {
         failed: 'Non riesco ad aggiungere l’agente adesso: riprova tra poco.',
         notComposed: 'Gli agenti non sono attivi in questo spazio.',
       });
@@ -836,19 +1072,35 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const draft = draftOf(agent.sourceKey);
     const phrase = draft.text.trim();
     if (draft.busy || phrase === '' || !state.space) return;
+    // backlog:1f7cb20d3c30: a capped agent needs the cost of one run.
+    let costPerRunCents = 0;
+    if (agent.capCents !== null && agent.capCents !== undefined) {
+      const cents = parseEuroToCents(String(draft.cost ?? ''));
+      if (cents === null || cents <= 0) {
+        draft.error = AGENT_COST_NEEDED_NOTE;
+        draft.done = '';
+        paint();
+        return;
+      }
+      costPerRunCents = cents;
+    }
     draft.busy = true;
     draft.error = '';
     draft.done = '';
     paint();
-    draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase });
+    draft.attempt = assignAttempt(draft.attempt, { spaceId: state.space, agentSourceKey: agent.sourceKey, phrase, costPerRunCents });
     try {
       const made = await assignToAgent(bound, draft.attempt, { once, nowIso: now() });
       draft.busy = false;
       draft.unclear = false;
       draft.text = '';
+      draft.cost = '';
       draft.attempt = null;
       draft.done = `Incarico dato a ${agent.name}: ${made ? describeSchedule(made).toLowerCase() : 'registrato'}.`;
       if (await reload()) paint();
+      // Backlog 2df6a513cc4d: the run lands after this answer, so read
+      // again twice: the card leaves «In attesa di partire» on its own.
+      scheduleFollowups();
     } catch (error) {
       draft.busy = false;
       if (isPhraseUnclear(error)) {
@@ -885,24 +1137,37 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     box.appendChild(head);
 
     const facts = el(documentNode, 'dl', 'bo-agent-facts');
-    for (const [term, value] of [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]]) {
+    const factRows = [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]];
+    if (card.capLabel !== null) factRows.push(['Tetto al mese', card.capLabel]);
+    for (const [term, value] of factRows) {
       const row = el(documentNode, 'div', 'bo-agent-fact');
       row.appendChild(el(documentNode, 'dt', null, term));
       row.appendChild(el(documentNode, 'dd', null, value));
       facts.appendChild(row);
     }
     box.appendChild(facts);
+    if (!card.engine) box.appendChild(el(documentNode, 'p', 'bo-agent-noengine', AGENT_NO_ENGINE_NOTE));
 
     if (card.assignments.length > 0) {
+      // Backlog «Agenti: layout delle card»: the newest two incarichi as
+      // compact rows, the rest behind «Mostra tutti (N)».
+      const all = state.expandedRuns.has(card.sourceKey);
       const list = el(documentNode, 'ul', 'bo-agent-assignments');
-      for (const assignment of card.assignments.slice(0, 5)) {
-        const item = el(documentNode, 'li', 'bo-agent-assignment');
-        item.appendChild(el(documentNode, 'p', 'bo-agent-phrase', `«${assignment.phrase}»`));
-        item.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
-        if (assignment.lastRun) item.appendChild(el(documentNode, 'p', 'bo-agent-lastrun', assignment.lastRun));
-        list.appendChild(item);
-      }
+      const shown = all ? card.assignments : card.assignments.slice(0, AGENT_RUNS_VISIBLE);
+      for (const assignment of shown) list.appendChild(renderAssignmentRow(assignment));
       box.appendChild(list);
+      if (card.assignments.length > AGENT_RUNS_VISIBLE) {
+        const toggle = el(documentNode, 'button', 'bo-agent-runs-toggle', all ? 'Mostra meno' : `Mostra tutti (${card.assignments.length})`);
+        toggle.setAttribute('type', 'button');
+        toggle.setAttribute('data-action', 'runs-toggle');
+        toggle.setAttribute('aria-expanded', all ? 'true' : 'false');
+        toggle.addEventListener('click', () => {
+          if (state.expandedRuns.has(card.sourceKey)) state.expandedRuns.delete(card.sourceKey);
+          else state.expandedRuns.add(card.sourceKey);
+          paint();
+        });
+        box.appendChild(toggle);
+      }
     } else {
       box.appendChild(el(documentNode, 'p', 'bo-muted bo-agent-noassign', 'Nessun incarico per ora.'));
     }
@@ -919,13 +1184,32 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     input.value = draft.text;
     input.addEventListener('input', () => { draft.text = String(input.value ?? ''); });
     form.appendChild(input);
+    if (card.capCents !== null) {
+      // backlog:1f7cb20d3c30: the package refuses an incarico to a capped
+      // agent without the cost of one run, so the card asks for it here.
+      const cost = el(documentNode, 'input', 'ui-field bo-agent-cost');
+      cost.setAttribute('type', 'text');
+      cost.setAttribute('inputmode', 'decimal');
+      cost.setAttribute('name', `cost-${card.sourceKey}`);
+      cost.setAttribute('aria-label', `Quanto costa un giro di ${card.name}, in euro`);
+      cost.setAttribute('placeholder', '€ a giro');
+      cost.value = draft.cost;
+      cost.addEventListener('input', () => { draft.cost = String(cost.value ?? ''); });
+      form.appendChild(cost);
+    }
     const send = uiButton(documentNode, { variant: 'primary', label: draft.busy ? 'Invio…' : 'Affida', attrs: { type: 'submit', 'data-action': 'talk' } });
     send.disabled = draft.busy;
     form.appendChild(send);
     form.addEventListener('submit', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
       draft.text = String(input.value ?? draft.text);
-      void sendInstruction(card, false);
+      const cost = form.querySelector(`input[name="cost-${card.sourceKey}"]`);
+      if (cost) draft.cost = String(cost.value ?? draft.cost);
+      // The shared wait (admin-cta-busy guard): Affida reads «Invio…» from
+      // the press; the repaint keeps it from draft.busy, and a press that
+      // writes nothing (empty line) gets the button back.
+      const release = uiHold(send, 'Invio…');
+      void sendInstruction(card, false).finally(() => release());
     });
     box.appendChild(form);
     if (draft.unclear) {
@@ -942,13 +1226,218 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     return box;
   }
 
+  /**
+   * One incarico as a compact row: the phrase on one line (cut with an
+   * ellipsis; its full text on hover and on click), schedule and state
+   * under it, the outcome chip and the date of the last run on the right.
+   * @param {any} assignment
+   */
+  function renderAssignmentRow(assignment) {
+    const item = el(documentNode, 'li', 'bo-agent-assignment');
+    if (assignment.lastRun) item.setAttribute('title', assignment.lastRun);
+    const main = el(documentNode, 'div', 'bo-agent-run-main');
+    const open = state.openPhrases.has(assignment.sourceKey);
+    const phrase = el(documentNode, 'button', `bo-agent-phrase${open ? ' is-open' : ''}`, `«${assignment.phrase}»`);
+    phrase.setAttribute('type', 'button');
+    phrase.setAttribute('title', assignment.phrase);
+    phrase.setAttribute('aria-expanded', open ? 'true' : 'false');
+    phrase.addEventListener('click', () => {
+      const next = !state.openPhrases.has(assignment.sourceKey);
+      if (next) state.openPhrases.add(assignment.sourceKey);
+      else state.openPhrases.delete(assignment.sourceKey);
+      phrase.classList.toggle('is-open', next);
+      phrase.setAttribute('aria-expanded', next ? 'true' : 'false');
+    });
+    main.appendChild(phrase);
+    main.appendChild(el(documentNode, 'p', 'bo-agent-when', `${assignment.schedule} · ${assignment.status}`));
+    item.appendChild(main);
+    const chip = assignment.lastOutcome ? RUN_OUTCOME_CHIP[assignment.lastOutcome] : null;
+    if (chip) {
+      const side = el(documentNode, 'div', 'bo-agent-run-side');
+      // The design-system badge; `neutral` has no authority colour of its
+      // own and reads as the plain surface chip.
+      const badge = el(documentNode, 'span', null, chip.label);
+      badge.setAttribute('class', `ui-badge${chip.tone === 'neutral' ? '' : ` ui-badge-${chip.tone}`} bo-agent-outcome bo-agent-outcome-${assignment.lastOutcome}`);
+      side.appendChild(badge);
+      if (assignment.lastStamp !== '') side.appendChild(el(documentNode, 'span', 'bo-agent-run-date', assignment.lastStamp));
+      item.appendChild(side);
+    }
+    return item;
+  }
+
+  /** Focus the first match of `selector` in the mount, when the DOM can. @param {string} selector */
+  function focusIn(selector) {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const node = mount.querySelector(selector);
+    if (node && typeof node.focus === 'function') node.focus();
+  }
+
+  function openNewAgent() {
+    // One caller key per open panel: a retry or a double click replays it.
+    state.newAgent = { key: issueAdminKey(), name: '', role: '', instructions: '', cap: '', error: '', busy: false, pending: null };
+    paint();
+    focusIn('input[name="agent-name"]');
+  }
+
+  function closeNewAgent() {
+    if (state.newAgent?.busy) return;
+    state.newAgent = null;
+    paint();
+    focusIn('button[data-action="new-agent"]');
+  }
+
+  /**
+   * «Nuovo agente»: name, role, instructions with an example, optional
+   * monthly cap — the same inline creation panel as «Nuova sequenza».
+   * Fields write into `state.newAgent` on input, so a repaint (the
+   * periodic read) never eats what the operator typed.
+   */
+  function renderNewAgentPanel() {
+    const form = /** @type {any} */ (state.newAgent);
+    const panel = el(documentNode, 'section', 'bo-seq-panel bo-agent-new');
+    panel.setAttribute('aria-label', 'Nuovo agente');
+    panel.addEventListener('keydown', (event) => {
+      if (event?.key !== 'Escape') return;
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      closeNewAgent();
+    });
+    panel.appendChild(el(documentNode, 'h3', undefined, 'Nuovo agente'));
+    if (form.error !== '') {
+      const error = el(documentNode, 'p', 'bo-seq-create-error', form.error);
+      error.setAttribute('role', 'alert');
+      panel.appendChild(error);
+    }
+    const fieldRow = (text, id, control, hint = null) => {
+      const row = el(documentNode, 'div', 'ui-field-row bo-seq-field');
+      const label = el(documentNode, 'label', 'ui-label bo-seq-field-label', text);
+      label.setAttribute('for', id);
+      control.setAttribute('id', id);
+      row.appendChild(label);
+      row.appendChild(control);
+      if (hint !== null) row.appendChild(el(documentNode, 'p', 'bo-agent-new-hint', hint));
+      return row;
+    };
+    const locked = form.pending !== null;
+    if (locked) panel.appendChild(el(documentNode, 'p', 'bo-agent-new-hint bo-agent-new-pending', NEW_AGENT_PENDING_NOTE));
+    const field = (tag, name, value, max, placeholder) => {
+      const node = el(documentNode, tag, 'ui-field', undefined);
+      if (tag === 'input') node.setAttribute('type', 'text');
+      if (locked) node.disabled = true;
+      node.setAttribute('name', name);
+      node.setAttribute('maxlength', String(max));
+      if (placeholder) node.setAttribute('placeholder', placeholder);
+      node.value = value;
+      return node;
+    };
+    const name = field('input', 'agent-name', form.name, NEW_AGENT_LIMITS.name, 'Es. Auguri');
+    name.addEventListener('input', () => { form.name = String(name.value ?? ''); });
+    panel.appendChild(fieldRow('Nome', 'bo-agent-new-name', name, 'È il nome che scrivi dopo la @ per dargli un incarico.'));
+    const role = field('input', 'agent-role', form.role, NEW_AGENT_LIMITS.role, 'Es. Fa gli auguri ai clienti');
+    role.addEventListener('input', () => { form.role = String(role.value ?? ''); });
+    panel.appendChild(fieldRow('Di cosa si occupa', 'bo-agent-new-role', role));
+    const instructions = field('textarea', 'agent-instructions', form.instructions, NEW_AGENT_LIMITS.instructions, NEW_AGENT_EXAMPLE);
+    instructions.setAttribute('rows', '4');
+    instructions.addEventListener('input', () => { form.instructions = String(instructions.value ?? ''); });
+    panel.appendChild(fieldRow('Come lavora', 'bo-agent-new-instructions', instructions,
+      'Scrivi cosa guarda e cosa ti propone. Prima di fare qualcosa ti chiede sempre l’ok.'));
+    const cap = field('input', 'agent-cap', form.cap, 12, 'Es. 10');
+    cap.setAttribute('inputmode', 'decimal');
+    cap.addEventListener('input', () => { form.cap = String(cap.value ?? ''); });
+    panel.appendChild(fieldRow('Tetto di spesa al mese, in euro (facoltativo)', 'bo-agent-new-cap', cap,
+      'Con un tetto, a ogni incarico scrivi anche quanto costa più o meno un giro.'));
+    const row = el(documentNode, 'div', 'bo-seq-btns');
+    const submit = uiButton(documentNode, { variant: 'cta', label: locked ? 'Riprova' : 'Crea l’agente', attrs: { type: 'button', 'data-action': 'create-agent' } });
+    if (form.busy) uiMarkBusy(submit, 'Creo…');
+    submit.addEventListener('click', () => {
+      // The shared wait (admin-cta-busy guard): «Creo…» from the press; the
+      // repaint keeps it from form.busy while the create runs.
+      const release = uiHold(submit, 'Creo…');
+      void submitNewAgent().finally(() => release());
+    });
+    row.appendChild(submit);
+    const cancel = uiButton(documentNode, { variant: 'secondary', label: 'Annulla', attrs: { type: 'button', 'data-action': 'cancel-agent' } });
+    cancel.disabled = form.busy;
+    cancel.addEventListener('click', () => closeNewAgent());
+    row.appendChild(cancel);
+    panel.appendChild(row);
+    return panel;
+  }
+
+  /** Create the hand-written agent: check, POST once under the panel key, show it in the team. */
+  async function submitNewAgent() {
+    const form = state.newAgent;
+    if (!form || form.busy) return;
+    if (readSpace() !== state.space) {
+      await render();
+      return;
+    }
+    // A create whose answer was lost is retried as it was sent: same body,
+    // same key. Only a new, checked intent reads the fields.
+    let body = form.pending;
+    if (body === null) {
+      const checked = checkNewAgent(form, state.agents);
+      if (checked.error) {
+        form.error = checked.error;
+        paint();
+        return;
+      }
+      body = { spaceId: state.space, key: form.key, ...checked.body };
+    }
+    form.busy = true;
+    form.error = '';
+    paint();
+    try {
+      const answer = await bound.request('/api/agents/create', {
+        method: 'POST',
+        body,
+        idempotencyKey: body.key,
+      });
+      const name = typeof answer?.agent?.name === 'string' ? answer.agent.name : body.name;
+      state.newAgent = null;
+      state.notice = `${name} è entrato nel tuo team.`;
+      if (await reload()) paint();
+      else paint();
+      focusIn('button[data-action="new-agent"]');
+    } catch (error) {
+      form.busy = false;
+      form.error = newAgentErrorText(error);
+      // A refusal the server answered wrote nothing: the corrected panel is
+      // a new intent with a new key. A lost answer keeps its key, so the
+      // retry replays instead of creating a second agent.
+      const status = /** @type {any} */ (error)?.status;
+      if (Number.isInteger(status) && status >= 400 && status < 500) {
+        form.key = issueAdminKey();
+        form.pending = null;
+      } else {
+        // No answer, or one that cannot say whether the agent was written:
+        // lock the panel on what was sent until a retry settles it.
+        form.pending = body;
+      }
+      paint();
+    }
+  }
+
   function renderMine(page, cards) {
     const section = el(documentNode, 'section', 'bo-agenti-section');
-    section.appendChild(el(documentNode, 'h3', null, 'I tuoi agenti'));
+    const head = el(documentNode, 'div', 'bo-agenti-sectionhead');
+    head.appendChild(el(documentNode, 'h3', null, 'I tuoi agenti'));
+    // backlog:1f7cb20d3c30: an agent written by hand, beside the catalogue.
+    const create = uiButton(documentNode, {
+      variant: 'cta',
+      label: 'Nuovo agente',
+      attrs: { type: 'button', 'data-action': 'new-agent', 'aria-expanded': state.newAgent !== null ? 'true' : 'false' },
+    });
+    create.addEventListener('click', () => {
+      if (state.newAgent !== null) closeNewAgent();
+      else openNewAgent();
+    });
+    head.appendChild(create);
+    section.appendChild(head);
+    if (state.newAgent !== null) section.appendChild(renderNewAgentPanel());
     if (cards.length === 0) {
       section.appendChild(uiEmpty(documentNode, {
         title: 'Nessun agente nel team',
-        text: 'Scegline uno dal catalogo qui sotto: entra nel team e puoi dargli il primo incarico.',
+        text: 'Scegline uno dal catalogo qui sotto, oppure creane uno nuovo: entra nel team e puoi dargli il primo incarico.',
       }));
     } else {
       const grid = el(documentNode, 'div', 'bo-agent-grid');
@@ -1163,7 +1652,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       page.appendChild(el(documentNode, 'p', 'bo-muted', `Mostro i primi ${AGENTI_READ_LIMIT} elementi per elenco.`));
     }
     const nowIso = now();
-    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso });
+    const cards = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso, catalog: state.catalog });
     renderMine(page, cards);
     renderDaFare(page, buildDaFare({ runs: state.runs, agents: state.agents, assignments: state.assignments }));
     renderCatalog(page, buildCatalogItems({ catalog: state.catalog, agents: state.agents }));
@@ -1181,10 +1670,15 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
   }
 
   async function render() {
+    stopAutoRefresh();
+    polling = true;
     const space = readSpace();
     if (space !== state.space) {
       state.space = space;
       state.drafts = new Map();
+      state.expandedRuns = new Set();
+      state.openPhrases = new Set();
+      state.newAgent = null;
       state.notice = '';
       state.addError = '';
     }
@@ -1195,6 +1689,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     state.loaded = false;
     paint();
     if (await reload()) paint();
+    // Backlog 2df6a513cc4d: keep reading while the screen is shown, so a
+    // run that lands after Affida paints without a manual reload.
+    schedulePoll();
   }
 
   return { render, paint, state, invalidate };
