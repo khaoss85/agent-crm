@@ -729,6 +729,87 @@ async function phoneIdentitySubjects({ modules, names }, needle, spaceId = 'unkn
 }
 
 /**
+ * The customer keys one list row can name (backlog:120f2994, production
+ * 14/11: the Clienti search answered 503 after 30 s). The same fields
+ * `belongsToCustomer` reads — contact, company, opportunity and the
+ * subject link — so the candidate set below always covers every row the
+ * rule would keep, and the rule itself still decides.
+ * @param {any} row
+ */
+function customerRowKeys(row) {
+  if (row === null || typeof row !== 'object') return [];
+  const keys = [];
+  if (row.contactId !== null && row.contactId !== undefined && row.contactId !== '') {
+    keys.push(`contact:${row.contactId}`);
+  }
+  if (row.companyId) keys.push(`company:${row.companyId}`);
+  if (row.opportunityId) keys.push(`opp:${row.opportunityId}`);
+  if ((row.subjectResource === 'contact' || row.subjectResource === 'company')
+    && row.subjectId !== null && row.subjectId !== undefined && row.subjectId !== '') {
+    keys.push(`${row.subjectResource}:${row.subjectId}`);
+  }
+  return keys;
+}
+
+/**
+ * One pass over a row set, bucketed by customer key (backlog:120f2994).
+ * @param {Array<any>} rows
+ */
+function indexRowsByCustomer(rows) {
+  const byKey = new Map();
+  const list = Array.isArray(rows) ? rows : [];
+  for (let at = 0; at < list.length; at += 1) {
+    for (const key of customerRowKeys(list[at])) {
+      let bucket = byKey.get(key);
+      if (bucket === undefined) {
+        bucket = [];
+        byKey.set(key, bucket);
+      }
+      bucket.push(at);
+    }
+  }
+  return { rows: list, byKey };
+}
+
+/**
+ * The rows of one customer out of a bucketed set (backlog:120f2994): only
+ * the buckets its keys name are visited, the survivors keep their source
+ * order, and `mine` — the same `belongsToCustomer` predicate the full scan
+ * used, contact-scoped narrowing included — still decides each row.
+ * @param {{rows: Array<any>, byKey: Map<string, Array<number>>}} indexed
+ * @param {Array<string>} keys
+ * @param {(row: any) => boolean} mine
+ */
+function selectSubjectRows(indexed, keys, mine) {
+  const hits = new Set();
+  for (const key of keys) {
+    const bucket = indexed.byKey.get(key);
+    if (bucket === undefined) continue;
+    for (const at of bucket) hits.add(at);
+  }
+  if (hits.size === 0) return [];
+  const ordered = [...hits].sort((a, b) => a - b);
+  const out = [];
+  for (const at of ordered) {
+    const row = indexed.rows[at];
+    if (mine(row)) out.push(row);
+  }
+  return out;
+}
+
+/**
+ * An evidence summary over already-selected rows (backlog:120f2994): the
+ * same available/count/complete shape the status derivation needs, without
+ * re-scanning the whole table per customer.
+ */
+function summarizeSectionRows(read, rows) {
+  if (!read || read.readable !== true) {
+    return { available: false, count: null, countIsComplete: true };
+  }
+  return { available: true, count: rows.length, countIsComplete: read.complete !== false };
+}
+
+/**
  * The customer list read (BO-F1-05). Module-level so tests drive it with a
  * fake module map; the operation above hands it the composed runtime.
  *
@@ -1172,6 +1253,20 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     throw new AppError('the da-leggere view needs the read-state records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
 
+  // backlog:120f2994 (production 14/11, the 30 s search that answered
+  // 503): every table below is bucketed once by customer key, so each
+  // subject gathers only its own candidates instead of scanning every
+  // table once per subject. The deciding predicate is unchanged.
+  const opportunityIndex = indexRowsByCustomer(opportunities.rows);
+  const orderIndex = indexRowsByCustomer(evidenceReads.orders.rows);
+  const contractIndex = indexRowsByCustomer(evidenceReads.contracts.rows);
+  const subscriptionIndex = indexRowsByCustomer(evidenceReads.subscriptions.rows);
+  const taskIndex = indexRowsByCustomer(tasks.rows);
+  const messageIndex = indexRowsByCustomer(messages.rows);
+  const callIndex = indexRowsByCustomer(calls.rows);
+  const conversationIndex = indexRowsByCustomer(conversations.rows);
+  const signalIndex = indexRowsByCustomer(signals.rows);
+
   const today = new Date().toISOString().slice(0, 10);
   const rows = subjects.map(({ contact, company }) => {
     const resource = contact ? 'contact' : 'company';
@@ -1188,7 +1283,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // On a contact row a company match alone never pulls in another
     // contact's contact-scoped record, or every card in the company shares
     // the same offer.
-    const myOpportunities = opportunities.rows.filter((row) => belongsToCustomer(row, {
+    // backlog:120f2994: the candidates come from the buckets this subject
+    // names — the predicate deciding each row is the same as the full scan.
+    const baseKeys = contact
+      ? [`contact:${contact.id}`, ...(company ? [`company:${company.id}`] : [])]
+      : [`company:${company.id}`];
+    const myOpportunities = selectSubjectRows(opportunityIndex, baseKeys, (row) => belongsToCustomer(row, {
       ...directIds,
       opportunityIds: new Set(),
     }, subject));
@@ -1196,10 +1296,17 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       ...directIds,
       opportunityIds: new Set(myOpportunities.map((entry) => entry?.id).filter((entry) => entry != null)),
     }, subject);
+    const subjectKeys = [...baseKeys, ...myOpportunities
+      .map((entry) => entry?.id)
+      .filter((entry) => entry != null)
+      .map((entry) => `opp:${entry}`)];
+    const myOrders = selectSubjectRows(orderIndex, subjectKeys, mine);
+    const myContracts = selectSubjectRows(contractIndex, subjectKeys, mine);
+    const mySubscriptions = selectSubjectRows(subscriptionIndex, subjectKeys, mine);
     const statusBySubject = new Map([[key, deriveCustomerStatus({
-      orders: sectionSummary(evidenceReads.orders, mine),
-      contracts: sectionSummary(evidenceReads.contracts, mine),
-      subscriptions: sectionSummary(evidenceReads.subscriptions, mine),
+      orders: summarizeSectionRows(evidenceReads.orders, myOrders),
+      contracts: summarizeSectionRows(evidenceReads.contracts, myContracts),
+      subscriptions: summarizeSectionRows(evidenceReads.subscriptions, mySubscriptions),
     })]]);
     // backlog:5c2f8bc67859 (giro UX 11/11): «Valore offerta» on a contact
     // row sums only the offers that name this contact, the same rule as the
@@ -1214,7 +1321,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
     const currencies = [...new Set(myOffers.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
-    const myTasks = tasks.rows.filter(mine).filter((row) => row?.status === 'open');
+    const myTasks = selectSubjectRows(taskIndex, subjectKeys, mine).filter((row) => row?.status === 'open');
     // The callback view filters on this one value, so it must be the most
     // actionable open task — overdue first, then due today — never the
     // earliest-sorted row, where an undated task ('') would sort before any
@@ -1228,18 +1335,19 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
-    const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    const myMessageRows = selectSubjectRows(messageIndex, subjectKeys, mine);
+    const myMessages = [...myMessageRows, ...selectSubjectRows(callIndex, subjectKeys, mine)];
     // The row's unread badge, from the message rows already in hand — no new
     // query. Calls never count (only what the scheda badges counts), and a
     // null here (no member, no watermark table, no read-state functions)
     // shapes nulls downstream.
     const myUnread = readFns !== null && typeof readFns.countUnreadForSubject === 'function'
-      ? readFns.countUnreadForSubject(messages.rows.filter(mine), watermarks)
+      ? readFns.countUnreadForSubject(myMessageRows, watermarks)
       : null;
     // «Da rispondere»: from the same message rows, no new query. Unreadable
     // messages shape nulls, never «nobody waits».
     const myAwaiting = repliesReadable
-      ? awaitingReplyFor(messages.rows.filter(mine), conversations.rows.filter(mine), { ownAddresses, correspondents })
+      ? awaitingReplyFor(myMessageRows, selectSubjectRows(conversationIndex, subjectKeys, mine), { ownAddresses, correspondents })
       : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
@@ -1272,10 +1380,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         lastContactSubject = typeof row?.mailSubject === 'string' ? row.mailSubject : null;
       }
     }
-    const renewalWithinDays = evidenceReads.subscriptions.rows.filter(mine).some((row) => (
+    const renewalWithinDays = mySubscriptions.some((row) => (
       row?.status === 'active' && withinDays(row?.endDate, today, 30)
     ));
-    const mySignals = signals.rows.filter(mine);
+    const mySignals = selectSubjectRows(signalIndex, subjectKeys, mine);
     mySignals.sort((a, b) => String(b?.observedAt ?? '').localeCompare(String(a?.observedAt ?? '')));
     const budgetSignal = mySignals[0] ?? null;
     return shapeCustomerRow({ contact, company }, {
@@ -1345,15 +1453,6 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     }))),
     pageSizes: [...CUSTOMER_PAGE_SIZES],
   });
-}
-
-/** Evidence summary for one customer from a batched section read. */
-function sectionSummary(read, mine) {
-  if (!read || read.readable !== true) {
-    return { available: false, count: null, countIsComplete: true };
-  }
-  const count = read.rows.filter(mine).length;
-  return { available: true, count, countIsComplete: read.complete !== false };
 }
 
 /** YYYY-MM-DD within (today, today + days]. */
