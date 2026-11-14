@@ -202,7 +202,11 @@ export function createCommercialDomain(options = {}) {
     // `accept-link` and `link-info` quote actions. Additive: catalog,
     // pricing, versions and approval are untouched; a project without the
     // `quote-share` manifest keeps its exact pre-link behaviour.
-    version: 8,
+    // 9: concurrent share-link mints on one approved version converge on a
+    // single live row — per-version exclusion in the mint plus loser-reuses
+    // on conflict, so double acceptance stays impossible. Additive: the
+    // share-link contract (input, reused-vs-minted answers) is unchanged.
+    version: 9,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',
