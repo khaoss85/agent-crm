@@ -17,6 +17,14 @@
 export function createKnownNames({ space, limit = 500 }) {
   /** @type {Map<string, string>} */
   const names = new Map();
+  /** @type {Map<string, string>} */
+  const offers = new Map();
+  /** @param {Map<string, string>} map @param {string} key @param {string} value */
+  const keep = (map, key, value) => {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > limit) map.delete(/** @type {string} */ (map.keys().next().value));
+  };
   /** @param {unknown} resource @param {unknown} id */
   const keyOf = (resource, id) => {
     if (typeof resource !== 'string' || !/^[a-z][a-z0-9-]*$/.test(resource)) return null;
@@ -32,9 +40,27 @@ export function createKnownNames({ space, limit = 500 }) {
       const key = keyOf(resource, id);
       const text = typeof name === 'string' ? name.trim() : '';
       if (key === null || text === '') return;
-      names.delete(key);
-      names.set(key, text);
-      while (names.size > limit) names.delete(/** @type {string} */ (names.keys().next().value));
+      keep(names, key, text);
+    },
+    /**
+     * backlog:a060a4aa65b6: the offer page this customer was opened from —
+     * the scheda asks its state history at once, beside its own first reads,
+     * instead of after the profile names the offer.
+     * @param {unknown} resource @param {unknown} id @param {unknown} offerId
+     */
+    rememberOffer(resource, id, offerId) {
+      const key = keyOf(resource, id);
+      if (key === null || typeof offerId !== 'string' || offerId === '') return;
+      keep(offers, key, offerId);
+    },
+    /**
+     * The offer last opened for this customer in this space, or null.
+     * @param {unknown} resource @param {unknown} id
+     * @returns {string | null}
+     */
+    offer(resource, id) {
+      const key = keyOf(resource, id);
+      return key === null ? null : (offers.get(key) ?? null);
     },
     /**
      * The name last shown for this customer in this space, or null.

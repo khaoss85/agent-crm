@@ -38,3 +38,14 @@ test('a762c28a646c: app.js hands one store to the Clienti list, the offer page a
   }
   assert.ok(app.indexOf('const knownNames = createKnownNames(') < app.indexOf('const offerDetail = createOfferDetail('), 'declared before the views');
 });
+
+test('a060a4aa65b6: the offer a customer was opened from is remembered per space', () => {
+  let space = 's1';
+  const names = createKnownNames({ space: () => space });
+  names.rememberOffer('contact', 'c1', 'o1');
+  assert.equal(names.offer('contact', 'c1'), 'o1');
+  space = 's2';
+  assert.equal(names.offer('contact', 'c1'), null);
+  names.rememberOffer('contact', 'c1', '');
+  assert.equal(names.offer('contact', 'c1'), null);
+});

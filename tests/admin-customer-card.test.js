@@ -1034,7 +1034,7 @@ test('1a066ddfe42a: la scheda con dati non mostra UUID, date ISO né inglese di 
   const text = mount.textContent;
   assertCustomerItalian(text, 'full card');
   assert.ok(!text.includes(UUID_B), 'an offer without a name never falls back to its id');
-  assert.ok(text.includes('approvata'), 'the offer status reads in Italian');
+  assert.ok(text.includes('Approvata'), 'the offer status reads in Italian');
   assert.ok(text.includes('attivo'), 'the package status reads in Italian');
 });
 
@@ -1310,7 +1310,7 @@ test('the offer panel names the quote after its opportunity, with the opportunit
   const text = mount.textContent;
   // Backlog a551982c06eb: the line reads the sale's stage, never the quote's
   // approval («approvata») as if it were the offer's state.
-  assert.ok(text.includes('Pacchetto 10 ingressi · proposta'),
+  assert.ok(text.includes('Pacchetto 10 ingressi · Proposta'),
     'the offer reads with its opportunity name and the Italian stage');
   assert.ok(!text.includes('approvata'), 'the quote approval is not the offer state');
   assert.ok(!text.includes('8d8f1d4d-25c1-4641-8836-267581100b32'),
@@ -1338,7 +1338,7 @@ test('a2ea75f705fd: the quote offer line opens the offer page, not the quote', a
   const link = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.ok(link, 'the quote offer line is a link');
   assert.equal(link.getAttribute('href'), '#/offerte/o1/cliente/contact/c1', 'the line opens its offer page (backlog:a2ea75f705fd), naming the scheda to go back to (backlog:96c7b56001ba)');
-  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · proposta'),
+  assert.ok(link.textContent.includes('Pacchetto 10 ingressi · Proposta'),
     'the link keeps the opportunity name and the Italian stage');
 });
 
@@ -1408,7 +1408,7 @@ test('a2ea75f705fd: the opportunity-fallback offer line opens the offer page', a
       quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
     },
   }));
-  assert.ok(mount.textContent.includes('Pacchetto sede · proposta'), 'the fallback offer line still reads');
+  assert.ok(mount.textContent.includes('Pacchetto sede · Proposta'), 'the fallback offer line still reads');
   const links = mount.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-link');
   assert.deepEqual(links.map((node) => node.getAttribute('href')), ['#/offerte/o1/cliente/contact/c1'], 'the offer opens its page');
 });
@@ -1428,7 +1428,7 @@ test('the opportunity-fallback offer line reads the name with its Italian stage,
     },
   }));
   const text = mount.textContent;
-  assert.ok(text.includes('Pacchetto sede · proposta'),
+  assert.ok(text.includes('Pacchetto sede · Proposta'),
     'the fallback offer line reads with its Italian stage');
   assert.ok(!text.includes('proposal'), 'the raw English stage is never shown');
 });
@@ -2125,7 +2125,7 @@ test('714433c2: Cambia stato lists the legal moves in Italian and moves the oppo
     doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
   }).renderCard('contact', 'c1');
 
-  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · qualificazione'),
+  assert.ok(mount.textContent.includes('Pacchetto 10 ingressi · Qualificazione'),
     'the offer line shows the opportunity with its Italian stage');
   const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
   assert.ok(change, 'the Cambia stato menu button exists');
@@ -6002,4 +6002,24 @@ test('backlog:af43dffdff83: «Solo SpazioB 0711» reads «SS» in the scheda ava
   const avatar = mount.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-avatar');
   assert.equal(avatar.textContent, 'SS');
   assert.ok(!avatar.textContent.includes('?'));
+});
+
+// backlog:a060a4aa65b6 (verifica 14/11 01:52Z, «Prova verifica 07/11 B1
+// modificato»): the offer is outside any board, so its state is the core
+// stage — read with a capital, as the Pipeline lists it («Qualificazione»).
+test('a060a4aa65b6: an offer outside any board reads its core stage like the Pipeline, with a capital', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'qualification', stage: 'qualification', name: 'Prova offerta', pipelineKey: null, pipelineStage: null }],
+      },
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  const state = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-scheda-offer-state');
+  assert.equal(state?.textContent, 'Qualificazione');
+  const { upperFirst, offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
+  assert.equal(state.textContent, upperFirst(offerStageLabel([], { stage: 'qualification' })), 'the same words as the Pipeline off-board list');
 });
