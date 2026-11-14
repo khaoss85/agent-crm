@@ -1258,6 +1258,8 @@ export function createCustomerCardView(deps) {
   // definitive answer (sent, refused, failed) drops the key.
   const composerSendKeys = new Map();
   let shownKey = null;
+  /** The card the on-screen «Riprova» buttons re-read (backlog:3a9bee845cc4). */
+  let retryTarget = null;
   /** The router left the scheda and cleared the mount (backlog:947260f9f036). */
   let offScreen = false;
   let shownSides = [];
@@ -5132,8 +5134,32 @@ export function createCustomerCardView(deps) {
   // Voce 908f2eb9bbfb: a section that fails shows its own error and leaves
   // the rest of the scheda. Only the card read failing fails the whole
   // scheda — it carries the name, and without a name there is no card.
+  // backlog:3a9bee845cc4: one failed request logs once, however many sections
+  // name it — the same error object reaches every riquadro, and each used to
+  // log its own «[bo] lettura fallita» line (production 13/11: 52 lines for 6
+  // requests under a 429). A failed section also offers «Riprova»: it
+  // re-reads the scheda, so a passed rate limit paints instead of staying
+  // failed.
+  const loggedReadFailures = new WeakSet();
+  const schedaRetryButton = () => {
+    const retry = el('button', 'bo-scheda-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'scheda-retry');
+    const target = retryTarget;
+    retry.addEventListener('click', () => {
+      // A double tap under a rate limit only crowds the server: the first tap
+      // owns the re-read (renderCard keeps only the newest answer anyway).
+      retry.setAttribute('disabled', '');
+      if (target !== null) void renderCard(target.resource, target.id);
+    });
+    return retry;
+  };
   const readError = (box, error, failed) => {
-    box.appendChild(el('p', 'field-error', humanReadError(error, { failed })));
+    const record = error !== null && (typeof error === 'object' || typeof error === 'function') ? error : null;
+    const first = record === null || !loggedReadFailures.has(record);
+    if (record !== null) loggedReadFailures.add(record);
+    box.appendChild(el('p', 'field-error', humanReadError(error, { failed, log: first ? null : () => {} })));
+    box.appendChild(schedaRetryButton());
   };
 
   /**
@@ -5175,6 +5201,7 @@ export function createCustomerCardView(deps) {
 
   async function renderCard(resource, id) {
     const key = `${resource}/${id}`;
+    retryTarget = { resource, id };
     const renderToken = ++cardRenderToken;
     // A section re-read that starts while this full read is in flight is
     // newer for its part: the full answer never paints over it.
@@ -5288,6 +5315,9 @@ export function createCustomerCardView(deps) {
       panel.appendChild(el('p', 'bo-muted', humanReadError(loaded.cardError, {
         failed: 'La scheda non si è potuta leggere. Riprova più tardi.',
       })));
+      // backlog:3a9bee845cc4: a rate limit failing the card read also leaves
+      // a way back — the same re-read the failed sections offer.
+      panel.appendChild(schedaRetryButton());
       // Review #612 round 3: a failed re-read of the scheda already shown
       // keeps its windows (a half-written Scrivi), filter, pages and scroll;
       // only a first read that fails starts from nothing.
