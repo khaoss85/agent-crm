@@ -127,7 +127,7 @@ const view = createShellView({
   doc: document,
   sidebar: document.getElementById('boSidebar'),
   topbar: document.getElementById('boTopbar'),
-  spaces: profile ? [profile.space] : [],
+  spaces: profile ? profile.spaces : [],
   user: profile ? { name: profile.name, email: profile.email, role: profile.role } : {},
   navigate: () => {},
   notify: () => {},

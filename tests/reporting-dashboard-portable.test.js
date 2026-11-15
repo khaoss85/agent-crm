@@ -103,7 +103,7 @@ test('portable dashboard reads real rows once they exist', async (t) => {
   const model = await response.json();
   const won = model.kpis.find((entry) => entry.id === 'won-period');
   assert.equal(won.display, formatMinor(120000, 'EUR'));
-  assert.equal(won.sub, '1 chiusure');
+  assert.equal(won.sub, '1 chiusura');
   assert.deepEqual(model.owners, ['guido']);
 });
 
@@ -187,6 +187,6 @@ test('the production reader (PostgreSQL, read-only) answers the dashboard 200, n
   const model = await response.json();
   const won = model.kpis.find((entry) => entry.id === 'won-period');
   assert.equal(won.display, formatMinor(120000, 'EUR'));
-  assert.equal(won.sub, '1 chiusure');
+  assert.equal(won.sub, '1 chiusura');
   assert.deepEqual(model.owners, ['guido']);
 });

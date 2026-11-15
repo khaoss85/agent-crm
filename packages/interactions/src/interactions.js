@@ -1852,6 +1852,11 @@ export async function readTimeline({ modules, moduleNames }, subject) {
         createdAt: row.createdAt ?? null,
         actorType: row.actorType ?? null,
         actorId: row.actorId ?? null,
+        // backlog:82235e46e3e9: a note correction or withdrawal names the
+        // note it supersedes; the hub folds it into that note.
+        seq: Number.isInteger(row.seq) ? row.seq : null,
+        revisesId: typeof row.revisesId === 'string' && row.revisesId !== '' ? row.revisesId : null,
+        withdrawn: row.withdrawn === true,
       })),
     };
   }

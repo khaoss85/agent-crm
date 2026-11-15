@@ -75,8 +75,11 @@
  *   passes `sessionFor`, an async function of `{ headers, cookies, path }`
  *   returning the display profile the shell shows — the contract of
  *   `apps/admin/public/admin-session.js`
- *   (`{ space: { id, name }, role, name, email, logoutUrl }`), or nullish
- *   when there is none. The mount serializes it (never validating its
+ *   (`{ space: { id, name }, spaces?: [{ id, name }], role, name, email,
+ *   logoutUrl }`), or nullish when there is none. `spaces` names every
+ *   space the person can open for the «Cambia spazio» menu
+ *   (backlog:029409ff); omitting it keeps the current space alone, and the
+ *   shell also merges the spaces this browser already opened. The mount serializes it (never validating its
  *   content — the embedder built it from its verified session) into served
  *   HTML as `<script id="bo-session" type="application/json">`, with `<`
  *   escaped so a hostile value cannot close the tag. A `sessionFor` failure

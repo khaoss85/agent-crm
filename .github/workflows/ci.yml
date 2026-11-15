@@ -142,9 +142,11 @@ jobs:
       - name: PR gate under one machine lock (check, touched, smoke, recipe, gtm, truth)
         env:
           BASE_REF: ${{ github.base_ref }}
-          # At most 4 lanes at once on the Linux runner (scripts/ci-fast.sh);
-          # sequential on the shared Mac.
-          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '4' || '' }}
+          # At most 3 lanes at once on the Linux runner (scripts/ci-fast.sh);
+          # sequential on the shared Mac. 3, not 4 (12/11): the server now runs
+          # one heavy queue for all its CI, where the fast job counts as one big
+          # job worth about 4 cores; 4 lanes took 6 and pushed load to 40-56.
+          CI_FAST_PARALLEL: ${{ runner.os == 'Linux' && '3' || '' }}
           # The busy rule (backlog:3d560518f3e2): a touched-tests timeout on a
           # full machine (load1 > 1.5 x CPUs) with no failed file, when it is
           # the gate's only failure, is retried once after the load drops,

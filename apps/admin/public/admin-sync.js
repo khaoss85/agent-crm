@@ -25,9 +25,10 @@
 import { humanReadError, isNotComposedFailure, isUnsupportedContractFailure } from './admin-core.js';
 import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import {
   channelConnectRoute,
+  channelState,
   countedChannel,
   NINE_CHANNELS,
   channelConnectionCount,
@@ -506,9 +507,22 @@ export function withProfileConnections(activity, profile = null) {
  * screen, so it reads `non collegato` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function syncConnectRoute(channel, profile = null) {
-  return channelConnectRoute(channel, { guided: CONNECTOR_CATALOG.map((entry) => entry.channel), profile });
+export function syncConnectRoute(channel, profile = null, adapters = null) {
+  const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
+  if (!Array.isArray(adapters)) return channelConnectRoute(channel, { guided, profile });
+  // backlog:e381c48581fa: with the schema's adapters read, the route is the
+  // shared `channelState` answer, the one Connettori shows: a channel no
+  // adapter serves and Profilo cannot connect offers no Collega here
+  // either (TikTok, Telefono, Form read «Non ancora disponibile» there).
+  const shared = channelState(channel, {
+    rows: [],
+    profile,
+    adapters: matchAdapters(channel, adapters),
+    guided,
+  });
+  return shared.state === 'da-collegare' ? shared.connectRoute : null;
 }
 
 /** Days before expiry that light the `Permesso in scadenza` pill and card. */
@@ -575,7 +589,7 @@ function channelPill(agg, nowMs, hasActive) {
  * @param {number} [nowMs]
  * @param {{ profile?: unknown }} [options] the /api/profile payload, for the Collega routes
  */
-export function syncChannelTable(activity, nowMs = Date.now(), { profile = null } = {}) {
+export function syncChannelTable(activity, nowMs = Date.now(), { profile = null, adapters = null } = {}) {
   const entries = entriesOf(activity);
   const byChannel = new Map();
   for (const entry of entries) {
@@ -640,7 +654,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued,
       detailRoute: catalogued ? `#/connettori/${fixed.id}` : '#/connettori',
-      connectRoute: syncConnectRoute(fixed.id, profile),
+      connectRoute: syncConnectRoute(fixed.id, profile, adapters),
     };
   });
   for (const [channel, list] of byChannel) {
@@ -661,7 +675,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null 
       keys: agg.keys,
       catalogued: extraCatalogued,
       detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
-      connectRoute: syncConnectRoute(channel, profile),
+      connectRoute: syncConnectRoute(channel, profile, adapters),
     });
   }
   return rows;
@@ -833,10 +847,14 @@ export function syncFeedItems(activity) {
   return items;
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy, uiChannelState, uiConnect } from './admin-ui.js'; // BO-F6-02: the single component library.
+
+/** Stato sync readings → the shared channel-state tones (backlog:8618ad3f72db). */
+const SYNC_PILL_TONES = Object.freeze({ attivo: 'ok', permesso: 'warn', importazione: 'data', attesa: 'data', altro: 'human' });
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
+
 }
 
 /**
@@ -882,6 +900,7 @@ export function createSyncView(deps) {
   const state = {
     spaceId: readSpace(),
     channelsReady: false,
+    /** @type {Array<any> | null} the schema's composed channel adapters */ adapters: null,
     /** @type {any} */ activity: null,
     /** @type {any} */ profile: null,
     /** @type {Array<any>} */ candidates: [],
@@ -960,6 +979,9 @@ export function createSyncView(deps) {
     // channelsContract, and the screen used to answer «non composti» there
     // with Gmail and Calendar connected (production, 04/11).
     state.channelsReady = Boolean(meta);
+    // The composed adapters, read like Connettori reads them: the Collega
+    // of a row follows the same shared state (backlog:e381c48581fa).
+    state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
     if (!state.channelsReady || activityRead === null) return;
     const activity = await activityRead;
     if (!current()) return;
@@ -1174,7 +1196,7 @@ export function createSyncView(deps) {
         keep.setAttribute('data-action', 'dismiss-duplicate-candidate');
         keep.setAttribute('data-candidate-id', card.id);
         keep.addEventListener('click', () => {
-          void dismissCandidate(card.id, keep);
+          void uiBusy(keep, 'Salvo…', () => dismissCandidate(card.id, keep));
         });
         node.appendChild(keep);
       }
@@ -1194,7 +1216,7 @@ export function createSyncView(deps) {
         button.setAttribute('data-connection-key', item.action.connectionKey);
         if (state.syncing.has(item.action.connectionKey)) button.setAttribute('disabled', '');
         button.addEventListener('click', () => {
-          void syncNow(item.action.connectionKey, button);
+          void uiBusy(button, 'Sincronizzo…', () => syncNow(item.action.connectionKey, button));
         });
         card.appendChild(button);
       }
@@ -1218,7 +1240,7 @@ export function createSyncView(deps) {
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
   function renderTable(box, activity) {
-    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile });
+    const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
     // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
     // channelConnectionCount over the same rows, profile links included.
     // A linked channel outside the fixed nine (SMS, Telegram) is a row of
@@ -1264,7 +1286,9 @@ export function createSyncView(deps) {
         doc,
         'td',
         undefined,
-        !present ? 'non collegato' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
+        // backlog:8618ad3f72db: «non collegato» was said twice on one row
+        // (here and in Stato); the state lives in Stato only.
+        !present ? '—' : ago === null ? '—' : `agg. ${ago === 'adesso' ? 'ora' : ago}`,
       ));
       line.appendChild(el(doc, 'td', undefined, !present ? '—' : eventsReceived(row.received)));
       const stateCell = doc.createElement('td');
@@ -1278,9 +1302,7 @@ export function createSyncView(deps) {
         if (!readOnly() && route !== null) {
           // The green Collega of every other screen (backlog:e381c48581fa),
           // never a dark grey that reads disabled.
-          const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-sync-collega', 'Collega');
-          link.setAttribute('href', route);
-          link.setAttribute('data-action', 'collega');
+          const link = uiConnect(doc, { href: route, action: 'collega', extra: 'bo-sync-collega' });
           link.setAttribute('data-channel', row.channel);
           link.addEventListener('click', (event) => {
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -1291,10 +1313,12 @@ export function createSyncView(deps) {
           // C19 has only `non collegato` for an unlinked row: a row nothing
           // here can connect (Stripe) says that, with no Collega it could
           // not keep — never the off-spec «Non disponibile».
-          stateCell.appendChild(el(doc, 'span', 'bo-sync-muted', 'non collegato'));
+          stateCell.appendChild(uiChannelState(doc, { text: 'non collegato', tone: 'muted', extra: 'bo-sync-muted' }));
         }
       } else {
-        const pill = el(doc, 'span', 'bo-sync-pill', row.pill.text);
+        // backlog:8618ad3f72db: the shared channel state, its tone mapped
+        // from the sync reading (data-pill keeps the sync's own word).
+        const pill = uiChannelState(doc, { text: row.pill.text, tone: SYNC_PILL_TONES[row.pill.tone] ?? 'muted', extra: 'bo-sync-pill' });
         pill.setAttribute('data-pill', row.pill.tone);
         stateCell.appendChild(pill);
       }
@@ -1357,6 +1381,9 @@ export function createSyncView(deps) {
   async function syncAll(keys) {
     if (state.syncingAll || keys.length === 0) return;
     state.syncingAll = true;
+    // Il lotto resta nello spazio di partenza: un cambio spazio a lotto in
+    // corso ri-legge lo stato solo nel load finale, mai nelle pull restanti.
+    const space = state.spaceId.trim();
     for (const key of keys) state.syncing.add(key);
     render();
     let failed = 0;
@@ -1364,7 +1391,7 @@ export function createSyncView(deps) {
       try {
         await client.request('/api/connectors/sync-now', {
           method: 'POST',
-          body: { spaceId: state.spaceId.trim(), connectionKey: key },
+          body: { spaceId: space, connectionKey: key },
         });
       } catch {
         failed += 1;
@@ -1377,7 +1404,12 @@ export function createSyncView(deps) {
     }
     state.syncingAll = false;
     state.syncing.clear();
-    if (failed === 0) toast('Sincronizzazione aggiornata.');
+    // Il lotto ha tirato nello spazio di partenza ma il load finale segue
+    // lo spazio cambiato a metà: un successo senza qualifica dipingerebbe
+    // come appena sincronizzati dati mai tirati — il toast lo dice.
+    const endSpace = state.spaceId.trim();
+    if (failed === 0 && endSpace === space) toast('Sincronizzazione aggiornata.');
+    else if (failed === 0) toast('Lotto finito nello spazio di partenza: lo schermo mostra il nuovo spazio.');
     else toast('Alcuni canali non si sono aggiornati: riprova con Sincronizza ora.', true);
     render();
   }

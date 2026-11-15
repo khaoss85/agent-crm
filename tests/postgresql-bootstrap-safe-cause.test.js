@@ -32,7 +32,7 @@ test('a startup failure without a code still names its kind', () => {
 // The tests below drive each site with a scripted pool or verifier and fail
 // when that site stops carrying the redacted cause.
 
-const SECRET_MESSAGE = 'password authentication failed for user "pg-user" password=s3cret host=db.internal:5432';
+const SECRET_MESSAGE = 'password authentication failed for user "pg-user" password=hunter2 host=db.internal:5432';
 
 function codedDriverError(code, message = SECRET_MESSAGE) {
   return Object.assign(new Error(message), { code });
@@ -76,7 +76,7 @@ function assertRedactedCause(error, code) {
   assert.deepEqual({ ...error.cause }, { code, name: 'Error' });
   assert.ok(Object.isFrozen(error.cause), 'the cause stays frozen');
   const text = errorGraphText(error);
-  for (const needle of ['s3cret', 'db.internal', 'pg-user']) {
+  for (const needle of ['hunter2', 'db.internal', 'pg-user']) {
     assert.ok(!text.includes(needle), `nothing of the driver message leaks (${needle})`);
   }
 }
@@ -210,6 +210,55 @@ test('a corrupt driver row inside the data transaction is wrapped by the inner c
       return true;
     },
   );
+});
+
+// backlog:a8ca358b84eb: a createPool rejection left startup through the raw
+// driver error (message can carry host, user, URL or password) because the
+// two openPool awaits ran before the failure path. These tests fail until
+// pool setup runs inside it.
+test('a createPool rejection leaves startup redacted', async () => {
+  await assert.rejects(
+    () => bootstrapPostgresqlApplication({
+      control: { host: 'db.test', port: 5432, database: 'accordo_control', user: 'u', password: 'p' },
+      data: { host: 'db.test', port: 5432, database: 'accordo', user: 'u', password: 'p' },
+      tenantId: 'acme',
+      identityVerifier: createTestVerifier({ tenantId: 'acme' }),
+      createPool: async () => { throw codedDriverError('28P01'); },
+    }),
+    (error) => {
+      assert.equal(error.code, 'STORAGE_UNAVAILABLE');
+      assert.equal(error.message, 'PostgreSQL startup storage failed');
+      assertRedactedCause(error, '28P01');
+      return true;
+    },
+  );
+});
+
+test('a data-pool failure ends the already-opened control pool', async () => {
+  const ended = [];
+  const controlPool = {
+    connect: async () => okClient(),
+    end: async () => { ended.push('control'); },
+    on: () => {},
+  };
+  await assert.rejects(
+    () => bootstrapPostgresqlApplication({
+      control: { host: 'db.test', port: 5432, database: 'accordo_control', user: 'u', password: 'p' },
+      data: { host: 'db.test', port: 5432, database: 'accordo', user: 'u', password: 'p' },
+      tenantId: 'acme',
+      identityVerifier: createTestVerifier({ tenantId: 'acme' }),
+      createPool: async (endpoint) => {
+        if (endpoint.database === 'accordo_control') return controlPool;
+        throw codedDriverError('3D000', 'database "accordo" does not exist password=hunter2 host=db.internal:5432');
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, 'STORAGE_UNAVAILABLE');
+      assertRedactedCause(error, '3D000');
+      return true;
+    },
+  );
+  assert.ok(ended.includes('control'), `the control pool is ended, saw [${ended.join(', ')}]`);
 });
 
 // backlog:86652c075724: every refused or failed composition used to leak the

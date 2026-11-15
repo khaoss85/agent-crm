@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 import { bindAdminMutations } from './admin-submission.js';
 
@@ -252,7 +252,7 @@ export function createSpineView(deps) {
         const grantButton = el('button', undefined, 'Grant membership');
         grantButton.setAttribute('data-action', 'grant-membership');
         busy.push(grantButton);
-        grantButton.addEventListener('click', () => withBusy(async () => {
+        grantButton.addEventListener('click', () => uiBusy(grantButton, 'Salvo…', () => withBusy(async () => {
           await client.request('/api/spine/memberships', {
             method: 'POST',
             body: JSON.stringify({
@@ -261,7 +261,7 @@ export function createSpineView(deps) {
               reason: String(reasonInput.value ?? ''),
             }),
           });
-        }));
+        })));
         memberBox.appendChild(grantButton);
         memberBox.appendChild(el('p', 'muted spine-no-invitations',
           'No invitation is sent and no email exists. Granting records a decision about a subject your '

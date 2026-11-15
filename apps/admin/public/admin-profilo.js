@@ -17,16 +17,20 @@
  * that never reads the Meta surface shows no Meta group at all, and a
  * space whose control plane has no Meta app shows the rows without an
  * action, never a Collega that cannot complete.
- * Writes: none here. «Collega» is the pilot's own GET ../profile/collega
- * (the server turns the click into the Google consent), «Scollega» its
- * same-origin POST ../profile/scollega: both already exist and both come
- * back here. Without /api/profile the page still shows the session person
- * and says, in Italian, that the connections cannot be read now.
+ * Writes: PATCH /api/profile { name } through the submission controller
+ * (backlog:1cfc68175ab7: the profile name is editable in place). «Collega»
+ * is the pilot's own GET ../profile/collega (the server turns the click
+ * into the Google consent), «Scollega» its same-origin POST
+ * ../profile/scollega: both already exist and both come back here. Without
+ * /api/profile the page still shows the session person and says, in
+ * Italian, that the connections cannot be read now.
  */
 
 import { CHANNEL_STATE_LABELS } from './admin-channels-count.js';
-import { el, uiButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy, uiButton, uiChannelState, uiConnect } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { sessionRoleLabel } from './admin-session.js';
+import { bindAdminMutations } from './admin-submission.js';
+import { settingsTabs } from './admin-shell.js';
 
 export const PROFILO_ROUTE = '#/profilo';
 
@@ -100,15 +104,15 @@ function connectionRow(doc, list, entry, item, readable, active = true) {
   row.appendChild(words);
   const side = el(doc, 'div', 'bo-profilo-conn-side');
   if (!readable) {
-    side.appendChild(el(doc, 'span', 'bo-profilo-pill bo-profilo-pill-muted', 'Non disponibile'));
+    side.appendChild(uiChannelState(doc, { text: 'Non disponibile', tone: 'muted' }));
   } else if (!active) {
-    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${NOT_ACTIVE.tone}`, NOT_ACTIVE.text));
+    side.appendChild(uiChannelState(doc, { text: NOT_ACTIVE.text, tone: NOT_ACTIVE.tone }));
   } else {
     // Own keys only: a prototype name (toString, __proto__) is an unknown
     // status, read as «Da collegare» like any other (Muse P2 on #453).
     const key = typeof item?.status === 'string' && Object.hasOwn(STATUS_LABELS, item.status) ? item.status : 'disconnected';
     const status = STATUS_LABELS[key];
-    side.appendChild(el(doc, 'span', `bo-profilo-pill bo-profilo-pill-${status.tone}`, status.text));
+    side.appendChild(uiChannelState(doc, { text: status.text, tone: status.tone }));
     if (item?.status === 'connected') {
       // Scollega revokes at the provider (Google or Meta): the pilot's
       // same-origin POST, which checks the origin and comes back here.
@@ -126,9 +130,7 @@ function connectionRow(doc, list, entry, item, readable, active = true) {
     } else {
       // Collega is a link, not a fetch: the pilot turns the click into the
       // signed Google or Meta consent and the browser follows it.
-      const link = el(doc, 'a', 'ui-btn ui-btn-cta ui-btn-small bo-profilo-collega', 'Collega');
-      link.setAttribute('href', `../profile/collega?connector=${entry.connector}`);
-      link.setAttribute('data-action', `collega-${entry.connector}`);
+      const link = uiConnect(doc, { href: `../profile/collega?connector=${entry.connector}`, action: `collega-${entry.connector}`, extra: 'bo-profilo-collega' });
       side.appendChild(link);
     }
   }
@@ -265,10 +267,36 @@ export function metaConnectionsCard({ doc, ready }) {
 /**
  * @param {{ doc: any, mount: any, client: { request: (path: string) => Promise<any> },
  *   member?: () => ({ name?: string | null, email?: string | null, role?: string | null } | null),
- *   log?: (...args: any[]) => void }} deps
+ *   log?: (...args: any[]) => void,
+ *   onMember?: (person: { name?: unknown, email?: unknown, role?: unknown }) => void }} deps
+ * backlog 3136d15da7bd: onMember reports the fresh person after Salva, so
+ * the shell footer learns the new name without a reload.
  */
-export function createProfiloView({ doc, mount, client, member = () => null, log = () => {} }) {
+export const PROFILE_NAME_MAX = 120;
+
+/**
+ * Validate a profile name before any request leaves the browser.
+ * @param {unknown} value
+ * @returns {string | null} the trimmed name, or null when it cannot be saved
+ */
+export function cleanProfileName(value) {
+  const next = personText(value);
+  if (next === null) return null;
+  if (next.length > PROFILE_NAME_MAX) return null;
+  return next;
+}
+
+export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions, navigate = null, fixCount = () => null, onMember = () => {} } = {}) {
   let token = 0;
+  // backlog:1cfc68175ab7: the name edit is local view state, never stored.
+  // `draft` keeps what the user typed across saving, validation errors and
+  // request failures (Codex P2 on #844): a repaint never rebuilds the input
+  // from the old server value, so a retry sends the draft again.
+  let editing = false;
+  let editError = '';
+  let saving = false;
+  let draft = '';
+  const bound = bindAdminMutations(client, submissions ? { submissions } : {}).client;
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -276,12 +304,150 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
 
   const read = () => readProfile(client, log);
 
-  function header(page, person) {
+  function header(page, person, session) {
     const head = el(doc, 'header', 'bo-profilo-head');
     head.appendChild(el(doc, 'span', 'bo-profilo-avatar', profiloInitials(personText(person.name), personText(person.email))));
     const words = el(doc, 'div', 'bo-profilo-words');
     words.appendChild(el(doc, 'p', 'bo-kicker', 'Il tuo profilo'));
-    words.appendChild(el(doc, 'h2', 'bo-profilo-name', personText(person.name) ?? personText(person.email) ?? 'Il tuo profilo'));
+    const shown = personText(person.name) ?? personText(person.email) ?? 'Il tuo profilo';
+    // backlog:f7d2f7f362cf: the name and its Modifica sit on one row — the
+    // button keeps its text measure beside the name instead of stretching
+    // like an empty field between the name and the email.
+    const nameRow = el(doc, 'div', 'bo-profilo-name-row');
+    // backlog:c51dca86dc66: the person's name is the page's h1 — every
+    // screen names its subject once, at the top level.
+    nameRow.appendChild(el(doc, 'h1', 'bo-profilo-name', shown));
+    if (!editing) {
+      const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
+        attrs: { type: 'button', 'data-action': 'modifica-nome' } });
+      edit.setAttribute('class', `${edit.getAttribute('class')} bo-profilo-edit-open`);
+      edit.addEventListener('click', () => {
+        editing = true;
+        editError = '';
+        draft = personText(person.name) ?? '';
+        paintLast();
+      });
+      nameRow.appendChild(edit);
+    }
+    words.appendChild(nameRow);
+    if (editing) {
+      const form = el(doc, 'div', 'ui-field-row bo-profilo-edit');
+      const label = el(doc, 'label', 'ui-label bo-profilo-edit-label', 'Nome');
+      label.setAttribute('for', 'bo-profilo-name-input');
+      const input = doc.createElement('input');
+      input.setAttribute('class', 'ui-field');
+      input.setAttribute('type', 'text');
+      input.setAttribute('name', 'profile-name');
+      input.setAttribute('id', 'bo-profilo-name-input');
+      input.setAttribute('aria-label', 'Nome');
+      input.setAttribute('maxlength', String(PROFILE_NAME_MAX));
+      input.value = draft;
+      form.appendChild(label);
+      form.appendChild(input);
+      const actions = el(doc, 'div', 'bo-profilo-edit-actions');
+      const save = uiButton(doc, { variant: 'cta', label: saving ? 'Salvo…' : 'Salva', small: true,
+        attrs: { type: 'button', 'data-action': 'salva-nome' } });
+      const cancel = uiButton(doc, { variant: 'secondary', label: 'Annulla', small: true,
+        attrs: { type: 'button', 'data-action': 'annulla-nome' } });
+      save.disabled = saving;
+      cancel.disabled = saving;
+      const doSave = () => {
+        if (saving) return;
+        draft = input.value;
+        const next = cleanProfileName(draft);
+        if (next === null) {
+          if (draft.trim() === '') {
+            editError = 'Scrivi un nome prima di salvare.';
+          } else if (personText(draft) === null) {
+            editError = 'Scrivi un nome leggibile, senza codici.';
+          } else {
+            editError = `Il nome è troppo lungo: al massimo ${PROFILE_NAME_MAX} caratteri.`;
+          }
+          paintLast();
+          return;
+        }
+        if (next === (personText(person.name) ?? '')) {
+          editing = false;
+          editError = '';
+          draft = '';
+          paintLast();
+          return;
+        }
+        saving = true;
+        editError = '';
+        // The /bo write wait (#775, #831): «Salvo…» and disabled on this
+        // button while the name is written, Annulla off beside it — never a
+        // second click on a write in flight.
+        cancel.disabled = true;
+        void uiBusy(save, 'Salvo…', () => bound.request('/api/profile', { method: 'PATCH', body: { name: next } }).then(
+          async () => {
+            // The write stays in flight until the reread lands: saving drops
+            // only then, with uiBusy, so no second PATCH slips in meanwhile.
+            const mine = ++token;
+            const fresh = await read();
+            saving = false;
+            if (mine !== token) return;
+            if (fresh === null) {
+              editError = 'Il nome è stato salvato, ma la rilettura non è riuscita. Riprova più tardi.';
+              paintLast();
+              return;
+            }
+            editing = false;
+            draft = '';
+            editError = '';
+            paint(session, fresh);
+            // backlog 3136d15da7bd: the fresh person reaches the shell at
+            // once — title and footer repaint from the same save, no reload.
+            // A failed re-read never returns here, so this reports saved
+            // names only, never a stale one.
+            if (fresh && typeof fresh === 'object' && fresh.member && typeof fresh.member === 'object') {
+              try {
+                onMember(fresh.member);
+              } catch (error) {
+                // The page already shows the new name; the shell keeps its
+                // own — but the split stays diagnosable, never silent: cause
+                // only, never the person just saved.
+                log('bo-profilo shell member push failed:', error instanceof Error ? error.name : 'unknown');
+              }
+            }
+          },
+          (error) => {
+            log('bo-profilo profile save failed:', error?.code ?? 'Error');
+            saving = false;
+            editError = 'Il nome non si è potuto salvare. Riprova più tardi.';
+            paintLast();
+          },
+        ));
+      };
+      const doCancel = () => {
+        if (saving) return;
+        editing = false;
+        editError = '';
+        draft = '';
+        paintLast();
+      };
+      save.addEventListener('click', doSave);
+      cancel.addEventListener('click', doCancel);
+      input.addEventListener('keydown', (event) => {
+        if (event?.isComposing) return;
+        if (event?.key === 'Enter') {
+          event.preventDefault?.();
+          doSave();
+        } else if (event?.key === 'Escape') {
+          event.preventDefault?.();
+          doCancel();
+        }
+      });
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      form.appendChild(actions);
+      if (editError !== '') form.appendChild(el(doc, 'p', 'field-error', editError));
+      words.appendChild(form);
+      // Opening Modifica hands the Nome field over ready to type: focus it
+      // with the current name selected, so typing replaces it at once.
+      if (typeof input.focus === 'function') input.focus();
+      if (typeof input.select === 'function') input.select();
+    }
     const meta = el(doc, 'div', 'bo-profilo-meta');
     const email = personText(person.email);
     if (email !== null && email !== personText(person.name)) meta.appendChild(el(doc, 'span', 'bo-profilo-email', email));
@@ -292,12 +458,24 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     page.appendChild(head);
   }
 
+  let lastSession = {};
+  let lastAnswer;
+  let lastAnswerSet = false;
+
   /**
    * The whole page for one state: `answer` is undefined while reading, null
    * when /api/profile cannot be read, the payload otherwise.
    */
   function paint(session, answer) {
+    lastSession = session;
+    lastAnswer = answer;
+    lastAnswerSet = true;
     clear();
+    // backlog:8618ad3f72db: Profilo is one of the Impostazioni tabs, with
+    // the same row as its siblings (the shell's count, no read of its own).
+    if (typeof navigate === 'function') {
+      mount.appendChild(settingsTabs(doc, { activeId: 'profilo', fixCount: fixCount(), navigate }));
+    }
     const page = el(doc, 'div', 'bo-profilo');
     mount.appendChild(page);
     const fromServer = answer?.member && typeof answer.member === 'object'
@@ -310,7 +488,7 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       : null;
     const person = { ...session, ...fromServer };
     if (personText(person.email) === null && linked) person.email = personText(linked.account);
-    header(page, person);
+    header(page, person, session);
     const card = el(doc, 'section', 'panel bo-profilo-card');
     card.appendChild(el(doc, 'h3', 'bo-profilo-card-title', 'I tuoi collegamenti'));
     card.appendChild(el(doc, 'p', 'bo-profilo-card-lede',
@@ -321,6 +499,11 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
       card.appendChild(el(doc, 'p', 'bo-profilo-group', 'Canali Meta'));
       paintMetaConnections(doc, card, answer);
     }
+  }
+
+  function paintLast() {
+    if (!lastAnswerSet) return;
+    paint(lastSession, lastAnswer);
   }
 
   async function render() {

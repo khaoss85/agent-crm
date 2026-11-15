@@ -1,5 +1,7 @@
 // @ts-check
 
+import { uiBusy } from './admin-ui.js';
+
 /**
  * Campi personalizzati della scheda (backlog:434cc39a): the shared client
  * and control layer the three admin surfaces use — Nuovo cliente (the ✦
@@ -258,7 +260,7 @@ export function addFieldForm(el, { onDefine }) {
   wrap.appendChild(row);
   wrap.appendChild(error);
   let busy = false;
-  save.addEventListener('click', async () => {
+  save.addEventListener('click', () => uiBusy(save, 'Creo…', async () => {
     if (busy) return;
     const label = String(labelInput.value ?? '').trim();
     const type = String(typeSelect.value ?? '').trim() || 'testo';
@@ -282,6 +284,6 @@ export function addFieldForm(el, { onDefine }) {
       busy = false;
       save.disabled = false;
     }
-  });
+  }));
   return { wrap, cancel };
 }

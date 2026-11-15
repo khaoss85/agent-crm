@@ -182,6 +182,35 @@ export async function transitionLetter(service, id, { event, patch = {}, actor }
  * request moves — a package imports only core, so the helper lives here
  * rather than crossing the boundary.)
  */
+/**
+ * Same-process serialization for every inbox resume, one FIFO chain per
+ * row: two redeliveries racing the same unprocessed row commit in order,
+ * so the loser re-reads the winner's state instead of deciding on its
+ * stale pre-read and writing a second resume. Cross-process writers still
+ * rely on the CHANNEL_TRANSITION_INVALID catch at the call site.
+ * (MEM_ACC_REUSE: the same tail pattern as the letter chain above, keyed
+ * per row because concurrent deliveries of different events must not
+ * block each other.)
+ */
+const inboxWriteChains = new Map();
+
+/** @param {string} key @param {() => Promise<any>} critical */
+export async function withInboxWrite(key, critical) {
+  const previous = inboxWriteChains.get(key) ?? Promise.resolve();
+  let release = () => {};
+  const current = new Promise((resolve) => { release = resolve; });
+  const tail = previous.then(() => current, () => current);
+  inboxWriteChains.set(key, tail);
+  // Synchronous until here: two callers racing in the same tick still order.
+  await previous;
+  try {
+    return await critical();
+  } finally {
+    if (inboxWriteChains.get(key) === tail) inboxWriteChains.delete(key);
+    release();
+  }
+}
+
 const letterWriteChain = { tail: Promise.resolve() };
 
 /** @param {() => Promise<any>} critical */

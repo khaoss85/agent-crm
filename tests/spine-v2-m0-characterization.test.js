@@ -130,6 +130,9 @@ test('M0 records PostgreSQL-shaped --db input as legacy SQLite path semantics, n
   const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'accordo-m0-db-semantics-')));
   try {
     const shapedInput = 'postgresql://sentinel.invalid/accordo';
+    // The child runs real migrations: on a loaded shared runner that exceeds
+    // 10 s (seen 10.4 s on 2026-11-10), so the bound keeps headroom. The pin
+    // below is the receipt and the SQLite semantics, never the wall time.
     const result = spawnSync(process.execPath, [cli, 'db:migrate', '--db', shapedInput], {
       cwd: workspace,
       encoding: 'utf8',
@@ -202,8 +205,14 @@ test('M0 freezes package v1 as synchronous declaration and operation metadata', 
   // deliberately here, the way #380 moved it for `postpone`.
   assert.deepEqual(
     (work.operations ?? []).map(({ name, operationContract, appMethod }) => ({ name, operationContract, appMethod })),
-    [{ name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' }],
-    'Work v1 declares exactly the operator-note application operation',
+    [
+      { name: 'record-subject-note', operationContract: 1, appMethod: 'recordSubjectNote' },
+      // backlog:82235e46e3e9: «Modifica» and «Elimina» on a scheda note,
+      // both append-only — moved here deliberately, like the note itself.
+      { name: 'revise-subject-note', operationContract: 1, appMethod: 'reviseSubjectNote' },
+      { name: 'withdraw-subject-note', operationContract: 1, appMethod: 'withdrawSubjectNote' },
+    ],
+    'Work v1 declares the operator-note operations',
   );
   assert.deepEqual(
     work.operations[0].input.map(({ name, type }) => ({ name, type })),

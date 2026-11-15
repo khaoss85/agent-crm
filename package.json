@@ -44,6 +44,7 @@
     "bench:tools:freeze": "node benchmarks/tool-selection/run.js freeze",
     "characterize:intelligence": "node scripts/characterize-intelligence.mjs",
     "characterize:commercial": "node scripts/characterize-commercial.mjs",
+    "characterize:realign-source": "node scripts/realign-characterization-source.mjs",
     "repo:truth": "node scripts/repo-truth.js",
     "repin:verifier-fixture": "node scripts/repin-verifier-fixture.js",
     "measure": "bash scripts/measure-pieces.sh",

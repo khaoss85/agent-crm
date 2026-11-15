@@ -7,18 +7,27 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_SPACE_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
   settingsBadge,
   settingsTabs,
+  shellScreenFor,
   countFixes,
   loadClientCount,
   loadFixCount,
   resolveBadgeSpaceId,
   defaultSpaces,
+  mergeSpaces,
   readSpaces,
+  readStoredSpaces,
   resolveSpaceShortcut,
+  spaceInitialsFor,
+  spaceBadgeColor,
+  spaceBadgeClass,
+  spaceBadgeHue,
+  spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
   createShellView,
@@ -187,6 +196,45 @@ test('space menu carries the ⌘N hint and marks the active space', () => {
   assert.equal(rows[0].initials, 'AL');
 });
 
+test('backlog:ecb26347d12c — space initials read from the name words', () => {
+  assert.equal(spaceInitialsFor('Presti Group'), 'PG');
+  assert.equal(spaceInitialsFor('Prova Validazione B1'), 'PV');
+  assert.equal(spaceInitialsFor('Spazio locale'), 'SL');
+  assert.equal(spaceInitialsFor('Alpha'), 'AL');
+  assert.equal(spaceInitialsFor('X'), 'X');
+});
+
+test('backlog:ecb26347d12c — colliding space initials read differently', () => {
+  const rows = spaceMenuItems(
+    [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    ],
+    'b1',
+  );
+  assert.equal(rows[0].initials, 'PR');
+  assert.equal(rows[1].initials, 'PG');
+  assert.notEqual(rows[0].color, rows[1].color);
+  assert.equal(rows[0].color, spaceBadgeColor('b1'));
+  // Two spaces with the very same name still read differently.
+  const twins = spaceMenuItems(
+    [{ id: 'p1', name: 'Presti' }, { id: 'p2', name: 'Presti' }],
+    'p1',
+  );
+  assert.notEqual(twins[0].initials, twins[1].initials);
+});
+
+test('backlog:ecb26347d12c — the switcher label lists only the shortcuts that exist', () => {
+  assert.equal(spaceSwitcherLabel([{ id: 'a' }]), 'Cambia spazio');
+  assert.equal(spaceSwitcherLabel([{ id: 'a' }, { id: 'b' }]), 'Cambia spazio (⌘1/2)');
+  assert.equal(
+    spaceSwitcherLabel([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+    'Cambia spazio (⌘1/2/3)',
+  );
+  const ten = Array.from({ length: 10 }, (_, index) => ({ id: `s${index}` }));
+  assert.equal(spaceSwitcherLabel(ten), 'Cambia spazio (⌘1/2/3/4/5/6/7/8/9)');
+});
+
 test('readSpaces falls back to the single local space, never empty', () => {
   assert.deepEqual(defaultSpaces(), [{ id: 'locale', name: 'Spazio locale', initials: 'SL' }]);
   assert.deepEqual(readSpaces(null), defaultSpaces());
@@ -195,6 +243,145 @@ test('readSpaces falls back to the single local space, never empty', () => {
   assert.deepEqual(readSpaces({ getItem: () => '[]' }), defaultSpaces());
   const stored = readSpaces({ getItem: () => JSON.stringify([{ id: 'x', name: 'X' }, { id: '', name: '' }]) });
   assert.deepEqual(stored, [{ id: 'x', name: 'X', initials: 'X' }]);
+});
+
+test('backlog:029409ff — mergeSpaces joins the session spaces with the visited ones', () => {
+  // The reported bug: the menu showed only the session space. The primary
+  // source (session profile) leads, visited spaces fill in, blanks and
+  // duplicates collapse — Presti appears next to Prova Validazione B1.
+  const merged = mergeSpaces(
+    [{ id: 'b1', name: 'Prova Validazione B1', initials: 'PR' }],
+    [{ id: 'presti', name: 'Presti' }, { id: 'b1', name: 'B1 duplicato' }, { id: '', name: '' }, null],
+  );
+  assert.deepEqual(merged, [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ]);
+  // With nothing usable the menu still shows the single local space.
+  assert.deepEqual(mergeSpaces([], []), defaultSpaces());
+  assert.deepEqual(mergeSpaces(null, undefined), defaultSpaces());
+});
+
+test('backlog:029409ff — a fresh browser never merges «Spazio locale» into a real session', () => {
+  // Codex P2 on agent-crm#754: readSpaces falls back to defaultSpaces, so a
+  // fresh, missing or corrupt storage merged a fictitious «Spazio locale»
+  // into the session spaces and persisted it. The session merge reads the
+  // stored history without the development fallback instead.
+  const fresh = { getItem: () => null };
+  const corrupt = { getItem: () => 'not json' };
+  assert.deepEqual(readStoredSpaces(null), []);
+  assert.deepEqual(readStoredSpaces(fresh), []);
+  assert.deepEqual(readStoredSpaces(corrupt), []);
+  assert.deepEqual(readStoredSpaces({ getItem: () => '[]' }), []);
+  const sessionSpaces = [
+    { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+    { id: 'presti', name: 'Presti', initials: 'PR' },
+  ];
+  for (const storage of [fresh, corrupt]) {
+    const merged = mergeSpaces(sessionSpaces, readStoredSpaces(storage));
+    assert.deepEqual(merged, sessionSpaces);
+    assert.ok(!merged.some((space) => space.id === 'locale'));
+  }
+  // The sessionless shell keeps its single local space fallback.
+  assert.deepEqual(readSpaces(fresh), defaultSpaces());
+});
+
+test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking one picks it', () => {
+  const { sidebar, seen } = renderShell({
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti', name: 'Presti', initials: 'PR' },
+    ],
+  });
+  const names = sidebar.textContent;
+  assert.ok(names.includes('Prova Validazione B1'));
+  assert.ok(names.includes('Presti'));
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  // Two spaces, two rows: the active one plus the other, never one alone.
+  assert.equal(picks.length, 2);
+  const other = picks.find((node) => !((node.className ?? '').includes('active')));
+  other.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['presti']);
+});
+
+test('backlog:ecb26347d12c — the «Cambia spazio» button names only the shortcuts that exist', () => {
+  const { sidebar } = renderShell({
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    ],
+  });
+  const button = sidebar.findAll('button').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space'));
+  assert.equal(button.getAttribute('title'), 'Cambia spazio (⌘1/2)');
+  assert.equal(button.getAttribute('aria-label'), 'Cambia spazio (⌘1/2)');
+  const badges = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+  // Switcher badge plus two menu rows; the menu rows read differently.
+  assert.equal(badges.length, 3);
+  const rowBadges = badges.slice(1).map((badge) => badge.textContent);
+  assert.notEqual(rowBadges[0], rowBadges[1]);
+  assert.equal(badges[0].textContent, rowBadges[0]);
+  // backlog:b545aca18b8f: the color lives in the stylesheet class, never
+  // in an inline style, so a pilot CSP refusing inline styles cannot
+  // strip it. Each badge names its hue class AND the stylesheet maps that
+  // class to the same hsl the helper computes.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
+  const hues = badges.map((badge) => {
+    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
+    assert.ok(cls, 'badge carries its hue class');
+    return Number(cls.slice('bo-space-badge--h'.length));
+  });
+  assert.ok(new Set(hues).size > 1, 'the two spaces have different colors');
+  for (const hue of hues) {
+    assert.ok(
+      css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
+      `stylesheet maps hue ${hue} to the helper color`,
+    );
+  }
+});
+
+test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color without inline style', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // Empty or missing lists never reach the renderers: the constructor
+  // normalizes to the single local space, and setSpaces ignores empties —
+  // those are the load-bearing invariants, so the test pins them.
+  for (const spaces of [[], null, undefined]) {
+    const { sidebar, topbar } = renderShell({ spaces });
+    const text = sidebar.textContent;
+    assert.ok(text.includes('Moduli nativi'), 'empty list still draws the native group');
+    assert.ok(text.includes('Spazio locale'), 'empty list falls back to the local space');
+    const badges = [...sidebar.findAll('span'), ...topbar.findAll('span')]
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+    assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
+    for (const badge of badges) {
+      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP refuses inline styles)');
+      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
+      assert.ok(cls, 'fallback badge carries its hue class');
+      const hue = Number(cls.slice('bo-space-badge--h'.length));
+      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space hue');
+      assert.ok(
+        css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
+        'stylesheet maps the fallback hue to the helper color',
+      );
+    }
+  }
+  // The class and the color string always agree on the hue.
+  for (const id of ['locale', 'aurora', 'presti-group', '']) {
+    assert.equal(spaceBadgeClass(id), `bo-space-badge--h${spaceBadgeHue(id)}`);
+    assert.equal(spaceBadgeColor(id), `hsl(${spaceBadgeHue(id)} 45% 42%)`);
+  }
+});
+
+test('backlog:b545aca18b8f — setSpaces ignores an empty list and keeps the open space', () => {
+  const { sidebar, view } = renderShell();
+  assert.ok(sidebar.textContent.includes('Studio Aurora'));
+  view.setSpaces([], 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'empty setSpaces keeps the previous spaces');
+  view.setSpaces(null, 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'null setSpaces keeps the previous spaces');
+  view.setSpaces([{ id: 'verde', name: 'Casa Verde', initials: 'CV' }], 'verde');
+  assert.ok(sidebar.textContent.includes('Casa Verde'), 'a real list still replaces the spaces');
+  assert.ok(!sidebar.textContent.includes('Studio Aurora'), 'the old space leaves the switcher');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
@@ -305,13 +492,52 @@ test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
 });
 
+// backlog 3136d15da7bd: with the space AI off the bar says so instead of
+// inviting a question the AI would not answer.
+test('AI entry placeholder names the off space AI on every screen', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('calendario', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('agenti', 'Mano', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /spenta/);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /Spazi e accessi/);
+});
+
+test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', () => {
+  const { view, topbar } = renderShell();
+  const input = () => topbar.findAll('input')[0];
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+  view.update({ aiSpaceOff: true });
+  assert.equal(input().getAttribute('placeholder'), AI_SPACE_OFF_PLACEHOLDER);
+  assert.ok(!/Chiedi: «cosa/.test(input().getAttribute('placeholder')), 'no inviting question while off');
+  view.update({ aiSpaceOff: false });
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+});
+
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
+});
+
 test('settings tabs list the four areas with the open one underlined', () => {
   const doc = createFakeDocument();
   const navigated = [];
   const bar = settingsTabs(doc, { activeId: 'stato-sync', fixCount: 2, navigate: (hash) => navigated.push(hash) });
   const tabs = bar.findAll('button');
-  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi']);
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync2', 'Spazi e accessi']);
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('data-tab')), ['personalizzazione', 'catalogo', 'stato-sync', 'spazi-accessi', 'profilo']);
+  // backlog:8618ad3f72db: Profilo is a settings tab too.
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync2', 'Spazi e accessi', 'Profilo']);
   assert.equal(tabs.find((tab) => tab.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
   // Every tab keeps a ui-* class (BO-F6-02 enforcement covers this screen).
   for (const tab of tabs) {
@@ -549,9 +775,9 @@ test('settings panel lists the four areas with honest availability', () => {
   // Personalizzazione (BO-F4-01, #323), Catalogo prodotti (BO-F2-05),
   // Stato sync (BO-F1-03) and Spazi e accessi (BO-F0-06) all link, in area
   // order.
-  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(links.map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
   for (const link of links) link.dispatch('click', { preventDefault: () => {} });
-  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(navigated, ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
 
   const empty = createMount();
   renderSettingsPanel({ doc, mount: empty, fixCount: 0 });
@@ -559,8 +785,70 @@ test('settings panel lists the four areas with honest availability', () => {
 
   const unknown = createMount();
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
-  assert.ok(unknown.textContent.includes('Non è stato possibile leggerle'));
+  assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+// backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non
+// ce ne siano)» named nothing and offered nothing. The panel says what was
+// not read and offers Riprova, which reads the count again.
+test('1d33b335fba0: an unread fix count says what is missing and Riprova reads it again', async () => {
+  const doc = createFakeDocument();
+  const flushAll = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  const mount = createMount();
+  const answers = [null, 3];
+  const asked = [];
+  const onRetry = async () => { asked.push(true); return answers.shift(); };
+  renderSettingsPanel({ doc, mount, fixCount: null, onRetry });
+  const text = mount.textContent;
+  assert.ok(text.includes('Non sono riuscito a leggere le cose da sistemare'), 'names what was not read');
+  assert.ok(text.includes('problemi nei dati e schede doppie'), 'in plain words');
+  assert.ok(!text.includes('leggerle'), 'never the old dangling pronoun');
+  assert.ok(!text.includes('non è detto che non ce ne siano'));
+  const retryOf = (node) => node.findAll('button').find((button) => button.getAttribute('data-action') === 'settings-retry');
+  let retry = retryOf(mount);
+  assert.ok(retry, 'Riprova is offered');
+  assert.equal(retry.textContent, 'Riprova');
+  // Still unreadable: the same note and Riprova again.
+  retry.dispatch('click', {});
+  assert.equal(retry.getAttribute('aria-busy'), 'true', 'the button says it is working');
+  await flushAll();
+  assert.equal(asked.length, 1);
+  retry = retryOf(mount);
+  assert.ok(retry, 'still unreadable: Riprova stays');
+  // Read: the count replaces the note.
+  retry.dispatch('click', {});
+  await flushAll();
+  assert.equal(asked.length, 2);
+  assert.ok(mount.textContent.includes('3 cose da sistemare'), 'the fresh count shows');
+  assert.ok(!retryOf(mount), 'no Riprova once read');
+  // A failing retry keeps the note, never throws.
+  const failing = createMount();
+  renderSettingsPanel({ doc, mount: failing, fixCount: null, onRetry: async () => { throw new Error('down'); } });
+  retryOf(failing).dispatch('click', {});
+  await flushAll();
+  assert.ok(failing.textContent.includes('Non sono riuscito a leggere'));
+  assert.ok(retryOf(failing), 'Riprova again after a failure');
+  // Review #833 P2: the retry answers the live availability too — Stato
+  // sync composed since the first paint links once the count is read.
+  const late = createMount();
+  renderSettingsPanel({ doc, mount: late, fixCount: null, customerDataAvailable: false,
+    onRetry: async () => ({ fixCount: 2, customerDataAvailable: true }) });
+  assert.ok(!late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'first paint: Stato sync not composed yet');
+  retryOf(late).dispatch('click', {});
+  await flushAll();
+  assert.ok(late.textContent.includes('2 cose da sistemare'));
+  assert.ok(late.findAll('a').some((link) => link.getAttribute('href') === '#/stato-sync'), 'the fresh availability links Stato sync');
+  // Left meanwhile: the late answer never repaints the new screen.
+  const left = createMount();
+  let release;
+  renderSettingsPanel({ doc, mount: left, fixCount: null, onRetry: () => new Promise((resolve) => { release = resolve; }) });
+  retryOf(left).dispatch('click', {});
+  while (left.firstChild) left.removeChild(left.firstChild);
+  left.appendChild(doc.createElement('p')).textContent = 'Clienti';
+  release(5);
+  await flushAll();
+  assert.equal(left.textContent, 'Clienti', 'the screen opened meanwhile stays');
 });
 
 test('Stato sync links its own screen once customer-data is composed', () => {
@@ -569,19 +857,19 @@ test('Stato sync links its own screen once customer-data is composed', () => {
   renderSettingsPanel({ doc, mount: off, fixCount: 2, customerDataAvailable: false });
   // Personalizzazione, Catalogo prodotti and Spazi e accessi link; Stato sync
   // stays an honest note until the customer-data package is composed.
-  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
+  assert.deepEqual(off.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi', '#/profilo']);
   assert.ok(off.textContent.includes('Stato sync'));
   assert.ok(off.textContent.includes('non composto'));
 
   const implicit = createMount();
   renderSettingsPanel({ doc, mount: implicit, fixCount: 2 });
-  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi']);
+  assert.deepEqual(implicit.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/spazi-accessi', '#/profilo']);
 
   const on = createMount();
   renderSettingsPanel({ doc, mount: on, fixCount: 2, customerDataAvailable: true });
   // With the package composed Stato sync links its own screen (BO-F1-03),
   // in area order beside Spazi e accessi.
-  assert.deepEqual(on.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi']);
+  assert.deepEqual(on.findAll('a').map((link) => link.getAttribute('href')), ['#/personalizzazione', '#/catalogo', '#/stato-sync', '#/spazi-accessi', '#/profilo']);
   assert.ok(on.textContent.includes('Stato sync'));
   assert.ok(!on.textContent.includes('non composto'));
 });
@@ -819,4 +1107,19 @@ test('Agenti link their screen only when the agents package publishes create-age
   const off = buildShellNav(without).find((item) => item.id === 'agenti');
   assert.equal(off.available, false);
   assert.equal(off.route, null);
+});
+
+// backlog:8618ad3f72db (verifica 13-14/11): on Catalogo prodotti the sidebar
+// «Impostazioni» lost its highlight. Every view under the Impostazioni tab
+// row keeps it, Profilo included.
+test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in the sidebar', () => {
+  for (const [view, label] of [
+    ['personalizzazione', 'Personalizzazione'], ['catalog', 'Catalogo prodotti'], ['sync', 'Stato sync'],
+    ['spazi-accessi', 'Spazi e accessi'], ['profilo', 'Profilo'],
+  ]) {
+    const screen = shellScreenFor({ view });
+    assert.equal(screen.id, 'impostazioni', `${view}: the sidebar highlights Impostazioni`);
+    assert.equal(screen.label, label);
+  }
+  assert.equal(shellScreenFor({ view: 'pipeline' }).id, 'pipeline');
 });

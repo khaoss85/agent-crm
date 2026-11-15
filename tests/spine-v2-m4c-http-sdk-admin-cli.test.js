@@ -3,6 +3,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { assertSyncChildExited, hangGuardMs } from './helpers/child-exit.js';
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -252,9 +253,10 @@ export function createSecretProvider() {
   for (const command of APP_COMMANDS.filter((name) => name !== 'serve')) {
     const run = spawnSync(process.execPath, [cli, command, '--deployment-storage', configPath, '--root', root], {
       encoding: 'utf8',
-      timeout: 10_000,
+      timeout: hangGuardMs(),
       env: { ...process.env, CRM_NO_SQLITE_FALLBACK: '1' },
     });
+    assertSyncChildExited(run, `M4C CLI ${command} refuses unauthenticated PostgreSQL mutators`);
     assert.notEqual(run.status, 0, command);
     const haystack = `${run.stdout}\n${run.stderr}`;
     assert.match(haystack, new RegExp(CLI_VERIFIED_OPERATOR_REQUIRED));
@@ -340,12 +342,37 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
     const listening = await listen(server);
     t.after(() => listening.close());
     const idempotencyKey = key();
-    const [left, right] = await Promise.all([
-      http(listening.url, '/api/companies', { method: 'POST', body: { name: 'Race' }, key: idempotencyKey }),
-      http(listening.url, '/api/companies', { method: 'POST', body: { name: 'Race' }, key: idempotencyKey }),
-    ]);
-    const statuses = [left.status, right.status].sort();
-    assert.ok(statuses.every((status) => status === 201 || status === 503));
+    // Under load either attempt can trip the query deadline and answer 504
+    // (STORAGE_TIMEOUT) instead of 503: both are the transient class, never a
+    // committed divergence. A transient is reconciled by re-posting the same
+    // key with the same body — the framework replays the winner or commits
+    // once under the same deterministic ids. The event the test measures is
+    // that every 201 carries the same id and exactly one record exists
+    // (backlog:1967694a). Anything outside 201/503/504 fails at once, and a
+    // transient that never settles fails when the hang-guard remainder ends:
+    // real defects stay red.
+    const postSame = () => http(listening.url, '/api/companies', {
+      method: 'POST', body: { name: 'Race' }, key: idempotencyKey,
+    });
+    const reconcileGuardMs = hangGuardMs();
+    const reconcileStarted = Date.now();
+    async function toCommitted(first) {
+      let current = first;
+      for (;;) {
+        if (current.status === 201) return current;
+        assert.ok(
+          current.status === 503 || current.status === 504,
+          `expected a transient 503/504, got ${current.status}: ${current.haystack}`,
+        );
+        if (Date.now() - reconcileStarted >= reconcileGuardMs) {
+          assert.equal(current.status, 201, `concurrent write never committed: ${current.haystack}`);
+        }
+        current = await postSame();
+      }
+    }
+    const [left, right] = await Promise.all([postSame(), postSame()]);
+    const committed = [await toCommitted(left), await toCommitted(right)];
+    assert.equal(committed[0].body.id, committed[1].body.id);
     const listed = await http(listening.url, '/api/companies');
     assert.equal(listed.body.items.length, 1);
   });
@@ -428,6 +455,12 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
     // Without this gate the schedule where A commits before B loads is a
     // legal sequential transition (both 200), which the assertions below
     // rightfully reject for overlapping pins.
+    // The barrier opens when both claims arrive (the event the assertions need),
+    // never after a fixed wait: under load the second claim can take longer
+    // than any fixed budget, and an early release turns a forced overlap into a
+    // legal sequence the assertions rightfully reject (backlog:1967694a). Only a
+    // hang still ends the wait, on the file's hang-guard remainder.
+    const barrierGuardMs = hangGuardMs();
     let arrived = 0;
     /** @type {Array<() => void>} */
     const waiters = [];
@@ -442,7 +475,7 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
           const index = waiters.indexOf(release);
           if (index !== -1) waiters.splice(index, 1);
           resolve();
-        }, 10_000);
+        }, barrierGuardMs);
         if (typeof timer.unref === 'function') timer.unref();
         const release = () => { clearTimeout(timer); resolve(); };
         waiters.push(release);

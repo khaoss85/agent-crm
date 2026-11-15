@@ -483,7 +483,7 @@ export function renewalSection({ label, connection, grantExpiresAt = null, nowMs
   });
 }
 
-import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 function errorOf(error) {
   return humanReadError(error, { failed: 'La richiesta non è riuscita. Riprova più tardi.' });
@@ -660,7 +660,7 @@ export function createConnectorDetailView(deps) {
       button.setAttribute('type', 'button');
       button.setAttribute('data-action', 'renew-grant');
       button.addEventListener('click', () => {
-        void renewGrant(channel, section, input, button);
+        void uiBusy(button, 'Registro…', () => renewGrant(channel, section, input, button));
       });
       panel.appendChild(button);
     }

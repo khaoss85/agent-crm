@@ -31,6 +31,7 @@ import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js'
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
+import { plural } from './admin-labels.js';
 import { readProfile } from './admin-profilo.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
@@ -122,9 +123,13 @@ export function filterUnits({ units = [], active = new Map(), tab = 'pacchetti',
   return list;
 }
 
-/** @param {unknown} count @param {string} singular @param {string} plural */
-export function pluralize(count, singular, plural) {
-  return `${count} ${count === 1 ? singular : plural}`;
+/**
+ * Kept for its callers and tests: the shared plural() of admin-labels
+ * (famiglia F8, backlog:9236684c96a7).
+ * @param {unknown} count @param {string} singular @param {string} many
+ */
+export function pluralize(count, singular, many) {
+  return plural(count, singular, many);
 }
 
 /**
@@ -156,7 +161,7 @@ export function previewLines(preview) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBadge, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * The open toolbar menu, if any (Aggiungi, Stato, Ordina per). One menu per
@@ -599,6 +604,7 @@ export function createPersonalizzazioneView(deps) {
 
   async function mutate(path, body) {
     state.busy = true;
+    busyWrite = `${path}|${body?.unit ?? ''}`; // cta-loading: the pressed button reads «…» on the re-render
     render();
     try {
       const answer = await client.request(path, { method: 'POST', body });
@@ -607,6 +613,8 @@ export function createPersonalizzazioneView(deps) {
       state.busy = false;
     }
   }
+  let busyWrite = '';
+  const busyOn = (path, unit) => state.busy && busyWrite === `${path}|${unit ?? ''}`;
 
   /** @param {string} hash */
   function go(hash) {
@@ -991,6 +999,7 @@ export function createPersonalizzazioneView(deps) {
       const cell = el(doc, 'td');
       const toggle = el(doc, 'button', { text: 'Disattiva', attrs: { type: 'button' } });
       toggle.disabled = state.busy;
+      if (busyOn('/api/space-packages/deactivate', entry.name)) uiMarkBusy(toggle, 'Disattivo…');
       toggle.addEventListener('click', async () => {
         try {
           await mutate('/api/space-packages/deactivate', { spaceId: readSpace().trim(), unit: entry.name });
@@ -1039,6 +1048,7 @@ export function createPersonalizzazioneView(deps) {
       const active = unitStatus({ entry, row }) === 'attiva';
       const add = el(doc, 'button', { text: active ? '✓' : '+', attrs: { type: 'button', 'aria-label': active ? 'Attiva (già attiva)' : `Attiva ${entry.label ?? entry.name}` } });
       add.disabled = state.busy || active;
+      if (busyOn('/api/space-packages/activate', entry.name)) uiMarkBusy(add, 'Attivo…');
       if (!active) {
         add.addEventListener('click', async () => {
           try {
@@ -1222,7 +1232,7 @@ export function createPersonalizzazioneView(deps) {
     head.appendChild(el(doc, 'span', {
       text: String(group.cards.length),
       cls: 'ui-conn-count',
-      attrs: { 'aria-label': `${group.cards.length} canali` },
+      attrs: { 'aria-label': plural(group.cards.length, 'canale', 'canali') },
     }));
     const all = el(doc, 'button', { text: 'Mostra tutto →', cls: 'ui-conn-all', attrs: { type: 'button' } });
     all.addEventListener('click', () => {

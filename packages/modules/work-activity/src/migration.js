@@ -36,6 +36,12 @@ export const workActivityMigrations = [
       "CREATE INDEX IF NOT EXISTS work_activities_task_id ON work_activities(task_id);" + '\n' +
       "CREATE INDEX IF NOT EXISTS work_activities_source_package ON work_activities(source_package);",
   },
+  {
+    name: "evolve_work_activities_r3",
+    sql:
+      "ALTER TABLE work_activities ADD COLUMN revises_id TEXT;" + '\n' +
+      "ALTER TABLE work_activities ADD COLUMN withdrawn INTEGER CHECK(withdrawn IN (0, 1));",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */

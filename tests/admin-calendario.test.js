@@ -13,6 +13,7 @@ import {
   servicePresendError,
   dayHead,
   formatPriceCents,
+  serviceOptionLabel,
   displayKeys,
   draftDayKey,
   draftDayOnly,
@@ -58,7 +59,8 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  *
  * DOM tests pin `now` to Friday 2026-10-23 06:00Z: the painted week is the
  * Oct 19–25 fixture week, and 08:00 Rome stays outside the painted hours so
- * no now-line appears (backlog:df55cf25: Sunday no longer opens this week).
+ * no now-line appears (backlog:c51dca86dc66: the opening week holds today
+ * even on the weekend, so Sunday opens this same week).
  */
 
 const WEEK = {
@@ -83,7 +85,9 @@ const WEEK = {
         },
         {
           id: 'a2',
-          status: 'cancelled',
+          // A closed booking that still paints (backlog:5346ab531538: a
+          // cancelled one leaves the grid, a done one stays).
+          status: 'done',
           startsAt: '2026-10-23T09:00:00.000Z',
           endsAt: '2026-10-23T09:30:00.000Z',
           serviceKey: 'barba',
@@ -243,22 +247,40 @@ test('week keys are Monday..Sunday in Rome and the window covers the week', () =
   assert.match(weekLabel(keys) ?? '', /ott/);
 });
 
-// backlog:df55cf25 — on Sunday 2026-11-01 the calendar opened the past
-// work week (Oct 26–30). The opening week is the containing one on work
-// days and the following one on Saturday/Sunday.
-test('opening week is the next one on Saturday and Sunday', () => {
-  // Sunday 2026-11-01 (Rome): the coming Mon..Sun opens, not Oct 26 – Nov 1.
+// backlog:c51dca86dc66 (was df55cf25) — on Sunday 2026-11-01 the calendar
+// used to open the coming week (Nov 2–8). The opening week is the
+// containing one every day, and the painted columns show the current day
+// even on the weekend, so today never vanishes from its own week.
+test('opening week is the containing one on Saturday and Sunday too', () => {
+  // Sunday 2026-11-01 (Rome): Oct 26 – Nov 1 opens, holding today.
   assert.deepEqual(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), [
-    '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05',
-    '2026-11-06', '2026-11-07', '2026-11-08',
+    '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29',
+    '2026-10-30', '2026-10-31', '2026-11-01',
   ]);
-  // The painted work days are the coming ones, never the past ones.
+  // The painted days are the work days plus today (Sunday).
   assert.deepEqual(
-    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z'))),
-    ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'],
+    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), new Date('2026-11-01T10:00:00Z')),
+    ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-11-01'],
   );
-  // Saturday 2026-10-31 (Rome): same — the Oct 26–30 work days are over.
-  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-11-02');
+  // Saturday 2026-10-31 (Rome): same — the week holds today, not the next one.
+  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-10-26');
+  assert.deepEqual(
+    displayKeys(openingWeekKeys(new Date('2026-10-31T10:00:00Z')), new Date('2026-10-31T10:00:00Z'))[5],
+    '2026-10-31',
+  );
+});
+
+test('backlog:c51dca86dc66: displayKeys paints Mon..Fri, plus today on the weekend only', () => {
+  const week = ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  // A Wednesday paints the five work days, no weekend.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-28T10:00:00Z')), week.slice(0, 5));
+  // Saturday paints Mon..Fri plus Saturday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-31T10:00:00Z')), [...week.slice(0, 5), '2026-10-31']);
+  // Sunday paints Mon..Fri plus Sunday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-01T10:00:00Z')), [...week.slice(0, 5), '2026-11-01']);
+  // Today outside the loaded week adds nothing.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-04T10:00:00Z')), week.slice(0, 5));
+  assert.deepEqual(displayKeys(null, new Date('2026-11-01T10:00:00Z')), []);
 });
 
 test('opening week is the containing one on work days', () => {
@@ -327,9 +349,10 @@ test('week renders five day columns with real Rome-time events', async () => {
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
   assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
   assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
-  // Cancelled rows stay listed with their status, in Italian (C14).
-  assert.ok(texts(mount, 'span').includes('annullato'));
-  assert.ok(!texts(mount, 'span').includes('cancelled'), 'C14: never the raw English status');
+  // Closed rows stay listed with their status, in Italian (C14); a
+  // cancelled booking leaves the grid (backlog:5346ab531538).
+  assert.ok(texts(mount, 'span').includes('svolto'));
+  assert.ok(!texts(mount, 'span').includes('done'), 'C14: never the raw English status');
   // No customer control paints before a selection: the card owns it (fetta 5).
   assert.equal(mount.findAll('a').length, 0);
   // Selecting the block opens the popover, and the customer links the scheda.
@@ -338,6 +361,46 @@ test('week renders five day columns with real Rome-time events', async () => {
   block.dispatch('click');
   const open = mount.findAll('a').find((node) => node.getAttribute('title') === 'Apri scheda cliente');
   assert.ok(open, 'the popover links the scheda, never a raw id');
+});
+
+// backlog:f9cf5e4616c2 — a Saturday appointment Oggi lists must read in the
+// team week on the same day and time, never vanish with the weekend.
+test('a Saturday booking paints its own column on the same day and time', async () => {
+  const saturday = {
+    ...WEEK,
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [{
+        id: 'a-sat',
+        status: 'booked',
+        // Saturday 2026-10-24, 10:00–10:30 Rome (CEST).
+        startsAt: '2026-10-24T08:00:00.000Z',
+        endsAt: '2026-10-24T08:30:00.000Z',
+        serviceKey: 'taglio',
+        teamMemberId: 'marco',
+        priceCents: 4500,
+        currency: 'EUR',
+        notes: null,
+        sourceKey: 'calendario:marco:sat:c1',
+        subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+      }],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week: saturday }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  const heads = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day-head'));
+  assert.equal(heads.length, 6, 'the Saturday booking opens its own column');
+  assert.ok(heads[5].textContent.includes('sab 24'), `the sixth head is Saturday: ${heads[5].textContent}`);
+  const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
+  assert.equal(days.length, 6);
+  assert.ok(texts(mount, 'span').some((text) => text === '10:00–10:30'), 'the Saturday block keeps its Rome time');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -567,7 +630,9 @@ test('a proposal Conferma books through confirm with the manual claim', async ()
   assert.equal(body.priceCents, 4500);
   assert.deepEqual(body.subject, { resource: 'contact', id: 'c1', owner: 'host' });
   assert.equal(body.sourceKey, 'calendario:marco:2026-10-22T14:00:00.000Z:c1');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — the booked panel closes instead of reading «Prenotato».
+  assert.ok(!mount.textContent.includes('Prenotato:'), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the form closes');
   assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
@@ -694,8 +759,11 @@ test('the search button stays disabled while searching', async () => {
   await view.render();
   mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
   clickButton(mount, 'Trova slot liberi');
-  const searching = mount.findAll('button').find((node) => node.textContent === 'Trova slot liberi');
-  assert.equal(searching.getAttribute('disabled'), 'true', 'the button is disabled in flight');
+  // backlog:07895caaa4be: the button itself says it is searching.
+  const searching = mount.findAll('button').find((node) => node.textContent === 'Cerco…');
+  assert.ok(searching, 'the button reads «Cerco…» in flight');
+  assert.notEqual(searching.getAttribute('disabled'), null, 'the button is disabled in flight');
+  assert.equal(searching.getAttribute('aria-busy'), 'true');
   assert.ok(texts(mount, 'p').some((text) => text.includes('Cerco gli slot liberi')), 'a short wait, no jargon');
   for (let round = 0; round < 7; round += 1) {
     await new Promise((resolve) => setImmediate(resolve));
@@ -752,7 +820,11 @@ test('propose plans, confirm books: nothing is written before Conferma', async (
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).confirmed, true);
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — like Google Calendar the booked panel closes instead
+  // of reading «Prenotato», and the proposals go with it.
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Prenotato:')), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
+  assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
 test('late-evening wall times book the same Rome day, never tomorrow', async () => {
@@ -841,7 +913,11 @@ test('conferma books directly: no propose call on the confirm path', async () =>
   const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
   assert.equal(confirms.length, 1);
   assert.equal(payload(confirms[0]).startsAt, '2026-10-22T16:00:00.000Z');
-  assert.ok(texts(mount, 'p').some((text) => text.includes('Prenotato: Marco')));
+  // backlog:134f3ed7 — like Google Calendar the booked panel closes instead
+  // of reading «Prenotato», and the proposals go with it.
+  assert.ok(!texts(mount, 'p').some((text) => text.includes('Prenotato:')), 'no done line covers the day');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
+  assert.ok(!texts(mount, 'button').some((text) => text.includes('✦ Proposta')), 'booking clears the proposals');
 });
 
 // BO-F6-11 fetta 8 (owner 29/10: the grid covers the proposal hours or says
@@ -912,7 +988,9 @@ test('the manual customer search lists names, never ids or resources', async () 
   await view.render();
   const search = mount.querySelector('input[name="customerSearch"]');
   assert.ok(search, 'the manual form searches by name');
-  assert.equal(search.getAttribute('placeholder'), 'Cerca il cliente per nome…');
+  // backlog:6e6750ff8163: the «Cliente» label names the field, so the hint
+  // stays short enough for the popover.
+  assert.equal(search.getAttribute('placeholder'), 'Cerca per nome…');
   search.value = 'Ad';
   search.dispatch('input');
   for (let round = 0; round < 7; round += 1) {
@@ -1151,10 +1229,12 @@ test('the voices focus the phrase field and the manual form', async () => {
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
   toggle.dispatch('click');
   const manual = menu.findAll('button').find((node) => node.textContent.includes('Compila manualmente'));
-  const first = mount.querySelector('input[name="customerSearch"]');
-  first.focus = () => { focused = 'manual'; };
   manual.dispatch('click');
-  assert.equal(focused, 'manual', 'the manual voice focuses the booking form');
+  // backlog:6e6750ff8163: the voice opens the form popover (a repaint) and
+  // focuses its first field — the live node, never a scroll to the rail.
+  const pop = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'manual-pop');
+  assert.ok(pop && pop.getAttribute('hidden') === null, 'the manual voice opens the form');
+  assert.equal(mount.querySelector('input[name="customerSearch"]').__focused, true, 'the manual voice focuses the booking form');
   assert.ok(menu.classList.contains('hidden'), 'the menu closes after the choice');
 });
 
@@ -1218,7 +1298,8 @@ test('the calendario view renders no raw control', async () => {
 // Mon..Fri work week against an 09:00–18:00 hour axis.
 test('the time grid shows five work days against the 09:00–18:00 axis', async () => {
   assert.deepEqual(
-    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']),
+    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25'],
+      new Date('2026-10-21T10:00:00Z')),
     ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23'],
   );
   assert.equal(dayHead('2026-10-19'), 'lun 19');
@@ -1238,17 +1319,18 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   assert.equal(hours.length, 10, 'C13: ten hour labels');
   assert.equal(hours[0].textContent, '09:00');
   assert.equal(hours[9].textContent, '18:00');
-  // Blocks sit on their Rome half-hour rows: taglio Thu 18:00–18:30 Rome
-  // clamps to the last row; barba Fri 11:00–11:30 Rome sits on row 5.
+  // Blocks sit on their Rome quarter-hour rows (backlog:7587307d5215):
+  // taglio Thu 18:00–18:30 Rome clamps to the last row (36); barba Fri
+  // 11:00–11:30 Rome covers rows 9 and 10.
   const blocks = mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-event'));
   assert.equal(blocks.length, 2, 'two held events paint two blocks');
   const taglio = blocks.find((node) => /taglio/i.test(node.textContent));
-  assert.ok(taglio.getAttribute('style').includes('grid-row: 18 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
+  assert.ok(taglio.getAttribute('style').includes('grid-row: 36 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
   // The barba row carries hostile notes, which become its title (inert text):
   // find it by its Rome time, Fri 11:00–11:30.
   const barba = blocks.find((node) => node.textContent.includes('11:00–11:30'));
   assert.ok(barba, 'the barba block paints with its Rome time');
-  assert.ok(barba.getAttribute('style').includes('grid-row: 5 / span 1'), `barba sits on its row: ${barba.getAttribute('style')}`);
+  assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
   // Colour and initials come from the opaque member id, never a name.
   assert.match(taglio.getAttribute('class'), /cal-m[0-4]/, 'the block carries its member tint');
   assert.ok(taglio.textContent.includes('MA'), 'the block carries member initials');
@@ -1257,10 +1339,15 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
 
 // Grid placement clamps out-of-hours bookings at the painted edge.
 test('gridRowsFor clamps outside hours and never drops a booking', () => {
-  assert.deepEqual(gridRowsFor('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), { row: 18, span: 1 });
-  assert.deepEqual(gridRowsFor('2026-10-23T07:00:00.000Z', '2026-10-23T07:30:00.000Z'), { row: 1, span: 1 });
-  // 08:00Z–09:00Z is 10:00–11:00 Rome in October: a two-row span mid-grid.
-  assert.deepEqual(gridRowsFor('2026-10-23T08:00:00.000Z', '2026-10-23T09:00:00.000Z'), { row: 3, span: 2 });
+  assert.deepEqual(gridRowsFor('2026-10-22T16:00:00.000Z', '2026-10-22T16:30:00.000Z'), { row: 36, span: 1 });
+  assert.deepEqual(gridRowsFor('2026-10-23T07:00:00.000Z', '2026-10-23T07:30:00.000Z'), { row: 1, span: 2 });
+  // 08:00Z–09:00Z is 10:00–11:00 Rome in October: four quarter rows mid-grid.
+  assert.deepEqual(gridRowsFor('2026-10-23T08:00:00.000Z', '2026-10-23T09:00:00.000Z'), { row: 5, span: 4 });
+  // backlog:7587307d5215 (pilota 11/11): 11:00–13:00 Rome covers exactly
+  // 11:00 to 13:00 — rows 9 to 16 — never drawn between 11:25 and 12:35.
+  assert.deepEqual(gridRowsFor('2026-10-23T09:00:00.000Z', '2026-10-23T11:00:00.000Z'), { row: 9, span: 8 });
+  // A quarter-hour booking covers its quarter: 10:15–10:45 Rome.
+  assert.deepEqual(gridRowsFor('2026-10-23T08:15:00.000Z', '2026-10-23T08:45:00.000Z'), { row: 6, span: 2 });
   // 06:00Z–07:00Z is 08:00–09:00 Rome: clamps to the first row, never dropped.
   assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T07:00:00.000Z'), { row: 1, span: 1 });
   assert.deepEqual(gridRowsFor('2026-10-23T06:00:00.000Z', '2026-10-23T06:30:00.000Z'), { row: 1, span: 1 });
@@ -1343,8 +1430,8 @@ test('the now-line paints on the current day inside painted hours', async () => 
   const sunday = await load(() => new Date('2026-10-25T10:00:00Z'));
   assert.equal(
     sunday.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now')).length,
-    0,
-    'no now-line when today is outside the work week',
+    1,
+    'backlog:c51dca86dc66: Sunday paints its own column, so the now-line crosses today',
   );
   const night = await load(() => new Date('2026-10-21T03:00:00Z'));
   assert.equal(
@@ -1962,9 +2049,10 @@ test('hiding the selected block member closes the detail card', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   mount.findAll('button').find((node) => /piega/i.test(node.textContent)).dispatch('click');
-  assert.ok(mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'the detail card opens');
+  const detail = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
+  assert.ok(detail(), 'the detail card opens');
   teamToggles(mount).find((node) => node.textContent.includes('Sara')).dispatch('click');
-  assert.ok(!mount.findAll('button').some((node) => node.getAttribute('aria-label') === 'Chiudi'), 'hiding the member closes the card');
+  assert.equal(detail(), undefined, 'hiding the member closes the card');
   assert.ok(!texts(mount, 'strong').some((text) => /^piega\b/i.test(text)));
 });
 
@@ -2019,12 +2107,32 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(['marco'], [], null), [
     {
       ids: ['marco'], id: 'marco', name: null, label: 'Marco',
+      email: null, sub: null,
       active: true, listed: true,
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
   assert.deepEqual(personRows([], [], []), [], 'no names and no roster: no rows');
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
+});
+
+// backlog:c0b718741f0f — every Team row carries the small sub-line like Spazi
+// e accessi: the mailbox when it adds to the painted name, else the access
+// kind, else nothing.
+test('personRows carries the small sub-line: mailbox or access kind', () => {
+  const withMail = personRows(['github|1'], [], [
+    { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+  ]);
+  assert.equal(withMail[0].sub, 'dan@example.com', 'the mailbox paints under the name');
+  assert.equal(withMail[0].email, 'dan@example.com');
+  const mailLabel = personRows([], [], [{ subject: 'x|1', role: 'member', email: 'sara@example.com' }]);
+  assert.equal(mailLabel[0].label, 'sara@example.com');
+  assert.equal(mailLabel[0].sub, null, 'no repeat when the label already is the mailbox');
+  const access = personRows(['google|1049abc'], [], [{ subject: 'google|1049abc', role: 'owner' }]);
+  assert.equal(access[0].label, 'Membro del team');
+  assert.equal(access[0].sub, 'Accesso Google', 'the access kind stands in without a mailbox');
+  const typed = personRows(['marco'], [], null);
+  assert.equal(typed[0].sub, null, 'typed words alone paint no sub-line');
 });
 
 // backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
@@ -2080,6 +2188,17 @@ test('personRows grouping table: merge, homonyms, ordinals', () => {
         { subject: 'a2', role: 'member', displayName: 'Rossi', email: 'b@example.com' },
       ],
       want: [{ ids: ['a1'], label: 'Rossi (1)' }, { ids: ['a2'], label: 'Rossi (2)' }],
+    },
+    {
+      // backlog:f4a1f25048c8: two distinct people on one shared mailbox
+      // (info@) stay two calendar rows — a mailbox alone never merges.
+      name: 'a shared mailbox with different names stays two rows',
+      named: ['a1', 'a2'],
+      members: [
+        { subject: 'a1', role: 'member', displayName: 'Sara Neri', email: 'info@example.com' },
+        { subject: 'a2', role: 'member', displayName: 'Luca Blu', email: 'INFO@example.com' },
+      ],
+      want: [{ ids: ['a1'], label: 'Sara Neri' }, { ids: ['a2'], label: 'Luca Blu' }],
     },
     {
       name: 'email-less homonyms stay separate with ordinals',
@@ -2219,7 +2338,9 @@ test('the Team card merges one human across roster subjects', async () => {
   const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n') + texts(mount, 'p').join('\n');
   assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
   assert.ok(!painted.includes('google|1049abc'), 'no technical subject id on screen');
-  assert.ok(!painted.includes('dan@example.com'), 'the mailbox is one person, not a second row');
+  // backlog:c0b718741f0f — the mailbox paints once, as the small sub-line of
+  // the single row: one person, not a second row.
+  assert.ok(teamToggles(mount)[0].textContent.includes('dan@example.com'), 'the mailbox is the sub-line of the one row');
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the detail card opens');
@@ -3010,22 +3131,24 @@ test('dragging on a day column chooses the slot and opens the filled form beside
   for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const days = () => mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
   const col = days()[2];
-  // 18 half-hour rows over 360 px: 20 px each, from 09:00.
+  // 36 quarter-hour rows over 360 px: 10 px each, from 09:00.
   col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 200, bottom: 360, height: 360, width: 200 });
   col.dispatch('pointerdown', { button: 0, clientY: 85, target: col, preventDefault() {} }); // 11:00
-  col.dispatch('pointermove', { clientY: 125, target: col }); // 12:00 → 11:00–12:30
+  col.dispatch('pointermove', { clientY: 135, target: col }); // 12:15 → 11:00–12:30
   col.dispatch('pointerup', { target: col });
   const pick = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   assert.ok(pick, 'the chosen slot stays painted on the grid');
   assert.equal(pick.textContent, '11:00–12:30');
-  const pop = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  const visiblePop = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null);
+  const pop = visiblePop();
   assert.ok(pop, 'the form opens beside the slot');
+  assert.equal(pop.getAttribute('data-anchor'), 'slot');
   const value = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name)?.value;
   assert.equal(value('date'), '2026-10-21');
   assert.equal(value('start'), '11:00');
   assert.equal(value('end'), '12:30');
   pop.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
-  assert.ok(!mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop')), '× closes the form');
+  assert.equal(visiblePop(), undefined, '× closes the form');
 });
 
 test('a plain click on an empty slot is half an hour', async () => {
@@ -3060,7 +3183,7 @@ async function phoneWeek() {
   for (let round = 0; round < 3; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const col = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'))[1];
   col.getBoundingClientRect = () => ({ top: 0, left: 0, right: 366, bottom: 360, height: 360, width: 366 });
-  const hasPop = () => mount.findAll('div').some((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-pop'));
+  const hasPop = () => mount.findAll('div').some((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null);
   const pick = () => mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick');
   return { mount, col, hasPop, pick };
 }
@@ -3494,14 +3617,19 @@ test('a proposal on top of a held booking is never offered (defect 07/11)', asyn
   assert.equal(list.findAll('button').length, 1);
 });
 
-test('lanes follow the painted rows: touching blocks that share a row sit side by side', () => {
-  // 10:00–10:45 and 10:45–11:30 Rome both cover the 10:30 row.
+test('lanes follow the painted rows: blocks that share a row sit side by side', () => {
+  // backlog:7587307d5215: rows are quarter hours, so 10:00–10:45 and
+  // 10:45–11:30 Rome touch without sharing a row and stack in one lane;
+  // 10:00–10:45 and 10:30–11:00 share the 10:30 row and sit side by side.
   const held = { startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:45:00.000Z' };
-  const ghost = { startsAt: '2026-10-22T08:45:00.000Z', endsAt: '2026-10-22T09:30:00.000Z' };
+  const touching = { startsAt: '2026-10-22T08:45:00.000Z', endsAt: '2026-10-22T09:30:00.000Z' };
+  const overlapping = { startsAt: '2026-10-22T08:30:00.000Z', endsAt: '2026-10-22T09:00:00.000Z' };
   const later = { startsAt: '2026-10-22T10:00:00.000Z', endsAt: '2026-10-22T10:30:00.000Z' };
-  const lanes = lanesFor([held, ghost, later]);
-  assert.notEqual(lanes.get(held).lane, lanes.get(ghost).lane);
-  assert.equal(lanes.get(later).lane, 0, 'a block on free rows takes the first lane');
+  const touch = lanesFor([held, touching]);
+  assert.equal(touch.get(held).lane, touch.get(touching).lane, 'touching blocks stack in one lane');
+  const overlap = lanesFor([held, overlapping, later]);
+  assert.notEqual(overlap.get(held).lane, overlap.get(overlapping).lane, 'blocks sharing a row sit side by side');
+  assert.equal(overlap.get(later).lane, 0, 'a block on free rows takes the first lane');
 });
 
 test('ghosts never paint over a booking or over each other (defect 07/11)', async () => {
@@ -3527,10 +3655,15 @@ test('ghosts never paint over a booking or over each other (defect 07/11)', asyn
   const column = (node) => /grid-column: (\d+)/.exec(node.getAttribute('style') ?? '')?.[1];
   const first = ghosts.find((node) => node.textContent === '✦ Proposta 16:00');
   const second = ghosts.find((node) => node.textContent === '✦ Proposta 16:45');
-  // The 16:00 ghost shares the 16:00 row with piega; the two ghosts share
-  // the 16:30 row: each pair sits in different lanes.
+  // The 16:00 ghost shares its rows with piega (16:00–16:30): it sits
+  // beside it. With quarter rows (backlog:7587307d5215) the two contiguous
+  // ghosts no longer share a row (16:00–16:45, 16:45–17:30), so the second
+  // takes the free first lane under the first, never on top of it.
   assert.notEqual(column(first), column(piega), 'the ghost sits beside the booking');
-  assert.notEqual(column(first), column(second), 'the ghosts sit beside each other');
+  const rowsOfNode = (node) => /grid-row: (\d+) \/ span (\d+)/.exec(node.getAttribute('style') ?? '').slice(1).map(Number);
+  const [firstRow, firstSpan] = rowsOfNode(first);
+  const [secondRow] = rowsOfNode(second);
+  assert.ok(column(first) !== column(second) || secondRow >= firstRow + firstSpan, 'the ghosts never paint over each other');
   assert.ok(ghosts.every((node) => !(node.getAttribute('style') ?? '').includes('1 / -1')), 'no ghost spans the whole day');
 });
 
@@ -3738,7 +3871,7 @@ const manualButton = (mount, label) => mount.querySelector('.cal-manual').findAl
 
 // e) After «booked» the form read «Bozza pronta: premi Conferma…» and the
 // phrase card kept its draft: a booking is a done state.
-test('a booked Conferma clears every draft and shows «Prenotato» with the week reloaded', async () => {
+test('a booked Conferma clears every draft, closes the panel and reloads the week', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -3765,11 +3898,11 @@ test('a booked Conferma clears every draft and shows «Prenotato» with the week
   await flushMany();
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1);
   assert.ok(!mount.textContent.includes('Bozza'), 'no draft line survives the booking');
-  const booked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'booked');
-  assert.ok(booked, 'the done state paints');
-  assert.equal(booked.textContent, 'Prenotato: Marco · 22 ott 18:00.');
+  // backlog:134f3ed7 — the booked panel closes instead of painting
+  // «Prenotato: …»: no done line covers the day column.
+  assert.ok(!mount.textContent.includes('Prenotato:'), 'no done line survives the booking');
+  assert.equal(mount.findAll('div').filter((node) => node.getAttribute('data-role') === 'manual-pop' && node.getAttribute('hidden') === null).length, 0, 'the panel closes');
   assert.equal(mount.querySelector('.cal-slots'), null, 'the proposals are gone');
-  assert.equal(byName().serviceKey.value, '', 'the form is cleared for the next booking');
   assert.ok(
     client.calls.filter((call) => call.path.startsWith('/api/appointments/team-week')).length > weekReads,
     'the week reloads so the new event paints',
@@ -3910,9 +4043,19 @@ test('the manual form offers the catalog menu with the default and price prefill
   const labels = service.findAll('option').map((node) => node.textContent);
   assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
   assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
-  assert.equal(service.value, 'taglio', 'the first entry is preselected like the worker default');
+  // backlog:c2f21b5debdd: the prices read as Italian money, never «45.00 €».
+  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Lezione prova · 15,00 €'), labels.join(' | '));
+  assert.ok(!labels.some((text) => /\d\.\d{2} €/.test(text)), 'no dotted decimals in the menu');
+  // backlog:6e6750ff8163: with two services nothing is preselected — the
+  // first catalog entry was a test product on a real listino.
+  assert.equal(service.value, '', 'no service preselected');
+  assert.equal(service.findAll('option')[0].textContent, 'Scegli il servizio');
   const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
-  assert.equal(byName().price.value, '45.00', 'the price prefills from the default');
+  assert.equal(byName().price.value, '', 'no price before a service is chosen');
+  service.value = 'taglio';
+  service.dispatch('change');
+  assert.equal(byName().price.value, '45.00', 'the price follows the chosen service');
   assert.equal(
     mount.findAll('input').filter((node) => node.getAttribute('name') === 'serviceKey').length,
     0,
@@ -4184,7 +4327,11 @@ test('review #805 giro 4 P1: a transient served-list failure retries on the next
   assert.ok(servicesReads() > readsBefore, 'the next submit re-reads the list instead of replaying the cached failure');
   const service = mount.querySelector('select[name="serviceKey"]');
   assert.notEqual(service.getAttribute('disabled'), 'disabled', 'the menu unblocks once the list reads');
-  assert.equal(service.value, 'prova-verifica-0711-b-prodotto', 'the served default is chosen');
+  // backlog:6e6750ff8163: with several services nothing is preselected (the
+  // first was a test product): the operator chooses, then submits again.
+  assert.equal(service.value, '', 'no served service preselected');
+  service.value = 'prova-verifica-0711-b-prodotto';
+  service.dispatch('change');
   clickButton(mount, 'Proponi');
   await flushMany(9);
   const proposes = client.calls.filter((call) => call.path === '/api/appointments/propose');
@@ -4447,6 +4594,59 @@ test('Conferma in flight replaces the draft note with «Prenotazione in corso…
   const panel = mount.querySelector('.cal-manual').textContent;
   assert.ok(panel.includes('Prenotazione in corso…'), panel);
   assert.ok(!panel.includes('Bozza'), 'the stale draft note is gone while Conferma runs');
+});
+
+// cta-loading (Dan 11/11): the pressed Conferma itself reads «Prenoto…»
+// while the booking is in flight, and pressing it again books nothing more.
+test('cta-loading: Conferma reads «Prenoto…» while booking and a second press books once', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const base = stubClient({ customers: customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }]) });
+  let release = () => {};
+  const client = {
+    calls: base.calls,
+    request(path, options = {}) {
+      if (path === '/api/appointments/confirm') {
+        base.calls.push({ path, method: options.method ?? 'GET', body: options.body });
+        return new Promise((_, reject) => { release = () => reject(Object.assign(new Error('boom'), { status: 500 })); });
+      }
+      return base.request(path, options);
+    },
+  };
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const byName = () => Object.fromEntries(mount.findAll('input').map((node) => [node.getAttribute('name'), node]));
+  await pickCustomerByName(mount, 'Ada');
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.serviceKey.value = 'taglio';
+  form.date.value = '2026-10-22';
+  form.start.value = '18:00';
+  form.end.value = '18:30';
+  const proponiBefore = manualButton(mount, 'Proponi');
+  manualButton(mount, 'Conferma').dispatch('click');
+  // Review Muse #775 giro 2: off at once, before the first await.
+  assert.equal(proponiBefore.disabled, true, 'Proponi goes off synchronously with the Conferma press');
+  await flushMany();
+  const busy = manualButton(mount, 'Prenoto…');
+  assert.ok(busy, 'the pressed Conferma says it is booking');
+  assert.equal(busy.getAttribute('aria-busy'), 'true');
+  assert.equal(busy.disabled, true);
+  busy.dispatch('click');
+  await flushMany();
+  const confirms = () => base.calls.filter((call) => call.path === '/api/appointments/confirm').length;
+  assert.equal(confirms(), 1, 'one booking for two presses');
+  // Review Muse #775: the other booking buttons are off meanwhile, never
+  // pressable and silently dropped.
+  const propose = manualButton(mount, 'Proponi');
+  assert.equal(propose.disabled, true, 'Proponi is off while Conferma books');
+  assert.equal(propose.getAttribute('aria-busy'), null, 'only the pressed button reads busy');
+  release();
+  await flushMany();
+  const back = manualButton(mount, 'Conferma');
+  assert.ok(back, 'after the refusal the button reads Conferma again');
+  assert.equal(back.getAttribute('aria-busy'), null);
+  assert.equal(back.disabled, false);
 });
 
 test('AI off is remembered for its own space only', async () => {
@@ -4933,4 +5133,82 @@ test('a block with a server-attached customer label reads service · customer wi
   // The label paints at once; a background profile read may warm the cache
   // for the detail card — the block never waits for it.
   assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
+});
+
+test('c2f21b5d: a service option reads its price as Italian money', () => {
+  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1,00 €');
+  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Pacchetto', priceCents: 123456789 }), 'Pacchetto · 1.234.567,89 €');
+  assert.equal(serviceOptionLabel({ name: 'Dollari', priceCents: 100, currency: 'USD' }), 'Dollari', 'never a currency the menu does not book');
+  assert.equal(serviceOptionLabel({ name: 'Strano', priceCents: 100, currency: 'XYZ!' }), 'Strano', 'an unknown code never throws');
+  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Senza prezzo', priceCents: 1.5 }), 'Senza prezzo');
+});
+
+test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian thousands dot', async () => {
+  const catalog = { products: [
+    { active: true, sku: 'pacchetto', name: 'Pacchetto annuale', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'flat_fee', flatAmountCents: 108000 }] }] },
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  for (let round = 0; round < 9; round += 1) await new Promise((resolve) => setImmediate(resolve));
+  const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
+  assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+});
+
+// Verifica 12/11: «È disponibile una nuova versione · Ricarica» answered
+// «Hai del testo non salvato» with nothing typed — the Calendario form
+// prefills the default service and its price on its own, and that counted
+// as the operator's text after leaving the screen.
+test('verifica 12/11: prefilled form values are nobody\'s unsaved text, typed ones are', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  const price = mount.findAll('input').find((node) => node.getAttribute('name') === 'price');
+  assert.equal(price.value, '45.00', 'the price prefilled on its own');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'a prefilled form is not unsaved text');
+  const notes = mount.findAll('input').find((node) => node.getAttribute('name') === 'notes')
+    ?? mount.findAll('textarea').find((node) => node.getAttribute('name') === 'notes');
+  notes.value = 'Porta le scarpe';
+  notes.dispatch('input');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'what the operator typed is');
+  resetVersionWatchState();
+});
+
+// Review #818 (P2): a choice made with a menu is the operator's work too.
+test('review #818: a service or a person chosen in the menus counts as unsaved work', async () => {
+  const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
+  resetVersionWatchState();
+  const emptyPage = { querySelectorAll: () => [] };
+  const catalog = { products: [
+    { active: true, sku: 'taglio', name: 'Taglio', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 4500 }] }] },
+    { active: true, sku: 'piega', name: 'Piega', offers: [{ active: true, currency: 'EUR', components: [{ chargeType: 'one_time', pricingModel: 'per_unit', unitAmountCents: 2000 }] }] },
+  ] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ catalog, memberships: [{ subject: 'sara', displayName: 'Sara', email: 'sara@example.com' }] }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  await flushMany(9);
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), false, 'the defaults are not unsaved work');
+  const service = mount.querySelector('select[name="serviceKey"]');
+  service.value = 'piega';
+  service.dispatch('change');
+  await view.render();
+  assert.equal(hasUnsavedWork(emptyPage), true, 'a chosen service is');
+  resetVersionWatchState();
 });

@@ -74,3 +74,46 @@ export const AGENT_CATALOG = Object.freeze([
 export function catalogAgentSourceKey(spaceId, slug) {
   return `agent:${spaceId}:${slug}`;
 }
+
+/**
+ * backlog:1f7cb20d3c30 — an agent written by hand («Nuovo agente»), not
+ * taken from the catalogue. Its source key is made here from a caller key
+ * (the backoffice issues `v1.<yyyymmdd>.<hex32>`), never from the name, and
+ * it can never look like a catalogue key: a deployment that picks its
+ * executor from the catalogue slug (`agent:<space>:<slug>`) must never run a
+ * hand-written agent as a catalogue one.
+ */
+export const CUSTOM_AGENT_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,79}$/;
+
+/**
+ * The source key of a hand-written agent in one space, or null when the
+ * caller key is not a safe key. A retry with the same caller key gets the
+ * same source key, so `create-agent` replays it as `duplicate: true`.
+ * @param {string} spaceId @param {unknown} key
+ */
+export function customAgentSourceKey(spaceId, key) {
+  if (typeof key !== 'string' || !CUSTOM_AGENT_KEY_PATTERN.test(key)) return null;
+  return `custom-agent:${spaceId}:${key}`;
+}
+
+/**
+ * Whether a source key belongs to a hand-written agent. `update-agent`
+ * and `set-agent-status` only touch these: a catalogue key
+ * (`agent:<space>:<slug>`) is refused, so a direct POST can never rename,
+ * pause or resume a catalogue agent the card gates keep read-only
+ * (review #879 giro 2). Mirrored by `isHandAgentKey` in the backoffice.
+ * @param {unknown} key
+ */
+export function isCustomAgentSourceKey(key) {
+  return typeof key === 'string' && key.startsWith('custom-agent:');
+}
+
+/**
+ * The name an agent answers to in an @mention: accents, case and spaces
+ * folded, so «@Report vendite» and «@reportvendite» are the same agent.
+ * Two agents of one space may never fold to the same name.
+ * @param {unknown} name
+ */
+export function agentMentionName(name) {
+  return String(name ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '');
+}

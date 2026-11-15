@@ -35,8 +35,10 @@ import { ValidationError } from '../../core/index.js';
  *
  * The one invariant the acceptance pins: on a Meta channel outside the
  * window this module never proposes free text — only an approved template
- * or another connected channel. A customer with no sendable route is
- * skipped with a reason, never forced onto a forbidden route.
+ * or another connected message channel. A slug that carries no message
+ * (stripe, calendar, site-form) is never a route: a customer with no
+ * sendable route is skipped with a reason, never forced onto one, and a
+ * refused draft keeps its cause beside the `no-draft` skip.
  */
 
 /** The agent's package identity, also the proposal `actionKind` root. */
@@ -64,15 +66,27 @@ export const REENGAGEMENT_INBOUND_CHANNELS = Object.freeze(['whatsapp', 'instagr
  */
 export const REENGAGEMENT_WINDOW_CHANNELS = Object.freeze(['whatsapp', 'instagram', 'facebook']);
 
+/**
+ * Channels that carry a free-text knock with no window observation.
+ * Mirrors the adapters in `packages/channels` that declare `sendOutbound`
+ * and no `outboundWindow` (gmail.js serving `email`, telegram.js): the
+ * window itself stays enforced there, this list only steers the fallback
+ * away from connected slugs no observation could send (stripe, calendar,
+ * site-form, voice, tiktok, sms with no adapter).
+ */
+export const REENGAGEMENT_FREETEXT_CHANNELS = Object.freeze(['email', 'telegram']);
+
 /** Customer silence before the agent knocks, unless the caller says otherwise. */
 export const REENGAGEMENT_DEFAULT_QUIET_DAYS = 7;
 
-/** Bounds: quiet days, customer references, summaries, template variables. */
+/** Bounds: quiet days, customer references, summaries, template variables, skip causes. */
 export const REENGAGEMENT_MIN_QUIET_DAYS = 1;
 export const REENGAGEMENT_MAX_QUIET_DAYS = 90;
 export const REENGAGEMENT_MAX_CUSTOMER_ID = 200;
 export const REENGAGEMENT_MAX_NAME = 100;
 export const REENGAGEMENT_MAX_SUMMARY = 500;
+/** Cause text kept beside a `no-draft` skip so a refused draft is never silent. */
+export const REENGAGEMENT_MAX_CAUSE_CHARS = 280;
 export const REENGAGEMENT_MAX_HISTORY = 20;
 export const REENGAGEMENT_MAX_HISTORY_TEXT = 2000;
 export const REENGAGEMENT_MAX_TEMPLATE_VARIABLES = 32;
@@ -84,14 +98,17 @@ export const REENGAGEMENT_WINDOW_STATES = Object.freeze(['in-window', 'needs-tem
 /** Consent as the caller resolved it from customer-data opt-out. */
 export const REENGAGEMENT_CONSENTS = Object.freeze(['granted', 'opted-out', 'unknown']);
 
-/** Why a customer got no proposal: legitimate states, never errors. */
+/**
+ * Why a customer got no proposal: legitimate states, never errors. There is
+ * no `no-inbound`: the edge refuses a missing `lastInboundAt` before the
+ * scan, so the scan never meets a customer without inbound.
+ */
 export const REENGAGEMENT_SKIP_REASONS = Object.freeze([
   'unsupported-channel',
   'opted-out',
   'consent-unknown',
   'replied',
   'recent',
-  'no-inbound',
   'no-sendable-route',
   'no-draft',
 ]);
@@ -277,6 +294,20 @@ export function assertReengagementCustomer(customer) {
   });
 }
 
+/**
+ * Keep the cause of a refused draft beside the `no-draft` skip: the wording
+ * edge threw, so the message or code it threw with is the reason — a fixed
+ * word when the edge answered with unusable text instead.
+ *
+ * @param {unknown} error
+ */
+function draftRefusalCause(error) {
+  const fromError = error instanceof Error ? (error.message || error.code || 'unknown') : error;
+  const raw = String(fromError ?? 'unknown');
+  const text = raw.trim().slice(0, REENGAGEMENT_MAX_CAUSE_CHARS);
+  return text === '' ? 'unknown' : text;
+}
+
 /** @param {unknown} quietDays */
 function assertQuietDays(quietDays) {
   if (quietDays === undefined || quietDays === null) return REENGAGEMENT_DEFAULT_QUIET_DAYS;
@@ -335,13 +366,19 @@ export function selectReengagementCandidate(customer, { nowMs, quietDays }) {
  * Pick the sendable route for one candidate. The acceptance invariant:
  * a windowed channel outside the window never yields free text — only an
  * approved template (whatsapp, the sole adapter with template sends),
- * another connected channel, or no route at all. Instagram and Messenger
- * document no template fallback, so their needs-template customers fall
- * through to the fallback below.
+ * another connected message channel, or no route at all. Instagram and
+ * Messenger document no template fallback, so their needs-template
+ * customers fall through to the fallback below. A channel that carries no
+ * message (stripe, calendar, site-form) never yields free text either:
+ * neither as the arrival channel nor as the fallback.
  *
  * @param {ReturnType<typeof assertReengagementCustomer>} candidate
  */
 export function decideReengagementRoute(candidate) {
+  if (!REENGAGEMENT_WINDOW_CHANNELS.includes(candidate.channel)
+    && !REENGAGEMENT_FREETEXT_CHANNELS.includes(candidate.channel)) {
+    return Object.freeze({ kind: 'none', channel: candidate.channel, template: null, reason: 'no-sendable-route' });
+  }
   if (!REENGAGEMENT_WINDOW_CHANNELS.includes(candidate.channel)) {
     return Object.freeze({ kind: 'free-text', channel: candidate.channel, template: null });
   }
@@ -353,7 +390,7 @@ export function decideReengagementRoute(candidate) {
   }
   // Fallback only to a channel that sends free text with no window
   // observation (the scan observes one window: the arrival channel's).
-  const fallback = candidate.connectedChannels.find((name) => !REENGAGEMENT_WINDOW_CHANNELS.includes(name));
+  const fallback = candidate.connectedChannels.find((name) => REENGAGEMENT_FREETEXT_CHANNELS.includes(name));
   if (fallback !== undefined) {
     return Object.freeze({ kind: 'free-text', channel: fallback, template: null });
   }
@@ -463,15 +500,15 @@ export async function scanReengagement({ customers, quietDays, nowMs, draftText 
     if (route.kind !== 'template') {
       try {
         draft = await draftText({ candidate, route, intent });
-      } catch {
-        skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft' }));
+      } catch (error) {
+        skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft', cause: draftRefusalCause(error) }));
         continue;
       }
     }
     if (route.kind === 'free-text'
       && (draft === null || draft === undefined
         || typeof draft.text !== 'string' || draft.text.trim() === '')) {
-      skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft' }));
+      skipped.push(Object.freeze({ customerId: checked.customerId, reason: 'no-draft', cause: 'empty-text' }));
       continue;
     }
     proposals.push(buildReengagementProposal({ candidate, route, draft, day }));

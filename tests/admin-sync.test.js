@@ -87,7 +87,14 @@ const activityOf = (over = {}) => ({
   ...over,
 });
 
-const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
+// A composition whose guided channels each have an adapter: every catalog
+// channel can connect here (backlog:e381c48581fa — the Collega follows
+// the shared channel state, which needs a composed adapter).
+const COMPOSED_ADAPTERS = ['whatsapp', 'instagram', 'telegram', 'facebook', 'tiktok', 'sms', 'email', 'voice', 'site-form']
+  .map((channel) => ({ channel, name: `${channel}-adapter`, version: 1 }));
+const schemaOk = { domains: { channels: { metadata: { channelsContract: 1, adapters: COMPOSED_ADAPTERS } } } };
+/** The production pilot: channels composed, no channel adapter at all. */
+const schemaNoAdapters = { domains: { channels: { metadata: { channelsContract: 1, adapters: [] } } } };
 
 function fakeClient({ activity = activityOf(), schema = schemaOk, failActivity = null, qualityIssues = [], candidates = [], failCandidates = null, profile = null } = {}) {
   const calls = [];
@@ -339,7 +346,7 @@ test('the screen renders indicator, fixes, table and feed from live activity', a
   }
   // The Stato sync tab is the open one and carries the fix count.
   const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab') !== null);
-  assert.deepEqual(tabs.map((node) => node.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync1', 'Spazi e accessi']);
+  assert.deepEqual(tabs.map((node) => node.textContent), ['Personalizzazione', 'Catalogo prodotti', 'Stato sync1', 'Spazi e accessi', 'Profilo']);
   assert.equal(tabs.find((node) => node.getAttribute('data-tab') === 'stato-sync').getAttribute('aria-selected'), 'true');
 });
 
@@ -408,6 +415,79 @@ test('the hero pull updates every syncable connection with one toast', async () 
   const rebuilt = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
   assert.equal(rebuilt.textContent, 'Sincronizza ora');
   assert.equal(rebuilt.getAttribute('disabled'), null);
+});
+
+test('a lot started in one space finishes in that space after a mid-lot switch', async () => {
+  // backlog:0e848a46e53a: il lotto cattura lo spazio alla partenza — un
+  // cambio spazio a lotto in corso non sposta le pull restanti (con le chiavi
+  // dello spazio vecchio) nello spazio nuovo.
+  let space = 'prova';
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => { releaseFirst = resolve; });
+  const calls = [];
+  let pulls = 0;
+  const switching = {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, options });
+      if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
+        if (path === '/api/connectors/sync-now') {
+          pulls += 1;
+          if (pulls === 1) await firstGate;
+          return { pulled: 1 };
+        }
+        throw new Error(`unexpected mutation ${path}`);
+      }
+      if (path === '/api/schema') return schemaOk;
+      if (path.startsWith('/api/connectors/activity')) {
+        return activityOf({
+          connections: [
+            entryOf(),
+            entryOf({ connectionKey: 'ig-1', channel: 'instagram', account: 'palestra.esempio' }),
+          ],
+        });
+      }
+      if (path === '/api/profile') throw new Error('profile not served');
+      if (path.startsWith('/api/modules/duplicate-candidate/records')) return { items: [] };
+      throw new Error(`unexpected GET ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createSyncView({
+    doc,
+    mount,
+    client: switching,
+    storage: { getItem: () => space, setItem: () => {}, removeItem: () => {} },
+    navigate: () => {},
+    toast: (message, isError) => { seen.push({ message, isError }); },
+  });
+  await view.render();
+  await flush();
+  const hero = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'sync-all');
+  hero.dispatch('click');
+  await flush(3);
+  assert.equal(calls.filter((call) => call.path === '/api/connectors/sync-now').length, 1);
+  // L'operatore cambia spazio a lotto in corso: l'host ri-renderizza, come onPickSpace.
+  space = 'nuova';
+  await view.render();
+  await flush();
+  releaseFirst();
+  await flush(15);
+  const lotto = calls.filter((call) => call.path === '/api/connectors/sync-now');
+  assert.equal(lotto.length, 2);
+  for (const pull of lotto) {
+    assert.equal(JSON.parse(pull.options.body).spaceId, 'prova');
+  }
+  // A lotto finito la vista segue lo spazio nuovo.
+  const reads = calls.filter((call) => call.path.startsWith('/api/connectors/activity'));
+  assert.ok(reads[reads.length - 1].path.includes('spaceId=nuova'));
+  // Ma il successo non è senza qualifica: il lotto ha tirato 'prova' e
+  // dipinge 'nuova' — il toast lo dice, senza fingere 'nuova' sincronizzata.
+  assert.ok(!seen.some((toast) => toast.message === 'Sincronizzazione aggiornata.'));
+  assert.ok(seen.some((toast) => toast.message.includes('spazio di partenza')));
 });
 
 test('hostile server text stays text, never markup', async () => {
@@ -1115,9 +1195,11 @@ test('3a3e6eaf C18-C20: a linked row shows agg., events and a coloured pill; no 
   assert.equal(row.getAttribute('class'), null, 'a linked row is not dimmed');
   assert.match(row.childNodes[1].textContent, /^agg\. /, 'the update column reads agg. <tempo>');
   assert.match(row.childNodes[2].textContent, /^\d+ eventi ricevuti$/);
-  const pill = row.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-pill');
+  const pill = row.findAll('span').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-sync-pill'));
   assert.equal(pill.textContent, 'Attivo');
   assert.equal(pill.getAttribute('data-pill'), 'attivo');
+  // backlog:8618ad3f72db: the shared channel state, the same pill as Profilo and Connettori.
+  assert.equal(pill.getAttribute('class'), 'ui-channel-state ui-channel-state-ok bo-sync-pill');
   const text = mount.textContent;
   assert.ok(!text.includes('wa-1') && !text.includes('+39 333 1234567'), 'no binding key nor account handle');
   for (const word of ['Sync now', 'Connect', 'Active', 'Loading', 'Error', 'undefined', 'null']) {
@@ -1130,8 +1212,9 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(!/\.bo-sync-channels \.bo-sync-table td:nth-child\(2\) \{ position: absolute;/.test(css),
     'the update column (agg. / non collegato) is never clipped away');
-  for (const tone of ['attivo', 'permesso', 'importazione', 'attesa']) {
-    assert.ok(css.includes(`.bo-sync-pill[data-pill="${tone}"]`), `the ${tone} pill is coloured`);
+  // backlog:8618ad3f72db: the sync pills wear the shared channel-state tones.
+  for (const tone of ['ok', 'warn', 'data', 'human', 'muted']) {
+    assert.ok(css.includes(`.ui-channel-state-${tone} {`), `the ${tone} channel state is coloured`);
   }
   const phone = css.slice(css.indexOf('@media (max-width: 700px) {\n  .bo-sync-hero-title'));
   assert.match(phone, /\.bo-sync-channels \.bo-sync-table tr \{ display: grid; grid-template-columns: minmax\(0, 1fr\) auto;/,
@@ -1190,6 +1273,14 @@ test('cf365ada15b9: Google Calendar offers Collega on Profilo when the product c
   const stripeRow = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
   assert.equal(stripeRow.findAll('a').length, 0, 'Stripe offers no Collega');
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'non collegato').length, 1, 'only Stripe reads non collegato in the state cell');
+  // backlog:8618ad3f72db: an unlinked row says «non collegato» once at most
+  // (never also in the update column), its state is the shared channel
+  // state and its Collega the shared green button — never an underlined pill.
+  for (const row of mount.findAll('tr').slice(1)) {
+    assert.ok((row.textContent.match(/non collegato/g) ?? []).length <= 1, `said once: ${row.textContent}`);
+  }
+  assert.match(stripeRow.findAll('span').find((node) => node.textContent === 'non collegato').getAttribute('class'), /\bui-channel-state\b/);
+  for (const link of collega) assert.match(link.getAttribute('class') ?? '', /\bui-connect\b/, 'the shared Collega');
   assert.equal(syncConnectRoute('calendar', null), null, 'without the profile there is nothing to offer');
   assert.equal(syncConnectRoute('whatsapp', null), '#/connettori/whatsapp');
 });
@@ -1403,4 +1494,45 @@ test('#692 P2: a binding that is not active never reads Attivo', () => {
   assert.equal(active.pill.text, 'in attesa del primo evento', 'an active binding with no traffic yet waits');
   const live = syncChannelTable(activityOf({ connections: [entryOf({ health: 'idle' })] }))[0];
   assert.equal(live.pill.text, 'Attivo', 'traffic keeps the Attivo pill');
+});
+
+// backlog:e381c48581fa (verifica pilota 51ab9ca): TikTok, Telefono e Form
+// read «Non ancora disponibile» in Connettori but offered «Collega» in
+// Stato sync. The production shape: no adapter composed, raw activity rows,
+// the profile apart. Every row offers Collega exactly where Connettori does.
+test('e381c48581fa: with no adapter Stato sync offers Collega only where Connettori does', async () => {
+  const profile = {
+    member: {},
+    connections: {
+      available: true,
+      reason: null,
+      items: [
+        { connector: 'whatsapp', status: 'disconnected', account: null },
+        { connector: 'gmail', status: 'disconnected', account: null },
+        { connector: 'calendar', status: 'disconnected', account: null },
+      ],
+      meta: { configured: true },
+    },
+  };
+  const { CONNECTOR_CATALOG, connectorStatus } = await import('../apps/admin/public/admin-connectors.js');
+  const empty = activityOf({ connections: [] });
+  const { mount, view } = renderView({ client: { activity: empty, schema: schemaNoAdapters, profile } });
+  await view.render();
+  await flush();
+  const collega = Object.fromEntries(mount.findAll('a')
+    .filter((node) => node.getAttribute('data-action') === 'collega')
+    .map((node) => [node.getAttribute('data-channel'), node.getAttribute('href')]));
+  for (const channel of ['tiktok', 'voice', 'site-form', 'instagram', 'facebook', 'stripe']) {
+    assert.equal(collega[channel], undefined, `${channel}: nothing connects it, no Collega`);
+  }
+  assert.equal(collega.whatsapp, '#/profilo', 'WhatsApp connects on Profilo (Meta app configured)');
+  assert.equal(collega.email, '#/profilo', 'Email connects on Profilo (Gmail)');
+  assert.equal(collega.calendar, '#/profilo');
+  // The same answer as the Connettori list for every catalog channel.
+  for (const entry of CONNECTOR_CATALOG) {
+    if (!['whatsapp', 'instagram', 'facebook', 'tiktok', 'email', 'voice', 'site-form'].includes(entry.channel)) continue;
+    const listed = connectorStatus({ entry, adapters: [], connections: [], profile });
+    const offered = listed.status === 'da-collegare' || listed.status === 'da-completare';
+    assert.equal(collega[entry.channel] !== undefined, offered, `${entry.channel}: one answer on both screens`);
+  }
 });

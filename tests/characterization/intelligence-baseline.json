@@ -2542,13 +2542,13 @@
     }
   ],
   "source": {
-    "apps/server/src/http-server.js": "969cda7e740d24b7167bdac1309348319312ea267f1c46368fd01ff81246a4d6",
+    "apps/server/src/http-server.js": "146a8d4a194049327cc858401810c6ea2b5feccd9deceb026e31c7c20b163f20",
     "examples/starters/b2b-lead-qualification/actions/disqualify.js": "8e722cf7073ff4d52c0f332391217fd6b4568f24f64bb1c7a058e989d9b07a69",
     "examples/starters/b2b-lead-qualification/actions/qualify.js": "3d5ddd5f51be258f7e65554b74ac9f449ac39f69845aef1d0d858b7660c06b78",
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
     "examples/starters/b2b-lead-qualification/lead.module.json": "f57c7d561fdeeb327463eb174e98c10b156b48dfabc06fecc548118b1233a03d",
     "packages/app/src/create-app.js": "2b204d52a648d906d129353643f2811c76f627d4b2874e15a06dd28f416ab021",
-    "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
+    "packages/core/src/action-runtime.js": "d4b31d619ff764d6d4f1a141854e11c22b10ca9415012cc941ab1ca8e37c2d58",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",
@@ -2569,7 +2569,7 @@
     "packages/intelligence/src/index.js": "7bdc53d6ea1e60645ad819f2206ed9292dbb21f6e7cf190ee9c6f14aa8d2f3ae",
     "packages/intelligence/src/registry.js": "da1f64931cb551917314bd05eede6f3519ac9ae571a58252399054b67b450463",
     "packages/sdk/src/index.js": "eeff79f9511114548959911e17e111f0e600b6ac8a849d10cfb4fd3f9148d325",
-    "packages/work/modules/work-activity.module.json": "eb0f70649d6663e643982be254c5b2bffcbfa7cdae292a9151c7b0ff2fb1f76d",
+    "packages/work/modules/work-activity.module.json": "22e3a3caf7729f50db442b767817d6f0b26073741248880d57aab0770a9dd706",
     "packages/work/modules/work-task.module.json": "cef3aa5be1d6654be6c49eba594b30059dfb6702eea9c861b7cbcd0d9714c2be"
   }
 }

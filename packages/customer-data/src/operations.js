@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
+import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
@@ -10,7 +11,7 @@ import {
   CUSTOMER_CHANNELS, CUSTOMER_COLUMNS, CUSTOMER_IDENTITY_SCAN_LIMIT, CUSTOMER_LIST_CONTRACT, CUSTOMER_PAGE_SIZES,
   CUSTOMER_SCAN_LIMIT, CUSTOMER_SEARCH_COMPANY_RESERVE, CUSTOMER_SEARCH_SCAN_LIMIT,
   CUSTOMER_SORTS, CUSTOMER_VIEWS, PHONE_BEARING_SYSTEMS, PHONE_SEARCH_MIN_DIGITS,
-  applyCustomerListQuery, channelWordsIn, filterCustomerRows,
+  applyCustomerListQuery, awaitingReplyFor, channelWordsIn, filterCustomerRows,
   matchesSearch, parseCustomerListQuery, phoneDigitsOf, searchNeedle, shapeCustomerRow,
 } from './customers.js';
 import { createCustomerDataExport } from './export.js';
@@ -728,6 +729,87 @@ async function phoneIdentitySubjects({ modules, names }, needle, spaceId = 'unkn
 }
 
 /**
+ * The customer keys one list row can name (backlog:120f2994, production
+ * 14/11: the Clienti search answered 503 after 30 s). The same fields
+ * `belongsToCustomer` reads — contact, company, opportunity and the
+ * subject link — so the candidate set below always covers every row the
+ * rule would keep, and the rule itself still decides.
+ * @param {any} row
+ */
+function customerRowKeys(row) {
+  if (row === null || typeof row !== 'object') return [];
+  const keys = [];
+  if (row.contactId !== null && row.contactId !== undefined && row.contactId !== '') {
+    keys.push(`contact:${row.contactId}`);
+  }
+  if (row.companyId) keys.push(`company:${row.companyId}`);
+  if (row.opportunityId) keys.push(`opp:${row.opportunityId}`);
+  if ((row.subjectResource === 'contact' || row.subjectResource === 'company')
+    && row.subjectId !== null && row.subjectId !== undefined && row.subjectId !== '') {
+    keys.push(`${row.subjectResource}:${row.subjectId}`);
+  }
+  return keys;
+}
+
+/**
+ * One pass over a row set, bucketed by customer key (backlog:120f2994).
+ * @param {Array<any>} rows
+ */
+function indexRowsByCustomer(rows) {
+  const byKey = new Map();
+  const list = Array.isArray(rows) ? rows : [];
+  for (let at = 0; at < list.length; at += 1) {
+    for (const key of customerRowKeys(list[at])) {
+      let bucket = byKey.get(key);
+      if (bucket === undefined) {
+        bucket = [];
+        byKey.set(key, bucket);
+      }
+      bucket.push(at);
+    }
+  }
+  return { rows: list, byKey };
+}
+
+/**
+ * The rows of one customer out of a bucketed set (backlog:120f2994): only
+ * the buckets its keys name are visited, the survivors keep their source
+ * order, and `mine` — the same `belongsToCustomer` predicate the full scan
+ * used, contact-scoped narrowing included — still decides each row.
+ * @param {{rows: Array<any>, byKey: Map<string, Array<number>>}} indexed
+ * @param {Array<string>} keys
+ * @param {(row: any) => boolean} mine
+ */
+function selectSubjectRows(indexed, keys, mine) {
+  const hits = new Set();
+  for (const key of keys) {
+    const bucket = indexed.byKey.get(key);
+    if (bucket === undefined) continue;
+    for (const at of bucket) hits.add(at);
+  }
+  if (hits.size === 0) return [];
+  const ordered = [...hits].sort((a, b) => a - b);
+  const out = [];
+  for (const at of ordered) {
+    const row = indexed.rows[at];
+    if (mine(row)) out.push(row);
+  }
+  return out;
+}
+
+/**
+ * An evidence summary over already-selected rows (backlog:120f2994): the
+ * same available/count/complete shape the status derivation needs, without
+ * re-scanning the whole table per customer.
+ */
+function summarizeSectionRows(read, rows) {
+  if (!read || read.readable !== true) {
+    return { available: false, count: null, countIsComplete: true };
+  }
+  return { available: true, count: rows.length, countIsComplete: read.complete !== false };
+}
+
+/**
  * The customer list read (BO-F1-05). Module-level so tests drive it with a
  * fake module map; the operation above hands it the composed runtime.
  *
@@ -904,6 +986,11 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       { subjectResource: 'company', subjectId: [...refs.companyIds] },
       ...extraShapes,
     ].filter((shape) => Array.isArray(shape.subjectId) ? shape.subjectId.length > 0 : true);
+    // No customer in the scan: no row can belong to one, so the exact
+    // answer is the empty one (pin #543, 12/11: an empty space fell through
+    // to the bounded page below, read as partial, and da-rispondere refused
+    // with a 409 the /bo counted as a failed read).
+    if (shapes.length === 0) return { rows: [], readable: true, complete: true };
     if (typeof service.listWhere === 'function') {
       const byId = new Map();
       let exact = false;
@@ -962,6 +1049,31 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const tasks = await batched('work-task');
   const messages = await batched('interaction-message');
   const calls = await batched('interaction-call');
+  // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
+  // closed state and label; an unreadable conversation module reads none.
+  const conversations = await batched('conversation');
+  // The space's own mailboxes (review Muse #821): the accounts of its email
+  // connections, read straight at the record module like the reads above.
+  // Mail from them is the team's own, never a customer waiting.
+  const ownAddresses = await (async () => {
+    const service = optional(modules, 'channel-connection');
+    if (!service) return [];
+    try {
+      const rows = typeof service.listWhere === 'function'
+        ? await service.listWhere({ channel: 'email' })
+        : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
+      return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
+    } catch (error) {
+      // Degraded, never silent (review Muse #821): the cause, never data.
+      console.error(
+        `[accordo] customer own mailboxes unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+      );
+      return [];
+    }
+  })();
+  // Who the team ever wrote to, over every message of the scan (review
+  // Muse #821 giro 2): one scope for every row, like Oggi over its read.
+  const correspondents = teamCorrespondents(messages.rows);
   // «Da leggere» (backlog:9e003582): one member's read watermarks over
   // every conversation, read once for the whole page. The member is always
   // the request actor — the query names no member — and without one (or
@@ -1125,9 +1237,35 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     && (messages.readable !== true || messages.complete === false)) {
     throw new AppError('the da-leggere view needs the interaction-message records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
+  // «Da rispondere» stands on the messages and on the threads' closed state
+  // (review Muse #795): a missing conversation module has no closed threads
+  // to hide, but a partial or failing read would count closed threads as
+  // waiting with an exact-looking total — refuse instead, like da-leggere.
+  const conversationsSound = conversations.readable !== true
+    ? optional(modules, 'conversation') === null
+    : conversations.complete !== false;
+  const repliesReadable = messages.readable === true && messages.complete !== false && conversationsSound;
+  if (query.view?.id === 'da-rispondere' && !repliesReadable) {
+    const missing = messages.readable !== true || messages.complete === false ? 'interaction-message' : 'conversation';
+    throw new AppError(`the da-rispondere view needs the ${missing} records, which are not readable here`, { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
+  }
   if (query.view?.id === 'da-leggere' && watermarks === null) {
     throw new AppError('the da-leggere view needs the read-state records, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
+
+  // backlog:120f2994 (production 14/11, the 30 s search that answered
+  // 503): every table below is bucketed once by customer key, so each
+  // subject gathers only its own candidates instead of scanning every
+  // table once per subject. The deciding predicate is unchanged.
+  const opportunityIndex = indexRowsByCustomer(opportunities.rows);
+  const orderIndex = indexRowsByCustomer(evidenceReads.orders.rows);
+  const contractIndex = indexRowsByCustomer(evidenceReads.contracts.rows);
+  const subscriptionIndex = indexRowsByCustomer(evidenceReads.subscriptions.rows);
+  const taskIndex = indexRowsByCustomer(tasks.rows);
+  const messageIndex = indexRowsByCustomer(messages.rows);
+  const callIndex = indexRowsByCustomer(calls.rows);
+  const conversationIndex = indexRowsByCustomer(conversations.rows);
+  const signalIndex = indexRowsByCustomer(signals.rows);
 
   const today = new Date().toISOString().slice(0, 10);
   const rows = subjects.map(({ contact, company }) => {
@@ -1145,7 +1283,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // On a contact row a company match alone never pulls in another
     // contact's contact-scoped record, or every card in the company shares
     // the same offer.
-    const myOpportunities = opportunities.rows.filter((row) => belongsToCustomer(row, {
+    // backlog:120f2994: the candidates come from the buckets this subject
+    // names — the predicate deciding each row is the same as the full scan.
+    const baseKeys = contact
+      ? [`contact:${contact.id}`, ...(company ? [`company:${company.id}`] : [])]
+      : [`company:${company.id}`];
+    const myOpportunities = selectSubjectRows(opportunityIndex, baseKeys, (row) => belongsToCustomer(row, {
       ...directIds,
       opportunityIds: new Set(),
     }, subject));
@@ -1153,16 +1296,32 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       ...directIds,
       opportunityIds: new Set(myOpportunities.map((entry) => entry?.id).filter((entry) => entry != null)),
     }, subject);
+    const subjectKeys = [...baseKeys, ...myOpportunities
+      .map((entry) => entry?.id)
+      .filter((entry) => entry != null)
+      .map((entry) => `opp:${entry}`)];
+    const myOrders = selectSubjectRows(orderIndex, subjectKeys, mine);
+    const myContracts = selectSubjectRows(contractIndex, subjectKeys, mine);
+    const mySubscriptions = selectSubjectRows(subscriptionIndex, subjectKeys, mine);
     const statusBySubject = new Map([[key, deriveCustomerStatus({
-      orders: sectionSummary(evidenceReads.orders, mine),
-      contracts: sectionSummary(evidenceReads.contracts, mine),
-      subscriptions: sectionSummary(evidenceReads.subscriptions, mine),
+      orders: summarizeSectionRows(evidenceReads.orders, myOrders),
+      contracts: summarizeSectionRows(evidenceReads.contracts, myContracts),
+      subscriptions: summarizeSectionRows(evidenceReads.subscriptions, mySubscriptions),
     })]]);
-    const openValue = myOpportunities
+    // backlog:5c2f8bc67859 (giro UX 11/11): «Valore offerta» on a contact
+    // row sums only the offers that name this contact, the same rule as the
+    // scheda (profile.js, voce 1e89d516cfc3). A company-linked offer (empty
+    // contactId) matched every contact under its company, so all the
+    // contacts of one company read the company's total. The wide rule above stays
+    // for status evidence: an order filed on the company still counts.
+    const myOffers = resource === 'contact'
+      ? myOpportunities.filter((row) => row?.contactId != null && row.contactId !== '' && row.contactId === id)
+      : myOpportunities;
+    const openValue = myOffers
       .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
-    const currencies = [...new Set(myOpportunities.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
-    const myTasks = tasks.rows.filter(mine).filter((row) => row?.status === 'open');
+    const currencies = [...new Set(myOffers.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
+    const myTasks = selectSubjectRows(taskIndex, subjectKeys, mine).filter((row) => row?.status === 'open');
     // The callback view filters on this one value, so it must be the most
     // actionable open task — overdue first, then due today — never the
     // earliest-sorted row, where an undated task ('') would sort before any
@@ -1176,13 +1335,19 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
-    const myMessages = [...messages.rows.filter(mine), ...calls.rows.filter(mine)];
+    const myMessageRows = selectSubjectRows(messageIndex, subjectKeys, mine);
+    const myMessages = [...myMessageRows, ...selectSubjectRows(callIndex, subjectKeys, mine)];
     // The row's unread badge, from the message rows already in hand — no new
     // query. Calls never count (only what the scheda badges counts), and a
     // null here (no member, no watermark table, no read-state functions)
     // shapes nulls downstream.
     const myUnread = readFns !== null && typeof readFns.countUnreadForSubject === 'function'
-      ? readFns.countUnreadForSubject(messages.rows.filter(mine), watermarks)
+      ? readFns.countUnreadForSubject(myMessageRows, watermarks)
+      : null;
+    // «Da rispondere»: from the same message rows, no new query. Unreadable
+    // messages shape nulls, never «nobody waits».
+    const myAwaiting = repliesReadable
+      ? awaitingReplyFor(myMessageRows, selectSubjectRows(conversationIndex, subjectKeys, mine), { ownAddresses, correspondents })
       : null;
     // The channels observed on this customer's own messages and calls, read
     // from the rows already in hand (backlog:826e377c): no new query, only
@@ -1215,10 +1380,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         lastContactSubject = typeof row?.mailSubject === 'string' ? row.mailSubject : null;
       }
     }
-    const renewalWithinDays = evidenceReads.subscriptions.rows.filter(mine).some((row) => (
+    const renewalWithinDays = mySubscriptions.some((row) => (
       row?.status === 'active' && withinDays(row?.endDate, today, 30)
     ));
-    const mySignals = signals.rows.filter(mine);
+    const mySignals = selectSubjectRows(signalIndex, subjectKeys, mine);
     mySignals.sort((a, b) => String(b?.observedAt ?? '').localeCompare(String(a?.observedAt ?? '')));
     const budgetSignal = mySignals[0] ?? null;
     return shapeCustomerRow({ contact, company }, {
@@ -1226,9 +1391,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       observedChannelsBySubject: new Map(observedChannels.length === 0 ? [] : [[key, observedChannels]]),
       observedComplete,
       unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
+      awaitingBySubject: new Map(myAwaiting === null ? [] : [[key, myAwaiting]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject }]]),
-      offerBySubject: new Map(myOpportunities.length === 0 ? [] : [[key, {
+      offerBySubject: new Map(myOffers.length === 0 ? [] : [[key, {
         valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
       }]]),
       taskBySubject: new Map(next === null ? [] : [[key, {
@@ -1258,12 +1424,20 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     if (complete !== true) return entry;
     if (view.id === 'ricontattare-oggi' && (tasks.readable !== true || tasks.complete === false)) return entry;
     if (view.id === 'da-leggere' && (messages.readable !== true || messages.complete === false || watermarks === null)) return entry;
+    if (view.id === 'da-rispondere' && !repliesReadable) return entry;
     if (view.id === 'rinnovi-30-giorni'
       && (evidenceReads.subscriptions.readable !== true || evidenceReads.subscriptions.complete === false)) return entry;
     return { ...entry, count: filterCustomerRows(rows, query, view, today).length };
   });
   return Object.freeze({
     customerListContract: CUSTOMER_LIST_CONTRACT,
+    // La base «mai scritto» della scansione (seguito P2 review Muse #821
+    // giro 4, backlog:095fb37de6bb): chi il team ha mai contattato, sugli
+    // stessi messaggi da cui la vista «Da rispondere» decide — Oggi la riusa
+    // per le notifiche invece dei suoi ultimi 100. Solo quando la lettura
+    // dei messaggi è esatta e completa; la vista rifiuta (409) altrimenti,
+    // quindi questa base non descrive mai una lettura parziale.
+    teamCorrespondents: serializeCorrespondents(repliesReadable ? correspondents : null),
     items: page.items,
     total: page.total,
     page: page.page,
@@ -1279,15 +1453,6 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     }))),
     pageSizes: [...CUSTOMER_PAGE_SIZES],
   });
-}
-
-/** Evidence summary for one customer from a batched section read. */
-function sectionSummary(read, mine) {
-  if (!read || read.readable !== true) {
-    return { available: false, count: null, countIsComplete: true };
-  }
-  const count = read.rows.filter(mine).length;
-  return { available: true, count, countIsComplete: read.complete !== false };
 }
 
 /** YYYY-MM-DD within (today, today + days]. */

@@ -14,7 +14,17 @@ import { findStage } from './pipeline-registry.js';
  * working or terminal (`won`, `paid`, `lost`) stages. No moves out of a
  * terminal stage (`won`, `paid`, `lost`; 409 TERMINAL_STAGE), no same-stage
  * moves (409 SAME_STAGE — a stale double-submit must be visible, not a silent
- * no-op), no reopen. `fromStage`, when supplied, is an optimistic-concurrency
+ * no-op), no reopen.
+ *
+ * Board position (backlog:67a3116f4f65): `afterId` (the card it lands
+ * right after) or `first: true` (top of the column) places the card inside
+ * the target column through the module service's `positionOnBoard` — same
+ * transaction, audited on the moved card. With a placement, `toStage` equal
+ * to the current stage is a reorder inside the column: no SAME_STAGE, no
+ * stage fields touched, and a terminal column can be reordered (nothing
+ * reopens). Without a placement the move is exactly as before and the card
+ * lands unplaced, on top. A module whose service has no board positions
+ * refuses a placement (400) instead of ignoring it. `fromStage`, when supplied, is an optimistic-concurrency
  * check (mismatch → 409 STALE_STAGE). A move to the lost stage requires a
  * non-blank `reason`, recorded as `closeReason`. A move into `paid` closes
  * like `won` (payment received); a move into `renewal` stays working and
@@ -33,9 +43,11 @@ export function buildMoveStageAction({ module }) {
       { name: 'toStage', type: 'string', required: true, hint: 'Target stage key from the pipeline definition.' },
       { name: 'fromStage', type: 'string', hint: 'Optional optimistic check: must match the current stage.' },
       { name: 'reason', type: 'string', hint: 'Required when moving to the lost stage.' },
+      { name: 'afterId', type: 'string', hint: 'Optional board placement: the card this one lands right after, in the target column.' },
+      { name: 'first', type: 'boolean', hint: 'Optional board placement: true puts the card at the top of the target column.' },
     ],
     /** @param {any} ctx */
-    async execute({ record, input, managed, pipelines, step, now }) {
+    async execute({ record, input, managed, pipelines, modules, actor, step, now }) {
       const pipeline = pipelines.forModule(module);
       if (!pipeline) {
         throw new AppError(`No pipeline is registered for module "${module}"`, { code: 'NO_PIPELINE', status: 409 });
@@ -60,6 +72,37 @@ export function buildMoveStageAction({ module }) {
           `Stale move: expected current stage "${input.fromStage}" but the record is in "${record.pipelineStage}"`,
           { code: 'STALE_STAGE', status: 409, details: { expected: input.fromStage, actual: record.pipelineStage } },
         );
+      }
+      const placement = boardPlacement(input);
+      /** @type {any} */
+      let boardService = null;
+      if (placement) {
+        if (input.first === true && input.afterId !== undefined) {
+          throw new ValidationError('A board placement names afterId or first, not both', { field: 'afterId' });
+        }
+        boardService = modules && typeof modules.get === 'function' ? modules.get(module)?.service ?? null : null;
+        if (!boardService || typeof boardService.positionOnBoard !== 'function') {
+          throw new ValidationError(`Module "${module}" has no board positions; move without afterId/first`, { field: 'afterId' });
+        }
+        if (input.toStage === currentStage.key) {
+          // A reorder inside the column: the stage stays, so a terminal
+          // column can be reordered too — nothing reopens.
+          const placed = await boardService.positionOnBoard(record.id, placement, { actor });
+          step('reorder', { pipeline: pipeline.name, stage: currentStage.key, boardPosition: placed.boardPosition });
+          return {
+            record: {
+              id: placed.id,
+              pipelineKey: placed.pipelineKey,
+              pipelineStage: placed.pipelineStage,
+              stageEnteredAt: placed.stageEnteredAt,
+              closedAt: placed.closedAt,
+              closeReason: placed.closeReason,
+              boardPosition: placed.boardPosition,
+            },
+            from: currentStage.key,
+            to: currentStage.key,
+          };
+        }
       }
       if (currentStage.type !== 'open' && currentStage.type !== 'renewal') {
         throw new AppError(
@@ -96,13 +139,17 @@ export function buildMoveStageAction({ module }) {
         ...(targetStage.type === 'won' || targetStage.type === 'paid' ? { closedAt: timestamp, closeReason: null } : {}),
         ...(targetStage.type === 'lost' ? { closedAt: timestamp, closeReason: input.reason } : {}),
       };
-      const updated = await managed(record.id, patch);
+      let updated = await managed(record.id, patch);
       step('transition', {
         pipeline: pipeline.name,
         from: currentStage.key,
         to: targetStage.key,
         type: targetStage.type,
       });
+      if (placement && boardService) {
+        updated = await boardService.positionOnBoard(record.id, placement, { actor });
+        step('reorder', { pipeline: pipeline.name, stage: targetStage.key, boardPosition: updated.boardPosition });
+      }
       return {
         record: {
           id: updated.id,
@@ -111,10 +158,22 @@ export function buildMoveStageAction({ module }) {
           stageEnteredAt: updated.stageEnteredAt,
           closedAt: updated.closedAt,
           closeReason: updated.closeReason,
+          ...(updated.boardPosition !== undefined ? { boardPosition: updated.boardPosition } : {}),
         },
         from: currentStage.key,
         to: targetStage.key,
       };
     },
   };
+}
+
+/**
+ * The board placement an input asks for, or null when it asks none.
+ * @param {Record<string, any>} input
+ * @returns {{afterId: string} | {first: true} | null}
+ */
+function boardPlacement(input) {
+  if (typeof input.afterId === 'string' && input.afterId !== '') return { afterId: input.afterId };
+  if (input.first === true) return { first: true };
+  return null;
 }

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { AUTOMATED_SENDER_LOCALS, NOTIFICATION_DOMAINS, SENDING_SUBDOMAINS, isAutomatedAddress } from '../../core/sender-kind.js';
 import { HISTORY_RECIPIENTS_MAX } from './adapter.js';
 import { verifyHmacWebhook } from './crypto.js';
 import { GMAIL_MAX_STORED_TEXT, createGmailHttpIo } from './gmail-http.js';
@@ -58,60 +59,20 @@ export const GMAIL_HISTORY_WINDOW_MS = 90 * 24 * 3600 * 1000;
  */
 
 /**
- * Local parts that are never a person writing (backlog:1a4d9b30,
- * supervisor arbitration 06/11 on #606: these local-parts alone are
- * automated, never leads, even without headers — no "team alone is a
- * person" rule). The bare address decides alone. A local
- * part matches exactly or as the stem of a separator-suffixed variant
- * (`noreply-it`, `order-update-2`), after the `+` tag is stripped.
- * Closed vocabulary — an unknown local part is a person until proven
- * otherwise.
+ * Local parts that are never a person writing, sending subdomains and bulk
+ * platforms (backlog:1a4d9b30, supervisor arbitration 06/11 on #606): one
+ * closed vocabulary in the kernel sender rule (core/sender-kind.js), shared
+ * with the Clienti and Oggi notification readers. Re-exported here under
+ * the Gmail names the door always used.
  */
-export const GMAIL_AUTOMATED_SENDER_LOCALS = Object.freeze([
-  'no-reply', 'noreply', 'donotreply', 'do-not-reply',
-  'notify', 'notification', 'notifications',
-  'alerts', 'order', 'order-update', 'invoice', 'billing', 'statements',
-  'renewals', 'support', 'onboarding',
-  'mailer-daemon', 'postmaster',
-]);
-
-/**
- * First DNS labels that mark a sender domain as sending infrastructure,
- * never a person (backlog:1a4d9b30): `hello@notify.railway.app` is
- * platform traffic even with a human-looking local part. Only the first
- * label counts, so `notify.example.com` matches but `example-notify.com`
- * does not. Closed vocabulary — any other domain is a person until
- * proven otherwise.
- */
-export const GMAIL_SENDING_SUBDOMAINS = Object.freeze([
-  'mail', 'notify', 'em', 'news', 'bounce',
-]);
-
-/** Separator that may follow an automated local-part stem (`noreply-it`). */
-const AUTOMATED_LOCAL_SEPARATORS = Object.freeze(['-', '_', '.']);
+export const GMAIL_AUTOMATED_SENDER_LOCALS = AUTOMATED_SENDER_LOCALS;
+export const GMAIL_SENDING_SUBDOMAINS = SENDING_SUBDOMAINS;
 
 /** Precedence header values that mark a message as mass mail. */
 export const GMAIL_BULK_PRECEDENCE = Object.freeze(['bulk', 'list', 'junk']);
 
-/**
- * Bulk-infrastructure domains: mail from these is platform traffic, never
- * a person writing. Bare domains match their subdomains too
- * (`newsletter.example` covers `a.newsletter.example`). Kept tight on
- * purpose — an unknown sender domain is a person until proven otherwise.
- */
-export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
-  'amazonses.com',
-  'sendgrid.net',
-  'mandrillapp.com',
-  'mailchimp.com',
-  'list-manage.com',
-  'campaign-archive.com',
-  'constantcontact.com',
-  'mailgun.org',
-  'hubspotemail.net',
-  'mktomail.com',
-  'cmail20.com',
-]);
+/** Bulk-infrastructure domains (kernel sender rule): their subdomains match too. */
+export const GMAIL_NOTIFICATION_DOMAINS = NOTIFICATION_DOMAINS;
 
 /**
  * Whether one sender address is automated, never a person
@@ -123,21 +84,7 @@ export const GMAIL_NOTIFICATION_DOMAINS = Object.freeze([
  * @param {unknown} from
  */
 export function isAutomatedGmailSender(from) {
-  const address = typeof from === 'string' ? from.trim().toLowerCase() : '';
-  const at = address.lastIndexOf('@');
-  if (at <= 0 || at === address.length - 1) return false;
-  const base = address.slice(0, at).split('+')[0] ?? '';
-  if (GMAIL_AUTOMATED_SENDER_LOCALS.includes(base)) return true;
-  if (GMAIL_AUTOMATED_SENDER_LOCALS.some((stem) => AUTOMATED_LOCAL_SEPARATORS.some((sep) => base.startsWith(`${stem}${sep}`)))) {
-    return true;
-  }
-  // A sending-subdomain first label automates regardless of local part
-  // (arbitration 06/11, P2): `hello@notify.railway.app` is platform
-  // traffic even with a human-looking local part.
-  const domain = address.slice(at + 1);
-  const labels = domain.split('.');
-  if (labels.length >= 2 && GMAIL_SENDING_SUBDOMAINS.includes(labels[0] ?? '')) return true;
-  return GMAIL_NOTIFICATION_DOMAINS.some((entry) => domain === entry || domain.endsWith(`.${entry}`));
+  return isAutomatedAddress(from);
 }
 
 /**
@@ -211,6 +158,19 @@ const MAX_ADDRESS = 256;
 const MAX_SUBJECT_LINE = 256;
 /** Email bodies run longer than chat bubbles but stay under the 32 KiB outbox bound. */
 export const GMAIL_MAX_TEXT = 30000;
+/**
+ * The same bound in bytes (backlog:1500e788): `GMAIL_MAX_TEXT` counts
+ * characters, so 30000 CJK/emoji characters are up to 120000 bytes and
+ * would overflow the 32 KiB outbox envelope (`assertOutboundMessage` in
+ * `operations.js`). A text at the limit stays storable only when it also
+ * fits this byte cap: 30000 bytes of text plus the bounded envelope
+ * (`to`, `threadId`, `subject`) stays under 32768 bytes.
+ */
+export const GMAIL_MAX_TEXT_BYTES = 30000;
+/** A text both bounds accept: non-empty, at most 30000 chars and 30000 bytes. */
+function gmailTextFitsBounds(text) {
+  return text !== '' && text.length <= GMAIL_MAX_TEXT && Buffer.byteLength(text, 'utf8') <= GMAIL_MAX_TEXT_BYTES;
+}
 /**
  * A received email subject stays a display snapshot (backlog:3055d50330b5):
  * bounded single-line text. Longer text truncates instead of refusing the
@@ -827,7 +787,9 @@ function normalizeKitEvent(parsed) {
  * Normalize one outbound reply. Email has no service window: a reply sends
  * at any time. `threadId` keeps the reply in the thread the inbound opened
  * (the card reads it back out of the inbox subject); without one the
- * provider opens a new thread.
+ * provider opens a new thread. The text bound is bytes as well as chars
+ * (backlog:1500e788): 30000 multibyte characters would overflow the 32 KiB
+ * outbox envelope, so they refuse here instead of at enqueue time.
  */
 function normalizeGmailOutbound(message) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
@@ -840,8 +802,8 @@ function normalizeGmailOutbound(message) {
     malformedMessage('message needs a bounded "to" address');
   }
   const text = typeof message.text === 'string' ? message.text : '';
-  if (text === '' || text.length > GMAIL_MAX_TEXT) {
-    malformedMessage(`message needs non-empty "text" (at most ${GMAIL_MAX_TEXT} chars)`);
+  if (!gmailTextFitsBounds(text)) {
+    malformedMessage(`message needs non-empty "text" (at most ${GMAIL_MAX_TEXT} chars and ${GMAIL_MAX_TEXT_BYTES} bytes)`);
   }
   const subjectLine = message.subject === undefined ? undefined
     : typeof message.subject === 'string' ? message.subject : null;
@@ -855,17 +817,38 @@ function normalizeGmailOutbound(message) {
     : { to, text, threadId, ...(subjectLine === undefined ? {} : { subject: subjectLine }) };
 }
 
-function mimeLines({ from, to, subjectLine, text }) {
+/**
+ * The RFC 2822 threading hint for a reply (backlog:1500e788): Gmail threads
+ * by the `threadId` send parameter, but mail clients nest the reply only
+ * with `In-Reply-To`/`References`. The pure builder cannot fetch the
+ * parent's real Message-ID (no history lookup at send time), so both
+ * headers carry the stable per-thread reference below, scoped to the bound
+ * mailbox domain. The thread id is reduced to the Message-ID-safe alphabet
+ * (`THREAD` also allows `<`, `>` and `@`), so no thread id can break the
+ * header syntax; control/whitespace characters are already impossible.
+ */
+function gmailThreadReference(threadId, mailbox) {
+  const safe = String(threadId).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 128) || 'thread';
+  const domain = typeof mailbox === 'string' && /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(mailbox)
+    ? mailbox.split('@')[1].toLowerCase()
+    : 'gmail';
+  return `<${safe}@${domain}>`;
+}
+
+function mimeLines({ from, to, subjectLine, text, threadRef }) {
   const lines = [`From: ${from}`, `To: ${to}`];
   if (subjectLine !== undefined) lines.push(`Subject: ${subjectLine}`);
+  if (threadRef !== undefined) lines.push(`In-Reply-To: ${threadRef}`, `References: ${threadRef}`);
   lines.push('Content-Type: text/plain; charset=utf-8', '', text);
   return lines.join('\r\n');
 }
 
 /**
  * The Gmail REST mapping as a pure function: URL, Bearer [REDACTED] from the
- * call-time secret (never stored), and the send body with the thread id for
- * replies. Unit-proven here; the fake records exactly this shape per send.
+ * call-time secret (never stored), the send body with the thread id for
+ * replies, and the `In-Reply-To`/`References` threading hint in the MIME
+ * for the same replies (a first message carries neither). Unit-proven here;
+ * the fake records exactly this shape per send.
  */
 export function buildGmailSendRequest({ message, config, secret }) {
   if (!message || typeof message !== 'object') {
@@ -880,7 +863,7 @@ export function buildGmailSendRequest({ message, config, secret }) {
   } catch {
     throw new AppError('Gmail send needs a bounded "to" address', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
   }
-  if (typeof message.text !== 'string' || message.text === '') {
+  if (typeof message.text !== 'string' || !gmailTextFitsBounds(message.text)) {
     throw new AppError('Gmail send needs text', { code: 'CHANNEL_MESSAGE_MALFORMED', status: 422 });
   }
   const threadId = message.threadId === undefined ? undefined : message.threadId;
@@ -892,6 +875,7 @@ export function buildGmailSendRequest({ message, config, secret }) {
     to,
     subjectLine: typeof message.subject === 'string' ? message.subject : undefined,
     text: message.text,
+    ...(threadId === undefined ? {} : { threadRef: gmailThreadReference(threadId, config.mailbox) }),
   }));
   return {
     method: 'POST',

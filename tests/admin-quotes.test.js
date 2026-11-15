@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createQuoteView, percentReason } from '../apps/admin/public/admin-quotes.js';
+import { bpsToPercentText, createQuoteView, percentReason, percentToBps } from '../apps/admin/public/admin-quotes.js';
 import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -73,7 +73,8 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
         if (failAction) throw Object.assign(new Error(failAction.message), failAction);
         return { ok: true, result: { quote: quoteRecord } };
       }
-      if (path.startsWith('/api/modules/opportunity/records/')) {
+      if (path.startsWith('/api/modules/opportunity/records/')) throw Object.assign(new Error('Not Found'), { status: 404 });
+      if (/^\/api\/opportunities\/[^/?]+$/.test(path)) {
         if (failOpportunity || opportunityRecord === undefined) throw Object.assign(new Error('Not Found'), { status: 404 });
         return opportunityRecord;
       }
@@ -139,7 +140,8 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.ok(text.includes('non si sommano tra loro'), 'the grouping contract is disclosed');
   assert.ok(!text.includes('server'), 'voce ef92f728: no developer note about who computes the amounts');
   assert.ok(text.includes('5,00%'), 'basis points shown as a percentage');
-  assert.ok(text.includes('Sconto in punti base'), 'the discount unit is explained');
+  assert.ok(text.includes('Lo sconto è in percentuale'), 'the discount unit is explained in percent (backlog:a2ea75f705fd)');
+  assert.ok(!/punti base/i.test(text), 'never «punti base»');
   assert.ok(text.includes('le quote fisse si addebitano una volta'), 'quantity semantics disclosed');
   // Component breakdown with the tier band.
   const components = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-component');
@@ -156,7 +158,7 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.equal(mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-revise').length, 0);
 });
 
-test('adding a line posts the server action with quantity, basis points and the draft revision', async () => {
+test('adding a line posts the server action with quantity, the percent as basis points and the draft revision', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({ lines: [LINE], entries: [ENTRY] });
@@ -165,7 +167,7 @@ test('adding a line posts the server action with quantity, basis points and the 
 
   const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
   addPanel.__quantity.value = '5';
-  addPanel.__discountBps.value = '750';
+  addPanel.__discount.value = '7,5';
   await addPanel.__add();
   const post = client.calls.find((call) => call.method === 'POST');
   assert.equal(post.path, '/api/modules/quote/records/q1/actions/add-line');
@@ -238,8 +240,76 @@ test('version history lists immutable versions with their policy decision', asyn
   assert.equal(rows.length, 2);
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('Richiede approvazione'));
+  assert.ok(rows[1].textContent.includes('standard-sales-discount@1'), 'the row names the policy that decided it');
   assert.ok(rows[1].textContent.includes('una tantum 5.000 €'), 'versions show grouped periods');
   assert.ok(rows[1].textContent.includes('3.200 € ogni 1 mese'), 'recurring period shown per version');
+});
+
+test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total', async () => {
+  const recurringOnly = {
+    oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    recurringTotals: [
+      { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320_000, discountAmountCents: 0, netAmountCents: 320_000 },
+    ],
+  };
+  const record = quote({ totalsJson: JSON.stringify(recurringOnly) });
+  const versions = [
+    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(recurringOnly), currency: 'EUR' },
+  ];
+  const listMount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: listMount, client: stubClient({ quoteRecord: record }) }).renderQuoteList();
+  const listText = listMount.textContent;
+  assert.ok(listText.includes('3.200 € ogni 1 mese'), 'the list shows the recurring group with its period');
+  assert.ok(!listText.includes('una tantum'), 'the list never shows a zero one-time total for a subscription-only quote');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(text.includes('3.200 €'), 'the valued recurring group leads the hero');
+  assert.ok(!text.includes('una tantum 0'), 'the hero never shows a zero one-time total');
+  assert.ok(text.includes('standard-sales-discount@1'), 'the history row names the deciding policy');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200 € ogni 1 mese'), 'the history row keeps the recurring period');
+});
+
+test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
+  const recurringOnly = {
+    oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    recurringTotals: [
+      { currency: 'EUR', interval: 'month', intervalCount: 1, listAmountCents: 320_000, discountAmountCents: 0, netAmountCents: 320_000 },
+      { currency: 'EUR', interval: 'year', intervalCount: 1, listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    ],
+  };
+  const record = quote({ totalsJson: JSON.stringify(recurringOnly) });
+  const versions = [
+    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(recurringOnly), currency: 'EUR' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
+  const totals = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-totals');
+  assert.ok(totals, 'the detail paints a Totale panel');
+  const rows = totals.findAll('p').filter((node) => node.getAttribute('data-total') !== null);
+  const labels = rows.map((row) => row.getAttribute('data-total'));
+  assert.ok(!labels.includes('Una tantum'), 'the Totale panel never shows a zero one-time total');
+  assert.ok(!labels.some((label) => label.startsWith('Ricorrente')) || labels.length === 1, 'only valued groups get a row');
+  assert.ok(labels.some((label) => label.startsWith('Ricorrente')), 'the valued recurring group keeps its row');
+});
+
+test('8dc6d4a456e1: a version with no valued group paints a dash like the header', async () => {
+  const empty = {
+    oneTimeTotal: { currency: 'EUR', listAmountCents: 0, discountAmountCents: 0, netAmountCents: 0 },
+    recurringTotals: [],
+  };
+  const record = quote({ totalsJson: JSON.stringify(empty) });
+  const versions = [
+    { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(empty), currency: 'EUR' },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · —'), 'no value reads as a dash, like the header');
 });
 
 test('hostile catalog and quote values render as inert text', async () => {
@@ -429,4 +499,104 @@ test('Dan 06/11: the quote is issued by the space and reads as a document beside
   assert.ok(side.textContent.includes('in sola lettura'), 'the approval state lives in the side column');
   const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-amount');
   assert.equal(amount?.textContent, '5.000 €', 'the one-time total leads the document');
+});
+
+
+// backlog:a2ea75f705fd (verifica 12/11, pilota 62654a1): the quote reads
+// its discount in percent or euro, never «punti base»; an empty rule menu
+// never shows; the way back reads the offer on its own route.
+test('a2ea75f705fd: the discount is written and read in percent, never «punti base»', async () => {
+  assert.equal(percentToBps('7,5'), 750);
+  assert.equal(percentToBps('10'), 1000);
+  assert.equal(percentToBps(' 12.25 % '), 1225);
+  assert.equal(percentToBps(''), 0, 'empty is no discount');
+  for (const bad of ['abc', '101', '7,555', '-5', '1e2']) assert.equal(percentToBps(bad), null, bad);
+  assert.equal(bpsToPercentText(750), '7,5');
+  assert.equal(bpsToPercentText(1000), '10');
+  assert.equal(bpsToPercentText(0), '0');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ lines: [{ ...LINE, discountAmountCents: 60000 }], entries: [ENTRY] });
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  const text = mount.textContent;
+  assert.ok(!/punti base/i.test(text), 'no «punti base» anywhere');
+  assert.ok(text.includes('Sconto (%)'), 'the field says percent');
+  assert.ok(text.includes('sconto 5,00% (−600 €)'), 'the line reads the discount in percent and in euro');
+  const row = mount.findAll('div').find((node) => node.getAttribute('data-line') === LINE.id);
+  assert.equal(row.__discount.value, '5', 'the line field shows its percent, not 500');
+
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  addPanel.__discount.value = 'tanto';
+  await addPanel.__add();
+  assert.equal(client.calls.filter((call) => call.method === 'POST').length, 0, 'a malformed discount sends nothing');
+  const error = mount.findAll('small').find((node) => (node.getAttribute('class') ?? '') === 'field-error');
+  assert.match(error.textContent, /Scrivi lo sconto in percentuale, da 0 a 100/);
+});
+
+test('a2ea75f705fd: the discount rule shows only when there is a choice; none means no empty menu', async () => {
+  const one = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: one, client: stubClient({ lines: [LINE], entries: [ENTRY] }) }).renderQuoteDetail('q1');
+  assert.ok(!one.textContent.includes('Regola di sconto'), 'one rule is applied, never a menu of one');
+  assert.ok(one.findAll('button').some((node) => node.textContent === 'Invia'), 'the send stays');
+
+  const policies = [
+    { name: 'standard-sales-discount', version: 1, label: 'Standard', fingerprint: 'f'.repeat(64) },
+    { name: 'standard-sales-discount', version: 2, label: 'Standard', fingerprint: 'e'.repeat(64) },
+  ];
+  const withSchema = (schema) => {
+    const base = stubClient({ lines: [LINE], entries: [ENTRY] });
+    return { calls: base.calls, request: (path, options) => (path === '/api/schema' ? Promise.resolve(schema) : base.request(path, options)) };
+  };
+  const two = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: two, client: withSchema({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: policies } }) }).renderQuoteDetail('q1');
+  assert.ok(two.textContent.includes('Regola di sconto'), 'two rules are a choice');
+
+  const none = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: none, client: withSchema({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: [] } }) }).renderQuoteDetail('q1');
+  assert.ok(!none.textContent.includes('Regola di sconto'), 'no empty rule menu');
+  assert.ok(!none.findAll('button').some((node) => node.textContent === 'Invia'), 'no send that cannot work');
+  assert.ok(none.textContent.includes('L’invio per l’approvazione non è ancora disponibile in questo spazio.'));
+});
+
+test('a2ea75f705fd: the way back reads the offer on its own route, never a generic read that 404s', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const paths = client.calls.map((call) => call.path);
+  assert.ok(paths.includes('/api/opportunities/o1'));
+  assert.ok(!paths.some((path) => path.startsWith('/api/modules/opportunity/records/')), 'no read on the generic surface');
+});
+
+
+test('a2ea75f705fd: the quote links to its offer page; with no rule, «Invia» is not there at all', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'draft', opportunityId: 'o1' }),
+    lines: [LINE],
+    entries: [ENTRY],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi', name: 'Proposta esempio' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const offer = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'quote-open-offer');
+  assert.ok(offer, 'the quote names the way to its offer');
+  assert.equal(offer.getAttribute('href'), '#/offerte/o1');
+  const noCustomer = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: noCustomer, client: stubClient({
+    quoteRecord: quote({ status: 'draft', opportunityId: 'o1' }), lines: [LINE], entries: [ENTRY],
+    opportunityRecord: { id: 'o1', name: 'Senza cliente' },
+  }) }).renderQuoteDetail('q1');
+  assert.ok(noCustomer.findAll('a').some((node) => node.getAttribute('href') === '#/offerte/o1'), 'the offer link stays even without a customer to go back to');
+
+  const base = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const noRules = { calls: base.calls, request: (path, options) => (path === '/api/schema' ? Promise.resolve({ ...SCHEMA, commercial: { ...SCHEMA.commercial, discountPolicies: [] } }) : base.request(path, options)) };
+  const none = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount: none, client: noRules }).renderQuoteDetail('q1');
+  const submitPanel = none.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-submit');
+  assert.equal(submitPanel.findAll('button').length, 0, 'no «Invia» that could send without a rule');
+  assert.equal(submitPanel.findAll('select').length, 0, 'no empty rule menu');
 });

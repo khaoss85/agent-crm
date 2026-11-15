@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_COLUMNS_KEY, CLIENTI_IMPORT_ROUTE, createCustomerListView, pageNumbers, statoTooltip } from '../apps/admin/public/admin-clienti.js';
 import { CLIENTI_NUOVO_ROUTE } from '../apps/admin/public/admin-cliente-nuovo.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -325,7 +325,7 @@ test('BO-F6-08 fetta 1: the table header names Cliente plus only the visible col
 test('BO-F6-08 fetta 1: an empty page reads the prototype text and 0 di 0 with page controls', async () => {
   const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
   const { mount } = await render(empty);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde. Prova con un nome, una città o un canale.'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
   assert.ok(mount.textContent.includes('0 di 0'), 'the pager keeps its 0 di 0 interval');
   assert.ok(mount.textContent.includes('Righe per pagina'), 'the page-size group stays labelled');
   assert.ok(byAttr(mount, 'button', 'aria-label', 'Pagina precedente'), 'previous keeps its accessible label');
@@ -480,7 +480,7 @@ test('Ultimo contatto of today reads «oggi HH:MM», a call names no excerpt', a
     'no excerpt is invented for a call');
 });
 
-test('a hostile excerpt stays text, and no contact still reads «mai»', async () => {
+test('a hostile excerpt stays text, and no contact reads «nessun messaggio»', async () => {
   // backlog:22d4dd0f, C16+C23: hostile server text never becomes markup.
   const hostileRow = {
     ...ROW_MARCO,
@@ -496,7 +496,12 @@ test('a hostile excerpt stays text, and no contact still reads «mai»', async (
   const cards = mount.findAll('article');
   assert.equal(cards[0].findAll('img').length, 0, 'the excerpt never becomes an element');
   assert.ok(cards[0].textContent.includes('<img src=x onerror=alert(1)>'), 'the hostile text still reads as text');
-  assert.ok(cards[1].textContent.includes('mai'), 'no contact still reads «mai»');
+  // backlog:fe9be5f0af4a: no message or call reads «nessun messaggio» and
+  // says what counts, never a bare «mai» beside a customer with notes.
+  const none = cards[1].findAll('span').find((node) => node.textContent === 'nessun messaggio');
+  assert.ok(none, 'the empty-contact cell reads exactly «nessun messaggio»');
+  assert.equal(none.getAttribute('title'), 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
+  assert.equal(cards[1].findAll('span').filter((node) => node.textContent === 'mai').length, 0, 'never a bare «mai» cell');
 });
 
 test("Crea con l'AI asks through the assistant, or hints without it", async () => {
@@ -657,6 +662,44 @@ test('the fallback views keep the prototype order before the server answers', as
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
     ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
+});
+
+test('5af848afdb63: a view without a server count shows no number, never a false 0', async () => {
+  const uncounted = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      return {
+        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+        views: [...MENUS.views, { id: 'da-leggere', label: 'Da leggere' }],
+      };
+    },
+  };
+  const { mount } = await render(uncounted);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  const unread = tabs.find((node) => node.getAttribute('data-view') === 'da-leggere');
+  assert.ok(unread, 'the uncounted view still renders its tab');
+  assert.equal(unread.textContent, 'Da leggere', 'no number when the server named none');
+  assert.ok(!/[0-9]/.test(unread.textContent), 'no false 0 in the tab text');
+});
+
+test('5af848afdb63: a view the server counted at zero reads 0', async () => {
+  const zeroed = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      return {
+        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+        views: MENUS.views.map((view) => ({ ...view, count: view.id === 'rinnovi-30-giorni' ? 0 : 2 })),
+      };
+    },
+  };
+  const { mount } = await render(zeroed);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  assert.ok(tabs.some((node) => node.textContent === 'Rinnovi entro 30 giorni 0'),
+    `the server-counted zero reads 0: ${JSON.stringify(tabs.map((node) => node.textContent))}`);
 });
 
 test('changing the view or the page size returns to page 1', async () => {
@@ -1025,7 +1068,7 @@ test('754918ad8da7: after Azzera the chips and rows stay until the new page arri
   const chipsRow = () => mount.findAll('div').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-chips'));
   assert.ok(chipsRow().textContent.includes('WhatsApp'), 'the filter chip shows');
   gated = true;
-  mount.findAll('button').find((node) => node.textContent === 'Azzera' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
+  mount.findAll('button').find((node) => node.textContent === 'Azzera filtri' && node.getAttribute('class')?.includes('bo-clienti-clear')).dispatch('click');
   await flush();
   // While the read is in flight nothing jumps: chips and rows stay, the
   // table only reads busy, and no loading line pushes the bar down.
@@ -1041,6 +1084,32 @@ test('754918ad8da7: after Azzera the chips and rows stay until the new page arri
   assert.ok(mount.textContent.includes('Marco Rossi'));
 });
 
+test('backlog:88ab568cdcba: while a search reads, the list names the wait under the bar', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  gated = true;
+  input.value = 'marco';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  // Rows and focus stay; the status line under the bar names the wait.
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while the search reads');
+  assert.equal(mount.findAll('input')[0], input, 'the field keeps focus and caret');
+  assert.ok(mount.textContent.includes('Ricerca in corso'), 'the wait reads while the search is in flight');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no loading line above the bar');
+  release();
+  await flush();
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'the wait goes with the new page');
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
 test('754918ad8da7: the status line sits under the bar, so an empty page never pushes the search down', async () => {
   const client = stubClient({ pages: [{ customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true }] });
   const { mount } = await render(client);
@@ -1049,7 +1118,61 @@ test('754918ad8da7: the status line sits under the bar, so an empty page never p
   const at = (cls) => kids.findIndex((value) => value.split(/\s+/).includes(cls));
   assert.ok(at('bo-clienti-status') > at('bo-clienti-search'), `status after the search: ${kids}`);
   assert.ok(at('bo-clienti-status') > at('bo-clienti-chips'), `status after the chips: ${kids}`);
-  assert.ok(mount.textContent.includes('Nessun cliente corrisponde'));
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'));
+});
+
+test('ee1244a145c9: an empty «Da rispondere» view without search reads as the view', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), '«Tutti» without search reads as the view');
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the empty view names itself');
+  assert.ok(!mount.textContent.includes('Nessun cliente corrisponde'), 'no search hint without a search');
+});
+
+test('ee1244a145c9: an empty search keeps the «corrisponde» hint', async () => {
+  const empty = { calls: [], async request(path = '', options = {}) { enforceAdminWriteGate(path, options); this.calls.push(path); return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS }; } };
+  const clock = timers();
+  const { mount } = await render(empty, { searchSchedule: clock.schedule, searchDelayMs: 300 });
+  assert.ok(mount.textContent.includes('Nessun cliente ancora.'), 'no search yet: the view reads as itself');
+  const input = mount.findAll('input')[0];
+  input.value = 'marco';
+  input.dispatch('input');
+  clock.fire();
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente con ricerca «marco». Prova con un nome, una città o un canale.'),
+    'an empty search result names the search and keeps the hint');
+});
+
+test('5af848afdb63: an empty view with a filter names both', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the view alone names itself');
+  toolToggle(mount, 'Filtri').dispatch('click');
+  await flush();
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere» con canale WhatsApp.'),
+    'the empty page names the view and the excluding filter');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
@@ -1135,4 +1258,220 @@ test('ff8bb60f417f: the unfiltered list total feeds the sidebar badge, a filtere
   byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
   await flush();
   assert.equal(totals.length, 1, 'a filtered page never moves the badge');
+});
+
+test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200,00 EUR»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const { mount } = await render(stubClient());
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [marco, anna] = facts(mount);
+  assert.ok(marco.textContent.endsWith('1.200 €'), `got «${marco.textContent}»`);
+  assert.ok(!mount.textContent.includes('EUR'), 'the euro reads as €, never as its code');
+  assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
+});
+
+/* ------------------------------------------------ backlog:4968615de0a4 */
+
+test('4968615de0a4: one way to clear the search — the field’s Azzera; no browser ×, no search chip', async () => {
+  const client = stubClient();
+  const { mount } = await render(client);
+  const input = mount.findAll('input')[0];
+  assert.equal(input.getAttribute('type'), 'text', 'a plain text field: no browser × inside it');
+  assert.equal(input.getAttribute('enterkeyhint'), 'search');
+  input.value = 'milano';
+  input.dispatch('input');
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=milano'));
+  const clears = mount.findAll('button').filter((node) => /Azzera/.test(node.textContent) || /Rimuovi filtro «/.test(node.getAttribute('aria-label') ?? ''));
+  assert.deepEqual(clears.map((node) => node.getAttribute('data-action')), ['clear-search'], 'only the field’s Azzera clears the search');
+  assert.equal(toolToggle(mount, 'Filtri').getAttribute('aria-label'), 'Filtri', 'a search is not a filter in the badge');
+  // With a filter on, the chip row clears the filters only.
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
+  await flush();
+  const clearFilters = mount.findAll('button').find((node) => node.textContent === 'Azzera filtri');
+  assert.ok(clearFilters, 'the chip row says what it clears');
+  clearFilters.dispatch('click');
+  await flush();
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(!last.includes('canale='), last);
+  assert.ok(last.includes('q=milano'), 'Azzera filtri keeps the search');
+  assert.equal(input.value, 'milano');
+});
+
+test('2067a415405c: back on Clienti from a scheda the search and the filters stay', async () => {
+  const client = stubClient();
+  const { mount, view } = await render(client);
+  const input = mount.findAll('input')[0];
+  input.value = 'milano';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  toolToggle(mount, 'Filtri').dispatch('click');
+  byAttr(mount, 'button', 'data-filter', 'stato:cliente').dispatch('click');
+  await flush();
+  view.invalidate();
+  await view.render();
+  const again = mount.findAll('input')[0];
+  assert.equal(again.value, 'milano', 'the field keeps the typed search');
+  const last = client.calls[client.calls.length - 1];
+  assert.ok(last.includes('q=milano'), `the list re-reads with the search: ${last}`);
+  assert.ok(last.includes('stato=cliente'), 'the filters stay, shown as chips');
+  assert.ok(byAttr(mount, 'button', 'aria-label', 'Rimuovi filtro Cliente'));
+});
+
+test('4968615de0a4: «Importa da file» has its own file mark, not the pencil of «Compila manualmente»', async () => {
+  const { mount } = await render(stubClient());
+  const tilePath = (action) => byAttr(mount, 'button', 'data-action', action)
+    .findAll('path').map((node) => node.getAttribute('d')).join(' ');
+  assert.notEqual(tilePath('add-import'), tilePath('add-manual'));
+  const { UI_ICONS } = await import('../apps/admin/public/admin-ui.js');
+  assert.ok(UI_ICONS.includes('importa'));
+});
+
+// backlog:a762c28a646c: every name the list shows is remembered for the
+// scheda it opens.
+test('a762c28a646c: the Clienti list remembers the names it shows', async () => {
+  const { createKnownNames } = await import('../apps/admin/public/admin-known-names.js');
+  const names = createKnownNames({ space: () => 's1' });
+  await render(stubClient(), { knownNames: names });
+  assert.equal(names.get('contact', 'c1'), 'Marco Rossi');
+  assert.equal(names.get('contact', 'c2'), 'Anna Bianchi');
+});
+
+// backlog:120f299445a6 (production 14/11: the list stayed grey for 30 s
+// with no sign of work): while the next page loads the status line says
+// the search is running, on top of the rows that stay on screen.
+test('120f299445a6: a search in flight reads «Ricerca in corso», never a stuck screen', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows are on screen');
+  gated = true;
+  const input = mount.findAll('input')[0];
+  input.value = 'nota';
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(mount.textContent.includes('Ricerca in corso'), 'the wait names the running search');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no first-read flash on a later read');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  release();
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=nota'), 'the gated read was the search');
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'the sign goes with the new page');
+  assert.ok(mount.textContent.includes('Marco Rossi'));
+});
+
+// backlog:120f299445a6 (production 14/11: the search answered 503 after
+// ~30 s): the timeout reads as what happened plus what to do — Italian,
+// no codes — and Cerca retries it.
+test('120f299445a6: a timed-out search says it took too long and retries', async () => {
+  let fail = false;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  client.request = async (path, options) => {
+    if (fail) {
+      client.calls.push(path);
+      throw Object.assign(new Error('bridge timeout'), { status: 503, code: 'BO_ADMIN_READ_TIMEOUT' });
+    }
+    return base(path, options);
+  };
+  const logged = [];
+  const realError = console.error;
+  console.error = (text, cause) => { logged.push([String(text), cause]); };
+  let mount;
+  try {
+    ({ mount } = await render(client, { spaceId: 's1' }));
+    const input = mount.findAll('input')[0];
+    const form = mount.findAll('form')[0];
+    input.value = 'nota';
+    fail = true;
+    form.dispatch('submit', { preventDefault() {} });
+    await flush();
+  } finally {
+    console.error = realError;
+  }
+  assert.match(mount.textContent, /troppo tempo/, 'the timeout names the wait');
+  assert.match(mount.textContent, /Riprova/, 'the timeout offers a retry');
+  assert.ok(!/503|BO_ADMIN_READ_TIMEOUT/.test(mount.textContent), 'no code leaks into the screen');
+  assert.equal(logged.length, 1, 'the timeout logs one line like every failed read');
+  assert.match(logged[0][0], /lettura fallita/, 'the line names the failed read');
+  assert.match(logged[0][0], /503/, 'the line names the status');
+  assert.match(logged[0][0], /BO_ADMIN_READ_TIMEOUT/, 'the line names the code');
+  assert.equal(logged[0][1]?.status, 503, 'the cause carries the status');
+  assert.equal(logged[0][1]?.code, 'BO_ADMIN_READ_TIMEOUT', 'the cause carries the code');
+  assert.equal(logged[0][1]?.spaceId, 's1', 'the cause carries the space');
+  fail = false;
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(client.calls[client.calls.length - 1].includes('q=nota'), 'the same search reads again on Cerca');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the retry paints the list');
+});
+
+// backlog:120f299445a6 (review #904 giro 1, P3 at :293): «Ricerca in
+// corso…» only while a search runs — a later read without a q keeps the
+// old line, with only the table marked busy.
+test('120f299445a6: a later read without a search names no search in progress', async () => {
+  let release = null;
+  const client = stubClient();
+  const base = client.request.bind(client);
+  let gated = false;
+  client.request = async (path, options) => {
+    if (gated) await new Promise((resolve) => { release = resolve; });
+    return base(path, options);
+  };
+  const { mount } = await render(client);
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows are on screen');
+  gated = true;
+  mount.findAll('form')[0].dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.ok(!mount.textContent.includes('Ricerca in corso'), 'no search runs, no search sign');
+  assert.ok(!mount.textContent.includes('Caricamento'), 'no first-read flash on a later read');
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the rows stay while loading');
+  release();
+  await flush();
+  assert.ok(mount.textContent.includes('Marco Rossi'), 'the read lands');
+});
+
+// backlog:7471d0bd718f: the Stato pill never shows the server's raw
+// technical-English reason («no signed business found in the composed
+// packages (orders: not readable here; …)»). The tooltip says in plain
+// Italian why the customer is in that state, with no package names or
+// diagnostics.
+test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw server reason', async () => {
+  const technical = {
+    ...ROW_ANNA,
+    status: {
+      value: 'contatto',
+      reason: 'no signed business found in the composed packages (orders: not readable here; contracts: none on record; subscriptions: partially readable) — the evidence packages are not all readable here, so this is not a claim none exist',
+    },
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [technical, ROW_MARCO], total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const pills = mount.findAll('span').filter((node) =>
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-pill'));
+  assert.equal(pills.length, 2, 'both rows render their Stato pill');
+  const byText = (text) => pills.find((node) => node.textContent === text);
+  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(byText('Cliente')?.getAttribute('title'), 'È un cliente perché ha almeno un acquisto confermato.');
+  for (const pill of pills) {
+    const title = String(pill.getAttribute('title') ?? '');
+    for (const leaked of ['package', 'orders', 'contracts', 'subscriptions', 'signed business', 'readable']) {
+      assert.ok(!title.toLowerCase().includes(leaked), `no package name or diagnostic leaks into «${title}»`);
+    }
+  }
+  assert.ok(!mount.textContent.includes('no signed business found'), 'the raw server reason never renders as text');
+  assert.equal(statoTooltip('contatto'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
+  assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
 });

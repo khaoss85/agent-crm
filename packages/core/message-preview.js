@@ -12,6 +12,7 @@ export {
   MESSAGE_PREVIEW_CHARS,
   cleanMessageBody,
   cleanPreviewText,
+  decodeHtmlEntities,
   hasMarkup,
   htmlToText,
   isPlaceholderBody,

@@ -90,6 +90,32 @@ test('a queued move says so on the card, then offers Riprova after the pending t
   assert.equal(client.calls.filter((call) => call.path === '/api/schema').length, reads + 1, 'Riprova re-reads the board');
 });
 
+test('85630aa14a4f: while the move is in flight the menu names the column on screen', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const client = stubClient(() => gate.then(() => ({ ok: true })));
+  const board = createPipelineBoard({ doc, mount, client, wait: () => new Promise(() => {}) });
+  await board.renderBoard('b2b-sales');
+  const card = cardOf(mount);
+  const menu = () => card.__select.childNodes.map((option) => option.getAttribute('value'));
+  assert.deepEqual(menu(), ['demo', 'won', 'lost'], 'at rest the menu skips the card\'s own column');
+  card.__select.value = 'demo';
+  void card.__move();
+  await tick();
+  assert.equal(card.parentNode.getAttribute('data-stage'), 'demo', 'the card waits in its new column');
+  assert.deepEqual(menu(), ['discovery', 'won', 'lost'], 'the menu follows the card, not the pending write');
+  release();
+  await tick();
+  await tick();
+  const fresh = cardOf(mount);
+  // The stub never applies the move server-side: the re-read truth is the
+  // old column, and the fresh menu follows it again.
+  assert.equal(fresh.parentNode.getAttribute('data-stage'), 'discovery', 'the re-read truth wins');
+  assert.deepEqual(fresh.__select.childNodes.map((option) => option.getAttribute('value')), ['demo', 'won', 'lost']);
+});
+
 test('a move answered in time never shows the pending line', async () => {
   const doc = createFakeDocument();
   const mount = createMount();

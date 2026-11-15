@@ -119,7 +119,7 @@ test('a failed move restores the control and shows a friendly line, never the se
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient(records, {
-    failMove: { message: 'Stale move: expected "discovery"', status: 409, code: 'STALE_STAGE' },
+    failMove: { message: 'boom', status: 500, code: 'INTERNAL' },
   });
   const board = createPipelineBoard({ doc, mount, client });
   await board.renderBoard('b2b-sales');
@@ -128,10 +128,45 @@ test('a failed move restores the control and shows a friendly line, never the se
   card.__select.value = 'demo';
   await card.__move();
   const error = card.findAll('small').find((n) => (n.getAttribute('class') ?? '') === 'field-error');
-  assert.ok(error.textContent.includes('Riprova più tardi'), `friendly retry line (${error.textContent})`);
-  assert.ok(!error.textContent.includes('Stale move'), 'no raw server message in the DOM');
-  assert.ok(!error.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
+  // backlog:85630aa14a4f: the line matches the Riprova next to it.
+  assert.equal(error.textContent, 'Spostamento non riuscito.', `friendly line beside Riprova (${error.textContent})`);
+  assert.ok(!error.textContent.includes('boom'), 'no raw server message in the DOM');
+  assert.ok(!error.textContent.includes('INTERNAL'), 'no error code in the DOM');
   assert.equal(card.findAll('select').length, 1, 'the move control is restored');
+  const retry = card.findAll('button').find((n) => n.getAttribute('data-action') === 'move-retry');
+  assert.ok(retry && !(retry.getAttribute('class') ?? '').includes('hidden'), 'Riprova stays on the card');
+});
+
+test('1541408e8144 + 85630aa14a4f: a STALE_STAGE move says the card moved elsewhere, re-reads the board, and offers no Riprova', async () => {
+  const records = [record('a', 'discovery')];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient(records, {
+    failMove: { message: 'Stale move: expected "discovery"', status: 409, code: 'STALE_STAGE' },
+  });
+  const toasts = [];
+  const board = createPipelineBoard({ doc, mount, client, toast: (message, error, options) => toasts.push({ message: String(message), error, options }) });
+  await board.renderBoard('b2b-sales');
+
+  const reads = client.calls.filter((call) => call.method === 'GET').length;
+  const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  card.__select.value = 'demo';
+  await card.__move();
+  assert.ok(client.calls.filter((call) => call.method === 'GET').length > reads, 'the board is re-read');
+  const fresh = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
+  assert.equal(fresh.parentNode.getAttribute('data-stage'), 'discovery', 'the card sits where the server has it');
+  // The move is superseded: the card, now in its right place, carries no
+  // message and no Riprova; the toast says what happened, once.
+  const error = fresh.findAll('small').find((n) => String(n.getAttribute('class') ?? '').split(/\s+/).includes('field-error'));
+  assert.ok(!error || error.textContent === '', `no message left on the card (${error?.textContent})`);
+  const retry = fresh.findAll('button').find((n) => n.getAttribute('data-action') === 'move-retry');
+  assert.ok(!retry || String(retry.getAttribute('class')).includes('hidden'), 'no Riprova: the move is superseded');
+  const said = toasts.filter((item) => item.error);
+  assert.equal(said.length, 1, 'said once, in the toast');
+  assert.ok(said[0].message.includes('spostata altrove'), `moved-elsewhere line (${said[0].message})`);
+  assert.equal(said[0].options?.action, undefined, 'and no Riprova there either');
+  assert.ok(!mount.textContent.includes('Stale move'), 'no raw server message in the DOM');
+  assert.ok(!mount.textContent.includes('STALE_STAGE'), 'no error code in the DOM');
 });
 
 test('move toasts name the stage label and failures stay friendly (C25)', async () => {
@@ -249,29 +284,65 @@ test('the board discloses truncation and excluded off-pipeline records', async (
   const board = createPipelineBoard({ doc, mount, client: stubClient(many) });
   await board.renderBoard('b2b-sales');
   assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
-  assert.ok(mount.textContent.includes("1 offerta di un'altra pipeline."), 'exclusion disclosed in correct Italian');
-  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/another-pipeline');
-  assert.ok(link, 'the other pipeline links to its own board');
-  assert.equal(link.textContent, 'Vedi another-pipeline');
+  // 'another-pipeline' is grammar-valid but absent from schema.pipelines, so
+  // it can never be a selector choice or a #/pipelines link (review P2-756):
+  // the destination would not render. The parked offer stays one click away.
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector with a single composed pipeline and no resolvable choice',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the parked offer is disclosed, never hidden');
+  assert.equal(toggle.textContent, "almeno 1 offerta di un'altra pipeline", 'the truncated count is a lower bound');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/other'],
+    'the parked offer keeps its click path to its page',
+  );
+  await board.renderBoard('another-pipeline');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked route renders no board');
 });
 
-test('past BOARD_LIMIT the off-pipeline counts say they are partial (250 offers)', async () => {
-  // Backlog 13f43804: 250 offers over the 200-record read — both counts are
-  // lower bounds and must say so, never read as exact.
+test('past BOARD_LIMIT the off-pipeline counts stay lower bounds (250 offers)', async () => {
+  // Backlog 13f43804: 250 offers over the 200-record read — the truncation
+  // notice stays and both counts are lower bounds. 'other' is absent from
+  // schema.pipelines, so it is disclosed with offer links, never as a
+  // pipeline choice (review P2-756).
   const onBoard = Array.from({ length: 190 }, (_, i) => record(`r${i}`, 'discovery'));
   const offBoard = Array.from({ length: 60 }, (_, i) => ({ ...record(`o${i}`, 'discovery'), pipelineKey: 'other' }));
   const doc = createFakeDocument();
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient([...onBoard, ...offBoard]) });
   await board.renderBoard('b2b-sales');
+  assert.ok(mount.textContent.includes('Mostro solo i primi 200 record'), 'truncation disclosed');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: the off-board key is not a composed pipeline',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
   const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
   assert.ok(toggle, 'the off-pipeline count is a button');
   assert.equal(toggle.textContent, 'almeno 60 offerte di altre pipeline', 'truncated toggle is a lower bound');
   assert.ok(mount.textContent.includes('e almeno altre 10'), 'unlisted remainder is a lower bound');
-  assert.ok(!mount.textContent.includes('e altre 10.') && !mount.textContent.includes('e altre 10 '), 'no exact remainder phrasing');
+  toggle.dispatch('click');
+  const links = mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+    .findAll('a').map((node) => node.getAttribute('href'));
+  assert.equal(links.length, 50, 'the list shows the first fifty parked offers');
+  assert.equal(links[0], '#/offerte/o0', 'each parked offer links to its page');
 });
 
-test('the off-pipeline disclosure uses the Italian plural for several records', async () => {
+test('off-board records surface as offer links, never as pipeline choices', async () => {
   const records = [
     record('a', 'discovery'),
     { ...record('x', 'discovery'), pipelineKey: 'other' },
@@ -281,10 +352,21 @@ test('the off-pipeline disclosure uses the Italian plural for several records', 
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
-  assert.ok(mount.textContent.includes('2 offerte di altre pipeline.'), 'plural exclusion disclosed in correct Italian');
-  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/pipelines/other');
-  assert.ok(link, 'the other pipeline links to its own board');
-  assert.equal(link.textContent, 'Vedi other');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector for unresolvable off-board keys',
+  );
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the parked offers are disclosed');
+  assert.equal(toggle.textContent, '2 offerte di altre pipeline', 'one disclosure for the shared key');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/x', '#/offerte/y'],
+    'every parked record keeps its click path to its page',
+  );
 });
 
 test('with several composed pipelines the board shows a selector instead of the note', async () => {
@@ -323,6 +405,18 @@ test('with several composed pipelines the board shows a selector instead of the 
   selects[0].value = 'upsell';
   selects[0].dispatch('change');
   assert.deepEqual(navigated, ['#/pipelines/upsell'], 'choosing a pipeline navigates to its board');
+  // P2-404: the measure resolves the destination for real — the routed
+  // board renders its own stages, while an unknown key renders no board.
+  await board.renderBoard('upsell');
+  assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the composed destination renders its board');
+  assert.ok(
+    mount.findAll('div')
+      .filter((node) => (node.getAttribute('class') ?? '').startsWith('pipeline-column'))
+      .some((node) => node.getAttribute('data-stage') === 'idea'),
+    'the destination board shows its own stages',
+  );
+  await board.renderBoard('other');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'an unknown key has no board to link to');
 });
 
 test('the selector lists every composed pipeline even when nothing is off-board', async () => {
@@ -361,6 +455,43 @@ test('with a single composed pipeline there is no selector, only the disclosure'
   const board = createPipelineBoard({ doc, mount, client: stubClient([record('a', 'discovery')]) });
   await board.renderBoard('b2b-sales');
   assert.equal(mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length, 0, 'no selector for a single pipeline');
+});
+
+test('1cb4cc488340: unresolvable off-board keys never become selector choices or pipeline links', async () => {
+  // VERIFIER_BACK repro: on the failing head the parked offers below were
+  // either invisible (no choice, no link) or one dead #/pipelines choice
+  // away from an empty board. They must surface as offer links instead.
+  const records = [
+    record('a', 'discovery'),
+    { ...record('x', 'discovery'), pipelineKey: 'other' }, // grammar-valid, absent from schema.pipelines
+    { ...record('y', 'discovery'), pipelineKey: null, pipelineStage: null }, // keyless, parked
+    { ...record('z', 'discovery'), pipelineKey: 'Altro Spazio' }, // outside the route grammar
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
+  await board.renderBoard('b2b-sales');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: a single composed pipeline offers no resolvable choice',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no pipeline link for keys the schema does not compose');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(toggle, 'the three parked offers are disclosed, never hidden');
+  assert.equal(toggle.textContent, '3 offerte di altre pipeline', 'one disclosure for every parked offer');
+  toggle.dispatch('click');
+  assert.deepEqual(
+    mount.findAll('ul').find((node) => node.getAttribute('data-off-pipeline') === 'list')
+      .findAll('a').map((node) => node.getAttribute('href')),
+    ['#/offerte/x', '#/offerte/y', '#/offerte/z'],
+    'each parked offer keeps its click path to its page',
+  );
+  await board.renderBoard('other');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked route renders no board');
 });
 
 test('the summary counts the shown cards, never the off-pipeline offers', async () => {
@@ -563,14 +694,39 @@ test('summary totals the filtered set per currency without mixing', async () => 
   pickVoice(mount, 'owner', 'alice');
   const text = summaryText(mount);
   assert.match(text, /3 offerte/);
-  assert.ok(text.includes('2.000 €'), `alice EUR total (${text})`);
+  // backlog:48993bed7294: the amount is the value still open — alice's won
+  // «d» is counted among the offers, never summed in.
+  assert.ok(text.includes('valore aperto 1.000 €'), `alice open EUR total (${text})`);
   assert.ok(text.includes('25 USD'), `alice USD total stays separate (${text})`);
 });
 
-test('forecast shows the month title, won plus 60% of open, and the risk name (C4/C5)', async () => {
+// backlog:48993bed7294 (verifica 13/11: Pipeline «Previsione di novembre
+// 605,60 €», Reporting «Vinte in novembre 0,00 €»): one rule with Reporting —
+// won and paid closed this month, plus the historical close rate of the open
+// offers expected this month or without a date.
+const MONTH_NOW = new Date().toISOString().slice(0, 7);
+const shiftedMonth = (delta) => {
+  const date = new Date(Date.UTC(Number(MONTH_NOW.slice(0, 4)), Number(MONTH_NOW.slice(5, 7)) - 1 + delta, 15));
+  return date.toISOString();
+};
+
+test('forecast shows the month title, the offers closed this month plus the historical rate of the open ones (C4/C5)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
-  const board = createPipelineBoard({ doc, mount, client: stubClient(boardRecords()) });
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      record('b', 'demo', { valueCents: 50_000, owner: 'bob', expectedCloseDate: shiftedMonth(1) }),
+      record('c', 'demo', { currency: 'USD', valueCents: 2_500, owner: 'alice' }),
+      record('s', 'demo', { valueCents: 70_000, owner: 'bob', expectedCloseDate: shiftedMonth(-1) }),
+      record('d', 'won', { owner: 'alice', closedAt: shiftedMonth(0) }),
+      record('o', 'won', { valueCents: 900_000, owner: 'alice', closedAt: shiftedMonth(-2) }),
+      record('e', 'lost', { owner: 'bob', closeReason: 'No budget', closedAt: shiftedMonth(0) }),
+      record('f', 'lost', { owner: 'bob', closeReason: 'No budget', closedAt: shiftedMonth(0) }),
+    ]),
+  });
   await board.renderBoard('b2b-sales');
 
   const box = forecastBox(mount);
@@ -580,18 +736,47 @@ test('forecast shows the month title, won plus 60% of open, and the risk name (C
     'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre',
   ];
   assert.ok(
-    box.textContent.includes(`✦ Previsione di ${months[new Date().getMonth()]}`),
+    box.textContent.includes(`✦ Previsione di ${months[Number(MONTH_NOW.slice(5, 7)) - 1]}`),
     `the title names the current month (${box.textContent})`,
   );
-  // EUR: won 100_000 at face value + 60% of open (100_000 + 50_000) = 190_000;
-  // USD: 60% of the 2_500 open demo = 1_500; lost stages never forecast.
-  assert.ok(box.textContent.includes('1.900 €'), `EUR forecast total (${box.textContent})`);
+  // 4 decided offers (d, o won; e, f lost) are fewer than 5: the declared
+  // 60% fallback (review lead #896). EUR: d closed this month (1.000 €; o
+  // closed two months ago stays out) + 60% of the undated «a» (600 €) =
+  // 1.600 € — «b» is expected next month, «s» is past-dated.
+  // USD: 60% of the undated 25 USD = 15 USD.
+  assert.ok(box.textContent.includes('1.600 €'), `EUR forecast total (${box.textContent})`);
   assert.ok(box.textContent.includes('15 USD'), `USD forecast total stays separate (${box.textContent})`);
+  // Review Muse #896: the rate is per currency — EUR has 4 decided, USD none.
+  assert.match(box.textContent, /per ogni valuta il suo tasso \(EUR 60% \(stima: poche offerte chiuse, 4 su almeno 5\); USD 60% \(stima: poche offerte chiuse, 0 su almeno 5\)\)/, 'the rule and the rate it used, said');
+  assert.match(box.textContent, /Sulle offerte in vista/, 'the shown offers, like the filters');
   assert.ok(
     !box.textContent.includes('Il rischio più alto'),
     `no global risk ranking across currencies (Codex P2 on #467) (${box.textContent})`,
   );
   assert.match(box.textContent, /non un impegno/i, 'no guaranteed outcome is promised');
+});
+
+// 35c3c897d696: the Pipeline validates months like the Reporting dashboard —
+// an impossible calendar month is no date, so the offer waits in the
+// forecast like an undated one instead of silently dropping out.
+test('forecast reads an impossible month as undated, like the dashboard', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { valueCents: 10_000, owner: 'alice' }),
+      record('g', 'demo', { valueCents: 10_000, owner: 'alice', expectedCloseDate: `${MONTH_NOW.slice(0, 4)}-13-40` }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  // 0 decided offers: the 60% fallback over both waiting offers (100 €
+  // undated plus 100 € with an impossible month) = 120 €.
+  assert.ok(box.textContent.includes('120 €'), `both offers wait in the forecast (${box.textContent})`);
 });
 
 test('forecast names the highest-value open offer when one currency is in play', async () => {
@@ -621,7 +806,7 @@ test('forecast with closed offers but no open ones shows totals and no risk line
   const board = createPipelineBoard({
     doc,
     mount,
-    client: stubClient([record('d', 'won'), record('e', 'lost', { closeReason: 'No budget' })]),
+    client: stubClient([record('d', 'won', { closedAt: shiftedMonth(0) }), record('e', 'lost', { closeReason: 'No budget', closedAt: shiftedMonth(0) })]),
   });
   await board.renderBoard('b2b-sales');
 
@@ -661,7 +846,7 @@ test('dropping a card posts the same move-stage action as the Move button', asyn
 
   const post = client.calls.filter((call) => call.method === 'POST').at(-1);
   assert.equal(post.path, '/api/modules/opportunity/records/a/actions/move-stage');
-  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery' });
+  assert.deepEqual(JSON.parse(post.body), { toStage: 'demo', fromStage: 'discovery', first: true }); // 67a3116f4f65: a drop carries its place in the column
   assert.ok(toasts.some((message) => message.includes('Spostata in Demo.')), 'success is toasted with the stage label');
 });
 
@@ -999,8 +1184,7 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
     'Nessuna offerta da stimare',
     'non un impegno',
     "Trascina qui un'offerta",
-    "1 offerta di un'altra pipeline.",
-    'Vedi altra',
+    "1 offerta di un'altra pipeline",
     'Fuori definizione (1)',
     'fase registrata: svincolata',
     'Sposta in',
@@ -1010,6 +1194,11 @@ test('pipeline chrome renders no shipped English string (backlog:8dc57f67)', asy
   ]) {
     assert.ok(painted().includes(italian), `kanban shows «${italian}»`);
   }
+  const switchSelect = mount.findAll('select').filter((n) => n.getAttribute('id') === 'pipeline-switch');
+  assert.equal(switchSelect.length, 0, 'no selector for a key the schema does not compose');
+  const parkedToggle = mount.findAll('button').find((n) => n.getAttribute('data-action') === 'show-off-pipeline');
+  assert.ok(parkedToggle, 'the parked offer is disclosed in Italian');
+  assert.equal(parkedToggle.textContent, "1 offerta di un'altra pipeline", 'the disclosure names the parked offer');
 
   // Move toast and the lost-reason reveal are customer-facing too.
   const card = mount.findAll('div').find((n) => n.getAttribute('data-record') === 'a');
@@ -1218,8 +1407,8 @@ test('kanban cards follow the prototype: chiusura label and referente initials b
   const closeOf = (id) => mount.findAll('div')
     .find((n) => n.getAttribute('data-record') === id)
     .findAll('p').find((n) => (n.getAttribute('class') ?? '') === 'card-close');
-  assert.equal(closeOf('a')?.textContent, 'chiusura 2026-11-20', 'C13: close line follows `chiusura <data>`');
-  assert.equal(closeOf('b')?.textContent, 'chiusura 2026-12-01', 'C13: close line on every dated card');
+  assert.equal(closeOf('a')?.textContent, 'chiusura 20 nov 2026', 'C13: close line follows `chiusura <data>`');
+  assert.equal(closeOf('b')?.textContent, 'chiusura 1 dic 2026', 'C13: close line on every dated card');
   assert.equal(closeOf('c'), undefined, 'cards without a close date show no close line');
 });
 
@@ -1492,7 +1681,11 @@ test('2a075e2d9250: the direct link #/pipeline opens the board of the first comp
   assert.ok(!mount.textContent.includes('Nessuna pipeline da mostrare'), 'the bare link finds the composed pipeline');
 });
 
-test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those offers', async () => {
+test('1e939a362c7c + 1cb4cc488340: the off-board disclosure lists every parked offer with its page link', async () => {
+  // Review P1-759/P2-756: 'renewals' is absent from schema.pipelines, so it
+  // is not a selector choice and has no #/pipelines link — the destination
+  // would not render. Both parked offers (keyless and unknown-key) open
+  // their #/offerte pages from the disclosure list instead.
   const records = [
     record('a', 'demo'),
     { ...record('x', 'demo'), name: 'Proposta esempio', pipelineKey: null, pipelineStage: null, stage: 'proposal' },
@@ -1502,6 +1695,15 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   const mount = createMount();
   const board = createPipelineBoard({ doc, mount, client: stubClient(records) });
   await board.renderBoard('b2b-sales');
+  assert.equal(
+    mount.findAll('select').filter((node) => node.getAttribute('id') === 'pipeline-switch').length,
+    0,
+    'no selector: renewals is not a composed pipeline',
+  );
+  const pipeHrefs = mount.findAll('a')
+    .map((node) => node.getAttribute('href'))
+    .filter((href) => typeof href === 'string' && href.startsWith('#/pipelines/'));
+  assert.deepEqual(pipeHrefs, [], 'no dead pipeline route for the unknown key');
   const toggle = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'show-off-pipeline');
   assert.ok(toggle, 'the count is a button, not plain text');
   assert.equal(toggle.textContent, '2 offerte di altre pipeline');
@@ -1516,6 +1718,8 @@ test('1e939a362c7c: «N offerte di altre pipeline» is clickable and opens those
   assert.equal(links[0].textContent, 'Proposta esempio', 'the name opens the offer');
   assert.equal(list.findAll('li')[0].textContent, 'Proposta esempio · Acme · Proposta', 'customer and stato in Italian, capitalised');
   assert.ok(!list.textContent.includes('Deal a'), 'offers of this board are not listed');
+  await board.renderBoard('renewals');
+  assert.ok(mount.textContent.includes('Nessuna pipeline da mostrare in questo spazio.'), 'the unlinked key has no board to render');
 });
 
 /**
@@ -1629,4 +1833,45 @@ test('169cd4bc988c: the offers of other pipelines read in the /bo dress — cust
   for (const link of list.findAll('a')) assert.equal(link.getAttribute('class'), 'pipeline-off-name', 'a styled link, never the browser default');
   const css = (await import('node:fs')).readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.pipeline-off-list \.pipeline-off-name \{[^}]*color: var\(--ink\)/, 'the name reads in ink, not link blue');
+});
+
+test('48993bed7294 (review lead #896): from five decided offers the board uses the historical rate, like Reporting', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { owner: 'alice' }),
+      ...['w1', 'w2', 'w3', 'w4'].map((id) => record(id, 'won', { valueCents: 1, closedAt: shiftedMonth(-2) })),
+      record('l1', 'lost', { valueCents: 1, closeReason: 'No budget', closedAt: shiftedMonth(-2) }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+  const box = forecastBox(mount);
+  assert.ok(box.textContent.includes('800 €'), `80% of the undated 1.000 € (${box.textContent})`);
+  assert.match(box.textContent, /più il 80% \(tasso di chiusura storico\)/);
+});
+
+// Review Muse #896 giro 1: the rate is per currency, like the Reporting.
+test('48993bed7294: each currency forecasts with its own close rate', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const won = (id, currency) => record(id, 'won', { currency, valueCents: 1, closedAt: shiftedMonth(-2) });
+  const lost = (id, currency) => record(id, 'lost', { currency, valueCents: 1, closeReason: 'No budget', closedAt: shiftedMonth(-2) });
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery'),
+      record('u', 'discovery', { currency: 'USD', valueCents: 10_000 }),
+      ...[1, 2, 3, 4, 5].map((n) => won(`ew${n}`, 'EUR')),
+      ...[1, 2, 3, 4, 5].map((n) => lost(`ul${n}`, 'USD')),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+  const box = forecastBox(mount);
+  assert.ok(box.textContent.includes('1.000 €'), `EUR: 100% of 1.000 € (${box.textContent})`);
+  assert.ok(box.textContent.includes('0 USD'), `USD: 0% of 100 USD (${box.textContent})`);
+  assert.match(box.textContent, /EUR 100% \(tasso di chiusura storico\); USD 0% \(tasso di chiusura storico\)/);
 });

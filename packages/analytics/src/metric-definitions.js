@@ -35,11 +35,13 @@ export const METRIC_DEFINITIONS = Object.freeze({
     filterable: Object.freeze(['opportunity.pipelineStage', 'opportunity.pipelineKey', 'opportunity.type', 'opportunity.owner', 'opportunity.currency']),
     rowCap: 1000,
   }),
+  // backlog:48993bed7294: version 2 groups by the close date too — a sale
+  // is won in the month it closed, not the month it was expected.
   pipeline_close_schedule_by_pipeline: Object.freeze({
-    version: 1,
-    description: 'Pipeline value by owner, per-pipeline stage and expected close date, summed in integer minor units and partitioned by currency.',
+    version: 2,
+    description: 'Pipeline value by owner, per-pipeline stage expected close date and close date, summed in integer minor units and partitioned by currency.',
     measure: Object.freeze({ kind: 'sum', field: 'opportunity.amountMinor' }),
-    groupBy: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate']),
+    groupBy: Object.freeze(['opportunity.owner', 'opportunity.pipelineStage', 'opportunity.expectedCloseDate', 'opportunity.closedAt']),
     partitionBy: Object.freeze(['opportunity.currency']),
     filterable: Object.freeze(['opportunity.pipelineStage', 'opportunity.pipelineKey', 'opportunity.owner', 'opportunity.type', 'opportunity.currency']),
     rowCap: 1000,
@@ -50,10 +52,10 @@ export const METRIC_DEFINITIONS = Object.freeze({
   // month bucketing is the dashboard builder's declared post-processing in
   // packages/analytics/src/dashboard.js, never the registry's.
   pipeline_close_schedule: Object.freeze({
-    version: 1,
-    description: 'Pipeline value by owner, stage and expected close date, summed in integer minor units and partitioned by currency.',
+    version: 2,
+    description: 'Pipeline value by owner, stage expected close date and close date, summed in integer minor units and partitioned by currency.',
     measure: Object.freeze({ kind: 'sum', field: 'opportunity.amountMinor' }),
-    groupBy: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate']),
+    groupBy: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.expectedCloseDate', 'opportunity.closedAt']),
     partitionBy: Object.freeze(['opportunity.currency']),
     filterable: Object.freeze(['opportunity.owner', 'opportunity.stage', 'opportunity.type', 'opportunity.currency']),
     rowCap: 1000,

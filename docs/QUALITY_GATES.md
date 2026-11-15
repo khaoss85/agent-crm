@@ -242,6 +242,44 @@ The boundaries, which are as much of the gate as the rules:
 - **No JTBD row is a fact.** §3 is a person reading merged tests, and it stays
   one.
 
+### 6.2 Characterization baselines: source hashes advise, observations gate
+
+Each `tests/characterization/*-baseline.json` (commercial, intelligence,
+signature) records the observed behaviour of a domain and, in its `source` map,
+the sha256 of every file that behaviour depends on. Since backlog:e0347551 the
+two halves are not equal:
+
+- **Observations are the gate.** Every asserted observed value is compared in
+  full, as before: a value that moved, went missing, appeared or was
+  reclassified fails the suite until the baseline is regenerated deliberately
+  (`npm run characterize:commercial`, `npm run characterize:intelligence`,
+  `node scripts/characterize-signature.mjs`) and the diff is reviewed.
+- **Source hashes are an advisory.** A PR that edits a digested file without
+  moving any observed value stays green, prints the drifted files on stderr and
+  regenerates nothing, so two such PRs never conflict on hash lines.
+- **The hashes realign on `main` through a normal PR**, never a direct push:
+
+  ```console
+  git switch -c chore/characterization-realign origin/main
+  npm run characterize:realign-source -- --dry-run   # names the drifted files
+  npm run characterize:realign-source                # rewrites only the source maps
+  git commit -am 'chore(characterization): realign source hashes'
+  gh pr create
+  ```
+
+  The command rewrites the `source` map and nothing else (observations, counts
+  and `fingerprint` stay byte-identical) and boots no project. Whether behaviour
+  moved is decided by that PR's own gate: a changed baseline selects its
+  characterization suite in `fast` (`CHARACTERIZATION_SUITES`).
+
+What this section does not relax: the package surface baseline
+(`tests/package-surface-version.test.js`, `fast`) and the truth facts (§6.1: a
+moved or dropped fact fails with or without `--drift-advisory`) stay blocking.
+The composition pins under `examples/` (a plan's `inspectionFingerprint`, an
+evidence document's `planFingerprint` and `source.artifact` hashes) stay
+blocking too: they are the AX2 staleness contract that `crm solution check` and
+`crm solution verify` report to a user, not CI metadata.
+
 ### September GTM reconciliation
 
 The current FAQ, comparison, capability, concept, glossary and GTM entry points
@@ -285,7 +323,7 @@ one red piece reddens the measure.
 
 | Gate | Where | What |
 |---|---|---|
-| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — warned best-effort when no test reaches a changed source (a `::warning::` annotation plus a summary line naming the uncovered files, then the guards still run; deleted files never run and never count as uncovered, but their paths still seed the reachability search so a deleted module selects the tests that still import it), plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff, through the unfiltered diff, so deleting a listed guard without updating the list still fails red), plus the kernel boundary tests (`KERNEL_BOUNDARY_TESTS`: `tests/package-contract.test.js` and `tests/contracts-activation-e2e.test.js`, which the import mapping cannot reach from a core change, so they join only when the diff touches `packages/core/**` or `packages/app/**` — a docs-only diff never selects them), plus the characterization staleness suites (`CHARACTERIZATION_SUITES`: each `tests/characterization/*-baseline.json` selects its `*-characterization.test.js` when the diff touches a file its `source` digest map records, or adds a source file under a directory it records (a brand-new file is never a digest key yet) — a docs-only diff never selects them), plus the package declaration freeze tests (`PACKAGE_DECLARATION_FREEZE_TESTS`: the six suites pinning a package's declared surface — work v1 actions, attach/detach surface, `packages/app` export keys — join whenever the diff touches `packages/**`, mapped or fallback selection alike, so a declaration change hidden behind a ~95-test fan-in still fails the PR instead of `main`; a docs-only diff never selects them), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base), the verifier-fixture drift check (the one exit-0 test of `tests/solution-verify.test.js` on every PR: a composition change that leaves the fixture behind fails the PR, fixed repeatably with `npm run repin:verifier-fixture`), plus the checked-in plan-pin currency check (the four composition-currency tests on every PR: the shipped-example tripwire of `tests/solution-plan.test.js`, the Service and M14b2 plan currency tests, and the source-artifact hash test of `tests/solution-verify.test.js` — a composition change that leaves a plan or evidence pin behind fails the PR, fixed by repinning to the live fingerprint) |
+| `fast` | every pull request | `npm run check`, the tests of the touched files (`scripts/ci-touched-tests.js`: transitive through every relative JS import in the repo — `tests/helpers` and `packages/` barrels incl. `export-from` — warned best-effort when no test reaches a changed source (a `::warning::` annotation plus a summary line naming the uncovered files, then the guards still run; deleted files never run and never count as uncovered, but their paths still seed the reachability search so a deleted module selects the tests that still import it), plus the declared repo-wide guards (`REPO_WIDE_GUARDS`: tests that scan `packages/`/`apps/`/`tests/`/`scripts/` wholesale and run on every non-empty diff, through the unfiltered diff, so deleting a listed guard without updating the list still fails red), plus the kernel boundary tests (`KERNEL_BOUNDARY_TESTS`: `tests/package-contract.test.js` and `tests/contracts-activation-e2e.test.js`, which the import mapping cannot reach from a core change, so they join only when the diff touches `packages/core/**` or `packages/app/**` — a docs-only diff never selects them), plus the characterization staleness suites (`CHARACTERIZATION_SUITES`: each `tests/characterization/*-baseline.json` selects its `*-characterization.test.js` when the diff touches a file its `source` digest map records, or adds a source file under a directory it records (a brand-new file is never a digest key yet), or changes the baseline itself (the source-hash realignment PR of §6.2) — a docs-only diff never selects them), plus the package declaration freeze tests (`PACKAGE_DECLARATION_FREEZE_TESTS`: the six suites pinning a package's declared surface — work v1 actions, attach/detach surface, `packages/app` export keys — join whenever the diff touches `packages/**`, mapped or fallback selection alike, so a declaration change hidden behind a ~95-test fan-in still fails the PR instead of `main`; a docs-only diff never selects them), selection bounded to 60 s, selected run bounded to 270 s, warned fallback to the PR's own changed test files past either bound), the smoke demo, the published recipe replay, `npm run gtm:check`, `npm run repo:truth -- --check --drift-advisory --base origin/main` (agreement only; advisory drift warns, added warns only from base), the verifier-fixture drift check (the one exit-0 test of `tests/solution-verify.test.js` on every PR: a composition change that leaves the fixture behind fails the PR, fixed repeatably with `npm run repin:verifier-fixture`), plus the checked-in plan-pin currency check (the four composition-currency tests on every PR: the shipped-example tripwire of `tests/solution-plan.test.js`, the Service and M14b2 plan currency tests, and the source-artifact hash test of `tests/solution-verify.test.js` — a composition change that leaves a plan or evidence pin behind fails the PR, fixed by repinning to the live fingerprint) |
 | `verify` | on schedule in two night windows, 22:23 and 02:23 UTC (`23 22,2 * * *`; the machine is shared and Arvo has precedence by day) plus manual dispatch of `main` only, and only when the head moved since the last successful measurement (the committed ledger or the runner-local record `~/.accordo-ci/main-last-measurement.json` the run itself maintains; a head that moved only in the measurement-flow files `site/claims.json` and `docs/repository-truth.json` counts as unmoved; `scripts/ci-measure-guard.js` skips the rest) | full corpus in pieces via `npm run measure` (`scripts/measure-pieces.sh`: `npm run check`, then one `measure-suite.js --shard i/n` per piece, each under its own lock with its own declared maximum, lock free between pieces — backlog:9fff957f3968) — never on `push`, so merge bursts queue no measurements (backlog:911355123044) — measured record kept as artifact and runner-local copy, smoke, recipe replay, then agreement `--check --drift-advisory` on the committed document, re-anchor at this run's measurement (`scripts/apply-ci-measurement.js`), regenerate, `--require-current`, controlled realign of advisory-only drift onto the fixed branch behind ONE PR (`scripts/realign-truth-main.js --push`, normal gate, never a push to `main`) |
 | `public-claims` | push to `main` only | `gtm:check`, agreement `--check --drift-advisory` on the committed document, and the measurement-age signal (`scripts/ci-measurement-age.js --window-hours 24`: a `::notice::` inside the window, a `::warning::` past it, always exit 0). Stays green between a merge and the next scheduled measurement; staleness never fails here — freshness is `verify`'s job |
 | nightly matrix | daily 01:17 UTC | the full worktree-heavy tool-selection product behind its opt-in variable (see the nightly workflow), skipped by default elsewhere |

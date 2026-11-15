@@ -193,6 +193,10 @@ test('e381c48581fa: a Meta channel Profilo can connect offers the green Collega 
   const collega = row.findAll('a').find((node) => node.getAttribute('data-action') === 'connect-elsewhere');
   assert.ok(collega, 'Collega is there');
   assert.match(collega.getAttribute('class') ?? '', /\bui-btn-cta\b/, 'green');
+  // backlog:8618ad3f72db: the shared Collega and channel state of Profilo and Stato sync.
+  assert.match(collega.getAttribute('class') ?? '', /\bui-connect\b/);
+  assert.ok(row.findAll('span').some((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-channel-state')
+    && node.textContent === 'Da collegare'), 'the state is the shared pill');
   assert.equal(collega.getAttribute('href'), '#/profilo');
   collega.dispatch('click', { preventDefault() {} });
   assert.deepEqual(navigated, ['#/profilo'], 'it leads to Profilo, never into a wizard with no adapter');
@@ -245,7 +249,7 @@ test('1cfc68175ab7: a settings tab keeps the tab row while its content loads', (
     assert.ok(mount.textContent.includes('Carico Stato sync…'), `${view}: only the content loads`);
     assert.ok(!mount.textContent.includes('Personalizzazione: Connettori'), `${view}: the old content is gone`);
     const tabs = mount.findAll('button').filter((node) => node.getAttribute('data-tab'));
-    assert.equal(tabs.length, 4);
+    assert.equal(tabs.length, 5, "the five Impostazioni tabs, Profilo included (8618ad3f72db)");
     const active = tabs.find((node) => node.getAttribute('aria-selected') === 'true');
     assert.equal(active?.getAttribute('data-tab'), area, `${view}: the opened tab is underlined at once`);
     assert.ok(mount.textContent.includes('3'), 'the fix badge stays on Stato sync');

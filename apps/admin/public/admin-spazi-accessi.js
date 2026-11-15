@@ -104,7 +104,9 @@ export const SPAZI_AI_DEFAULTS = Object.freeze({
 export const SPAZI_AI_MASTER = Object.freeze({
   key: 'ai-enabled',
   label: 'AI dello spazio',
-  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, ogni azione diventa una proposta da approvare.',
+  // backlog:cb1a32dc46b2: the switches govern what the AI does on its own;
+  // what a person does (a Conferma, a save) is never held behind them.
+  line: 'Accende e spegne tutta l\u2019AI di questo spazio. Da spenta, le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è.',
 });
 
 /** Master default, mirrored from the package — a space with no master row runs with the AI on. */
@@ -316,6 +318,33 @@ function nameInitials(name) {
 }
 
 /**
+ * The verified session subject from a settled `/api/spine/context` read
+ * (`identity.subject`, else `membership.subject`), or null.
+ * @param {{ok: boolean, value: any}} settled
+ */
+function selfSubjectOf(settled) {
+  if (!settled || settled.ok !== true) return null;
+  // Review Muse #897 P2: an empty identity subject never hides the
+  // membership one — each candidate is checked for a non-empty value.
+  for (const value of [settled.value?.identity?.subject, settled.value?.membership?.subject]) {
+    if (typeof value === 'string' && value.trim() !== '') return value;
+  }
+  return null;
+}
+
+/** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
+const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
+/** @param {Array<string>} subjects */
+export function accessLabel(subjects) {
+  const kinds = [];
+  for (const subject of subjects) {
+    const hit = ACCESS_KINDS.find(([prefix]) => String(subject).toLowerCase().startsWith(prefix));
+    if (hit && !kinds.includes(hit[1])) kinds.push(hit[1]);
+  }
+  return kinds.length > 0 ? kinds.join(' · ') : null;
+}
+
+/**
  * One team row per PERSON. The roster (`GET /api/spine/memberships`) may
  * carry, beside each opaque subject, the control-plane displayName, email
  * and `operatorAccountId` the pilot enriches it with — the same fields the
@@ -342,17 +371,24 @@ function nameInitials(name) {
  * list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
  */
-export function buildTeamRows(members = []) {
+export function buildTeamRows(members = [], { selfSubject = null } = {}) {
   // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
   // teamPeople (admin-labels.js), the same rows the Calendario team reads.
   const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
     subjects: row.subjects,
+    keys: row.keys,
     live: row.members.filter((member) => member.status !== 'suspended').map((member) => member.subject),
     displayName: row.name,
     email: row.email,
     roles: row.members.map((member) => member.role),
     statuses: row.members.map((member) => member.status),
+    self: typeof selfSubject === 'string' && selfSubject !== '' && row.subjects.includes(selfSubject),
   }));
+  // backlog:9d06eb1e174b (review Muse #897 P1): a name is never a proof of
+  // identity — not even the session's own name. Without a person key or a
+  // server link a same-named subject stays a row of its own, with its own
+  // «Rimuovi», told apart by its access kind (accessLabel below): one row
+  // too many beats a person hidden.
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
@@ -382,6 +418,11 @@ export function buildTeamRows(members = []) {
           ? nameInitials(person.displayName)
           : (readable !== null ? memberInitials(readable) : '·'),
         role: spaceRoleLabel(role),
+        // The session's own person: never offered «Rimuovi» on themself.
+        self: person.self,
+        // How this person signs in, when no real mailbox names them: two
+        // same-named rows read apart («Accesso GitHub», «Accesso Google»).
+        access: accessLabel(person.subjects),
         status: MEMBER_STATUS[/** @type {keyof typeof MEMBER_STATUS} */ (rawStatus)] ?? (typeof rawStatus === 'string' && rawStatus !== '' ? rawStatus : 'sconosciuto'),
       };
     })
@@ -436,13 +477,13 @@ export function masterEnabled(spaceId, overrideRows = []) {
  * @param {string} tag
  * @param {{text?: string, cls?: string, attrs?: Record<string, string>}} [options]
  */
-import { el, uiAddOption } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
  * A view controller for the Spazi e accessi screen. Injecting `doc`,
  * `client`, spaces and the space picker keeps it testable without a browser.
  *
- * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate?: (hash: string) => void, spaces?: () => Array<{id: string, name?: string, initials?: string}>, activeSpaceId?: () => string | null, onPickSpace?: (id: string) => void, toast?: (message: string, error?: boolean) => void, storage?: any}} deps
+ * @param {{doc: Document, mount: any, client: {request: (path: string, options?: any) => Promise<any>}, navigate?: (hash: string) => void, spaces?: () => Array<{id: string, name?: string, initials?: string}>, activeSpaceId?: () => string | null, onPickSpace?: (id: string) => void, onSwitches?: () => void, toast?: (message: string, error?: boolean) => void, storage?: any}} deps
  */
 export function createSpaziAccessiView(deps) {
   const { doc, mount, navigate } = deps;
@@ -468,6 +509,8 @@ export function createSpaziAccessiView(deps) {
   };
 
   const state = {
+    /** backlog:1a96094db71d: the first reads are pending (skeleton panels). */
+    loading: false,
     /** The invite form opens in place from the team card head. */
     inviteOpen: false,
     /** The invite menu (C21) opens above the inline form. */
@@ -478,6 +521,10 @@ export function createSpaziAccessiView(deps) {
     newSpaceNote: null,
     /** @type {string|null} my membership role, or null when unknown */
     myRole: null,
+    // backlog:9d06eb1e174b: the verified session subject (who «Tu» is), and
+    // whether the context read that names the role is still out.
+    selfSubject: null,
+    contextPending: false,
     /** @type {Array<string>|null} roles the server advertises, or null */
     roles: null,
     /** @type {Array<any>|null} team rows, or null when unread */
@@ -493,6 +540,10 @@ export function createSpaziAccessiView(deps) {
     /** @type {Map<string, string>} card statistic by space id; a space with
      * an unknown count simply has no entry, never an invented row */
     stats: new Map(),
+    // backlog:2de01913d276: the statistic (connectors, customers, profile)
+    // lands after the data — while it is out the tiles wait instead of
+    // failing, and the page paints without it.
+    statsPending: false,
     /**
      * backlog:67e14a50efb6: the raw connector entries behind each space's
      * statistic, so every team row paints this space's calendar state and
@@ -523,6 +574,58 @@ export function createSpaziAccessiView(deps) {
     /** @type {number | null} */ fixCount: null,
     /** @type {string | null} */ fixSpace: null,
   };
+
+  // The two pop-up menus (C20 new-space, C21 invite): one open at a time,
+  // Escape closes, a click outside closes — the same contract as the clienti
+  // and personalizzazione menus (MEM_ACC_REUSE: no parallel invention).
+  // Documents without addEventListener (the dependency-free fake DOM of the
+  // unit tests) skip the outside closer; the toggles, the voices and Escape
+  // still work there.
+  // Toggling a menu repaints the whole view, so the node that had keyboard
+  // focus is gone after render(): closing with Escape returns focus to the
+  // toggle that opened the menu (backlog:dd570f6d501e), while an outside
+  // click leaves focus where the user put it.
+  /** Currently rendered menu nodes, rebuilt on every render. */
+  const liveMenuWraps = [];
+  function focusToggle(selector) {
+    if (typeof selector !== 'string' || !mount || typeof mount.querySelector !== 'function') return;
+    const target = mount.querySelector(selector);
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+  function closeMenus(refocusSelector = null) {
+    if (!state.newSpaceMenuOpen && !state.inviteMenuOpen) return;
+    state.newSpaceMenuOpen = false;
+    state.inviteMenuOpen = false;
+    render();
+    focusToggle(refocusSelector);
+  }
+  function trackMenuWrap(node, toggleSelector = null) {
+    liveMenuWraps.push(node);
+    node.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(toggleSelector);
+    });
+  }
+  const newSpaceToggleSelector = 'button[data-menu="nuovo-spazio"]';
+  const inviteToggleSelector = 'button[data-menu="invita-persona"]';
+  if (doc && typeof doc.addEventListener === 'function') {
+    doc.addEventListener('click', (event) => {
+      let node = event?.target ?? null;
+      while (node) {
+        if (liveMenuWraps.includes(node)) return;
+        node = node.parentNode ?? null;
+      }
+      closeMenus();
+    });
+    // Codex P2 on #763: render() removes the focused toggle, so in a real
+    // browser focus falls back to the body and Escape never reaches the
+    // menu/toggle keydown handlers. Listen at document level, where Escape
+    // always lands however the menu was opened.
+    doc.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') {
+        closeMenus(state.newSpaceMenuOpen ? newSpaceToggleSelector : inviteToggleSelector);
+      }
+    });
+  }
 
   function clear() {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -586,16 +689,21 @@ export function createSpaziAccessiView(deps) {
    * count yields null and the card shows no statistic: a failure here is a
    * missing enhancement, never a page error, so it stays silent.
    * @param {string} spaceId
-   * @param {number|null} memberCount
-   * @param {unknown} [profile] the /api/profile answer for this space, null otherwise
+   * @param {Promise<number|null>} memberCountRead the rendered team size, once read
+   * @param {Promise<unknown>} [profileRead] the /api/profile answer for this space, null otherwise
    */
-  async function loadSpaceStat(spaceId, memberCount, profile = null) {
+  async function loadSpaceStat(spaceId, memberCountRead, profileRead = Promise.resolve(null)) {
+    // backlog:1a96094db71d: the two reads start at once, beside the team
+    // and permission reads; only the statistic waits for the member count
+    // and the profile it formats with.
+    const reads = Promise.allSettled([
+      client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
+      client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
+    ]);
+    const [memberCount, profile] = await Promise.all([memberCountRead, profileRead]);
     if (memberCount === null) return null;
     try {
-      const [channelsSettled, customersSettled] = await Promise.allSettled([
-        client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`),
-        client.request(`/api/customer-data/customers?spaceId=${encodeURIComponent(spaceId)}`),
-      ]);
+      const [channelsSettled, customersSettled] = await reads;
       // backlog:67e14a50efb6: keep the raw entries beside the statistic, so
       // the team rows tile this space's calendar and channels from the same
       // answer — no second request. A failed customer count never hides the
@@ -628,8 +736,9 @@ export function createSpaziAccessiView(deps) {
       const status = typeof /** @type {{status?: unknown}} */ (record).status === 'number'
         ? /** @type {{status?: unknown}} */ (record).status
         : null;
-      if (typeof console !== 'undefined' && typeof console.error === 'function') {
-        console.error('[bo] lettura fallita', { code, status, spaceId });
+      // A missing statistic is a handled state: a warn, never console.error.
+      if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn('[bo] lettura fallita', { code, status, spaceId });
       }
       // backlog:67e14a50efb6: the team rows read this too — a 404 (the
       // connectors are not composed here) is honest scope, anything else a
@@ -647,9 +756,15 @@ export function createSpaziAccessiView(deps) {
     }
   }
 
-  async function load() {
-    const space = readActiveSpace().trim();
+  /**
+   * Reset the reads for one load. Entry and space changes drop the previous
+   * statistic; every read restarts, so a refresh after a write rereads.
+   * Returns false without an open space: nothing starts then.
+   * @param {string} space
+   */
+  function resetLoadState(space) {
     state.myRole = null;
+    state.contextPending = true;
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
@@ -657,6 +772,10 @@ export function createSpaziAccessiView(deps) {
     state.switchesUnavailable = null;
     state.stats = new Map();
     state.spaceConns = new Map();
+    // backlog:2de01913d276: the statistic follows the data, never the other
+    // way round — a slow /api/profile (verifica 13/11: 7,6 s) waits its
+    // turn instead of holding the whole page.
+    state.statsPending = true;
     state.confirmRemove = null;
     state.removeRetry = null;
     state.confirmFlip = null;
@@ -665,22 +784,81 @@ export function createSpaziAccessiView(deps) {
     state.inviteMenuOpen = false;
     state.newSpaceMenuOpen = false;
     state.newSpaceNote = null;
-    if (space === '') return;
-    try {
-      const context = await client.request('/api/spine/context');
-      state.myRole = typeof context?.membership?.role === 'string' ? context.membership.role : null;
-      state.roles = context?.roles && typeof context.roles === 'object'
-        ? Object.keys(context.roles).filter((name) => name !== '')
+    if (space === '') {
+      state.contextPending = false;
+      state.statsPending = false;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Every read the page needs, started at once (backlog:1a96094db71d: they
+   * used to run one after the other — context, team, agents, permissions,
+   * profile, then the space cards — eight round trips of 2,5–4 s each in
+   * production). The data reads paint first; the statistic reads resolve in
+   * the second phase.
+   * @param {string} space
+   */
+  function beginReads(space) {
+    const settle = (promise) => promise.then(
+      (value) => ({ ok: true, value, error: null }),
+      (error) => ({ ok: false, value: null, error }),
+    );
+    const contextRead = settle(Promise.resolve().then(() => client.request('/api/spine/context')));
+    const membersRead = settle(Promise.resolve().then(() => client.request('/api/spine/memberships')));
+    const agentsRead = loadSpaceAgents(client, space);
+    const switchesRead = settle(Promise.resolve().then(() => client.request(
+      `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
+    )));
+    const ids = readSpaces()
+      .filter((entry) => entry !== null && typeof entry === 'object'
+        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
+        && /** @type {{id?: unknown}} */ (entry).id !== '')
+      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
+    // The profile describes the session's own space: its links count on
+    // that card only, never on another space's (review #782 P1).
+    const profileRead = ids.length > 0 ? readProfile(client) : Promise.resolve(null);
+    // The statistic counts what the team list shows: rendered rows only, so a
+    // malformed membership never leaks into the card number.
+    const memberCountRead = Promise.all([membersRead, contextRead]).then(([answer, context]) => (answer.ok
+      ? buildTeamRows(Array.isArray(answer.value?.items) ? answer.value.items : [], { selfSubject: selfSubjectOf(context) }).length
+      : null));
+    const current = space;
+    // backlog:9d06eb1e174b: only the open space's connectors and customers
+    // are read. Another space's GET /api/connectors?spaceId=… answers 403
+    // to this session (verifica 13-14/11): its card shows no statistic
+    // instead of a refused read.
+    const statsRead = Promise.all(ids.filter((id) => id === current).map(async (id) => {
+      const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
+      if (stat !== null) state.stats.set(id, stat);
+    }));
+    return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+  }
+
+  /**
+   * The data the page paints: role, team, agents and switches. The statistic
+   * is not awaited here — it fills in with {@link loadStats}.
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   */
+  async function loadCore(reads) {
+    const context = await reads.contextRead;
+    state.contextPending = false;
+    state.selfSubject = selfSubjectOf(context);
+    if (context.ok) {
+      state.myRole = typeof context.value?.membership?.role === 'string' ? context.value.membership.role : null;
+      state.roles = context.value?.roles && typeof context.value.roles === 'object'
+        ? Object.keys(context.value.roles).filter((name) => name !== '')
         : null;
-    } catch {
+    } else {
       state.myRole = null;
       state.roles = null;
     }
-    try {
-      const answer = await client.request('/api/spine/memberships');
-      state.members = Array.isArray(answer?.items) ? answer.items : [];
-    } catch (error) {
-      const failure = errorOf(error);
+    const members = await reads.membersRead;
+    if (members.ok) {
+      state.members = Array.isArray(members.value?.items) ? members.value.items : [];
+    } else {
+      const failure = errorOf(members.error);
       state.members = null;
       state.membersUnavailable = failure.code === 'SPINE_MEMBERSHIP_FORBIDDEN' || failure.status === 403
         ? 'Non hai il permesso di vedere il team: il server ha rifiutato la lettura, e questa non \u00E8 una lista vuota.'
@@ -690,41 +868,48 @@ export function createSpaziAccessiView(deps) {
     }
     // backlog:33782ba68747: agents sit beside people; a failed or absent
     // read leaves the Team exactly as it was.
-    state.agents = await loadSpaceAgents(client, space);
-    try {
-      const answer = await client.request(
-        `/api/space-permissions/effective?spaceId=${encodeURIComponent(space)}`,
-      );
-      const items = Array.isArray(answer?.overrides) ? answer.overrides : [];
-      state.overrides = items;
-    } catch (error) {
-      const failure = errorOf(error);
+    state.agents = await reads.agentsRead;
+    const switches = await reads.switchesRead;
+    if (switches.ok) {
+      state.overrides = Array.isArray(switches.value?.overrides) ? switches.value.overrides : [];
+    } else {
+      const failure = errorOf(switches.error);
       state.overrides = null;
       state.switchesUnavailable = humanReadError(failure, {
         failed: 'I permessi AI non si sono potuti leggere. Riprova pi\u00F9 tardi.',
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
-    // The statistic counts what the team list shows: rendered rows only, so a
-    // malformed membership never leaks into the card number.
-    const memberCount = Array.isArray(state.members) ? buildTeamRows(state.members).length : null;
-    const ids = readSpaces()
-      .filter((entry) => entry !== null && typeof entry === 'object'
-        && typeof /** @type {{id?: unknown}} */ (entry).id === 'string'
-        && /** @type {{id?: unknown}} */ (entry).id !== '')
-      .map((entry) => /** @type {string} */ (/** @type {{id?: unknown}} */ (entry).id));
-    // The profile describes the session's own space: its links count on
-    // that card only, never on another space's (review #782 P1).
-    const profile = ids.length > 0 ? await readProfile(client) : null;
-    const current = readActiveSpace().trim();
-    await Promise.all(ids.map(async (id) => {
-      const stat = await loadSpaceStat(id, memberCount, id === current ? profile : null);
-      if (stat !== null) state.stats.set(id, stat);
-    }));
+  }
+
+  /**
+   * The statistic after the data: connectors, customers and the profile
+   * merge that formats the channel count. Never throws — {@link loadSpaceStat}
+   * keeps a failed count as a missing enhancement, never a page error.
+   * @param {{ statsRead: Promise<any> }} reads
+   */
+  async function loadStats(reads) {
+    await reads.statsRead;
+  }
+
+  /**
+   * Reread everything after a refused write without painting: the caller
+   * reopens its confirmation on the fresh state and paints once. This is
+   * the pre-two-phase `load()` the refusal paths called: same reset, same
+   * reads, no render.
+   */
+  async function reload() {
+    const space = readActiveSpace().trim();
+    if (!resetLoadState(space)) return;
+    const reads = beginReads(space);
+    await loadCore(reads);
+    await loadStats(reads);
+    state.statsPending = false;
   }
 
   async function mutate(path, body) {
     state.busy = true;
+    busyPath = path; // cta-loading: the button that wrote reads «…» on the re-render
     render();
     try {
       return await client.request(path, { method: 'POST', body });
@@ -732,6 +917,8 @@ export function createSpaziAccessiView(deps) {
       state.busy = false;
     }
   }
+  let busyPath = '';
+  const busyOn = (test) => state.busy && test(busyPath);
 
   function activeSpace() {
     const spaces = readSpaces();
@@ -782,7 +969,13 @@ export function createSpaziAccessiView(deps) {
       // the small dark \u00abApri\u00bb on the right.
       const foot = el(doc, 'div', { cls: 'bo-spazi-foot' });
       const you = el(doc, 'span', { text: 'Tu: ', cls: 'bo-muted bo-spazi-you' });
-      you.appendChild(el(doc, 'strong', { text: card.roleKnown ? card.role : 'ruolo non riconosciuto' }));
+      // backlog:9d06eb1e174b: while the context read is out the role is a
+      // skeleton, never «ruolo non riconosciuto» for the 2-7 s of the read.
+      if (card.roleKnown) you.appendChild(el(doc, 'strong', { text: card.role }));
+      else if (state.contextPending) {
+        you.setAttribute('aria-busy', 'true');
+        you.appendChild(uiSkeleton(doc, { width: '64px' }));
+      } else you.appendChild(el(doc, 'strong', { text: 'ruolo non riconosciuto' }));
       foot.appendChild(you);
       if (card.active) {
         foot.appendChild(el(doc, 'span', { text: 'Stai lavorando qui', cls: 'bo-spazi-here' }));
@@ -802,40 +995,65 @@ export function createSpaziAccessiView(deps) {
     // C11: the dashed box stays last; its menu carries the verbatim C20
     // voices. Creation itself lives in the control plane (no capability
     // here), so picking a voice never invents a space.
-    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder' });
+    // The new-space menu opens as a popover over the page (absolute on this
+    // relative anchor), like the clienti and personalizzazione add menus:
+    // opening it never pushes the grid or the panels below.
+    const adder = el(doc, 'div', { cls: 'bo-spazi-card bo-spazi-adder', attrs: { style: 'position: relative;' } });
     const adderToggle = el(doc, 'button', {
       text: '+ Nuovo spazio di lavoro',
       cls: 'bo-spazi-quiet',
       attrs: {
         type: 'button',
+        'data-menu': 'nuovo-spazio',
         'aria-haspopup': 'true',
         'aria-expanded': state.newSpaceMenuOpen ? 'true' : 'false',
       },
     });
     adderToggle.disabled = state.busy;
-    adderToggle.addEventListener('click', () => {
-      state.newSpaceMenuOpen = !state.newSpaceMenuOpen;
+    adderToggle.addEventListener('click', (event) => {
+      // The opening click bubbles to the document in a real browser: stop
+      // it, or the outside closer would shut the menu just opened.
+      event?.stopPropagation?.();
+      const willOpen = !state.newSpaceMenuOpen;
+      state.newSpaceMenuOpen = willOpen;
+      if (willOpen) state.inviteMenuOpen = false;
       state.newSpaceNote = null;
       render();
+      // Closing from the toggle replaces the toggle itself: keep keyboard
+      // focus on it, so Tab continues from the button that closed the menu.
+      if (!willOpen) focusToggle(newSpaceToggleSelector);
+    });
+    adderToggle.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(newSpaceToggleSelector);
     });
     adder.appendChild(adderToggle);
     if (state.newSpaceMenuOpen) {
-      const menu = el(doc, 'div', { cls: 'ui-add-menu', attrs: { role: 'menu', 'aria-label': 'Nuovo spazio di lavoro' } });
+      const menu = el(doc, 'div', {
+        cls: 'ui-add-menu',
+        attrs: {
+          role: 'menu',
+          'aria-label': 'Nuovo spazio di lavoro',
+          style: 'position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 30; margin: 0;',
+        },
+      });
       const aiVoice = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Descrivi l\u2019attivit\u00E0, propongo canali e team' });
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = null;
         say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
         render();
+        focusToggle(newSpaceToggleSelector);
       });
       menu.appendChild(aiVoice);
       menu.appendChild(manualVoice);
+      trackMenuWrap(menu, newSpaceToggleSelector);
       adder.appendChild(menu);
     }
     if (state.newSpaceNote !== null) {
@@ -852,7 +1070,7 @@ export function createSpaziAccessiView(deps) {
    * says why on the row instead of staying silently bare.
    * @param {{entries: Array<any>|null, unreadable: 'not-composed'|'failed'|null}} conns
    */
-  function renderTeamConns(conns) {
+  function renderTeamConns(conns, statsOut) {
     const line = el(doc, 'div', { cls: 'bo-spazi-conns' });
     if (conns.entries !== null) {
       line.appendChild(el(doc, 'span', { text: teamCalendarState(conns.entries), cls: 'bo-spazi-calendar' }));
@@ -865,10 +1083,14 @@ export function createSpaziAccessiView(deps) {
       }
       return line;
     }
+    // backlog:2de01913d276: a count that never started failing is not a
+    // failure — while the statistic reads are out the tiles wait for them.
     line.appendChild(el(doc, 'span', {
-      text: conns.unreadable === 'not-composed'
-        ? 'Canali e calendario non sono attivi in questo spazio.'
-        : 'Canali e calendario non leggibili al momento.',
+      text: statsOut === true
+        ? 'Leggo canali e calendario…'
+        : conns.unreadable === 'not-composed'
+          ? 'Canali e calendario non sono attivi in questo spazio.'
+          : 'Canali e calendario non leggibili al momento.',
       cls: 'bo-spazi-calendar',
     }));
     return line;
@@ -883,36 +1105,60 @@ export function createSpaziAccessiView(deps) {
     // C21: «Invita persona» opens a two-voice menu with verbatim subtitles.
     // Manual entry opens the existing inline spine form below; the AI voice
     // stays honest (no invention) until a capability exists.
-    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
-    inviteToggle.addEventListener('click', () => {
+    // The invite menu opens as a popover under its button (absolute on this
+    // relative wrap), like every other add menu: opening it never pushes
+    // the team list or the invite form below.
+    const inviteWrap = el(doc, 'div', { cls: 'bo-spazi-invite-wrap', attrs: { style: 'position: relative; margin-left: auto;' } });
+    const inviteToggle = el(doc, 'button', { text: 'Invita persona ▾', cls: 'cta bo-spazi-invite-toggle', attrs: { type: 'button', 'data-menu': 'invita-persona', 'aria-haspopup': 'true', 'aria-expanded': (state.inviteMenuOpen || state.inviteOpen) ? 'true' : 'false' } });
+    inviteToggle.addEventListener('click', (event) => {
+      event?.stopPropagation?.();
+      const wasMenuOpen = state.inviteMenuOpen;
       if (state.inviteMenuOpen) {
         state.inviteMenuOpen = false;
       } else if (state.inviteOpen) {
         state.inviteOpen = false;
       } else {
         state.inviteMenuOpen = true;
+        state.newSpaceMenuOpen = false;
       }
       render();
+      // Same promise as the new-space toggle: closing from the toggle keeps
+      // keyboard focus on it.
+      if (wasMenuOpen) focusToggle(inviteToggleSelector);
     });
-    teamHead.appendChild(inviteToggle);
+    inviteToggle.addEventListener('keydown', (event) => {
+      if (event?.key === 'Escape' || event?.key === 'Esc') closeMenus(inviteToggleSelector);
+    });
+    inviteWrap.appendChild(inviteToggle);
+    teamHead.appendChild(inviteWrap);
     section.appendChild(teamHead);
     if (state.inviteMenuOpen) {
-      const inviteMenu = el(doc, 'div', { cls: 'ui-add-menu bo-spazi-invite-menu', attrs: { role: 'menu', 'aria-label': 'Invita persona' } });
+      const inviteMenu = el(doc, 'div', {
+        cls: 'ui-add-menu bo-spazi-invite-menu',
+        attrs: {
+          role: 'menu',
+          'aria-label': 'Invita persona',
+          style: 'position: absolute; top: calc(100% + 6px); right: 0; z-index: 30; margin: 0;',
+        },
+      });
       const inviteAi = uiAddOption(doc, { kind: 'ai', title: 'Crea con l\u2019AI', line: 'Es. \u00ABLuca, vendite, solo Instagram e WhatsApp\u00BB' });
       inviteAi.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         say('Gli inviti con l\u2019AI non sono ancora disponibili: usa Compila manualmente.');
         render();
+        focusToggle(inviteToggleSelector);
       });
       const inviteManual = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Email e ruolo' });
       inviteManual.addEventListener('click', () => {
         state.inviteMenuOpen = false;
         state.inviteOpen = true;
         render();
+        focusToggle(inviteToggleSelector);
       });
       inviteMenu.appendChild(inviteAi);
       inviteMenu.appendChild(inviteManual);
-      section.appendChild(inviteMenu);
+      trackMenuWrap(inviteMenu, inviteToggleSelector);
+      inviteWrap.appendChild(inviteMenu);
     }
     section.appendChild(el(doc, 'p', {
       text: 'Lo stesso team per tutta l\u2019organizzazione: rimuovere sospende la persona nell\u2019intera organizzazione, non nel singolo spazio.',
@@ -923,14 +1169,21 @@ export function createSpaziAccessiView(deps) {
       box.appendChild(section);
       return;
     }
-    const rows = buildTeamRows(state.members);
+    const rows = buildTeamRows(state.members, { selfSubject: state.selfSubject });
     // backlog:67e14a50efb6 (specs/account.md C13/C14): every team row paints
     // this space's shared calendar state and channel tiles from the same
     // connectors answer the cards counted — the team is one per organization
     // while the channels live per space, so the line repeats on each row and
     // the titles say whose it is.
     const conns = state.spaceConns.get(readActiveSpace()) ?? { entries: null, unreadable: 'failed' };
+    const connsOut = state.statsPending && conns.entries === null;
     const list = el(doc, 'div', { cls: 'bo-spazi-team' });
+    if (state.selfSubject === null && rows.length > 0) {
+      list.appendChild(el(doc, 'p', {
+        text: 'Rimuovi non \u00E8 disponibile: non sono riuscito a verificare il tuo account. Ricarica la pagina per riprovare.',
+        cls: 'bo-muted bo-spazi-remove-off',
+      }));
+    }
     if (rows.length === 0) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
     }
@@ -947,9 +1200,12 @@ export function createSpaziAccessiView(deps) {
         const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
         names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
       } else {
-        names.appendChild(el(doc, 'div', { text: row.status, cls: 'bo-spazi-status' }));
+        // backlog:9d06eb1e174b: no real mailbox — the access kind tells
+        // same-named rows apart, beside the status.
+        const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
+        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
       }
-      names.appendChild(renderTeamConns(conns));
+      names.appendChild(renderTeamConns(conns, connsOut));
       identity.appendChild(names);
       item.appendChild(identity);
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
@@ -978,6 +1234,7 @@ export function createSpaziAccessiView(deps) {
           attrs: { type: 'button' },
         });
         yes.disabled = state.busy;
+        if (busyOn((path) => path.endsWith('/suspend'))) uiMarkBusy(yes, 'Rimuovo…');
         yes.addEventListener('click', async () => {
           const motive = String(reason.value ?? '').trim();
           if (motive === '') {
@@ -1018,8 +1275,8 @@ export function createSpaziAccessiView(deps) {
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
           // One message, inside the row that failed; a toast only if it cannot show.
-          await load();
-          // load() closes every confirmation: reopen this one on a subject
+          await reload();
+          // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
           state.removeRetry = { subject: refused[0].subject, reason: motive, note };
@@ -1031,7 +1288,11 @@ export function createSpaziAccessiView(deps) {
         confirmBox.appendChild(yes);
         confirmBox.appendChild(no);
         item.appendChild(confirmBox);
-      } else {
+      } else if (state.selfSubject !== null && !row.self) {
+        // backlog:9d06eb1e174b: never «Rimuovi» on one's own account — and
+        // fail closed (review Muse #897 giro 2): while who «Tu» is stays
+        // unknown (context unread, failed or without a subject) no row
+        // offers it; the note above the list says why.
         const remove = el(doc, 'button', { text: 'Rimuovi', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         remove.disabled = state.busy;
         remove.addEventListener('click', () => { state.confirmRemove = row.subject; state.removeRetry = null; render(); });
@@ -1067,6 +1328,7 @@ export function createSpaziAccessiView(deps) {
     invite.appendChild(reason);
     const send = el(doc, 'button', { text: 'Invita', cls: 'bo-spazi-open', attrs: { type: 'button' } });
     send.disabled = state.busy;
+    if (busyOn((path) => path === '/api/spine/memberships')) uiMarkBusy(send, 'Invito…');
     send.addEventListener('click', async () => {
       const who = String(subject.value ?? '').trim();
       const picked = String(role.value ?? '').trim() || 'operator';
@@ -1082,7 +1344,7 @@ export function createSpaziAccessiView(deps) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
         // One message, inside the form that failed; a toast only if it cannot show.
-        await load();
+        await reload();
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
@@ -1119,7 +1381,7 @@ export function createSpaziAccessiView(deps) {
     section.appendChild(el(doc, 'p', {
       text: master
         ? `AI dello spazio: accesa. Vale per tutto lo spazio ${space.name}. Quello che \u00E8 spento diventa una proposta da approvare.`
-        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: ogni azione diventa una proposta da approvare, finch\u00E9 non la riaccendi.`,
+        : `AI dello spazio: spenta. Vale per tutto lo spazio ${space.name}: le azioni dell\u2019AI diventano proposte da approvare, finch\u00E9 non la riaccendi; quello che fai tu resta com\u2019è.`,
       cls: 'bo-muted',
     }));
     const switches = [
@@ -1173,7 +1435,7 @@ export function createSpaziAccessiView(deps) {
           text: entry.master === true
             ? (pending.to
               ? 'Accendere l\u2019AI dello spazio? Da accesa, i cinque interruttori decidono uno per uno.'
-              : 'Spegnere l\u2019AI dello spazio? Da spenta, ogni azione diventa una proposta da approvare.')
+              : 'Spegnere l\u2019AI dello spazio? Da spenta, le azioni dell\u2019AI diventano proposte da approvare; quello che fai tu resta com\u2019è.')
             : (pending.to
               ? `Accendere \u00AB${entry.label}\u00BB? Da accesa, l\u2019AI agisce da sola.`
               : `Spegnere \u00AB${entry.label}\u00BB? Da spenta, diventa una proposta da approvare.`),
@@ -1181,6 +1443,7 @@ export function createSpaziAccessiView(deps) {
         }));
         const yes = el(doc, 'button', { text: 'Conferma', cls: 'bo-spazi-open', attrs: { type: 'button' } });
         yes.disabled = state.busy;
+        if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
           try {
             await mutate('/api/space-permissions/set-permission', {
@@ -1197,7 +1460,7 @@ export function createSpaziAccessiView(deps) {
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
             // One message, under the switch that failed; a toast only if it cannot show.
-            await load();
+            await reload();
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
@@ -1206,6 +1469,16 @@ export function createSpaziAccessiView(deps) {
           }
           state.confirmFlip = null;
           await refresh();
+          // backlog 3136d15da7bd: a flipped switch may be the space AI
+          // master — the top AI bar re-reads it at once instead of naming
+          // questions while the AI is off (or hiding that it is back on).
+          if (typeof deps.onSwitches === 'function') {
+            try {
+              deps.onSwitches();
+            } catch {
+              // The bar keeps its last words; the panel already said them.
+            }
+          }
         });
         const no = el(doc, 'button', { text: 'Annulla', cls: 'bo-spazi-quiet', attrs: { type: 'button' } });
         no.addEventListener('click', () => { state.confirmFlip = null; state.switchRefusal = null; render(); });
@@ -1232,8 +1505,22 @@ export function createSpaziAccessiView(deps) {
   let generation = 0;
   const childrenOf = () => Array.from(mount?.childNodes ?? []);
 
+  // review #830 P2: the nodes this view painted last. A menu opened while
+  // the first reads are pending repaints the mount from inside this view;
+  // that is still this screen, so the late answer must paint over it.
+  /** @type {Array<any> | null} */
+  let lastPaint = null;
+  const sameNodes = (left, right) => Array.isArray(left) && Array.isArray(right)
+    && left.length === right.length && left.every((node, index) => node === right[index]);
+
   function render() {
+    paint();
+    lastPaint = childrenOf();
+  }
+
+  function paint() {
     refusalPainted = false;
+    liveMenuWraps.length = 0;
     clear();
     const space = activeSpace();
     mount.appendChild(settingsTabs(doc, { activeId: 'spazi-accessi', fixCount: state.fixCount, navigate: typeof navigate === 'function' ? navigate : () => {} }));
@@ -1250,14 +1537,42 @@ export function createSpaziAccessiView(deps) {
     // 1.5fr + AI 1fr, like prototype screen 08) and stack in one column
     // under 700px. The panels wrap instead of overflowing in between.
     const panels = el(doc, 'div', { cls: 'bo-spazi-panels' });
-    renderTeam(panels);
-    renderSwitches(panels, space);
+    if (state.loading) {
+      renderSkeleton(panels);
+    } else {
+      renderTeam(panels);
+      renderSwitches(panels, space);
+    }
     mount.appendChild(panels);
   }
 
-  async function refresh() {
+  /**
+   * The team and AI panels while their reads are pending
+   * (backlog:1a96094db71d): the same two cards with their titles and grey
+   * bars, marked busy — never a fake row, never a switch that can be
+   * flipped before its value is known.
+   * @param {any} box
+   */
+  function renderSkeleton(box) {
+    box.setAttribute('aria-busy', 'true');
+    const panels = [
+      { cls: 'bo-spazi-team-panel', title: 'Team dell\u2019organizzazione', rows: 3 },
+      { cls: 'bo-spazi-ai-panel', title: '\u2726 Cosa pu\u00F2 fare l\u2019AI', rows: 6 },
+    ];
+    for (const panel of panels) {
+      const section = el(doc, 'section', { cls: `bo-spazi-section bo-spazi-panel ${panel.cls}`, attrs: { 'data-skeleton': 'true' } });
+      section.appendChild(el(doc, 'h3', { text: panel.title }));
+      for (let index = 0; index < panel.rows; index += 1) {
+        const row = el(doc, 'div', { cls: 'bo-spazi-skeleton-row' });
+        row.appendChild(uiSkeleton(doc, { width: index % 2 === 0 ? '70%' : '50%', block: true }));
+        section.appendChild(row);
+      }
+      box.appendChild(section);
+    }
+  }
+
+  async function refresh({ skeleton = false } = {}) {
     const mine = (generation += 1);
-    const before = childrenOf();
     const space = readActiveSpace().trim();
     // A space change drops the previous space's count before anything
     // paints: the tabs never wear another space's badge, not even briefly.
@@ -1265,23 +1580,72 @@ export function createSpaziAccessiView(deps) {
       state.fixSpace = space;
       state.fixCount = null;
     }
-    await load();
-    if (mine !== generation) return;
-    if (space !== '') {
-      // Voce 19c2e22a64a1 (1): the badge counts this space live. A space
-      // move mid-read keeps the unknown state instead of painting another
-      // space's late count.
-      const count = await loadFixCount(client, { spaceId: space });
-      if (mine !== generation) return;
-      if (readActiveSpace().trim() === space) state.fixCount = count;
+    // backlog:1a96094db71d: the badge count reads beside the page, never
+    // after it. Voce 19c2e22a64a1 (1): it counts this space live, and a
+    // space move mid-read keeps the unknown state instead of painting
+    // another space's late count.
+    const countRead = space !== '' ? loadFixCount(client, { spaceId: space }) : Promise.resolve(null);
+    const hasSpace = resetLoadState(space);
+    const reads = hasSpace ? beginReads(space) : null;
+    // A statistic that already landed paints as data, never as pending:
+    // the flag flips in the settlement turn, before the data paint below.
+    let statsDone = false;
+    if (reads !== null) {
+      reads.statsRead.then(
+        () => { statsDone = true; },
+        () => { statsDone = true; },
+      );
     }
+    // backlog:1a96094db71d: on entry the page paints at once — tabs,
+    // header, space cards and a skeleton where team and AI switches will
+    // be — instead of «Carico…» for the whole of the reads. A refresh after
+    // a write keeps the screen as it is until the answer lands.
+    if (skeleton && space !== '') {
+      state.loading = true;
+      render();
+    }
+    const before = childrenOf();
+    // backlog:2de01913d276: the data paints as soon as its reads land; the
+    // statistic (connectors, customers, profile) follows when the slowest
+    // one lands instead of holding the page (verifica 13/11: 7,6 s).
+    if (reads !== null) await loadCore(reads);
+    const count = await countRead;
+    // Only the newest refresh decides the loading state: an older one
+    // landing late never lifts a newer one's skeleton.
+    if (mine !== generation) return;
+    if (statsDone) state.statsPending = false;
+    state.loading = false;
+    if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
+    // Paint only while the mount still holds this screen: what it held
+    // when the reads started, or what this view painted since (a menu
+    // opened meanwhile). Anything else is another screen: stay out.
     const now = childrenOf();
-    if (now.length !== before.length || now.some((node, index) => node !== before[index])) return;
+    if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
+    render();
+    if (reads === null) return;
+    // The statistic fills its tiles and the card line late. A space move
+    // meanwhile belongs to the newer refresh; a repaint with nothing new
+    // to show would only steal focus.
+    // backlog:2de01913d276: whether the paint above still waited for the
+    // statistic. The stat data can land between that paint and the snapshot
+    // below (set into state while the data paint is on screen): the rows
+    // then still read «Leggo canali…» and skipping the second paint would
+    // freeze that waiting line. Skip only when the first paint already
+    // showed the final state.
+    const paintedPending = state.statsPending;
+    const statBefore = state.stats.get(space);
+    const connsBefore = state.spaceConns.get(space);
+    await loadStats(reads);
+    state.statsPending = false;
+    if (mine !== generation) return;
+    if (space === '' || readActiveSpace().trim() !== space) return;
+    if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
+    if (!sameNodes(childrenOf(), lastPaint)) return;
     render();
   }
 
   async function renderView() {
-    await refresh();
+    await refresh({ skeleton: true });
   }
 
   return { render: renderView };

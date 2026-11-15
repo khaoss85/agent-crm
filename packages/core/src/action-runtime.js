@@ -8,6 +8,7 @@ import { createExecutionRunStore } from './execution-run-store.js';
 // neither touches the other at module-evaluation time (ADR-017).
 import { runExternalOperation } from './external-operation.js';
 import { isUnknownCommit, runIdempotentWrite, usesWriteOutcomes } from './write-outcome-runtime.js';
+import { applyTraceRedact } from './trace-redact.js';
 import { createWriteOutcomeStore } from './write-outcome-store.js';
 import { resolveIdempotencyKey, tenantNamespace } from './idempotency.js';
 
@@ -285,7 +286,7 @@ export async function runRecordAction(params) {
       status: failure ? 'failed' : 'completed',
       input: {
         recordId,
-        input: validatedInput,
+        input: applyTraceRedact(definition.traceRedact, 'input', validatedInput),
         actor: safeActor(actor),
         // The decision that let this run, so the trace answers "by what
         // authority" rather than only "who claimed to be whom".
@@ -301,7 +302,7 @@ export async function runRecordAction(params) {
           }
           : {}),
       },
-      output: failure ? null : result,
+      output: failure ? null : applyTraceRedact(definition.traceRedact, 'output', result),
       error: failure ? failure.message : null,
       startedAt,
       steps,
@@ -348,7 +349,13 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
     operation: `${module}.${action}`,
     target: recordId,
     contractVersion: String(definition.actionContract ?? 1),
-    input: { recordId, input: validatedInput },
+    // The envelope persists this input (pending run, outcome scope, settled
+    // trace): it holds the redacted copy, never a Bearer [REDACTED] `execute`
+    // still sees the raw validated input below.
+    input: { recordId, input: applyTraceRedact(definition.traceRedact, 'input', validatedInput) },
+    // Redacts the persisted outcome copy (write-outcome row, settled trace);
+    // the live return keeps the raw value.
+    traceRedact: definition.traceRedact,
     now,
   };
   if (usesWriteOutcomes(database)) {
@@ -410,7 +417,9 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
         managed: (id, patch) => service.applyManaged(id, patch, { actor }),
         step,
       });
-      step(`${module}.${action}`, result);
+      // The span persists through the outcome envelope: it holds the redacted
+      // copy, while the live return below keeps the raw value.
+      step(`${module}.${action}`, applyTraceRedact(definition.traceRedact, 'output', result));
       return result;
     });
     return {
@@ -436,7 +445,7 @@ async function runPostgresqlRecordAction(params, definition, validatedInput, aut
           status: 'failed',
           input: {
             recordId,
-            input: validatedInput,
+            input: applyTraceRedact(definition.traceRedact, 'input', validatedInput),
             actor: safeActor(actor),
             ...(authorization
               ? {

@@ -15,6 +15,9 @@ import { createAdminShellMount } from '../packages/app/src/admin-mount.js';
 import {
   BO_UPDATE_NOTICE,
   BO_UPDATE_UNSAVED_NOTICE,
+  BO_UNSAVED_RECHECK_MS,
+  BO_UNSAVED_RECHECK_LIMIT,
+  refreshUpdateNotice,
   BO_VERSION_POLL_MS,
   checkBundleVersion,
   currentBundleName,
@@ -332,12 +335,95 @@ test('checkBundleVersion never reloads on its own: clean or dirty, only the noti
   assert.equal(dirtyReloads, 1, 'the second press confirms the reload');
 });
 
-test('49bd3657: the notice speaks Italian and offers Ricarica', () => {
-  assert.equal(BO_UPDATE_NOTICE, 'È disponibile una nuova versione · Ricarica');
-  assert.ok(/salvalo/.test(BO_UPDATE_UNSAVED_NOTICE) && /ricaricare/.test(BO_UPDATE_UNSAVED_NOTICE));
+test('49bd3657 + 52f76db1a3ef: the notice speaks Italian and offers Aggiorna', () => {
+  assert.equal(BO_UPDATE_NOTICE, 'È disponibile una nuova versione · Aggiorna');
+  assert.ok(/salvalo/.test(BO_UPDATE_UNSAVED_NOTICE) && /aggiornare/.test(BO_UPDATE_UNSAVED_NOTICE));
   for (const text of [BO_UPDATE_NOTICE, BO_UPDATE_UNSAVED_NOTICE]) {
     assert.ok(!/\b(update|reload|new version|refresh)\b/i.test(text), `no English: ${text}`);
   }
+});
+
+// backlog:52f76db1a3ef (verifica Mac 10/11 08:40Z): after the note is saved
+// the warning «Hai del testo non salvato…» must go; with no unsent text the
+// notice stays and a press updates — never a reload by surprise.
+test('52f76db1a3ef: the unsaved warning goes once the note is saved, and a press then updates', async () => {
+  resetVersionWatchState();
+  const note = fakeField({ value: 'nota da salvare' });
+  const doc = fakeDoc({ scripts: [fakeScript('/bo/bo-aaaa000000.js')], fields: [note] });
+  const timers = [];
+  let reloads = 0;
+  const outcome = await checkBundleVersion({
+    adminBase: '/bo',
+    doc,
+    fetchImpl: okFetch('bo-bbbb111111.js'),
+    reload: () => { reloads++; },
+    setInterval: (fn, ms) => { const timer = { fn, ms, cleared: false }; timers.push(timer); return timer; },
+    clearInterval: (timer) => { timer.cleared = true; },
+  });
+  assert.equal(outcome, 'deferred');
+  const banner = doc._state.banner;
+  assert.equal(banner.textContent, BO_UPDATE_NOTICE, 'the notice says «Aggiorna»');
+  banner.click();
+  assert.equal(reloads, 0, 'unsent text: the first press only warns');
+  assert.equal(banner.textContent, BO_UPDATE_UNSAVED_NOTICE);
+  assert.equal(timers.length, 1, 'the warning rechecks the unsent text');
+  assert.equal(timers[0].ms, BO_UNSAVED_RECHECK_MS);
+  timers[0].fn();
+  assert.equal(banner.textContent, BO_UPDATE_UNSAVED_NOTICE, 'text still unsent: the warning stays');
+  note.value = '';
+  timers[0].fn();
+  assert.equal(banner.textContent, BO_UPDATE_NOTICE, 'note saved: the warning is gone, the plain notice is back');
+  assert.equal(timers[0].cleared, true, 'the recheck stops once the warning is gone');
+  assert.equal(reloads, 0, 'saving never reloads on its own');
+  banner.click();
+  assert.equal(reloads, 1, 'with no unsent text a press updates at once');
+});
+
+test('52f76db1a3ef: a later poll also clears a stale warning, and never reloads', async () => {
+  resetVersionWatchState();
+  const note = fakeField({ value: 'bozza' });
+  const doc = fakeDoc({ scripts: [fakeScript('/bo/bo-aaaa000000.js')], fields: [note] });
+  let reloads = 0;
+  const options = {
+    adminBase: '/bo', doc, fetchImpl: okFetch('bo-bbbb111111.js'), reload: () => { reloads++; },
+    setInterval: () => ({}), clearInterval: () => {},
+  };
+  await checkBundleVersion(options);
+  doc._state.banner.click();
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE);
+  note.value = '';
+  assert.equal(await checkBundleVersion(options), 'deferred');
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_NOTICE);
+  assert.equal(reloads, 0);
+  assert.equal(refreshUpdateNotice(null, doc), false, 'no banner, nothing to say');
+});
+
+// Review #761 (P2): a field that keeps text (a search box) must not keep
+// the one-second recheck alive forever: it stops at a cap, the warning stays
+// honest, and the minute poll still clears it later.
+test('review #761: the recheck stops after its cap when a field keeps text', async () => {
+  resetVersionWatchState();
+  const search = fakeField({ tag: 'INPUT', type: 'search', value: 'giulia' });
+  const doc = fakeDoc({ scripts: [fakeScript('/bo/bo-aaaa000000.js')], fields: [search] });
+  const timers = [];
+  let reloads = 0;
+  const options = {
+    adminBase: '/bo', doc, fetchImpl: okFetch('bo-bbbb111111.js'), reload: () => { reloads++; },
+    setInterval: (fn, ms) => { const timer = { fn, ms, cleared: false }; timers.push(timer); return timer; },
+    clearInterval: (timer) => { timer.cleared = true; },
+  };
+  await checkBundleVersion(options);
+  doc._state.banner.click();
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE);
+  for (let tick = 1; tick < BO_UNSAVED_RECHECK_LIMIT; tick += 1) timers[0].fn();
+  assert.equal(timers[0].cleared, false, 'still checking before the cap');
+  timers[0].fn();
+  assert.equal(timers[0].cleared, true, 'the recheck stops at the cap');
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_UNSAVED_NOTICE, 'text still there: the warning stays');
+  search.value = '';
+  await checkBundleVersion(options);
+  assert.equal(doc._state.banner.textContent, BO_UPDATE_NOTICE, 'the next poll clears the warning');
+  assert.equal(reloads, 0, 'never a reload on its own');
 });
 
 test('a CSS-only release shows the notice', async () => {

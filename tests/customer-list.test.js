@@ -11,6 +11,7 @@ import {
   LAST_CONTACT_PREVIEW_CHARS,
   applyCustomerListQuery,
   channelWordsIn,
+  filterCustomerRows,
   parseCustomerListQuery,
   previewLastContactText,
   shapeCustomerRow,
@@ -21,7 +22,7 @@ import {
  * filters, free-text search with channel-word detection, sorting and
  * server-side pagination over exact page sizes.
  *
- * What it must prove: the six quick views are saved filter descriptors (no
+ * What it must prove: the seven quick views are saved filter descriptors (no
  * row snapshots); filters combine and clear to `all`; unknown query values
  * refuse fail-closed; pages slice server-side with an exact total; the
  * shared status rule promotes only on signed business; the AI budget column
@@ -138,10 +139,10 @@ test('free text matches name, email, company and phone, case-insensitively', () 
 
 /* ----------------------------------------------------------------- views */
 
-test('the six quick views are saved filter descriptors, not row snapshots', () => {
-  assert.equal(CUSTOMER_VIEWS.length, 6);
+test('the seven quick views are saved filter descriptors, not row snapshots', () => {
+  assert.equal(CUSTOMER_VIEWS.length, 7);
   assert.deepEqual(CUSTOMER_VIEWS.map((view) => view.id),
-    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere']);
+    ['tutti', 'ricontattare-oggi', 'nuovi-lead', 'clienti-attivi', 'rinnovi-30-giorni', 'da-leggere', 'da-rispondere']);
   for (const view of CUSTOMER_VIEWS) {
     assert.equal(typeof view.label, 'string');
     assert.ok(view.label.length > 0);
@@ -169,6 +170,34 @@ test('the six quick views are saved filter descriptors, not row snapshots', () =
   });
   const unknown = rowOf({}, baseReads());
   assert.equal(applyCustomerListQuery([unread, read, unknown], parseCustomerListQuery({ vista: 'da-leggere' })).total, 1);
+});
+
+test('a view rule combines with the Stato filter: Clienti attivi never shows a Contatto (backlog:0dd85ba9)', () => {
+  const ada = rowOf({ contact: { firstName: 'Ada', lastName: 'Rossi' } }, baseReads());
+  const cliente = rowOf({ contact: { firstName: 'Mario', lastName: 'Rossi' } }, {
+    identitiesBySubject: new Map([['contact:c1', [IDENTITY()]]]),
+    statusBySubject: new Map([['contact:c1', { value: 'cliente', reason: 'orders: 1 on record' }]]),
+  });
+  const rows = [ada, cliente];
+  // No Stato filter: the view alone cuts by its rule.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi' })).total, 1);
+  // Stato=Contatto with the view open: the combination matches nothing —
+  // the view never shows a Contatto, and its pill counts zero, not 18.
+  const conflict = parseCustomerListQuery({ vista: 'clienti-attivi', stato: 'contatto' });
+  assert.equal(applyCustomerListQuery(rows, conflict).total, 0);
+  const counts = new Map(CUSTOMER_VIEWS.map((view) => [view.id, filterCustomerRows(rows, conflict, view).length]));
+  assert.equal(counts.get('clienti-attivi'), 0);
+  assert.equal(counts.get('nuovi-lead'), 1);
+  assert.equal(counts.get('tutti'), 1);
+  // The reported case: view open with a search — Ada Rossi is a Contatto,
+  // so only the Cliente named Rossi stays.
+  const found = applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi', q: 'Rossi' }));
+  assert.equal(found.total, 1);
+  assert.equal(found.items[0].status.value, 'cliente');
+  // Symmetric conflict: Nuovi lead never shows a Cliente.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'nuovi-lead', stato: 'cliente' })).total, 0);
+  // Agreement is not a conflict: the matching Stato filter keeps the row.
+  assert.equal(applyCustomerListQuery(rows, parseCustomerListQuery({ vista: 'clienti-attivi', stato: 'cliente' })).total, 1);
 });
 
 test('da-leggere sorts by newest unread first, rows without unread last', () => {
@@ -381,6 +410,39 @@ test('the operation joins, enriches and pages over the module map, writing nothi
   assert.equal(anna.offerValueCents, 120000);
   // No spaceId, no budget read: the AI column stays unavailable, never broken.
   assert.equal(guido.budget.available, false);
+});
+
+test('backlog:5c2f8bc67859: a contact row sums only its own offers, never its company mates\u2019', async () => {
+  // Production 11/11: five offers filed on one company with no contact made
+  // every contact under it read the same 1.080 €. A contact row now counts only
+  // the offers that name it — the scheda's rule (voce 1e89d516cfc3).
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+    { id: 'c2', companyId: 'co1', firstName: 'Bea', lastName: 'Bianchi', email: 'bea@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    orders: [{ id: 'o1', companyId: 'co1' }],
+    opportunities: [
+      { id: 'op-sede', companyId: 'co1', contactId: null, valueCents: 35000, currency: 'EUR', stage: 'qualification' },
+      { id: 'op-ada', companyId: 'co1', contactId: 'c1', valueCents: 1500, currency: 'EUR', stage: 'qualification' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  const bea = page.items.find((item) => item.id === 'c2');
+  assert.equal(ada.offerValueCents, 1500, 'Ada reads her own offer only');
+  assert.equal(ada.offerCurrency, 'EUR');
+  assert.equal(bea.offerValueCents, null, 'Bea has no offer of her own');
+  // The status evidence keeps the wide rule: an order on the company still
+  // makes both contacts customers.
+  assert.equal(ada.status.value, 'cliente');
+  assert.equal(bea.status.value, 'cliente');
 });
 
 test('views, filters and search run on the same page the server returns', async () => {

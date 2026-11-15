@@ -1,0 +1,206 @@
+{
+  "stateVersion": 2,
+  "module": "teammate-squad",
+  "revision": 1,
+  "fingerprint": "396024ca603948092a5c794dfa99a7536d07dfbbfc00f65a6f26ae1841ff71a2",
+  "manifest": {
+    "manifestVersion": 1,
+    "revision": 1,
+    "name": "teammate-squad",
+    "description": "One agent squad of one space (backlog:0d2d8f2e): a named team with an objective and a metric, member agents with roles, phases with an approval mode, sources with a time, outputs and a monthly spending cap. Created from a template or from a free-text brief; every row is managed. (backlog:0d2d8f2e)",
+    "table": "teammate_squads",
+    "fields": [
+      {
+        "name": "sourceKey",
+        "type": "string",
+        "required": false,
+        "unique": true,
+        "column": "source_key",
+        "writable": "managed"
+      },
+      {
+        "name": "spaceId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "space_id",
+        "writable": "managed"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "name",
+        "writable": "managed"
+      },
+      {
+        "name": "objective",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "objective",
+        "writable": "managed"
+      },
+      {
+        "name": "metricName",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "metric_name",
+        "writable": "managed"
+      },
+      {
+        "name": "metricTarget",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "metric_target",
+        "writable": "managed"
+      },
+      {
+        "name": "metricUnit",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "metric_unit",
+        "writable": "managed"
+      },
+      {
+        "name": "membersJson",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "members_json",
+        "writable": "managed"
+      },
+      {
+        "name": "phasesJson",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "phases_json",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcesJson",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "sources_json",
+        "writable": "managed"
+      },
+      {
+        "name": "outputsJson",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "outputs_json",
+        "writable": "managed"
+      },
+      {
+        "name": "spendingCapCents",
+        "type": "integer",
+        "required": false,
+        "unique": false,
+        "column": "spending_cap_cents",
+        "writable": "managed"
+      },
+      {
+        "name": "templateSlug",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "template_slug",
+        "writable": "managed"
+      },
+      {
+        "name": "brief",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "brief",
+        "writable": "managed"
+      },
+      {
+        "name": "status",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "status",
+        "writable": "managed",
+        "default": "active",
+        "values": [
+          "active",
+          "paused"
+        ]
+      },
+      {
+        "name": "decidedAt",
+        "type": "timestamp",
+        "required": false,
+        "unique": false,
+        "column": "decided_at",
+        "writable": "managed"
+      },
+      {
+        "name": "actorType",
+        "type": "enum",
+        "required": false,
+        "unique": false,
+        "column": "actor_type",
+        "writable": "managed",
+        "values": [
+          "user",
+          "agent",
+          "system"
+        ]
+      },
+      {
+        "name": "actorId",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "actor_id",
+        "writable": "managed"
+      },
+      {
+        "name": "sourcePackage",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "index": true,
+        "column": "source_package",
+        "writable": "managed"
+      },
+      {
+        "name": "sourceAction",
+        "type": "string",
+        "required": false,
+        "unique": false,
+        "column": "source_action",
+        "writable": "managed"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "name": "create_teammate_squads",
+      "checksum": "8e828eae6b8e0d412f4ee0ad92d4a84309a85a73d5a4679c6d18217d93ee3617",
+      "sql": "CREATE TABLE IF NOT EXISTS teammate_squads (\n  id TEXT PRIMARY KEY,\n  source_key TEXT UNIQUE,\n  space_id TEXT,\n  name TEXT,\n  objective TEXT,\n  metric_name TEXT,\n  metric_target INTEGER,\n  metric_unit TEXT,\n  members_json TEXT,\n  phases_json TEXT,\n  sources_json TEXT,\n  outputs_json TEXT,\n  spending_cap_cents INTEGER,\n  template_slug TEXT,\n  brief TEXT,\n  status TEXT CHECK(status IN ('active', 'paused')),\n  decided_at TEXT,\n  actor_type TEXT CHECK(actor_type IN ('user', 'agent', 'system')),\n  actor_id TEXT,\n  source_package TEXT,\n  source_action TEXT,\n  created_at TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n) STRICT;\nCREATE INDEX IF NOT EXISTS teammate_squads_space_id ON teammate_squads(space_id);\nCREATE INDEX IF NOT EXISTS teammate_squads_source_package ON teammate_squads(source_package);\n"
+    }
+  ],
+  "postgres": {
+    "bootstrap": {
+      "name": "pg_bootstrap_teammate_squads",
+      "checksum": "eea393d4a09890f412ec2729f30af0967003c632da392b4835096181c1c1f093",
+      "sql": "CREATE SCHEMA IF NOT EXISTS \"accordo\";\n\nCREATE TABLE \"accordo\".\"teammate_squads\" (\n  \"id\" TEXT PRIMARY KEY,\n  \"source_key\" TEXT UNIQUE,\n  \"space_id\" TEXT,\n  \"name\" TEXT,\n  \"objective\" TEXT,\n  \"metric_name\" TEXT,\n  \"metric_target\" BIGINT,\n  \"metric_unit\" TEXT,\n  \"members_json\" TEXT,\n  \"phases_json\" TEXT,\n  \"sources_json\" TEXT,\n  \"outputs_json\" TEXT,\n  \"spending_cap_cents\" BIGINT,\n  \"template_slug\" TEXT,\n  \"brief\" TEXT,\n  \"status\" TEXT CHECK(\"status\" IN ('active', 'paused')),\n  \"decided_at\" TIMESTAMPTZ,\n  \"actor_type\" TEXT CHECK(\"actor_type\" IN ('user', 'agent', 'system')),\n  \"actor_id\" TEXT,\n  \"source_package\" TEXT,\n  \"source_action\" TEXT,\n  \"created_at\" TIMESTAMPTZ NOT NULL,\n  \"updated_at\" TIMESTAMPTZ NOT NULL\n);\n\nCREATE INDEX \"teammate_squads_space_id\"\n  ON \"accordo\".\"teammate_squads\"(\"space_id\");\n\nCREATE INDEX \"teammate_squads_source_package\"\n  ON \"accordo\".\"teammate_squads\"(\"source_package\");\n",
+      "provenance": {
+        "kind": "v1-state-fingerprint",
+        "fingerprint": "396024ca603948092a5c794dfa99a7536d07dfbbfc00f65a6f26ae1841ff71a2"
+      }
+    },
+    "evolutions": []
+  }
+}

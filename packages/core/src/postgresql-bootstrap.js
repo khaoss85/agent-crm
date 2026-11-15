@@ -770,13 +770,20 @@ export async function bootstrapPostgresqlApplication(options) {
     ? options.leaseTtlMs
     : WRITER_LEASE_TTL_MS;
   const openPool = options.createPool ?? createPostgresqlPool;
-  const controlPool = await openPool({ ...options.control, acquisitionDeadlineMs });
-  const dataPool = await openPool({ ...options.data, acquisitionDeadlineMs });
+  let controlPool;
+  let dataPool;
   let controlStorage;
   let dataStorage;
   /** @type {any} */
   let writerLease = null;
   try {
+    // Pool setup runs inside the failure path on purpose: a createPool
+    // rejection carries the raw driver message (host, user, URL or password),
+    // so it must leave startup wrapped by startupStorageFailure like every
+    // other raw driver error, and a control pool that opened before the data
+    // pool failed is ended below instead of leaking (backlog:a8ca358b84eb).
+    controlPool = await openPool({ ...options.control, acquisitionDeadlineMs });
+    dataPool = await openPool({ ...options.data, acquisitionDeadlineMs });
     const controlAttestation = await attestPostgresqlStartup({
       operations: options.identityVerifier.operations,
       tenantId: options.tenantId,

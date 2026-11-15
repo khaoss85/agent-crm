@@ -1,5 +1,6 @@
 // @ts-check
 
+import { uiBusy } from './admin-ui.js';
 import { formatMinorUnits, humanReadError } from './admin-core.js';
 import { renderDeliveryChangeAcceptance } from './admin-delivery-change.js';
 
@@ -111,7 +112,7 @@ function renderPlanner({ contract, domain, panel, el, client, withBusy, busy }) 
       planButton.disabled = false;
     }
   };
-  planButton.addEventListener('click', () => plan());
+  planButton.addEventListener('click', () => uiBusy(planButton, 'Preparo…', () => plan()));
   form.__plan = plan;
   form.__policy = policySelect;
 }
@@ -200,7 +201,7 @@ function renderPlanResult({ contract, plan, policy, appliedOverrides = [], domai
         previewButton.disabled = false;
       }
     };
-    previewButton.addEventListener('click', preview);
+    previewButton.addEventListener('click', () => uiBusy(previewButton, 'Applico…', preview));
     result.appendChild(previewButton);
     result.appendChild(errorLine);
     result.__preview = preview;
@@ -290,7 +291,7 @@ function renderPlanResult({ contract, plan, policy, appliedOverrides = [], domai
       },
     );
   });
-  handoverButton.addEventListener('click', handover);
+  handoverButton.addEventListener('click', () => uiBusy(handoverButton, 'Creo…', handover));
   handoverPanel.appendChild(handoverButton);
   handoverPanel.appendChild(errorLine);
   result.appendChild(handoverPanel);

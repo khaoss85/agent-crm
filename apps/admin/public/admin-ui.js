@@ -205,12 +205,17 @@ const ICON_PATHS = Object.freeze({
   plus: '<path d="M12 5v14M5 12h14"/>',
   colonne: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/>',
   matita: '<path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/>',
+  importa: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-7M9 14l3-3 3 3"/>',
   // Azioni rapide della scheda (prototype 05 Scheda cliente).
   telefono: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
   'telefono-piu': '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/><path d="M18 3v6M15 6h6"/>',
   messaggio: '<path d="M4 5h16v11H9l-5 4z"/>',
   offerta: '<path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/>',
   appuntamento: '<path d="M5 6h14v13H5zM5 10h14M9 4v4M15 4v4"/>',
+  // Voce 2f2d22f2: the prototype's sixth quick action — «✦ Chiedi all'AI».
+  ai: '<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/>',
+  // backlog:5346ab531538: «Annulla appuntamento» in the calendar popover.
+  cestino: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
 });
 
 export const UI_ICONS = Object.freeze(Object.keys(ICON_PATHS));
@@ -276,16 +281,54 @@ export function uiButton(doc, options = {}) {
   return node;
 }
 
+/** The tones a channel state reads in, on every screen (backlog:8618ad3f72db). */
+export const UI_CHANNEL_STATE_TONES = Object.freeze(['ok', 'warn', 'muted', 'data', 'human']);
+
+/**
+ * The state of one channel connection — «Collegato», «Da collegare»,
+ * «Da completare», «Importazione»… — as ONE component on every screen that
+ * lists channels: Profilo «I tuoi collegamenti», Stato sync > Canali and
+ * Personalizzazione > Connettori (backlog:8618ad3f72db: three places, three
+ * styles). `extra` keeps a screen's own hook class, never its look.
+ * @param {any} doc
+ * @param {{ text: string, tone?: string, extra?: string }} options
+ */
+export function uiChannelState(doc, { text, tone = 'muted', extra = '' }) {
+  const node = doc.createElement('span');
+  const known = UI_CHANNEL_STATE_TONES.includes(tone) ? tone : 'muted';
+  node.setAttribute('class', `ui-channel-state ui-channel-state-${known}${extra ? ` ${extra}` : ''}`);
+  node.textContent = String(text);
+  return node;
+}
+
+/**
+ * The «Collega» action of a channel, the same green small button on every
+ * screen (backlog:8618ad3f72db: an underlined pill on Stato sync). A link
+ * when it leads somewhere (`href`), a button otherwise.
+ * @param {any} doc
+ * @param {{ href?: string | null, action?: string, extra?: string, label?: string }} [options]
+ */
+export function uiConnect(doc, { href = null, action = 'collega', extra = '', label = 'Collega' } = {}) {
+  const node = doc.createElement(href !== null ? 'a' : 'button');
+  node.setAttribute('class', `ui-btn ui-btn-cta ui-btn-small ui-connect${extra ? ` ${extra}` : ''}`);
+  if (href !== null) node.setAttribute('href', href);
+  else node.setAttribute('type', 'button');
+  node.setAttribute('data-action', action);
+  node.textContent = label;
+  return node;
+}
+
 /**
  * One voice of an "add" menu, the prototype's single pattern for every
  * «+ Nuovo …» / «Aggiungi …» menu (cliente, modulo, sequenza, appuntamento,
  * offerta, persona, spazio, prodotto): a 28 px tile, a bold title and one
  * muted line under it. `kind` picks the tile: `ai` is the violet ✦, `manual`
- * the pencil. Built without `el` normalization so a menu voice never picks
+ * the pencil — or `icon`, when the voice is not a hand-filled form (the
+ * file import, backlog:4968615de0a4). Built without `el` normalization so a menu voice never picks
  * up a chip or button class (design pass 7: every menu read in monospace).
  *
  * @param {any} doc
- * @param {{ kind: 'ai' | 'manual', title: string, line: string, attrs?: Record<string, unknown> }} options
+ * @param {{ kind: 'ai' | 'manual', title: string, line: string, icon?: string, attrs?: Record<string, unknown> }} options
  */
 export function uiAddOption(doc, options) {
   const node = doc.createElement('button');
@@ -299,7 +342,7 @@ export function uiAddOption(doc, options) {
   tile.setAttribute('class', 'ui-add-tile');
   tile.setAttribute('aria-hidden', 'true');
   if (options.kind === 'ai') tile.textContent = '\u2726';
-  else tile.appendChild(uiIcon(doc, 'matita'));
+  else tile.appendChild(uiIcon(doc, typeof options.icon === 'string' && options.icon !== '' ? options.icon : 'matita'));
   node.appendChild(tile);
   const words = doc.createElement('span');
   words.setAttribute('class', 'ui-add-words');
@@ -625,6 +668,8 @@ export function createToastController(doc, node, clock = {}) {
   let pointerHeld = false;
   let focusHeld = false;
   let deadline = 0;
+  /** The screen that raised the toast on show, when it says one (backlog:3d811389bb4c). */
+  let scope = null;
   const held = () => pointerHeld || focusHeld;
   const hide = () => {
     if (timer !== null) clearTimer(timer);
@@ -657,6 +702,7 @@ export function createToastController(doc, node, clock = {}) {
      * @param {{ action?: { label: string, run: () => void } | null, duration?: number }} [options]
      */
     show(message, error = false, options = {}) {
+      scope = typeof options?.scope === 'string' && options.scope !== '' ? options.scope : null;
       paintToast(doc, node, message, { error, action: options?.action ?? null, onDone: hide });
       node.classList.remove('hidden');
       const duration = Number.isFinite(options?.duration) ? Number(options.duration) : (options?.action ? 10000 : 3200);
@@ -664,6 +710,14 @@ export function createToastController(doc, node, clock = {}) {
       arm(duration);
     },
     hide,
+    /**
+     * Close the toast when it belongs to `owner` — a screen's own message
+     * («Spostata in … · Annulla») leaves with the screen. Any other toast stays.
+     * @param {string} owner
+     */
+    hideScope(owner) {
+      if (scope !== null && scope === owner && !node.classList.contains('hidden')) hide();
+    },
   };
 }
 
@@ -709,3 +763,86 @@ export function uiSecretField(doc, options = {}) {
   }
   return wrap;
 }
+
+/**
+ * Backlog cta-loading (Dan 11/11: «quando clicco … non c'è un loader sul
+ * CTA che fa capire che la sta salvando»): the one way a write button shows
+ * it is working. While `work` runs the button is disabled, marked
+ * aria-busy and reads `label` («Salvo…», «Invio…»). When it settles —
+ * success or error — the button gets back its own content (icons too) and
+ * its previous disabled state; a view that closes or re-renders simply
+ * drops it. A second click while busy runs nothing, so a double tap is one
+ * write. Errors are not caught: the caller's own try/catch keeps showing
+ * its message next to the command. A `work` that must leave the button off
+ * (an uncertain create that must not be blindly retried) returns
+ * UI_BUSY_LOCKED.
+ *
+ * @template T
+ * @param {any} button
+ * @param {string} label
+ * @param {() => Promise<T> | T} work
+ * @returns {Promise<T | undefined>}
+ */
+export async function uiBusy(button, label, work) {
+  if (!button) return work();
+  if (button.getAttribute('aria-busy') === 'true') return undefined;
+  const release = uiHold(button, label);
+  let result;
+  try {
+    result = await work();
+    return result;
+  } finally {
+    release(result === UI_BUSY_LOCKED);
+  }
+}
+
+/**
+ * The same waiting state for a write that starts mid-handler (after its
+ * own checks): returns the function that gives the button back — its own
+ * content, icons too, and its previous disabled state; `keepOff` leaves
+ * it off. A label the work wrote itself stays.
+ *
+ * @param {any} button
+ * @param {string} label
+ * @returns {(keepOff?: boolean) => void}
+ */
+export function uiHold(button, label) {
+  const wasDisabled = button.disabled === true;
+  const ownText = button.textContent;
+  const ownNodes = Array.from(button.childNodes ?? []);
+  const hadElements = ownNodes.some((node) => node && node.nodeType !== 3 && typeof node.tagName === 'string');
+  uiMarkBusy(button, label);
+  return (keepOff = false) => {
+    button.removeAttribute('aria-busy');
+    // A label the work wrote itself stays, on text and icon buttons alike.
+    if (button.textContent === label) {
+      if (hadElements) {
+        button.textContent = '';
+        for (const node of ownNodes) button.appendChild(node);
+      } else {
+        button.textContent = ownText;
+      }
+    }
+    button.disabled = wasDisabled || keepOff === true;
+    if (!button.disabled) button.removeAttribute('disabled');
+  };
+}
+
+/**
+ * The busy look alone, for views that re-render while a write is in
+ * flight and rebuild the button from their own state (the button uiBusy
+ * would restore no longer exists): off, aria-busy, «Salvo…».
+ *
+ * @param {any} button
+ * @param {string} label
+ */
+export function uiMarkBusy(button, label) {
+  button.disabled = true;
+  button.setAttribute('disabled', 'disabled');
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = label;
+  return button;
+}
+
+/** What a uiBusy `work` returns to keep its button off once it settles. */
+export const UI_BUSY_LOCKED = Symbol('ui-busy-locked');

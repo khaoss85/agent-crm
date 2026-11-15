@@ -33,6 +33,7 @@ const INPUT_TYPES = new Set(['string', 'timestamp', 'enum', 'integer', 'boolean'
  *   fromStates?: string[],
  *   stateField?: string,
  *   confirm?: boolean,
+ *   traceRedact?: { input?: (input: any) => unknown, output?: (result: any) => unknown },
  *   execute: (ctx: any) => unknown | Promise<unknown>
  * }} ActionDefinition
  */
@@ -141,6 +142,19 @@ export function validateActionDefinition(definition, deps) {
   }
   if (definition.fromStates !== undefined && !Array.isArray(definition.fromStates)) {
     throw new ValidationError(`${label}: fromStates must be an array`);
+  }
+  // Trace redaction (bearer-shaped input/result an action must never persist
+  // in workflow_runs/trace_spans): checked at registration, not at the first
+  // request, so a process boots correctly configured or does not boot.
+  if (definition.traceRedact !== undefined) {
+    if (!definition.traceRedact || typeof definition.traceRedact !== 'object') {
+      throw new ValidationError(`${label}: traceRedact must be an object when present`);
+    }
+    for (const kind of ['input', 'output']) {
+      if (definition.traceRedact[kind] !== undefined && typeof definition.traceRedact[kind] !== 'function') {
+        throw new ValidationError(`${label}: traceRedact.${kind} must be a function when present`);
+      }
+    }
   }
   // Optional prepare phase (ADR-015): runs before the write transaction for
   // external-style side effects. Additive to actionContract 1.

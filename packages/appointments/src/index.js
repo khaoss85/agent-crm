@@ -22,6 +22,7 @@ import {
   bookAppointment,
   bookFromLink,
   bounds,
+  cancelAppointment,
   confirmBooking,
   createAppointmentBookCapability,
   createAppointmentScheduleCapability,
@@ -108,6 +109,7 @@ export {
   bookAppointment,
   bookFromLink,
   bounds,
+  cancelAppointment,
   confirmBooking,
   dispatchDueReminders,
   findOverlap,
@@ -135,8 +137,16 @@ export {
  *   channels?: { capabilities?: Array<any> },
  *   spacePermissions?: { capabilities?: Array<any> },
  *   llm?: { capabilities?: Array<any> },
+ *   calendarSync?: { pushAppointment?: Function, listOwnerBlocks?: Function },
  *   config?: Record<string, string>
  * }} [options]
+ *   `calendarSync` is the same handover for the owner-block feed
+ *   (backlog:af190faf): the deployment's handle whose `listOwnerBlocks`
+ *   answers the owner commitments with no guest for one member and window.
+ *   It is the ONLY source of owner holds on every path — team-week, suggest,
+ *   propose, confirm, link, reschedule — and no caller/request input carries
+ *   blocks. Absent, every path keeps main behaviour (no blocks); a wired
+ *   handle that cannot be read fails the call closed.
  *   `work` is the composed work package definition — the same object the
  *   composition lists beside this package. The appointments package takes the
  *   created `follow-up@1` capability object from it, so the reminder is always
@@ -171,11 +181,12 @@ export function createAppointmentsPackage(options = {}) {
   const flowFor = (runtime) => {
     let composed = composedByRuntime.get(runtime);
     if (!composed) {
-      const schedule = createAppointmentScheduleCapability({ moduleNames: options.config });
+      const schedule = createAppointmentScheduleCapability({ moduleNames: options.config, calendarSync: options.calendarSync });
       const book = createAppointmentBookCapability({
         moduleNames: options.config,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
+        calendarSync: options.calendarSync,
       });
       composed = {
         schedule: schedule.create({ modules: runtime.modules }),
@@ -212,7 +223,17 @@ export function createAppointmentsPackage(options = {}) {
     // a new slot through `app.rescheduleAppointmentBooking` (409 on overlap,
     // terminal states and stranded reminders). Additive: reads, capabilities
     // and the booking contract are untouched.
-    version: 3,
+    // 4 (backlog:5346ab531538): cancel-appointment cancels one booking with
+    // a reason through `app.cancelAppointmentBooking` — the lifecycle's own
+    // `-> cancelled` advance, idempotent on an already cancelled row.
+    // Additive: the transition table and the booking contract are untouched.
+    // 5 (backlog:af190faf): owner holds with no guest from the composed
+    // calendar-sync handle (`listOwnerBlocks`) hold on team-week, suggest,
+    // propose, confirm, link and reschedule — shown as Occupato (`busy`,
+    // required on every member group) and never offered as free. Server
+    // seam only: no caller/request input carries blocks, so nothing to
+    // forge and nothing to omit. Old callers unchanged.
+    version: 5,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -236,8 +257,9 @@ export function createAppointmentsPackage(options = {}) {
         templateSendProvider: offeredTemplateSend,
         spacePermissions: options.spacePermissions,
         llm: options.llm,
+        calendarSync: options.calendarSync,
       }),
-      createAppointmentScheduleCapability({ moduleNames: options.config }),
+      createAppointmentScheduleCapability({ moduleNames: options.config, calendarSync: options.calendarSync }),
     ],
     actions: [],
 
@@ -257,7 +279,7 @@ export function createAppointmentsPackage(options = {}) {
         label: 'Read team week',
         appMethod: 'readAppointmentTeamWeek',
         description:
-          'The team week for the backoffice calendar (BO-F3-01): every appointment overlapping the window for each named team member, grouped per person. Returns an honest empty week when nothing is held.',
+          'The team week for the backoffice calendar (BO-F3-01): every appointment overlapping the window for each named team member, grouped per person, plus the owner commitments with no guest as «Occupato» (`busy`, required on every group, from the composed calendar-sync handle — never from the caller). Returns an honest empty week when nothing is held.',
         input: [
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
@@ -273,7 +295,7 @@ export function createAppointmentsPackage(options = {}) {
         label: 'Suggest appointment slots',
         appMethod: 'suggestAppointmentSlots',
         description:
-          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking overlaps. Read-only: no row is written, no slot invented. With nowIso named, a step already begun is cut too: a proposal must be bookable.',
+          'Free slots for the backoffice calendar (BO-F3-02): the named window cut into steps minus every step a held booking or an owner commitment with no guest overlaps (owner holds from the composed calendar-sync handle — never from the caller). Read-only: no row is written, no slot invented. With nowIso named, a step already begun is cut too: a proposal must be bookable.',
         input: [
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
@@ -346,6 +368,22 @@ export function createAppointmentsPackage(options = {}) {
         ],
         create(runtime) {
           return (input, actor) => flowFor(runtime).bookFor(actor).rescheduleAppointment(input);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'cancel-appointment',
+        label: 'Cancel appointment',
+        appMethod: 'cancelAppointmentBooking',
+        description:
+          'Cancel one booking with a reason (backlog:5346ab531538): the row named by exactly one of id/sourceKey advances to cancelled, frees its slot and stays in the customer history — refused 409 when it is done or no-show, idempotent when it is already cancelled.',
+        input: [
+          { name: 'id', type: 'string', required: false, hint: 'The booking row id; exactly one of id/sourceKey.' },
+          { name: 'sourceKey', type: 'string', required: false, hint: 'The booking source key; exactly one of id/sourceKey.' },
+          { name: 'reason', type: 'string', required: true, hint: 'Why the booking is cancelled, at most 300 characters.' },
+        ],
+        create(runtime) {
+          return (input, actor) => flowFor(runtime).bookFor(actor).cancelAppointment(input);
         },
       },
     ],

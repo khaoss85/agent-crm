@@ -1,0 +1,27 @@
+{
+  "manifestVersion": 1,
+  "name": "teammate-squad",
+  "description": "One agent squad of one space (backlog:0d2d8f2e): a named team with an objective and a metric, member agents with roles, phases with an approval mode, sources with a time, outputs and a monthly spending cap. Created from a template or from a free-text brief; every row is managed. (backlog:0d2d8f2e)",
+  "fields": [
+    { "name": "sourceKey", "type": "string", "unique": true, "writable": "managed" },
+    { "name": "spaceId", "type": "string", "index": true, "writable": "managed" },
+    { "name": "name", "type": "string", "writable": "managed" },
+    { "name": "objective", "type": "string", "writable": "managed" },
+    { "name": "metricName", "type": "string", "writable": "managed" },
+    { "name": "metricTarget", "type": "integer", "writable": "managed" },
+    { "name": "metricUnit", "type": "string", "writable": "managed" },
+    { "name": "membersJson", "type": "string", "writable": "managed" },
+    { "name": "phasesJson", "type": "string", "writable": "managed" },
+    { "name": "sourcesJson", "type": "string", "writable": "managed", "required": false },
+    { "name": "outputsJson", "type": "string", "writable": "managed", "required": false },
+    { "name": "spendingCapCents", "type": "integer", "writable": "managed", "required": false },
+    { "name": "templateSlug", "type": "string", "writable": "managed", "required": false },
+    { "name": "brief", "type": "string", "writable": "managed", "required": false },
+    { "name": "status", "type": "enum", "values": ["active", "paused"], "default": "active", "writable": "managed" },
+    { "name": "decidedAt", "type": "timestamp", "writable": "managed" },
+    { "name": "actorType", "type": "enum", "values": ["user", "agent", "system"], "writable": "managed" },
+    { "name": "actorId", "type": "string", "writable": "managed" },
+    { "name": "sourcePackage", "type": "string", "index": true, "writable": "managed" },
+    { "name": "sourceAction", "type": "string", "writable": "managed" }
+  ]
+}

@@ -21,6 +21,7 @@ import {
   isSpaceMount,
   isTodayInRome,
   loadOggiData,
+  OGGI_READ_LIMIT,
   countConnectedNine,
   googleNineChannels,
   missingLeadChannels,
@@ -473,6 +474,59 @@ test('recap follows the prototype sentence with real counts', () => {
   assert.ok(!recap.includes('AI') && !recap.includes('artificiale'), 'deterministic, never generated insight');
 });
 
+test('57e3d1685e58: past appointments leave «Ti resta» and offer no «Prepara»', () => {
+  const past = { ...APPT_TODAY, id: 'appt-past', startsAt: '2026-10-19T06:00:00.000Z' }; // 08:00 in Rome, behind OGGI_NOW
+  assert.equal(
+    buildTodayRecap({ appointments: [past, APPT_TODAY], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  assert.equal(
+    buildTodayRecap({ appointments: [past], openTasks: [], now: OGGI_NOW }),
+    'Niente in sospeso e nessun appuntamento per oggi.',
+  );
+  assert.deepEqual(
+    buildAdvisorActions({ tasks: [], appointments: [past], now: OGGI_NOW }).actions,
+    [],
+    'no prep for a slot already behind us',
+  );
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [past, APPT_TODAY], now: OGGI_NOW }).actions;
+  assert.equal(prep?.record.id, 'appt-1', 'the prep reads the call still ahead');
+  const agenda = buildTodayAgenda([past, APPT_TODAY], OGGI_NOW);
+  assert.equal(agenda.length, 2, 'the agenda still lists the past slot, grey');
+  assert.equal(agenda[0].past, true);
+});
+
+test('57e3d1685e58: the chi line shows the contact address, never the user one', () => {
+  const userMail = 'operatore@esempio.it';
+  const contactMail = 'ospite@esempio.it';
+  const roster = [{ subject: 'op-1', displayName: null, email: userMail }];
+  const synced = {
+    ...APPT_TODAY, id: 'appt-sync', teamMemberId: 'op-1',
+    subjectLabel: contactMail, notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([synced], OGGI_NOW, {}, roster)[0].who,
+    contactMail,
+    'the contact email, never the operator one',
+  );
+  const noted = { ...synced, id: 'appt-notes', subjectLabel: 'Giulia Romano', notes: 'Vuole la scheda.' };
+  assert.equal(
+    buildTodayAgenda([noted], OGGI_NOW, {}, roster)[0].who,
+    'Vuole la scheda.',
+    'no contact address: the notes cue, still never the user email',
+  );
+  const bare = { ...synced, id: 'appt-bare', subjectLabel: 'Giulia Romano' };
+  delete bare.notes;
+  assert.equal(buildTodayAgenda([bare], OGGI_NOW, {}, roster)[0].who, null);
+  const named = buildTodayAgenda(
+    [{ ...APPT_TODAY, teamMemberId: 'op-1' }],
+    OGGI_NOW,
+    {},
+    [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
+  );
+  assert.equal(named[0].who, 'Marco Ferri', 'a real team name still reads first');
+});
+
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
   const agenda = buildTodayAgenda([APPT_TODAY, APPT_TOMORROW, { ...APPT_TODAY, id: 'appt-3', status: 'cancelled' }], OGGI_NOW);
   assert.equal(agenda.length, 1, 'only today booked/confirmed');
@@ -918,6 +972,351 @@ test('channel invite counts connected of nine, names exactly the missing ones, a
   assert.ok(!full.textContent.includes('collegati'), 'no invite once every counted channel connects');
 });
 
+test('Oggi reads connections per space: space A never hides the space B invite (backlog:803d127c4458)', async () => {
+  const rows = [
+    { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' },
+    { channel: 'email', status: 'active', spaceId: 'spazio-b' },
+  ];
+  const seen = [];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) {
+        // Like the server: only the asked space's rows answer.
+        return { items: rows.filter((row) => path.includes(`filter.spaceId=${row.spaceId}`)) };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW, { spaceId: 'spazio-b' });
+  const connectionRead = seen.find((path) => path.startsWith('/api/modules/channel-connection/records'));
+  assert.ok(connectionRead?.includes('filter.spaceId=spazio-b'), 'the connections read is scoped to the space');
+  assert.equal(data.channelsAvailable, true, 'the scoped read counts as available');
+  assert.equal(data.channelsPartial, false, 'two rows are no cap');
+  const missing = missingLeadChannels(data.connections, data.profile);
+  assert.ok(missing.some((entry) => entry.channel === 'whatsapp'), "space A's WhatsApp still invites in space B");
+  assert.ok(!missing.some((entry) => entry.channel === 'email'), "space B's own Email stays out of the invite");
+});
+
+test('Oggi without a space reads no connections: no other space leaks in (backlog:803d127c4458)', async () => {
+  const seen = [];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW);
+  assert.ok(!seen.some((path) => path.startsWith('/api/modules/channel-connection/records')), 'no unscoped connections read');
+  assert.equal(data.channelsAvailable, false, 'the channels section stays unavailable');
+  assert.deepEqual(data.connections, [], 'no rows travel without a space');
+});
+
+test('Oggi says partial past 100 connections instead of cutting silently (backlog:803d127c4458)', async () => {
+  const over = Array.from(
+    { length: OGGI_READ_LIMIT + 1 },
+    (_, index) => ({ channel: 'whatsapp', status: 'active', spaceId: 'spazio-b', connectionKey: `k-${index}` }),
+  );
+  const exact = over.slice(0, OGGI_READ_LIMIT);
+  const clientFor = (items) => ({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  });
+  const capped = await loadOggiData(clientFor(over), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(capped.connections.length, OGGI_READ_LIMIT, 'the page stays bounded');
+  assert.equal(capped.channelsPartial, true, 'one row past the page is partial');
+  const full = await loadOggiData(clientFor(exact), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(full.channelsPartial, false, 'exactly the page is not partial');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: missingLeadChannels(capped.connections),
+      connections: capped.connections,
+      channelsPartial: capped.channelsPartial,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(
+    mount.textContent.includes(`Mostro i primi ${OGGI_READ_LIMIT} collegamenti (elenco parziale).`),
+    'the cap is disclosed on screen',
+  );
+});
+
+test('Oggi view scopes the connections read to the live space (backlog:803d127c4458)', async () => {
+  const rows = [
+    { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' },
+    { channel: 'email', status: 'active', spaceId: 'spazio-b' },
+  ];
+  const seen = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) {
+        // Like the server: only the asked space's rows answer.
+        return { items: rows.filter((row) => path.includes(`filter.spaceId=${row.spaceId}`)) };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, navigate: () => {}, spaceId: () => 'spazio-b' });
+  await view.render({ spaceName: 'Spazio B', links: [], now: OGGI_NOW });
+  await settle(() => mount.textContent.includes('collegati'));
+  const connectionRead = seen.find((path) => path.startsWith('/api/modules/channel-connection/records'));
+  assert.ok(connectionRead?.includes('filter.spaceId=spazio-b'), 'the view reads its own space');
+  assert.ok(mount.textContent.includes('Collega WhatsApp'), "space A's WhatsApp still invites in space B");
+});
+
+test('Oggi never reads channel-connection without the space filter (backlog:803d127c4458)', async () => {
+  const legacy = { channel: 'email', status: 'active' };
+  const other = { channel: 'whatsapp', status: 'active', spaceId: 'spazio-a' };
+  const seen = [];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      seen.push(path);
+      if (path === '/api/schema') return { domains: { channels: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) {
+        if (!path.includes('filter.spaceId=spazio-b')) return { items: [legacy, other] };
+        return { items: [] };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW, { spaceId: 'spazio-b' });
+  const connectionReads = seen.filter((path) => path.startsWith('/api/modules/channel-connection/records'));
+  assert.ok(connectionReads.length > 0, 'Oggi reads the connections');
+  assert.ok(
+    connectionReads.every((path) => path.includes('filter.spaceId=spazio-b')),
+    'no request without spaceId leaves Oggi, even with legacy rows on the server',
+  );
+  assert.deepEqual(data.connections, [], 'the scoped read decides alone, no legacy merge');
+});
+
+test('Oggi with unreadable channels still links Connettori (backlog:803d127c4458)', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      availability: { work: true, appointments: true, channels: false },
+    },
+  });
+  assert.ok(mount.textContent.includes('I canali non sono attivi in questo spazio.'), 'the honest line stays');
+  assert.ok(mount.textContent.includes('Collega un canale'), 'the way to connect one stays');
+  const anchor = mount.findAll('a').find((node) => node.textContent.includes('Collega un canale'));
+  assert.ok(anchor, 'the link renders');
+  assert.equal(anchor.getAttribute('href'), '#/connettori', 'the link lands on Connettori');
+});
+
+test('Oggi without a readable space never reports the channels as inactive (backlog:0c0186a242af)', async () => {
+  const clientFor = ({ refuse = false } = {}) => {
+    const seen = [];
+    return {
+      seen,
+      request: async (path, options = {}) => {
+        enforceAdminWriteGate(path, options);
+        seen.push(path);
+        if (path === '/api/schema') return { domains: { channels: {} } };
+        if (path === '/api/profile') return null;
+        if (path === '/api/spine/memberships') return { items: [] };
+        if (path.startsWith('/api/modules/channel-connection/records')) {
+          if (refuse) {
+            const error = new Error('Request failed (403)');
+            error.status = 403;
+            throw error;
+          }
+          return { items: [] };
+        }
+        throw new Error(`unexpected read: ${path}`);
+      },
+    };
+  };
+  // No space id, like a caller that does not know the active space yet: the
+  // scoped read never leaves and the section stays unknown, not inactive.
+  const spaceless = clientFor();
+  const noSpace = await loadOggiData(spaceless, OGGI_NOW);
+  assert.equal(noSpace.channelsAvailable, false, 'no read, no composed flag');
+  assert.equal(noSpace.channelsUnknown, true, 'unknown, never inactive');
+  assert.ok(
+    spaceless.seen.every((path) => !path.startsWith('/api/modules/channel-connection/records')),
+    'no request without spaceId leaves Oggi',
+  );
+  // Space given but the scoped read refused: same unknown state.
+  const refused = clientFor({ refuse: true });
+  const denied = await loadOggiData(refused, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(denied.channelsAvailable, false, 'refused read, no composed flag');
+  assert.equal(denied.channelsUnknown, true, 'unknown, never inactive');
+  // Space given and the read answered: composed, not unknown — even empty.
+  const answered = clientFor();
+  const read = await loadOggiData(answered, OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(read.channelsAvailable, true, 'the scoped read decides');
+  assert.equal(read.channelsUnknown, false, 'a read answer is not unknown');
+  // The render names the unknown state and never the inactive one, keeping
+  // the way to connect one.
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      channelsUnknown: true,
+      availability: { work: true, appointments: true, channels: false },
+    },
+  });
+  assert.ok(!mount.textContent.includes('non sono attivi'), 'never the inactive line for an unread space');
+  assert.ok(mount.textContent.includes('I canali non si sono potuti leggere in questo spazio.'), 'the unknown line shows');
+  const anchor = mount.findAll('a').find((node) => node.textContent.includes('Collega un canale'));
+  assert.ok(anchor, 'the link renders');
+  assert.equal(anchor.getAttribute('href'), '#/connettori', 'the link lands on Connettori');
+});
+
+test('Oggi says partial past 100 follow-up and appointments, never cuts silently (backlog:803d127c4458)', async () => {
+  const over = (base, prefix) => Array.from(
+    { length: OGGI_READ_LIMIT + 1 },
+    (_, index) => ({ ...base, id: `${prefix}-${index}` }),
+  );
+  const clientFor = (tasks, appointments) => ({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/work-task/records')) return { items: tasks };
+      if (path.startsWith('/api/modules/appointment/records')) return { items: appointments };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  });
+  const capped = await loadOggiData(
+    clientFor(over(TASK_OPEN, 'task'), over(APPT_TODAY, 'appt')),
+    OGGI_NOW,
+  );
+  assert.equal(capped.tasks.length, OGGI_READ_LIMIT, 'the page stays bounded');
+  assert.equal(capped.tasksPartial, true, 'one follow-up past the page is partial');
+  assert.equal(capped.appointmentsPartial, true, 'one appointment past the page is partial');
+  const full = await loadOggiData(
+    clientFor(over(TASK_OPEN, 'task').slice(0, OGGI_READ_LIMIT), over(APPT_TODAY, 'appt').slice(0, OGGI_READ_LIMIT)),
+    OGGI_NOW,
+  );
+  assert.equal(full.tasksPartial, false, 'exactly the page is not partial');
+  assert.equal(full.appointmentsPartial, false, 'exactly the page is not partial');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x',
+      actions: buildAdvisorActions({ tasks: capped.tasks, appointments: capped.appointments, now: OGGI_NOW }).actions,
+      triage: {},
+      capped: false,
+      agenda: buildTodayAgenda(capped.appointments, OGGI_NOW),
+      brief: null,
+      missing: [],
+      connections: [],
+      tasksPartial: capped.tasksPartial,
+      appointmentsPartial: capped.appointmentsPartial,
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(
+    mount.textContent.includes(`L'elenco delle cose da fare è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the follow-up cut is disclosed',
+  );
+  assert.ok(
+    mount.textContent.includes(`L'elenco degli appuntamenti è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the agenda cut is disclosed',
+  );
+});
+
+test('Oggi says partial past 100 inbox messages (backlog:803d127c4458)', async () => {
+  const messages = Array.from(
+    { length: OGGI_READ_LIMIT + 1 },
+    (_, index) => ({
+      ...MESSAGE_IN,
+      id: `msg-${index}`,
+      conversationId: `c-${index}`,
+      direction: 'inbound',
+      subjectId: 'lead-1',
+      subjectResource: 'lead',
+    }),
+  );
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {} } };
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, OGGI_NOW);
+  assert.equal(data.inboxMessages.length, OGGI_READ_LIMIT, 'the page stays bounded');
+  assert.equal(data.inboxPartial, true, 'one message past the page is partial');
+
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderOggi({
+    doc,
+    mount,
+    spaceName: 'Spazio di prova',
+    links: [],
+    now: OGGI_NOW,
+    home: {
+      recap: 'x', actions: [], triage: {}, agenda: [], brief: null,
+      missing: [],
+      connections: [],
+      inbox: { available: true, partial: data.inboxPartial, total: 0, rows: [] },
+      availability: { work: true, appointments: true, channels: true },
+    },
+  });
+  assert.ok(
+    mount.textContent.includes(`L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`),
+    'the inbox cut is disclosed',
+  );
+});
+
 test('no technical resource-id label reaches the Oggi screen', () => {
   const unlabeledTask = {
     id: 'task-nolabel', status: 'open', title: 'Richiama per il preventivo',
@@ -946,7 +1345,27 @@ test('no technical resource-id label reaches the Oggi screen', () => {
   });
   const text = mount.textContent;
   assert.ok(!text.includes('lead · lead-1'), 'no technical label on screen');
-  assert.ok(text.includes('il cliente'), 'an Italian fallback names the customer');
+  // Backlog 1f846205b9a3: one fallback only — the agenda and the advisor
+  // read «un ospite da confermare», never «il cliente».
+  assert.ok(text.includes('un ospite da confermare'), 'the one fallback names the wait');
+  assert.ok(!text.includes('il cliente'), 'no second fallback on screen');
+});
+
+test('1f846205b9a3: a nameless appointment reads one fallback in every card', () => {
+  const nameless = {
+    id: 'appt-noname', status: 'booked', startsAt: '2026-10-19T08:00:00.000Z',
+    subjectResource: 'lead', subjectId: 'lead-9',
+  };
+  const agenda = buildTodayAgenda([nameless], OGGI_NOW);
+  assert.equal(agenda[0].title, 'un ospite da confermare', 'agenda reads the one fallback');
+  const { actions } = buildAdvisorActions({ tasks: [], appointments: [nameless], now: OGGI_NOW });
+  const prep = actions.find((action) => action?.kind === 'appointment-prep');
+  assert.ok(prep, 'the prep card exists');
+  assert.equal(prep.title, 'Prepara la call con un ospite da confermare', 'prep reads the one fallback');
+  assert.ok(!`${prep.title} ${prep.why} ${prep.record.label}`.includes('il cliente'), 'no second fallback on the prep card');
+  const brief = buildPreCallBrief({ appointment: nameless, now: OGGI_NOW });
+  assert.equal(brief.title, 'un ospite da confermare', 'brief reads the one fallback');
+  assert.ok(!brief.bullets.join(' ').includes('il cliente'), 'no second fallback on the brief card');
 });
 
 test('the greeting is the only h1 of the Oggi screen', () => {
@@ -1230,7 +1649,7 @@ test('Da rispondere: one row per conversation waiting on the team, newest first 
   const inbox = buildInbox({ messages, conversations, now });
   assert.equal(inbox.total, 2, 'the answered and the closed conversations are not waiting');
   assert.deepEqual(inbox.rows.map((row) => row.name), ['Lia Marroni', 'Fio Neri'], 'newest first');
-  assert.equal(inbox.rows[0].mono, 'IG');
+  assert.equal(inbox.rows[0].mono, 'LM', 'backlog:0f78353438c5: the badge is the client initials, never the channel tile');
   assert.equal(inbox.rows[0].when, 'da 30 min · Instagram');
   assert.equal(inbox.rows[1].href, '#/customer-card/contact/p1', 'Rispondi opens the scheda');
   assert.equal(waitedFor('2026-11-03T15:00:00Z', now), 'da ieri');
@@ -1245,7 +1664,7 @@ test('Da rispondere renders its rows, the empty line and the unreadable line', a
     renderOggi({ doc, mount, userName: 'Dan', navigate: (h) => navigated.push(h), home: { actions: [], agenda: [], inbox } });
     return { mount, navigated };
   };
-  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'WA', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
+  const full = draw({ available: true, total: 1, rows: [{ id: 'c1', channel: 'whatsapp', mono: 'FN', name: 'Fio Neri', preview: 'Quanto costa?', when: 'da 3 ore · WhatsApp', href: '#/customer-card/contact/p1' }] });
   assert.ok(full.mount.textContent.includes('Da rispondere'));
   assert.ok(full.mount.textContent.includes('1 in attesa'));
   assert.ok(full.mount.textContent.includes('Fio Neri') && full.mount.textContent.includes('Quanto costa?'));
@@ -1741,6 +2160,72 @@ test('2a075e2d9250 (production fc3fa62): the independent reads start together �
     'each read still runs once');
 });
 
+// Voce 785aeb28bd18: the roster launches with the profile, not after the
+// first wave — the member step settles with the wave (under 1 s on a warm
+// server), and `timings` says where the load time went.
+test('785aeb28bd18: memberships launches beside profile, before any read resolves', async () => {
+  const asked = [];
+  let resolveSchema = null;
+  const schemaGate = new Promise((resolve) => { resolveSchema = resolve; });
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      asked.push(path);
+      if (path === '/api/schema') return schemaGate;
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') return { items: [] };
+      return {};
+    },
+  };
+  const pending = loadOggiData(client, OGGI_NOW);
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
+  assert.ok(asked.includes('/api/profile'), 'the profile read left at once');
+  assert.ok(asked.includes('/api/spine/memberships'),
+    'the roster left with the profile, not after the first wave');
+  assert.ok(!asked.some((path) => path.startsWith('/api/modules/')),
+    'no module read resolves before the schema lands');
+  resolveSchema({ domains: {} });
+  const data = await pending;
+  assert.deepEqual(data.members, [], 'the empty roster travels, fail-soft');
+  assert.equal(typeof data.timings?.members, 'number', 'the member step is measured');
+});
+
+test('785aeb28bd18: on a warm server the member step is under 1 s, and timings name every step', async () => {
+  const members = [{ subject: 'marco', role: 'owner', status: 'active' }];
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { work: {}, appointments: {} } };
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') return { items: members };
+      if (path.startsWith('/api/modules/')) return { items: [] };
+      return {};
+    },
+  }, OGGI_NOW);
+  assert.deepEqual(data.members, members, 'the roster travels with the load');
+  for (const scope of ['schema', 'profile', 'members', 'essentials', 'names', 'total']) {
+    assert.equal(typeof data.timings?.[scope], 'number', `timings names ${scope}`);
+    assert.ok(data.timings[scope] >= 0, `${scope} is a duration`);
+    assert.ok(data.timings[scope] < 1000, `${scope} is under 1 s on a warm server`);
+  }
+});
+
+test('785aeb28bd18: a refused roster stays fail-soft and still measured', async () => {
+  const data = await loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: {} };
+      if (path === '/api/profile') return {};
+      if (path === '/api/spine/memberships') {
+        throw Object.assign(new Error('refused'), { code: 'SPINE_MEMBERSHIP_FORBIDDEN', status: 403 });
+      }
+      return {};
+    },
+  }, OGGI_NOW);
+  assert.deepEqual(data.members, [], 'a refusal is an empty roster, never an error on Oggi');
+  assert.equal(typeof data.timings?.members, 'number', 'even a failed member step is measured');
+});
+
 test('2a075e2d9250: the day paints on the essentials; names and the call recap fill their sections without repainting the rest', async () => {
   const clock = virtualClock();
   const client = slowOggiClient(clock, 2000);
@@ -1947,4 +2432,35 @@ test('7d30fb517785: oggi, ieri and domani hold across the DST change (29/03 and 
   assert.equal(brief.when, 'domani alle 10:00', 'the brief says domani for 26/10');
   assert.ok(brief.bullets[0].startsWith('Appuntamento di domani alle 10:00'), brief.bullets[0]);
   assert.equal(romeDayKeyShift('not a date', 1), null);
+});
+
+// backlog:8763c6f1a9b0 (verifica Mac 10/11 08:43Z su Presti): the agenda and
+// «Prima della prossima call» said Fio Neri while the advisor card said «un
+// ospite da confermare». One name rule now feeds all three: for every way a
+// name can arrive (profile, stored label, both, a placeholder, nothing) the
+// three places say the same name, and the neutral wait only when none exists.
+test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for the same appointment', () => {
+  const linked = { ...APPT_TODAY, subjectResource: 'contact', subjectId: 'fio' };
+  const cases = [
+    { label: 'profile only', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'stored label only', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: {}, want: 'Fio Neri' },
+    { label: 'profile wins over a stale label', appt: { ...linked, subjectLabel: 'Fio' }, names: { 'contact:fio': 'Fio Neri' }, want: 'Fio Neri' },
+    { label: 'placeholder profile, real label', appt: { ...linked, subjectLabel: 'Fio Neri' }, names: { 'contact:fio': 'Unknown' }, want: 'Fio Neri' },
+    { label: 'no name anywhere', appt: { ...linked, subjectLabel: null }, names: { 'contact:fio': 'Unknown Unknown' }, want: null },
+  ];
+  for (const { label, appt, names, want } of cases) {
+    const [prep] = buildAdvisorActions({ tasks: [], appointments: [appt], now: OGGI_NOW, names }).actions;
+    const [row] = buildTodayAgenda([appt], OGGI_NOW, names);
+    const brief = buildPreCallBrief({ appointment: appt, now: OGGI_NOW, names });
+    if (want === null) {
+      assert.equal(prep.title, 'Prepara la call con un ospite da confermare', `${label}: the neutral wait only without a name`);
+      assert.equal(brief.title, 'un ospite da confermare', label);
+      continue;
+    }
+    assert.equal(row.title, want, `${label}: agenda`);
+    assert.equal(brief.title, want, `${label}: Prima della prossima call`);
+    assert.equal(prep.title, `Prepara la call con ${want}`, `${label}: advisor card`);
+    assert.ok(prep.why.includes(`con ${want}.`), `${label}: advisor motive`);
+    assert.ok(!`${prep.title} ${prep.why}`.includes('ospite da confermare'), `${label}: no stand-in beside a known name`);
+  }
 });

@@ -101,6 +101,25 @@ function safeText(value, field, max) {
   return trimmed;
 }
 
+/**
+ * A note body (backlog:82235e46e3e9 seguito, production 12/11: a note
+ * written on two lines with Maiusc+Invio was refused 400): plain text that
+ * may hold line breaks and tabs. Every line break is stored as `\n`; any
+ * other control character, and the Unicode line/paragraph separators, are
+ * still refused.
+ * @param {unknown} value @param {string} field @param {number} max
+ */
+export function safeNoteText(value, field, max) {
+  if (typeof value !== 'string') throw new ValidationError(`${field} is required`, { field });
+  const trimmed = value.replace(/\r\n?/g, '\n').trim();
+  if (trimmed === '') throw new ValidationError(`${field} is required`, { field });
+  if (trimmed.length > max) throw new ValidationError(`${field} must be at most ${max} characters`, { field });
+  if (CONTROL_RE.test(trimmed.replace(/[\n\t]/g, ''))) {
+    throw new ValidationError(`${field} must not contain control characters`, { field });
+  }
+  return trimmed;
+}
+
 /** @param {unknown} value @param {string} field @param {number} max */
 function optionalSafeText(value, field, max) {
   if (value === undefined || value === null || value === '') return null;
@@ -647,7 +666,10 @@ export function postponeDueAt(nowIso) {
  * @param {{activities: any, actor?: unknown}} deps
  * @param {{sourceKey: string|null, kind: string, subject: {resource: string, id: string},
  *   taskId: string|null, body: string|null, occurredAt: string,
- *   source: {package: string, action: string}}} entry
+ *   source: {package: string, action: string}, revisesId?: string, withdrawn?: boolean,
+ *   beforeInsert?: () => Promise<void>}} entry `beforeInsert` runs inside the
+ *   serial section, right before the row is written: a check that must hold
+ *   at write time (a note not withdrawn meanwhile) throws there.
  */
 export async function recordActivity({ activities, actor }, entry) {
   if (!ACTIVITY_KINDS.includes(entry.kind)) {
@@ -659,6 +681,7 @@ export async function recordActivity({ activities, actor }, entry) {
   // sentinel out of the task namespace, whatever task ids look like.
   const taskKey = typeof entry.taskId === 'string' ? `task:${entry.taskId}` : 'task:∅-no-task';
   return withTaskSeq(taskKey, async () => {
+    if (typeof entry.beforeInsert === 'function') await entry.beforeInsert();
     const siblings = await activities.listWhere({ taskId: entry.taskId });
     let seq = 1;
     for (const sibling of siblings) {
@@ -677,6 +700,10 @@ export async function recordActivity({ activities, actor }, entry) {
       sourcePackage: entry.source.package,
       sourceAction: entry.source.action,
       seq,
+      // backlog:82235e46e3e9: a correction or a withdrawal names the note it
+      // supersedes; every other row leaves both empty.
+      ...(typeof entry.revisesId === 'string' ? { revisesId: entry.revisesId } : {}),
+      ...(entry.withdrawn === true ? { withdrawn: true } : {}),
     }, { actor });
   });
 }

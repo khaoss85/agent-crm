@@ -821,3 +821,32 @@ test('the SDK preserves 401, 403 and 200 — and holds no credential of its own'
   assert.deepEqual(client.headers, {});
   assert.equal(Object.isFrozen(client.headers), true, 'a caller cannot mutate them after construction');
 });
+
+test('cb348c9fcaeb: the context names the actor the caller’s writes are signed with', async (t) => {
+  // The scheda offers «Modifica» and «Elimina» on a note only when its
+  // writer (`actorId`, the request actor) is the caller: the context says
+  // which id that is, verified or asserted alike.
+  const localSpine = local();
+  const app = createAccordoApp({
+    spine: {
+      ...localSpine,
+      identityVerifier: ({ headers }) => {
+        const subject = headers['x-verified-subject'];
+        if (typeof subject !== 'string' || subject === '') throw new Error('unverified');
+        return {
+          kind: 'verified-user', subject, issuer: 'https://issuer.test', method: 'oidc-id-token',
+          organizationId: localSpine.tenant.id,
+        };
+      },
+    },
+  });
+  const server = createHttpServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  t.after(async () => { await new Promise((r) => server.close(r)); app.close(); });
+
+  const verified = await (await fetch(`${baseUrl}/api/spine/context`, { headers: { 'x-verified-subject': 'alice' } })).json();
+  assert.deepEqual(verified.actor, { type: 'user', id: 'alice' });
+  const asserted = await (await fetch(`${baseUrl}/api/spine/context`, { headers: { 'x-actor-id': 'dev' } })).json();
+  assert.deepEqual(asserted.actor, { type: 'user', id: 'dev' });
+});

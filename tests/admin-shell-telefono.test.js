@@ -201,7 +201,11 @@ test('the phone content starts within 120px at 390px, short and long names with 
     assert.ok(found, `${name} is declared, so the budget stays measurable`);
     return Number(found[1]);
   };
-  const barPadV = 2 * px(block, /\.bo-topbar \{[^}]*padding: (\d+)px \d+px;/, 'phone bar vertical padding');
+  // Top and bottom padding read apart: the bar may keep the prototype's
+  // top inset and give up its bottom one (main rossa bo-reference 390, 12/11).
+  const barPad = block.match(/\.bo-topbar \{[^}]*padding: (\d+)px \d+px(?: (\d+)(?:px)?)?;/);
+  assert.ok(barPad, 'phone bar vertical padding is declared, so the budget stays measurable');
+  const barPadV = Number(barPad[1]) + Number(barPad[2] ?? barPad[1]);
   const rowGap = px(block, /\.bo-topbar \{[^}]*gap: (\d+)px/, 'phone bar row gap');
   const toggleH = px(block, /\.bo-menu-toggle \{[^}]*height: (\d+)px;/, 'phone menu button height');
   const badgeH = px(block, /\.bo-space-badge \{[^}]*height: (\d+)px;/, 'phone space badge height');

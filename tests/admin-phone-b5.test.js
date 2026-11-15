@@ -66,10 +66,14 @@ test('lint: the stacked phone week lets a finger scroll; wide touch screens keep
     'no touch-only query lifts it at desktop width (a 1280px touch laptop keeps press-and-drag)');
 });
 
-test('lint: the inline new-appointment form, phone only: the magnifier never covers the placeholder', () => {
-  assert.match(phone, /\.cal-form \.ui-search \.ui-search-input\s*\{[^}]*padding-left:\s*36px/);
+// backlog:c2f21b5debdd (review #813): the B5 cure was phone-only, and the
+// desktop form kept the lens over the placeholder (pilot 11/11). The 36px
+// lens room and the full-row search are now a rule for every width; the
+// phone block keeps only the full-row person picker beside it.
+test('lint: the new-appointment form, every width: the magnifier never covers the placeholder', () => {
   const outside = css.replace(/@media[^{]+\{(?:[^{}]*\{[^}]*\})*[^{}]*\}/g, '');
-  assert.doesNotMatch(outside, /\.cal-form \.ui-search \.ui-search-input/, 'desktop forms are untouched');
+  assert.match(outside, /\.cal-form \.ui-search \.ui-search-input\s*\{[^}]*padding-left:\s*36px/, 'the lens room holds on desktop too');
+  assert.match(outside, /\.cal-form \.ui-search\s*\{[^}]*flex:\s*1 1 100%/, 'the search takes the whole row on desktop too');
   assert.match(phone, /\.cal-form \.ui-search,\s*\.cal-form \.ui-select\s*\{[^}]*flex:\s*1 1 100%/);
 });
 

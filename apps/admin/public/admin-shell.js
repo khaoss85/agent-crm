@@ -1,8 +1,10 @@
 // @ts-check
 
 import { sessionRoleLabel } from './admin-session.js';
-import { el, uiAddOption, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { el, uiAddOption, uiBusy, uiIcon, uiTabs } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { createCommandMenu } from './admin-cmdk.js';
+import { moduleScreenLabel } from './admin-labels.js';
+import { AGENT_MENTION_NEUTRAL, agentMentionPlaceholder } from './admin-agenti.js'; // MEM_ACC_REUSE: the team-agent placeholder lives with the team.
 
 // BO-F0-02 — Backoffice shell and navigation model (sidebar, topbar, spaces).
 //
@@ -85,6 +87,9 @@ export const SETTINGS_AREAS = Object.freeze([
   { id: 'catalogo', label: 'Catalogo prodotti', route: '#/catalogo', story: 'BO-F2 (catalogo)' },
   { id: 'stato-sync', label: 'Stato sync', route: '#/stato-sync', story: 'BO-F1-03' },
   { id: 'spazi-accessi', label: 'Spazi e accessi', route: '#/spazi-accessi', story: 'BO-F0-06' },
+  // backlog:8618ad3f72db: Profilo is a settings tab too, not only the name
+  // at the foot of the sidebar.
+  { id: 'profilo', label: 'Profilo', route: '#/profilo', story: 'BO-F6 (profilo)' },
 ]);
 
 /**
@@ -100,7 +105,9 @@ const AI_PLACEHOLDERS = Object.freeze({
   pipeline: 'Chiedi: «quanto posso chiudere questo mese?»',
   calendario: 'Scrivi: «trova 45 minuti con Marco e Sara»',
   sequenze: 'Scrivi: «crea una sequenza per i lead del sito»',
-  agenti: 'Scrivi: «@Riaggancio occupati dei lead WhatsApp non contattati»',
+  // backlog:f06d06f242d6: no agent of the team can work yet (or the team is
+  // still unknown): no example @name that would reach nobody.
+  agenti: AGENT_MENTION_NEUTRAL,
   reporting: 'Chiedi: «chi ha gestito più call questo mese?»',
   'nuovo-modulo': 'Descrivi: «un modulo sonde per i KPI del pilota»',
   impostazioni: 'Chiedi: «cosa può fare l\u2019AI senza chiedermi?»',
@@ -111,10 +118,27 @@ const AI_PLACEHOLDERS = Object.freeze({
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
- * @param {string} screenId
+ * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
+ * inviting a question would promise an AI that stays silent. The bar keeps
+ * working (search never needed the AI), only its words change.
  */
-export function aiPlaceholder(screenId) {
+export const AI_SPACE_OFF_PLACEHOLDER = 'AI dello spazio spenta: la riaccendi in Spazi e accessi';
+
+/**
+ * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
+ * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
+ * always reaches somebody; otherwise a neutral line.
+ * @param {string} screenId
+ * @param {string} [agentName]
+ * @param {boolean} [spaceAiOff] backlog 3136d15da7bd: with the space AI off
+ *   the bar says so instead of inviting a question.
+ */
+export function aiPlaceholder(screenId, agentName = '', spaceAiOff = false) {
+  if (spaceAiOff === true) return AI_SPACE_OFF_PLACEHOLDER;
   if (typeof screenId !== 'string') return AI_ENTRY_FALLBACK;
+  if (screenId === 'agenti' && typeof agentName === 'string' && agentName.trim() !== '') {
+    return agentMentionPlaceholder([{ name: agentName.trim() }]);
+  }
   return AI_PLACEHOLDERS[screenId] ?? AI_ENTRY_FALLBACK;
 }
 
@@ -280,18 +304,20 @@ export function defaultSpaces() {
 }
 
 /**
- * Read user spaces from a storage-like object. Corrupt or missing data
- * falls back to the single local space — never an empty list.
+ * Read the spaces this browser actually stored — visited space mounts —
+ * without any fallback: missing, corrupt or empty data is an empty list,
+ * never a fictitious space. Use it when another source (the session
+ * profile) already names the person's spaces; the development fallback
+ * would leak a «Spazio locale» into a real session and persist it.
  * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
  */
-export function readSpaces(storage) {
-  const fallback = defaultSpaces();
+export function readStoredSpaces(storage) {
   try {
     const raw = storage?.getItem?.(SPACES_KEY);
-    if (typeof raw !== 'string' || raw === '') return fallback;
+    if (typeof raw !== 'string' || raw === '') return [];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-    const cleaned = parsed
+    if (!Array.isArray(parsed)) return [];
+    return parsed
       .filter((entry) => entry != null && typeof entry.id === 'string' && entry.id !== ''
         && typeof entry.name === 'string' && entry.name !== '')
       .map((entry) => ({
@@ -299,12 +325,62 @@ export function readSpaces(storage) {
         name: entry.name,
         initials: typeof entry.initials === 'string' && entry.initials !== ''
           ? entry.initials.slice(0, 2).toUpperCase()
-          : entry.name.slice(0, 2).toUpperCase(),
+          : spaceInitialsFor(entry.name),
       }));
-    return cleaned.length > 0 ? cleaned : fallback;
   } catch {
-    return fallback;
+    return [];
   }
+}
+
+/**
+ * Read user spaces from a storage-like object. Corrupt or missing data
+ * falls back to the single local space — never an empty list. Sessionless
+ * shell only: under a session use readStoredSpaces so the fallback never
+ * merges into the person's real spaces.
+ * @param {{ getItem?: (key: string) => string | null } | null | undefined} storage
+ */
+export function readSpaces(storage) {
+  const stored = readStoredSpaces(storage);
+  return stored.length > 0 ? stored : defaultSpaces();
+}
+
+/**
+ * Join two space lists into one menu list (backlog:029409ff): the primary
+ * source first (the session profile's spaces), then any extra the secondary
+ * source names (spaces this browser already opened, under a session that
+ * only carries the current space). Entries keep the readSpaces shape;
+ * blanks are dropped, duplicates collapse on id, order is stable — the
+ * menu never renders a blank or doubled row, and the result is never
+ * empty: with nothing usable it falls back to the single local space.
+ * @param {unknown} primary
+ * @param {unknown} secondary
+ */
+export function mergeSpaces(primary, secondary) {
+  const clean = (value) => {
+    if (!Array.isArray(value)) return [];
+    const out = [];
+    for (const entry of value) {
+      if (entry === null || typeof entry !== 'object') continue;
+      const id = typeof /** @type {any} */ (entry).id === 'string'
+        ? /** @type {any} */ (entry).id.trim() : '';
+      const name = typeof /** @type {any} */ (entry).name === 'string'
+        ? /** @type {any} */ (entry).name.trim() : '';
+      if (id === '' || name === '') continue;
+      if (out.some((known) => known.id === id)) continue;
+      const initials = typeof /** @type {any} */ (entry).initials === 'string'
+        && /** @type {any} */ (entry).initials.trim() !== ''
+        ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
+        : spaceInitialsFor(name);
+      out.push({ id, name, initials });
+    }
+    return out;
+  };
+  const merged = [...clean(primary)];
+  for (const entry of clean(secondary)) {
+    if (merged.some((known) => known.id === entry.id)) continue;
+    merged.push(entry);
+  }
+  return merged.length > 0 ? merged : defaultSpaces();
 }
 
 /**
@@ -324,19 +400,113 @@ export function resolveSpaceShortcut(event, spaces) {
 }
 
 /**
+ * Space badge initials from the space name (backlog:ecb26347d12c): the
+ * first letter of the first two words («Presti Group» → «PG»), else the
+ * first two alphanumeric characters («Presti» → «PR»). The same word rule
+ * as `nameInitials` in admin-spazi-accessi.js — reused here, never a new
+ * rule — so «Spazio locale» reads «SL» like defaultSpaces().
+ * @param {unknown} name
+ */
+export function spaceInitialsFor(name) {
+  if (typeof name !== 'string') return '·';
+  const words = name.split(/\s+/)
+    .map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, ''))
+    .filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Badge hue for one space (backlog:ecb26347d12c): a deterministic hue
+ * from the space id, so two spaces never share the badge color and the
+ * same space reads the same everywhere. White text stays readable on it.
+ * @param {unknown} id
+ */
+export function spaceBadgeHue(id) {
+  const text = typeof id === 'string' ? id : '';
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return hash % 360;
+}
+
+/**
+ * Badge color for one space (backlog:ecb26347d12c): same value as before,
+ * derived from the hue so the class and the color string never disagree.
+ * @param {unknown} id
+ */
+export function spaceBadgeColor(id) {
+  return `hsl(${spaceBadgeHue(id)} 45% 42%)`;
+}
+
+/**
+ * Stylesheet class carrying one space's badge color (backlog:b545aca18b8f):
+ * the color lives in styles.css (`.bo-space-badge--h<hue>`), never in an
+ * inline `style` attribute or a CSSOM write, so a pilot CSP that refuses
+ * inline styles cannot strip it. Same hue as spaceBadgeColor, no new shade.
+ * @param {unknown} id
+ */
+export function spaceBadgeClass(id) {
+  return `bo-space-badge--h${spaceBadgeHue(id)}`;
+}
+
+/**
+ * The «Cambia spazio» button label (backlog:ecb26347d12c): it lists only
+ * the shortcuts that exist — «Cambia spazio (⌘1/2)» with two spaces,
+ * never the fixed «(⌘1/2/3)». Past nine spaces only ⌘1…⌘9 exist.
+ * @param {unknown} spaces
+ */
+export function spaceSwitcherLabel(spaces) {
+  const count = Array.isArray(spaces) ? spaces.length : 0;
+  const shown = Math.max(0, Math.min(count, 9));
+  if (shown < 2) return 'Cambia spazio';
+  const parts = [];
+  for (let n = 1; n <= shown; n++) parts.push(String(n));
+  return `Cambia spazio (⌘${parts.join('/')})`;
+}
+
+/**
  * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
- * get a hint; the rest render without one.
+ * get a hint; the rest render without one. Display initials never repeat
+ * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
+ * the word rule («Prova Validazione B1» → «PV»), then longer slices of
+ * the name — the first unused candidate, so «Presti Group» and «Prova
+ * Validazione B1» read differently even when both arrive as «PR».
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
  */
 export function spaceMenuItems(spaces, activeId) {
-  return spaces.map((space, index) => ({
-    id: space.id,
-    name: space.name,
-    initials: space.initials ?? space.name.slice(0, 2).toUpperCase(),
-    keyHint: index < 9 ? `⌘${index + 1}` : '',
-    active: space.id === activeId,
-  }));
+  const list = Array.isArray(spaces) ? spaces : [];
+  const seen = new Set();
+  return list.map((space, index) => {
+    const name = typeof space?.name === 'string' ? space.name : '';
+    const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
+      ? space.initials.trim().toUpperCase()
+      : '';
+    const word = spaceInitialsFor(name);
+    const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '').toUpperCase();
+    const candidates = stored !== '' ? [stored, word] : [word];
+    if (clean.length >= 3) candidates.push(clean.slice(0, 3));
+    if (clean.length >= 3) candidates.push(`${clean[0]}${clean[clean.length - 1]}`);
+    let initials = candidates[0] ?? '·';
+    for (const candidate of candidates) {
+      if (candidate !== '' && !seen.has(candidate)) {
+        initials = candidate;
+        break;
+      }
+    }
+    seen.add(initials);
+    return {
+      id: space.id,
+      name: space.name,
+      initials,
+      color: spaceBadgeColor(space?.id),
+      badgeClass: spaceBadgeClass(space?.id),
+      keyHint: index < 9 ? `⌘${index + 1}` : '',
+      active: space.id === activeId,
+    };
+  });
 }
 
 /**
@@ -439,7 +609,7 @@ export function buildShellNav({ pipelines = [], customModules = [], customerData
  *   onLogout?: () => void,
  *   onPickSpace?: (id: string) => void,
  *   onAiSubmit?: ((text: string) => void) | null,
- *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null> } | null,
+ *   commandSearch?: { customers?: (query: string) => Promise<Array<any> | null>, offers?: () => Promise<Array<any> | null>, agents?: () => Promise<Array<any> | null> } | null,
  *   schedule?: (fn: () => void, ms: number) => any,
  *   win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null,
  * }} options
@@ -469,6 +639,12 @@ export function createShellView({
     // highlight (Stato sync lives under Impostazioni). Null falls back to
     // the highlighted screen id.
     aiScreenId: null,
+    // Backlog 7d169a3b1dd2: first named team agent, told by the Agenti
+    // screen once its read lands — the bar placeholder names the team.
+    aiAgentName: '',
+    // Backlog 3136d15da7bd: the space AI master, told by app.js (the shell
+    // does its own reads never). True paints the off words in the bar.
+    aiSpaceOff: false,
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -564,12 +740,20 @@ export function createShellView({
 
   function renderSidebar() {
     clearMount(sidebar);
-    const space = activeSpace();
+    // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
+    // per-space colors, so two spaces never read the same; the button label
+    // lists only the shortcuts that exist.
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const space = items.find((entry) => entry.active) ?? items[0];
+    const switcherLabel = spaceSwitcherLabel(state.spaces);
 
     const spaceButton = el(doc, 'button', 'bo-space');
     spaceButton.setAttribute('aria-haspopup', 'true');
-    spaceButton.setAttribute('title', 'Cambia spazio (⌘1/2/3)');
-    const badge = el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase());
+    spaceButton.setAttribute('title', switcherLabel);
+    spaceButton.setAttribute('aria-label', switcherLabel);
+    // backlog:b545aca18b8f: the color comes from the stylesheet class,
+    // never from an inline style, so the pilot CSP cannot strip it.
+    const badge = el(doc, 'span', `bo-space-badge ${space.badgeClass}`, space.initials);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -589,10 +773,10 @@ export function createShellView({
     const menu = el(doc, 'div', 'bo-space-menu hidden');
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', 'Spazi di lavoro');
-    for (const entry of spaceMenuItems(state.spaces, state.activeSpaceId)) {
+    for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
-      const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
+      const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -748,8 +932,9 @@ export function createShellView({
 
   /**
    * backlog:be99004b06e4: the bar finds before it asks. Pages come from the
-   * shell's own voices and settings areas; customers and offers from the
-   * reads app.js already makes (commandSearch). The AI is the last row.
+   * shell's own voices and settings areas; customers, offers and (backlog
+   * 1f7cb20d3c30) the space's agents from the reads app.js already makes
+   * (commandSearch). The AI is the last row.
    */
   function commandPages() {
     const customerData = state.items.some((item) => item.id === 'clienti' && item.available === true);
@@ -764,7 +949,6 @@ export function createShellView({
       pages.push({ label: area.label, href: area.route, sub: 'Impostazioni' });
     }
     pages.push({ label: 'Connettori', href: '#/connettori', sub: 'Impostazioni' });
-    pages.push({ label: 'Profilo', href: '#/profilo' });
     return pages;
   }
 
@@ -792,7 +976,12 @@ export function createShellView({
     // opens the sidebar as a drawer. Both hidden above 560px by the
     // stylesheet, so desktop is unchanged.
     const phoneSpace = el(doc, 'div', 'bo-phonebar-space');
-    phoneSpace.appendChild(el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase()));
+    // backlog:ecb26347d12c: the phone bar shows the same de-duplicated
+    // initials and color as the sidebar switcher.
+    const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
+    const phoneBadge = el(doc, 'span', `bo-space-badge ${phoneSpaceEntry.badgeClass}`, phoneSpaceEntry.initials);
+    phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
     const phoneRole = sessionRoleLabel(state.user.role);
@@ -820,8 +1009,14 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId));
-    aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
+    // backlog 3136d15da7bd: with the space AI off the placeholder says so
+    // instead of inviting a question the AI would not answer.
+    const aiOff = state.aiSpaceOff === true;
+    const aiWords = aiOff
+      ? AI_SPACE_OFF_PLACEHOLDER
+      : aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName);
+    aiInput.setAttribute('placeholder', aiWords);
+    aiInput.setAttribute('title', aiOff ? AI_SPACE_OFF_PLACEHOLDER : 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
     form.appendChild(hint);
@@ -916,12 +1111,15 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, aiSpaceOff, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
+      if (typeof aiAgentName === 'string') state.aiAgentName = aiAgentName;
+      // backlog 3136d15da7bd: the space AI master state, pushed by app.js.
+      if (typeof aiSpaceOff === 'boolean') state.aiSpaceOff = aiSpaceOff;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
@@ -968,6 +1166,12 @@ export function renderUnknownRoute({ doc, mount }) {
 }
 
 /**
+ * What the Impostazioni screen says when the «things to fix» count could not
+ * be read (backlog:1d33b335fba0): what is missing, and that it may not be zero.
+ */
+export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -975,22 +1179,56 @@ export function renderUnknownRoute({ doc, mount }) {
  * count above zero, never at zero and never when the count is unknown.
  * @param {{ doc: object, mount: object, fixCount?: unknown, navigate?: (hash: string) => void, customerDataAvailable?: boolean }} options
  */
-export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false } = {}) {
+export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
   mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
   mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
-  mount.appendChild(el(
+  const summary = el(
     doc,
     'p',
     'bo-muted',
     unknown
-      ? 'Non è stato possibile leggerle (non è detto che non ce ne siano).'
+      // backlog:1d33b335fba0: say what was not read, in plain words, with
+      // a way to try again — never «leggerle» with nothing it refers to.
+      ? SETTINGS_FIX_UNREAD_MESSAGE
       : badgeText === ''
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
-  ));
+  );
+  mount.appendChild(summary);
+  if (unknown && typeof onRetry === 'function') {
+    summary.setAttribute('role', 'status');
+    const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
+    retry.setAttribute('type', 'button');
+    retry.setAttribute('data-action', 'settings-retry');
+    retry.addEventListener('click', () => {
+      void uiBusy(retry, 'Riprovo…', async () => {
+        let count = null;
+        // Review #833 P2: the retry answers the live state, not only the
+        // count — Stato sync may have become available since the first
+        // paint. A bare number keeps the availability the panel had.
+        let available = customerDataAvailable;
+        try {
+          const answer = await onRetry();
+          if (answer !== null && typeof answer === 'object') {
+            count = answer.fixCount ?? null;
+            if (typeof answer.customerDataAvailable === 'boolean') available = answer.customerDataAvailable;
+          } else {
+            count = answer ?? null;
+          }
+        } catch {
+          count = null;
+        }
+        // The operator may have left meanwhile: repaint only the panel
+        // still on screen, never over the screen just opened.
+        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
+      });
+    });
+    mount.appendChild(retry);
+  }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
     const row = el(doc, 'div', 'bo-setting-row');
@@ -1031,6 +1269,7 @@ export const SETTINGS_VIEW_AREAS = Object.freeze({
   catalog: 'catalogo',
   sync: 'stato-sync',
   'spazi-accessi': 'spazi-accessi',
+  profilo: 'profilo',
 });
 
 /**
@@ -1091,3 +1330,63 @@ export function settingsTabs(doc, { activeId = 'stato-sync', fixCount = null, na
   wrap.appendChild(bar);
   return wrap;
 }
+
+/**
+ * The sidebar voice and topbar crumb of one routed view (moved here from
+ * app.js so the mapping is testable). backlog:8618ad3f72db: every view
+ * under the Impostazioni tab row — Catalogo prodotti and Profilo included —
+ * keeps «Impostazioni» highlighted in the sidebar.
+ * @param {{ view?: string, moduleName?: string, from?: unknown }} target
+ */
+export function shellScreenFor(target) {
+  switch (target.view) {
+    case 'dashboard': return { id: 'oggi', label: 'Oggi' };
+    case 'customer-data':
+    case 'customer-card': return { id: 'clienti', label: 'Clienti' };
+    case 'customer-import': return { id: 'clienti', label: 'Importa clienti' };
+    case 'customer-new': return { id: 'clienti', label: 'Nuovo cliente' };
+    case 'pipeline': return { id: 'pipeline', label: 'Pipeline' };
+    case 'sequenze': return { id: 'sequenze', label: 'Sequenze' };
+    case 'agenti': return { id: 'agenti', label: 'Agenti' };
+    case 'settings': return { id: 'impostazioni', label: 'Impostazioni' };
+    case 'list':
+    case 'new':
+    case 'detail':
+      // backlog:1d99c8207f90: the crumb (uppercased by .bo-crumb) read
+      // «OPPORTUNITY» on Nuova offerta: a module route names its screen in
+      // Italian, never the raw module key.
+      return target.moduleName
+        ? { id: `module-${target.moduleName}`, label: moduleScreenLabel(target.view, target.moduleName) }
+        : { id: null, label: 'Modulo' };
+    // Admin views outside the backoffice prototype: an honest crumb with no
+    // sidebar highlight, never the previous screen left stale.
+    case 'spine': return { id: null, label: 'Identità e accessi' };
+    case 'work': return { id: null, label: 'Lavoro' };
+    case 'work-task': return { id: null, label: 'Attività' };
+    case 'marketing': return { id: null, label: 'Proposte' };
+    case 'marketing-proposal': return { id: null, label: 'Proposta' };
+    case 'quotes': return { id: null, label: 'Preventivi' };
+    case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
+    // backlog:bfc070243427: the quote lives on the offer's board — Pipeline
+    // stays highlighted on the preventivo, like on the offer.
+    case 'quote-detail': return { id: 'pipeline', label: 'Preventivo' };
+    // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
+    case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
+    case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
+    case 'connector-detail': return { id: 'impostazioni', label: 'Dettaglio connettore' };
+    // BO-F6-16: the sidebar still highlights Impostazioni, but the AI bar
+    // asks about sync (its own placeholder), not the generic settings one.
+    case 'sync': return { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' };
+    case 'reporting': return { id: 'reporting', label: 'Reporting' };
+    case 'calendario': return { id: 'calendario', label: 'Calendario' };
+    case 'nuovo-modulo': return { id: 'nuovo-modulo', label: 'Nuovo modulo' };
+    case 'personalizzazione': return { id: 'impostazioni', label: 'Personalizzazione' };
+    case 'skill-detail': return { id: 'impostazioni', label: 'Dettaglio skill' };
+    case 'spazi-accessi': return { id: 'impostazioni', label: 'Spazi e accessi' };
+    case 'profilo': return { id: 'impostazioni', label: 'Profilo' };
+    case 'componenti': return { id: null, label: 'Componenti' };
+    case 'invalid': return { id: null, label: 'Percorso non valido' };
+    default: return { id: null, label: 'Vista' };
+  }
+}
+

@@ -1,8 +1,8 @@
 // @ts-check
 
-import { elFor, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, UI_BUSY_LOCKED, uiBusy, uiButton, uiSecondaryButton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { bindAdminMutations } from './admin-submission.js';
-import { customerImportReasonLabel } from './admin-core.js';
+import { customerImportReasonLabel, wakeWaitText } from './admin-core.js';
 import { isSessionLostCode } from './admin-session.js';
 import {
   addFieldForm,
@@ -632,9 +632,11 @@ export function createCustomerFormView(deps) {
     // lands while the reads below are still out waits for them, then saves.
     let setupDone = false;
     let saveQueued = false;
+    // cta-loading: «Salvo…» while it works; a just-created customer keeps Salva off.
+    const busySave = () => uiBusy(save, 'Salvo…', async () => { await saveCustomer(); return created ? UI_BUSY_LOCKED : undefined; });
     save.addEventListener('click', () => {
       if (setupDone) {
-        void saveCustomer();
+        void busySave();
         return;
       }
       saveQueued = true;
@@ -763,7 +765,7 @@ export function createCustomerFormView(deps) {
     if (saveQueued) {
       saveQueued = false;
       save.disabled = false;
-      void saveCustomer();
+      void busySave();
     }
 
     // The session may die after the customer exists (phone, custom value,
@@ -959,7 +961,7 @@ export function createCustomerFormView(deps) {
             await saveFieldValue(client, { resource: subject.resource, id: subject.id, key, value: typed });
           } catch (err) {
             if (rescueSessionLoss(err, { subject, done: [...completedNow] })) return;
-            entry.setError(String(err?.message ?? 'Valore non valido.'));
+            entry.setError(wakeWaitText(err) ?? String(err?.message ?? 'Valore non valido.'));
             if (warning === null) warning = 'Il cliente è creato: controlla i campi evidenziati dalla scheda.';
           }
           if (token !== renderToken) return;
@@ -1006,9 +1008,9 @@ export function createCustomerFormView(deps) {
         }
         const fieldName = error?.details?.field;
         if (typeof fieldName === 'string' && slots[fieldName]) {
-          setErrors({ [fieldName]: String(error?.message ?? 'Valore non valido.') });
+          setErrors({ [fieldName]: wakeWaitText(error) ?? String(error?.message ?? 'Valore non valido.') });
         } else {
-          setErrors({ general: 'Non si è potuto creare il cliente. Riprova più tardi.' });
+          setErrors({ general: wakeWaitText(error) ?? 'Non si è potuto creare il cliente. Riprova più tardi.' });
         }
       } finally {
         busy = false;
@@ -1051,7 +1053,7 @@ export function createCustomerFormView(deps) {
       const error = el('small', 'field-error', '');
       box.appendChild(error);
       let working = false;
-      go.addEventListener('click', async () => {
+      go.addEventListener('click', () => uiBusy(go, 'Interpreto…', async () => {
         if (working) return;
         const phrase = String(area.value ?? '').trim();
         if (phrase === '') {
@@ -1067,12 +1069,12 @@ export function createCustomerFormView(deps) {
           renderPreview(preview, draft, ctx);
         } catch (err) {
           if (token !== renderToken) return;
-          error.textContent = String(err?.message ?? 'L\u2019AI non ha capito la frase: compila i campi a mano.');
+          error.textContent = wakeWaitText(err) ?? String(err?.message ?? 'L\u2019AI non ha capito la frase: compila i campi a mano.');
         } finally {
           working = false;
           go.disabled = false;
         }
-      });
+      }));
     }
 
     function renderPreview(box, draft, ctx) {
@@ -1116,7 +1118,7 @@ export function createCustomerFormView(deps) {
       back.addEventListener('click', () => {
         while (box.firstChild) box.removeChild(box.firstChild);
       });
-      confirm.addEventListener('click', async () => {
+      confirm.addEventListener('click', () => uiBusy(confirm, 'Creo…', async () => {
         if (working) return;
         working = true;
         confirm.disabled = true;
@@ -1153,12 +1155,12 @@ export function createCustomerFormView(deps) {
           ctx.notify(warning ?? 'Cliente creato.');
         } catch (err) {
           if (token !== renderToken) return;
-          error.textContent = String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
+          error.textContent = wakeWaitText(err) ?? String(err?.message ?? 'Non si è potuto creare il cliente. Riprova più tardi.');
         } finally {
           working = false;
           confirm.disabled = false;
         }
-      });
+      }));
     }
 
   }

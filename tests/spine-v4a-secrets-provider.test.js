@@ -1,7 +1,7 @@
 // @ts-check
 
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -169,6 +169,26 @@ test('repeated production import timeouts close trusted descriptors without wait
   const descriptorCount = () => readdirSync(fdDirectory).length;
   const before = descriptorCount();
 
+  // backlog:c7e97de6cf1f (review Muse #900): the synchronous close is proven
+  // on the trusted descriptors themselves — every one the provider opens
+  // (fs.openSync on its source) is closed by the time the timeout rejects,
+  // while the hanging module never settles. No clock, no machine load.
+  const providersReal = fs.realpathSync(join(root, 'providers'));
+  const opened = new Set();
+  const closed = new Set();
+  const ownOpen = fs.openSync;
+  const ownClose = fs.closeSync;
+  fs.openSync = function openSpy(path, ...rest) {
+    const fd = ownOpen.call(this, path, ...rest);
+    if (String(path).startsWith(providersReal)) opened.add(fd);
+    return fd;
+  };
+  fs.closeSync = function closeSpy(fd, ...rest) {
+    if (opened.has(fd)) closed.add(fd);
+    return ownClose.call(this, fd, ...rest);
+  };
+  t.after(() => { fs.openSync = ownOpen; fs.closeSync = ownClose; });
+
   for (let index = 0; index < 8; index += 1) {
     const modulePath = join(root, 'providers', `hanging-${index}.mjs`);
     writeFileSync(modulePath, `export const secretProviderContract = 1;
@@ -177,6 +197,8 @@ await new Promise(() => {});
 export function createSecretProvider() { throw new Error('unreachable'); }
 `);
     chmodSync(modulePath, 0o600);
+    opened.clear();
+    closed.clear();
     await assert.rejects(
       () => resolveProductionSecretProvider({
         relativePath: `./providers/hanging-${index}.mjs`,
@@ -186,11 +208,47 @@ export function createSecretProvider() { throw new Error('unreachable'); }
       }),
       (error) => error?.code === 'SECRET_PROVIDER_TIMEOUT',
     );
+    assert.ok(opened.size > 0, 'the provider source was opened as a trusted descriptor');
+    assert.deepEqual([...opened].filter((fd) => !closed.has(fd)), [],
+      `provider ${index}: every trusted descriptor is closed when the timeout rejects`);
   }
 
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(descriptorCount() <= before + 1, `trusted descriptors leaked: before=${before}, after=${descriptorCount()}`);
+  // And nothing stays open in the process: the ESM loader's own reads of the
+  // sources (open → read → close on the libuv pool) may finish later on a
+  // loaded runner (CI: before=24, after=26), so the count is awaited — it
+  // fails if it stops moving for DESCRIPTOR_STALL_MS, or at the total
+  // DESCRIPTOR_SETTLE_MAX_MS cap.
+  const after = await descriptorsSettled(descriptorCount, before + 1);
+  assert.ok(after <= before + 1, `descriptors leaked: before=${before}, after=${after}`);
 });
+
+/** How long the descriptor count may stand still above its limit before it is a leak. */
+const DESCRIPTOR_STALL_MS = 10_000;
+/** The total cap of the wait (review Muse #900): never reached when descriptors close. */
+const DESCRIPTOR_SETTLE_MAX_MS = 60_000;
+
+/**
+ * The descriptor count once it is back under `limit`; or, if it is not, once
+ * it stopped moving for DESCRIPTOR_STALL_MS or DESCRIPTOR_SETTLE_MAX_MS
+ * passed in all (a leak, reported by the caller's assertion).
+ * @param {() => number} count @param {number} limit
+ */
+async function descriptorsSettled(count, limit) {
+  const started = Date.now();
+  let last = count();
+  let movedAt = started;
+  while (last > limit && Date.now() - started < DESCRIPTOR_SETTLE_MAX_MS) {
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+    const now = count();
+    if (now !== last) {
+      last = now;
+      movedAt = Date.now();
+    } else if (Date.now() - movedAt > DESCRIPTOR_STALL_MS) {
+      break;
+    }
+  }
+  return last;
+}
 
 test('fixture and environment providers return opaque single-use disposable leases', async () => {
   for (const provider of [

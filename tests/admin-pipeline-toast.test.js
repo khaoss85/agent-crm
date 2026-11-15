@@ -81,6 +81,7 @@ async function board(records) {
   const view = createPipelineBoard({
     doc, mount, client,
     toast: (message, error, options) => toasts.push({ message: String(message), error: Boolean(error), options }),
+    hideToast: () => toasts.push({ message: '<hidden>', error: false }),
     navigate: () => {},
     wait: () => new Promise(() => {}),
   });
@@ -99,49 +100,60 @@ function drop(mount, id, stage) {
 
 // ---- 1. The toast comes at once and stays ---------------------------------
 
-test('2f72000d4a4d: the «Spostata · Annulla» toast comes at the drop, before the write answers, for at least 10 s', async () => {
+test('2f72000d4a4d + fd0adcded1c3: at the drop a neutral toast with «Annulla»; «Spostata» only after the server, for at least 10 s', async () => {
   const { mount, client, toasts } = await board([record('a', 'discovery')]);
   drop(mount, 'a', 'demo');
   await tick();
   assert.equal(client.posts.length, 1, 'the write is still running');
-  const moved = toasts.find((item) => item.message === 'Spostata in Prova.');
-  assert.ok(moved, 'the toast is already there');
-  assert.equal(moved.options?.action?.label, 'Annulla');
-  assert.ok(UNDO_TOAST_MS >= 10000 && moved.options.duration >= 10000, 'it asks to stay at least 10 s');
+  const moving = toasts.find((item) => item.message === 'Spostamento in Prova…');
+  assert.ok(moving, 'the toast is already there, and says the move is under way');
+  assert.equal(moving.options?.action?.label, 'Annulla', '«Annulla» possible at once, as before');
+  assert.ok(UNDO_TOAST_MS >= 10000 && moving.options.duration >= 10000, 'it asks to stay at least 10 s');
+  assert.ok(!toasts.some((item) => item.message.startsWith('Spostata')), 'never «Spostata» while the write runs');
   client.posts[0].answer();
   await tick();
-  assert.equal(toasts.filter((item) => item.message.startsWith('Spostata')).length, 1, 'no second toast when the write lands');
+  const moved = toasts.filter((item) => item.message.startsWith('Spostata'));
+  assert.equal(moved.length, 1, 'one «Spostata» when the write lands');
+  assert.equal(moved[0].message, 'Spostata in Prova.');
+  assert.equal(moved[0].options?.action?.label, 'Annulla');
+  assert.ok(moved[0].options.duration >= 10000);
 });
 
 test('2f72000d4a4d: «Annulla» pressed while the move is being written undoes it as soon as it lands', async () => {
   const { mount, client, toasts } = await board([record('a', 'discovery')]);
   drop(mount, 'a', 'demo');
   await tick();
-  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  toasts.find((item) => item.message === 'Spostamento in Prova…').options.action.run();
   await tick();
   assert.equal(client.posts.length, 1, 'no reverse POST before the first one lands');
-  assert.ok(toasts.some((item) => item.message === 'Riporto in Richiesta info…'), 'the toast says the undo is coming');
+  // backlog:3d811389bb4c: the card and «Riportata» come back at the click,
+  // the reverse write follows once the first one lands.
+  assert.ok(toasts.some((item) => item.message === 'Riportata in Richiesta info.'), 'the message is back at once');
+  assert.equal(cardOf(mount, 'a').parentNode.getAttribute('data-stage'), 'discovery', 'and so is the card');
   client.posts[0].answer();
   await tick(6);
   assert.equal(client.posts.length, 2);
-  assert.deepEqual(client.posts[1].body, { toStage: 'discovery', fromStage: 'demo' }, 'the reverse move');
+  assert.deepEqual(client.posts[1].body, { toStage: 'discovery', fromStage: 'demo', first: true }, 'the reverse move, back to the place it left');
   client.posts[1].answer();
   await tick(6);
   assert.ok(toasts.some((item) => item.message === 'Riportata in Richiesta info.'));
   assert.equal(cardOf(mount, 'a').parentNode.getAttribute('data-stage'), 'discovery');
 });
 
-test('2f72000d4a4d: a failed move replaces the «Spostata» toast with the reason, and «Annulla» then does nothing', async () => {
+test('2f72000d4a4d + fd0adcded1c3 + 85630aa14a4f: a failed move takes the waiting toast down, says why on the card, never «Spostata», and «Annulla» then does nothing', async () => {
   const { mount, client, toasts } = await board([record('a', 'discovery')]);
   drop(mount, 'a', 'demo');
   await tick();
-  const moved = toasts.find((item) => item.message === 'Spostata in Prova.');
+  const moved = toasts.find((item) => item.message === 'Spostamento in Prova…');
   client.posts[0].fail();
   await tick();
-  const last = toasts[toasts.length - 1];
-  assert.equal(last.message, 'Spostamento non riuscito. Riprova più tardi.');
-  assert.equal(last.error, true);
-  assert.equal(toasts.filter((item) => item.message === 'Spostamento non riuscito. Riprova più tardi.').length, 1, 'said once');
+  // backlog:85630aa14a4f: one message, on the card beside its Riprova; the
+  // waiting toast goes away instead of turning into a red copy.
+  assert.equal(toasts[toasts.length - 1].message, '<hidden>', 'the waiting toast is taken down');
+  assert.ok(!toasts.some((item) => item.error), 'no red toast repeating the card');
+  const error = cardOf(mount, 'a').childNodes.find((n) => classes(n).includes('field-error'));
+  assert.equal(error.textContent, 'Spostamento non riuscito.');
+  assert.ok(!toasts.some((item) => item.message.startsWith('Spostata')), 'the screen never said the move was saved');
   moved.options.action.run();
   await tick();
   assert.equal(client.posts.length, 1, 'nothing to undo');
@@ -166,7 +178,8 @@ test('review Muse #799: an undo that fails on a filtered-out card still says so'
   await tick(6);
   const last = toasts[toasts.length - 1];
   assert.equal(last.error, true, 'the failed undo toasts');
-  assert.equal(last.message, 'Spostamento non riuscito. Riprova più tardi.');
+  // backlog:3d811389bb4c: the toast says where the card stays.
+  assert.equal(last.message, 'Non sono riuscito a riportarla in Richiesta info: resta in Prova.');
 });
 
 // ---- The shell toast's clock ----------------------------------------------
@@ -305,7 +318,7 @@ test('review #809: «Annulla» on a move the server queued says it cannot undo y
   const { mount, client, toasts } = await board([record('a', 'discovery')]);
   drop(mount, 'a', 'demo');
   await tick();
-  toasts.find((item) => item.message === 'Spostata in Prova.').options.action.run();
+  toasts.find((item) => item.message === 'Spostamento in Prova…').options.action.run();
   client.posts[0].pend();
   await tick(6);
   assert.equal(client.posts.length, 1, 'no reverse POST on a queued move');

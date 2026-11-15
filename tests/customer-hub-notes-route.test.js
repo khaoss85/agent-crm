@@ -124,3 +124,57 @@ test('aaa36cd07cd4: a non contact/company resource refuses 400', async (t) => {
   assert.equal(status, 400);
   assert.equal(notes.length, 0);
 });
+
+// backlog:82235e46e3e9: «Modifica» and «Elimina» on a scheda note ride two
+// fixed paths with the note in the body, the same gate, subject check and
+// session actor as the notes route.
+function correctionApp({ calls = [], composed = true } = {}) {
+  return {
+    services: {
+      contacts: { get: async (id) => { if (id !== 'c1') throw new NotFoundError('contact', String(id)); return { id: 'c1' }; } },
+      companies: { get: async (id) => { throw new NotFoundError('company', String(id)); } },
+    },
+    ...(composed ? {
+      async reviseSubjectNote(params) { calls.push(['revise', params]); return { id: 'r1', revisesId: params.noteId, body: params.body }; },
+      async withdrawSubjectNote(params) { calls.push(['withdraw', params]); return { id: 'w1', revisesId: params.noteId, withdrawn: true }; },
+    } : {}),
+  };
+}
+
+test('82235e46e3e9: POST notes/revise reaches the operation with the session actor', async (t) => {
+  const calls = [];
+  const { status, payload } = await request(t, correctionApp({ calls }), 'POST', '/api/customer-hub/notes/revise', {
+    resource: 'contact', id: 'c1', noteId: 'n1', body: 'Richiamare martedì',
+    actor: { type: 'user', id: 'someone-else' }, actorRole: 'owner',
+  });
+  assert.equal(status, 201);
+  assert.equal(payload?.revisesId, 'n1');
+  assert.deepEqual(calls.map(([kind, params]) => [kind, params.noteId, params.body, params.actor?.id]),
+    [['revise', 'n1', 'Richiamare martedì', 'nota-route']], 'the body actor is stripped');
+  assert.equal(calls[0][1].actorRole, null,
+    'the role comes from the authorization decision (none without a spine), never from the body');
+});
+
+test('82235e46e3e9: POST notes/withdraw reaches the operation and answers 200', async (t) => {
+  const calls = [];
+  const { status, payload } = await request(t, correctionApp({ calls }), 'POST', '/api/customer-hub/notes/withdraw', {
+    resource: 'contact', id: 'c1', noteId: 'n1',
+  });
+  assert.equal(status, 200);
+  assert.equal(payload?.withdrawn, true);
+  assert.deepEqual(calls.map(([kind, params]) => [kind, params.noteId, params.actor?.id]), [['withdraw', 'n1', 'nota-route']]);
+});
+
+test('82235e46e3e9: ghost record 404, foreign resource 400, uncomposed operation 404 by name', async (t) => {
+  for (const path of ['/api/customer-hub/notes/revise', '/api/customer-hub/notes/withdraw']) {
+    const calls = [];
+    const ghost = await request(t, correctionApp({ calls }), 'POST', path, { resource: 'contact', id: 'c-ghost', noteId: 'n1', body: 'x' });
+    assert.equal(ghost.status, 404);
+    const lead = await request(t, correctionApp({ calls }), 'POST', path, { resource: 'lead', id: 'c1', noteId: 'n1', body: 'x' });
+    assert.equal(lead.status, 400);
+    assert.equal(calls.length, 0, 'nothing reaches the operation');
+    const bare = await request(t, correctionApp({ composed: false }), 'POST', path, { resource: 'contact', id: 'c1', noteId: 'n1', body: 'x' });
+    assert.equal(bare.status, 404);
+    assert.match(String(bare.payload?.error?.message ?? ''), /subject note (revision|withdrawal)/);
+  }
+});

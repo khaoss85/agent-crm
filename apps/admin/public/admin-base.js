@@ -29,3 +29,26 @@ export function resolveAdminBase(doc) {
   if (typeof content !== 'string' || content === '') return '';
   return content;
 }
+
+/**
+ * Every /bo in-page link (pilota 12/11: opening a quote went to /bo/#/ and
+ * reloaded the app). The mount serves the shell at `/w/<space>/bo` while its
+ * `<base href>` names `/w/<space>/bo/`: every in-page link («#/quotes/…»)
+ * resolves against the base, lands on another path and reloads the whole
+ * shell. When the page path is exactly the base without its trailing slash,
+ * the address to settle on is the base itself, with the same query and
+ * hash — set once at boot with history.replaceState, so links stay in the
+ * page. Null when nothing needs to change.
+ * @param {{ pathname?: unknown, search?: unknown, hash?: unknown }} location
+ * @param {unknown} baseHref the `<base href>` attribute, as written
+ * @returns {string | null}
+ */
+export function canonicalShellPath(location, baseHref) {
+  const path = typeof location?.pathname === 'string' ? location.pathname : '';
+  const base = typeof baseHref === 'string' ? baseHref.trim() : '';
+  if (path === '' || !base.startsWith('/') || !base.endsWith('/') || base === '/') return null;
+  if (path.endsWith('/') || `${path}/` !== base) return null;
+  const search = typeof location?.search === 'string' ? location.search : '';
+  const hash = typeof location?.hash === 'string' ? location.hash : '';
+  return `${base}${search}${hash}`;
+}

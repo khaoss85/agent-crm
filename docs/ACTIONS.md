@@ -55,6 +55,15 @@ Any input field may declare a `hint` (string, ≤ 200 chars) — free-text guida
 rendered under the control strictly as text. Use it wherever a raw value could
 mislead, e.g. money: `hint: "Integer MINOR units: 500000 means 5,000.00."`.
 
+An action whose input or result carries a credential it must never persist
+(a public-link bearer) declares `traceRedact: { input, output }` — two pure
+functions mapping the validated input and the result to the copies the
+workflow trace (`workflow_runs`/`trace_spans`) stores. On PostgreSQL the same
+copies land in the idempotent write-outcome rows, so the redaction covers
+them too. The live return value keeps the raw value and `execute` always
+sees the raw validated input; only the persisted copies are redacted. Store
+the lookup form (e.g. the SHA-256 hash), never the bearer.
+
 ### The `execute` context
 
 | Key | What it is |
@@ -214,8 +223,21 @@ await client.module('opportunity').action(id, 'move-stage', {
   toStage: 'proposal',
   fromStage: 'demo',   // optional optimistic check → 409 STALE_STAGE on mismatch
   reason: '…',         // required when the target stage type is 'lost'
+  afterId: 'opp_123',  // optional board placement: land right after this card
+  // first: true,      // …or at the top of the target column (not both)
 });
 ```
+
+Board position (backlog:67a3116f4f65, migration v11): `afterId` or
+`first: true` places the card inside the target column through
+`OpportunityService.positionOnBoard`, in the action's transaction and audited
+on the moved card. With a placement, `toStage` equal to the current stage is a
+reorder (no `SAME_STAGE`, stage fields untouched, terminal columns included).
+A card that is not in the target column → `409 STALE_POSITION`. Without a
+placement a move lands unplaced (`boardPosition: 0`), on top of the column.
+`GET /api/opportunities?order=board` reads the board order (position, then
+newest first); the plain list stays newest first. A module whose service has
+no board positions refuses a placement with 400.
 
 Rules: open→open/won/lost only; same-stage → `409 SAME_STAGE`; terminal
 stages refuse (`409 TERMINAL_STAGE`, no reopen); corrupt state refuses

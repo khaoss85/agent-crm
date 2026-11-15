@@ -475,6 +475,36 @@ test('concurrent redeliveries of one unprocessed row resolve idempotently, never
   assert.equal(rows[0].effect, 'applied');
 });
 
+test('two truly concurrent redeliveries produce one resume and one audit row (backlog:3034a9adfa94)', async (t) => {
+  // Both deliveries pre-read the same received row before either commits:
+  // the per-row chain orders their moves, so exactly one reports resumed
+  // and the resume writes a single audited row.
+  const { harness } = setup();
+  t.after(() => harness.close());
+  const reg = await harness.register(SPACE_A, {
+    channel: 'whatsapp', account: ACCOUNT_A, adapter: 'fixture-channel', adapterVersion: 1, secretRef: SECRET_REF,
+  });
+  const key = reg.connection.sourceKey;
+  const rawBody = fixtureEventBody({ id: 'evt-resume-duo', subject: 'chat-1', seq: 1 });
+  const headers = harness.faults.sign(rawBody);
+  const parked = await harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers });
+  assert.equal(parked.quarantined, true);
+  await harness.activate(SPACE_A, key);
+  const auditBefore = harness.auditRows().length;
+  const [first, second] = await Promise.all([
+    harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers }),
+    harness.ingest(SPACE_A, { connectionKey: key, rawBody, headers }),
+  ]);
+  const resumed = [first, second].filter((out) => out.resumed === true);
+  const duplicates = [first, second].filter((out) => out.duplicate === true);
+  assert.equal(resumed.length, 1, 'exactly one delivery resumes the row');
+  assert.equal(duplicates.length, 1, 'the loser adopts the winner as a duplicate');
+  assert.equal(resumed[0].effect, 'applied');
+  assert.equal(harness.auditRows().length - auditBefore, 1, 'the resume writes a single audit row');
+  const rows = harness.inbox(SPACE_A).filter((row) => row.providerEventId === 'evt-resume-duo');
+  assert.equal(rows.length, 1, 'one event, one row');
+});
+
 test('a max-length account and message key still queue under the outbox bound', async (t) => {
   const { harness } = setup();
   t.after(() => harness.close());

@@ -99,5 +99,7 @@ test('5083e7a77c26: a stored «Unknown» never reaches the sender name', () => {
     conversations: [{ id: 'cp', channel: 'email', status: 'open', ...host, subjectId: 'pp', subjectLabel: 'Unknown Unknown' }],
     now: NOW,
   });
-  assert.equal(onlyPlaceholder.notifications.rows[0].name, 'service@paypal.it', 'nothing real left: the sender handle names the row');
+  // Nothing real left: a notification names its sender's brand, like Clienti,
+  // never the bare address (backlog:bab63e32acdb, verification 12/11).
+  assert.equal(onlyPlaceholder.notifications.rows[0].name, 'Paypal');
 });

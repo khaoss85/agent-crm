@@ -1,5 +1,6 @@
 // @ts-check
 
+import { takePendingClientiView } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -21,7 +22,7 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // the entry point never breaks. The deterministic channel-word search
 // ("marco whatsapp") needs no LLM and always works.
 
-import { customerInitials, humanReadError } from './admin-core.js';
+import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -43,6 +44,24 @@ const CHANNEL_LABELS = Object.freeze({
 });
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
+
+/**
+ * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
+ * `status.reason` (technical English diagnostics naming packages, e.g.
+ * «no signed business found in the composed packages (orders: not readable
+ * here; …)»). The tooltip says in plain Italian why the customer is in
+ * that state; an unknown state carries no tooltip rather than a raw
+ * diagnostic.
+ */
+const STATO_TOOLTIPS = Object.freeze({
+  cliente: 'È un cliente perché ha almeno un acquisto confermato.',
+  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+});
+
+/** Plain-Italian tooltip for a customer state, or null when unknown. */
+export function statoTooltip(value) {
+  return STATO_TOOLTIPS[String(value ?? '').toLowerCase()] ?? null;
+}
 
 /** localStorage key for the visible columns (operator-local, like the shell). */
 export const CLIENTI_COLUMNS_KEY = 'accordo.clienti.columns';
@@ -78,6 +97,8 @@ export const SEARCH_DEBOUNCE_MS = 300;
 export const LIST_REFRESH_MS = 60_000;
 /** The server's view of customers with unread inbound messages. */
 const UNREAD_VIEW = 'da-leggere';
+/** «Da rispondere» (backlog:c2bf6b206d96): lit like «Da leggere» when someone waits. */
+const AWAITING_VIEW = 'da-rispondere';
 /**
  * Grid track per column id: [minimum px, flexible share]. Optional and custom
  * columns get a readable 120px minimum (review #600 P2: never a 0px track).
@@ -144,6 +165,9 @@ export function pageNumbers(pages, page) {
  */
 export function createCustomerListView(deps) {
   const { doc, mount, navigate = () => {}, notify = () => {}, onAskAi = null } = deps;
+  // backlog:a762c28a646c: each name the list shows is remembered, so the
+  // scheda it opens reads it at once.
+  const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client } = deps;
   const activeSpaceId = () => {
     const raw = typeof deps.spaceId === 'function' ? deps.spaceId() : deps.spaceId;
@@ -256,6 +280,18 @@ export function createCustomerListView(deps) {
   function render() {
     // A keystroke read left pending by the previous frame dies here.
     searchSeq += 1;
+    // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
+    // the view alone, never a search or filter left from an earlier visit
+    // (review Muse #795).
+    const askedView = takePendingClientiView(store);
+    if (askedView !== null) {
+      Object.assign(state, {
+        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    }
+    // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
+    // scheda) keeps the search too — like the filters, it shows in the bar
+    // and clears only with its own Azzera.
     drawShell();
     return load();
   }
@@ -264,15 +300,37 @@ export function createCustomerListView(deps) {
     const token = ++renderToken;
     if (frame === null) drawShell();
     const statusLine = frame.status;
-    // The first read has nothing to show yet; later reads keep the rows
-    // and only mark the table busy, so the bar never jumps.
-    if (data === null && statusLine) statusLine.textContent = 'Caricamento…';
+    // The first read has nothing to show yet; a later read with a search
+    // says the search is running (backlog:120f2994, production 14/11: the
+    // list stayed grey for 30 s with no sign of work), so the wait never
+    // reads as a stuck screen. A later read without a search keeps the
+    // old line: only the table reads busy, the bar never jumps.
+    // (Same outcomes as backlog:88ab568cdcba: first read «Caricamento…»,
+    // later read with a search «Ricerca in corso…», rows and focus kept.)
+    if (statusLine && (data === null || state.q !== '')) {
+      statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
+    }
     frame.body.setAttribute('aria-busy', 'true');
     try {
       data = await client.request(`/api/customer-data/customers?${queryString()}`);
     } catch (error) {
       if (token !== renderToken) return;
-      data = { error: humanReadError(error, { failed: 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.' }), status: error?.status ?? null };
+      // A search the server could not answer in time (503 from the /bo
+      // bridge timeout): say what happened and what to do, never a code.
+      // Every failed read goes through humanReadError, the timeout too, so
+      // the console always names status, code and space (review #904 giro 1:
+      // the timeout branch used to skip reportFailure and log nothing).
+      const timedOut = error?.status === 503 || error?.code === 'BO_ADMIN_READ_TIMEOUT';
+      const spaceId = activeSpaceId();
+      data = {
+        error: humanReadError(error, {
+          failed: timedOut
+            ? 'La ricerca ha impiegato troppo tempo. Riprova tra poco con meno parole.'
+            : 'L\u2019elenco non si \u00E8 potuto leggere. Riprova pi\u00F9 tardi.',
+          log: spaceId === null ? undefined : (text, cause) => console.error(text, { ...cause, spaceId }),
+        }),
+        status: error?.status ?? null,
+      };
     }
     if (token !== renderToken) return;
     paint();
@@ -492,7 +550,10 @@ export function createCustomerListView(deps) {
     headRow.appendChild(menuBox('Aggiungi cliente', (menu, closeMenu) => {
       menu.classList.add('ui-add-menu');
       const addItem = (action, label, hint, onPick) => {
+        // backlog:4968615de0a4: the import has its own file mark, never
+        // the pencil of «Compila manualmente».
         const item = uiAddOption(doc, { kind: action === 'add-ai' ? 'ai' : 'manual', title: label, line: hint,
+          icon: action === 'add-import' ? 'importa' : undefined,
           attrs: { 'data-action': action } });
         item.addEventListener('click', () => {
           closeMenu();
@@ -523,13 +584,18 @@ export function createCustomerListView(deps) {
     // beside the table it speaks about: its text never pushes the search
     // and the tools down (backlog:754918ad8da7).
     const status = el('p', 'bo-muted bo-clienti-status', '');
+    status.setAttribute('aria-live', 'polite');
 
     // ── search (the prototype's ✦ field), then views and tools on one bar ──
     const form = el('form', 'bo-clienti-search');
     form.appendChild(el('span', 'bo-clienti-spark', '✦'));
     form.setAttribute('role', 'search');
     const input = el('input', 'ui-field'); // BO-F6-02: through the library, never raw.
-    input.setAttribute('type', 'search');
+    // backlog:4968615de0a4: one way to clear the search — the field's own
+    // Azzera. A plain text field carries no browser ×, and the search is no
+    // chip either (it is already in the field); Invio still searches.
+    input.setAttribute('type', 'text');
+    input.setAttribute('enterkeyhint', 'search');
     input.setAttribute('name', 'q');
     input.setAttribute('aria-label', 'Cerca clienti');
     input.setAttribute('placeholder', 'Cerca per nome o chiedi: «lead da Instagram», «chi è di Milano»');
@@ -631,15 +697,16 @@ export function createCustomerListView(deps) {
     const viewsRow = frame.viewsRow;
     while (viewsRow.firstChild) viewsRow.removeChild(viewsRow.firstChild);
     for (const view of views) {
-      // The server names a finite `count` per view when it can know it; a
-      // view without one renders its label only — honest absence, never a
-      // guessed number.
-      const count = Number(view.count);
-      const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
+      // backlog:5af848afdb63: every view carries its number when the server
+      // named it — even 0. A view whose count was never read (the answer is
+      // not in yet, or the server refused that derived view) shows its bare
+      // label: a missing count is «unknown», never a false 0.
+      const count = typeof view.count === 'number' && Number.isFinite(view.count) ? view.count : null;
+      const label = count === null ? view.label : `${view.label} ${count}`;
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
-      if (view.id === UNREAD_VIEW && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
+      if ((view.id === UNREAD_VIEW || view.id === AWAITING_VIEW) && Number.isFinite(count) && count > 0) button.setAttribute('data-attention', 'true');
       if (state.vista === view.id) button.setAttribute('aria-selected', 'true');
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
@@ -661,7 +728,7 @@ export function createCustomerListView(deps) {
     // columns with its visible/total), so the assistant entry joins the
     // Filtri menu instead of a fourth word beside it: same question, same
     // fallback, same action, one tap away.
-    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.q !== '' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
+    const activeFilters = (state.canale !== 'all' ? 1 : 0) + (state.stato !== 'all' ? 1 : 0) + (state.campo !== '' ? 1 : 0);
     const filtersBox = menuBox(toolLabel('filtri', { badge: activeFilters }), (menu, closeMenu) => {
       const aiItem = el('button', 'bo-clienti-item', '✦ Crea un filtro con l’AI');
       aiItem.setAttribute('data-action', 'ai-filter');
@@ -829,7 +896,6 @@ export function createCustomerListView(deps) {
     };
     if (state.canale !== 'all') chip(channelLabel(state.canale), () => { state.canale = 'all'; reload(); });
     if (state.stato !== 'all') chip(STATO_LABELS[state.stato] ?? state.stato, () => { state.stato = 'all'; reload(); });
-    if (state.q !== '') chip(`«${state.q}»`, () => { state.q = ''; clearSearchField(); reload(); });
     if (state.campo !== '') {
       const def = customDefs.find((entry) => String(entry?.key ?? '') === state.campo) ?? null;
       const label = String(def?.label ?? state.campo);
@@ -840,14 +906,13 @@ export function createCustomerListView(deps) {
       });
     }
     if (chips.childNodes.length > 0) {
-      const clearAll = el('button', 'bo-clienti-clear', 'Azzera');
+      // Clears the filters only: the search keeps its own Azzera.
+      const clearAll = el('button', 'bo-clienti-clear', 'Azzera filtri');
       clearAll.addEventListener('click', () => {
         state.canale = 'all';
         state.stato = 'all';
-        state.q = '';
         state.campo = '';
         state.valore = '';
-        clearSearchField();
         reload();
       });
       chips.appendChild(clearAll);
@@ -879,7 +944,8 @@ export function createCustomerListView(deps) {
       case 'stato': {
         const value = String(row.status?.value ?? '');
         const node = el('span', `bo-clienti-pill bo-pill-${value || 'none'}`, STATO_LABELS[value] ?? (value || '—'));
-        if (row.status?.reason) node.setAttribute('title', row.status.reason);
+        const hint = statoTooltip(value);
+        if (hint) node.setAttribute('title', hint);
         return node;
       }
       case 'ultimo': {
@@ -889,7 +955,15 @@ export function createCustomerListView(deps) {
         // Two lines that never run together (Dan 05/11: «giovedì.WhatsApp»):
         // the meta line — mark and mono «canale · quando» — then the excerpt,
         // clamped to two lines so every row keeps the same rhythm.
-        if (!row.lastContactAt) return el('span', 'bo-muted', 'mai');
+        // backlog:fe9be5f0af4a (production 13/11: «mai» beside a customer
+        // with notes and an offer of today): the column counts messages and
+        // calls with the customer, and says so — a note or an offer is the
+        // team's work, not a contact.
+        if (!row.lastContactAt) {
+          const none = el('span', 'bo-muted', 'nessun messaggio');
+          none.setAttribute('title', 'Conta solo messaggi e chiamate con il cliente: note e offerte non sono contatti.');
+          return none;
+        }
         const wrap = el('span', 'bo-clienti-last');
         const meta = el('span', 'bo-clienti-last-meta');
         const channel = String(row.lastContactChannel ?? '');
@@ -919,8 +993,8 @@ export function createCustomerListView(deps) {
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
-        const amount = (Number(row.offerValueCents) / 100).toLocaleString('it-IT', { minimumFractionDigits: 2 });
-        return el('span', undefined, `${amount} ${row.offerCurrency ?? ''}`.trim());
+        // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
+        return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
       }
       case 'budget': {
         if (row.budget?.available !== true) return el('span', 'bo-muted', row.budget?.reason ?? 'non disponibile');
@@ -957,8 +1031,26 @@ export function createCustomerListView(deps) {
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = frame?.status ?? null;
     if (statusLine) {
+      // backlog:ee1244a145c9 + backlog:5af848afdb63: an empty page names what
+      // excludes — the view, the filters, or both — never a bare «no
+      // customers». «Nessun cliente corrisponde…» only answers an actual
+      // search or filter.
+      const views = data?.views ?? FALLBACK_VIEWS;
+      const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
+      const inView = state.vista !== 'tutti' && viewLabel !== null ? ` in «${viewLabel}»` : '';
+      const excluding = [];
+      if (state.q !== '') excluding.push(`ricerca «${state.q}»`);
+      if (state.canale !== 'all') excluding.push(`canale ${channelLabel(state.canale)}`);
+      if (state.stato !== 'all') excluding.push(`stato ${STATO_LABELS[state.stato] ?? state.stato}`);
+      if (state.campo !== '') {
+        const campoLabel = columnsMeta.find((column) => column.id === `campo:${state.campo}`)?.label ?? state.campo;
+        excluding.push(state.valore !== '' ? `${campoLabel}: «${state.valore}»` : `campo ${campoLabel}`);
+      }
       statusLine.textContent = total === 0
-        ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
+        ? (excluding.length === 0
+          ? (inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
+          : (`Nessun cliente${inView} con ${excluding.join(', ')}.`
+            + (state.q !== '' ? ' Prova con un nome, una città o un canale.' : '')))
         : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }
@@ -993,6 +1085,7 @@ export function createCustomerListView(deps) {
       card.setAttribute('style', `grid-template-columns: ${grid}; min-width: ${floor}px`);
       const head = el('div', 'bo-clienti-head');
       const name = String(row.name ?? '');
+      knownNames?.remember(row.resource, row.id, row.name);
       head.appendChild(el('span', 'bo-clienti-avatar', customerInitials(name)));
       const who = el('div', 'bo-clienti-who');
       const nameLink = link(

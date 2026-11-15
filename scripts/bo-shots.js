@@ -54,7 +54,8 @@ import { accordoSalesPipeline } from '../packages/pipelines/accordo-sales.js';
 // The photographed Previsione reuses the production money formatter
 // (backlog:1ce3a1f0): the obiettivo line can never again show cents as
 // euros, because no second formatter exists for it.
-import { formatMinor } from '../packages/analytics/src/dashboard.js';
+import { formatMinor, formatMonth } from '../packages/analytics/src/dashboard.js';
+import { currentPeriod } from '../apps/admin/public/admin-reporting.js';
 import { CONNECTOR_CATALOG } from '../apps/admin/public/admin-connectors.js';
 
 const scriptDir = join(fileURLToPath(import.meta.url), '..');
@@ -92,6 +93,8 @@ export function parseArgs(argv, options = {}) {
   const root = options.root ?? process.cwd();
   let out = null;
   let screen = null;
+  let period = null;
+  let theme = 'light';
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--out') {
@@ -109,19 +112,38 @@ export function parseArgs(argv, options = {}) {
       if (!SCREEN_NAMES.includes(screen)) {
         throw new Error(`bo:shots unknown screen "${screen}" (one of: ${SCREEN_NAMES.join(', ')})`);
       }
+    } else if (arg === '--period') {
+      // backlog:c0726d0f6d13: YYYY-MM the reporting demo answers to (the
+      // current UTC month when omitted).
+      period = argv[index + 1];
+      index += 1;
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period ?? '')) {
+        throw new Error('bo:shots --period needs YYYY-MM (for example --period 2026-10)');
+      }
+    } else if (arg === '--theme') {
+      // backlog:c0726d0f6d13: light (default) or dark (Chromium
+      // --force-dark-mode) for the design checks.
+      theme = argv[index + 1];
+      index += 1;
+      if (theme !== 'light' && theme !== 'dark') {
+        throw new Error('bo:shots --theme needs light or dark (for example --theme dark)');
+      }
     } else if (arg === '--help' || arg === '-h') {
-      return { help: true, out: null, screen: null };
+      return { help: true, out: null, screen: null, period: null, theme: 'light' };
     } else {
       throw new Error(`bo:shots unknown argument "${arg}" (see --help)`);
     }
   }
-  return { help: false, out: resolve(root, out ?? join('..', 'bo-shots')), screen };
+  return { help: false, out: resolve(root, out ?? join('..', 'bo-shots')), screen, period, theme };
 }
 
-export const USAGE = `usage: npm run bo:shots [--out <dir>] [--screen <nome>]
+export const USAGE = `usage: npm run bo:shots [--out <dir>] [--screen <nome>] [--period YYYY-MM] [--theme light|dark]
 
 Renders every /bo screen to PNG with demo data, at 1440x1800 and 390x1600.
 Output defaults outside the repo (<repo>/../bo-shots).
+--period YYYY-MM photographs that month in reporting (default: current UTC
+month); --theme dark renders with Chromium --force-dark-mode. Non-default
+period/theme are suffixed to the PNG names.
 
 screens: ${SCREEN_NAMES.join(', ')}`;
 
@@ -305,7 +327,7 @@ const DEMO_PROFILE = {
   workTasks: {
     available: true, count: 2, countIsComplete: true,
     items: [
-      { id: 'w1', status: 'open', name: 'Richiamare per la prova' },
+      { id: 'w1', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' },
       { id: 'w2', status: 'done', name: 'Inviare il listino' },
     ],
     truncated: false,
@@ -419,32 +441,37 @@ const DEMO_REPORT = {
   metrics: { modelVersion: 1 },
   truncated: false,
   kpis: [
-    { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000,00 EUR', sub: '6 preventivi aperti' },
-    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000,00 EUR' },
-    { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000,00 EUR', sub: '2 chiusure' },
-    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 perse' },
-    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000,00 EUR', sub: '2 preventivi' },
+    // Review #761: displays come from the server formatter (never a
+    // hand-typed «EUR»), counts with the server's singular for one.
+    { id: 'open-value', label: 'Valore pipeline aperto', display: formatMinor(2600000, 'EUR'), sub: '6 preventivi aperti' },
+    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: formatMinor(2600000, 'EUR') },
+    { id: 'won-period', label: 'Vinte in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 chiusure' },
+    { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
+    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: formatMinor(1400000, 'EUR'), sub: '2 preventivi' },
   ],
+  // backlog:6e927ba9dd16: one scale everywhere (minor cents): the open
+  // stages add up to the open-value KPI (6 quotes, 2.600.000) and the won
+  // stage to the won-period KPI (2 closures, 1.400.000).
   funnel: [
-    { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
-    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 10000 },
-    { stage: 'won', label: 'Vinte', count: 2, minor: 14000 },
+    { stage: 'qualification', label: 'Qualifica', count: 4, minor: 1500000 },
+    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 1100000 },
+    { stage: 'won', label: 'Vinte', count: 2, minor: 1400000 },
   ],
   valueByStage: [
-    { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
-    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 10000 },
+    { stage: 'qualification', label: 'Qualifica', count: 4, minor: 1500000 },
+    { stage: 'negotiation', label: 'Trattativa', count: 2, minor: 1100000 },
   ],
   monthly: [
-    { month: '2026-09', label: 'settembre 2026', openCount: 1, expectedMinor: 2500, wonCount: 0, wonMinor: 0 },
-    { month: '2026-10', label: 'ottobre 2026', openCount: 2, expectedMinor: 14000, wonCount: 2, wonMinor: 14000 },
+    { month: '2026-09', label: 'settembre 2026', openCount: 1, expectedMinor: 250000, wonCount: 0, wonMinor: 0 },
+    { month: '2026-10', label: 'ottobre 2026', openCount: 2, expectedMinor: 1400000, wonCount: 2, wonMinor: 1400000 },
   ],
   team: [
-    { owner: 'alice', openCount: 2, openMinor: 14000, wonCount: 1, wonMinor: 9000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
-    { owner: 'bob', openCount: 0, openMinor: 0, wonCount: 1, wonMinor: 5000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
+    { owner: 'alice', openCount: 4, openMinor: 1500000, wonCount: 1, wonMinor: 900000, lostCount: 1, winRate: 0.5, winRateDisplay: '50%' },
+    { owner: 'bob', openCount: 2, openMinor: 1100000, wonCount: 1, wonMinor: 500000, lostCount: 0, winRate: 1, winRateDisplay: '100%' },
   ],
   owners: ['alice', 'bob'],
   forecast: {
-    currency: 'EUR', closedMinor: 14000, probableMinor: 9333, bestMinor: 14000, targetMinor: 2000000,
+    currency: 'EUR', closedMinor: 1400000, probableMinor: 933333, bestMinor: 1400000, targetMinor: 2000000,
     heuristic: true, label: 'Stima',
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
     note: `Obiettivo ${formatMinor(2000000, 'EUR')}.`,
@@ -471,8 +498,79 @@ const DEMO_REPORT = {
     moves: [{ from: 'alice', to: 'bob', count: 1, reason: '1 preventivi senza data, tasso 50% contro 100%' }],
     note: 'La proposta non sposta nulla da sola: la riassegnazione resta dell\u2019operatore.',
   },
-  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;2;14000;1;9000;1;50%\n' },
+  csv: { filename: 'reporting-2026-10.csv', content: 'reporting;2026-10;tutti;EUR\nalice;4;1500000;1;900000;1;50%\nbob;2;1100000;1;500000;0;100%\n' },
 };
+
+/**
+ * Italian long month label for a YYYY-MM period (UTC), like the server's
+ * formatMonth(query.period).
+ * @param {string} period
+ */
+export function reportingMonthLabel(period) {
+  return new Intl.DateTimeFormat('it-IT', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1, 1)));
+}
+
+/**
+ * Shift a YYYY-MM period by delta months.
+ * @param {string} period
+ * @param {number} delta
+ */
+export function reportingShiftMonth(period, delta) {
+  const date = new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)) - 1 + delta, 1));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * Demo reporting model for the asked period (backlog:06d4b855fac4): like
+ * the real server, period, periodLabel, the «Vinte in» / «In chiusura in»
+ * card labels, the monthly window, the channel weeks and the CSV name all
+ * follow the period the screen asks for, never a fixed October. An invalid
+ * period falls back to the fixture's own month.
+ * @param {string} period YYYY-MM the screen asks for
+ */
+export function reportingModelFor(period) {
+  const asked = /^\d{4}-(0[1-9]|1[0-2])$/.test(period ?? '') ? period : DEMO_REPORT.period.slice(0, 7);
+  const periodLabel = reportingMonthLabel(asked);
+  const model = structuredClone(DEMO_REPORT);
+  model.period = asked;
+  model.periodLabel = periodLabel;
+  const labels = { 'won-period': `Vinte in ${periodLabel}`, 'closing-period': `In chiusura in ${periodLabel}` };
+  model.kpis = model.kpis.map((kpi) => (labels[kpi.id] ? { ...kpi, label: labels[kpi.id] } : kpi));
+  const last = model.monthly.length - 1;
+  model.monthly = model.monthly.map((entry, index) => {
+    const month = reportingShiftMonth(asked, index - last);
+    return { ...entry, month, label: reportingMonthLabel(month) };
+  });
+  // Like channelWeeksOf(period) on the server: the four Monday-start weeks
+  // opening the asked month, never a fixed «28 set … 19 ott».
+  const first = Date.UTC(Number(asked.slice(0, 4)), Number(asked.slice(5, 7)) - 1, 1);
+  const monday = first - ((new Date(first).getUTCDay() + 6) % 7) * 86400000;
+  const dayLabel = new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  model.channels = {
+    ...model.channels,
+    weeks: model.channels.weeks.map((slot, index) => {
+      const start = new Date(monday + index * 7 * 86400000);
+      return { week: start.toISOString().slice(0, 10), label: dayLabel.format(start).replace(/\./g, '') };
+    }),
+  };
+  if (model.csv) {
+    model.csv = {
+      filename: `reporting-${asked}.csv`,
+      content: model.csv.content.replace(DEMO_REPORT.period.slice(0, 7), asked),
+    };
+  }
+  return model;
+}
+
+/**
+ * Demo reporting bundle rows for the asked period (backlog:06d4b855fac4):
+ * the summary table's «Ultimo periodo» follows the same month as the cards.
+ * @param {string} period YYYY-MM the screen asks for
+ */
+export function reportingBundleRows(period) {
+  return [{ id: 'r1', metric: 'chiamate', period, value: 20, unit: 'call' }];
+}
 
 const DEMO_UNITS = [
   { name: 'channels', kind: 'package', label: 'Canali', blurb: 'Messaggi in un unico inbox.' },
@@ -618,7 +716,11 @@ export const SCREENS = Object.freeze([
   { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
-  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', 'ottobre 2026'] },
+  // backlog:06d4b855fac4: the demo dashboard follows the requested period
+  // (backlog:c0726d0f6d13: --period, else the current UTC month, the same
+  // currentPeriod() the fixture builds the demo with), so the cards must
+  // read that month — never a hard-coded «ottobre 2026».
+  { name: 'reporting', module: 'admin-reporting.js', ready: 'reporting-ready', expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(currentPeriod())}`] },
   { name: 'nuovo-modulo', module: 'admin-reporting.js', ready: 'nuovo-modulo-ready', expect: ['Nuovo modulo personalizzato', 'Genera il modulo'] },
   { name: 'personalizzazione', module: 'admin-personalizzazione.js', ready: 'personalizzazione-ready', expect: ['Kit social', 'Canali di conversazione'] },
   { name: 'catalogo', module: 'admin-catalog.js', ready: 'catalogo-ready', expect: ['Pacchetto 10 lezioni', 'Collegato a Stripe'] },
@@ -654,10 +756,10 @@ export const SHELL_SCREENS = Object.freeze({
   reporting: { id: 'reporting', label: 'Reporting' },
   'nuovo-modulo': { id: 'nuovo-modulo', label: 'Nuovo modulo' },
   personalizzazione: { id: 'impostazioni', label: 'Personalizzazione' },
-  catalogo: { id: '', label: 'Catalogo prodotti' },
+  catalogo: { id: 'impostazioni', label: 'Catalogo prodotti' },
   'stato-sync': { id: 'impostazioni', label: 'Stato sync', ai: 'stato-sync' },
   'spazi-accessi': { id: 'impostazioni', label: 'Spazi e accessi' },
-  profilo: { id: '', label: 'Profilo' },
+  profilo: { id: 'impostazioni', label: 'Profilo' },
   // The connectors screen (BO-F6-02): the same sidebar voice and path the
   // app crumbs for it, exactly like shellScreenFor in app.js.
   connettori: { id: 'impostazioni', label: 'Connettori' },
@@ -717,6 +819,8 @@ shellView.update({
 // missing). Await the faces the shell paints before the fixtures run, so
 // the load event — and the screenshot — wait for real glyphs. Rejections
 // settle the wait instead of hanging the harness.
+// backlog:30dc70e6b076: a face loads and decodes in real time; the page
+// pacer (PACE_PRELUDE) keeps the virtual clock from running out meanwhile.
 await Promise.all([
   document.fonts.load('400 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
   document.fonts.load('700 14px "Bricolage Grotesque"', 'Studio Aurora Oggi Clienti'),
@@ -769,8 +873,48 @@ if (diagEl) {
 
 const MIN_BYTES = Object.freeze({ desktop: 20000, phone: 10000 });
 
+// First shot plus exactly one retake of a below-floor PNG, then fail naming
+// the screen (backlog:418b90704674). The floor itself never moves down.
+export const SHOT_MAX_ATTEMPTS = 2;
+
+/**
+ * Painted-bytes floor for a viewport kind.
+ * @param {string} kind
+ */
+export function shotFloor(kind) {
+  if (kind === 'desktop') return MIN_BYTES.desktop;
+  if (kind === 'phone') return MIN_BYTES.phone;
+  throw new Error(`bo:shots has no byte floor for viewport "${kind}"`);
+}
+
+/**
+ * PNG existence plus dimensions for a screenshot file. A below-floor byte
+ * count is NOT thrown here: that is the paint race the caller retakes once,
+ * while dimensions come straight from `--window-size` and are deterministic,
+ * so they throw at once.
+ * @param {string} file
+ * @param {string} screenName
+ * @param {string} kind
+ * @param {{ width: number, height: number }} viewport
+ */
+export function checkShotSize(file, screenName, kind, viewport) {
+  if (!existsSync(file)) {
+    throw new Error(`${screenName} ${kind}: chromium exits 0 without writing the screenshot`);
+  }
+  const shot = readPngSize(file);
+  if (shot.width !== viewport.width || shot.height !== viewport.height) {
+    throw new Error(`${screenName} ${kind}: the PNG is ${shot.width}x${shot.height}, expected ${viewport.width}x${viewport.height}`);
+  }
+  return shot;
+}
+
 /** @param {string} name */
-function fixtureScript(name) {
+/**
+ * @param {string} name
+ * @param {{ period?: string|null }} [options] YYYY-MM the reporting demo
+ * answers to (backlog:c0726d0f6d13); null reads the current UTC month
+ */
+function fixtureScript(name, options = {}) {
   switch (name) {
     case 'oggi': return `
 import { createOggiView, buildOggiLinks } from './admin-oggi.js';
@@ -819,8 +963,9 @@ import { createCustomerListView } from './admin-clienti.js';
 const ROWS = ${JSON.stringify(DEMO_CLIENTS)};
 const MENUS = {
   // Demo-shaped counts (Tutti 3 covers the 3 demo rows); rinnovi names no
-  // count on purpose, so the render also proves the label-only fallback for
-  // an unreadable dependency (backlog:22d4dd0f, C10).
+  // count on purpose, so the render proves the honest absence (bare label,
+  // never a false 0) for an unreadable dependency
+  // (backlog:22d4dd0f, C10; backlog:5af848afdb63).
   views: [
     { id: 'tutti', label: 'Tutti', count: 3 },
     { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', count: 1 },
@@ -906,15 +1051,39 @@ await view.render();
 // control, so the shot proves all three steps (drop zone, column match,
 // table check) instead of the empty first step.
 const input = document.querySelector('#view-module input[name="file"]');
+const CSV = 'nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n';
 const transfer = new DataTransfer();
-transfer.items.add(new File(['nome,email,telefono\\nAda,ada@esempio.it,+39 333 1234567\\nBo,bo@esempio.it,+39 333 7654321\\n'], 'clienti.csv', { type: 'text/csv' }));
+transfer.items.add(new File([CSV], 'clienti.csv', { type: 'text/csv' }));
 input.files = transfer.files;
+// The demo file's bytes are already here: hand them over without a Blob
+// read. Chromium's virtual clock waits for network fetches, not for Blob
+// I/O, so on a loaded runner the read used to land after the budget and
+// the shot ended with no import-ready (bo:shots import, PR #828 and #833).
+// The view still reads the file through its own file.arrayBuffer() call.
+const bytes = new TextEncoder().encode(CSV);
+Object.defineProperty(input.files[0], 'arrayBuffer', { value: () => Promise.resolve(bytes.buffer.slice(0)) });
 input.dispatchEvent(new Event('change', { bubbles: true }));
-const deadline = Date.now() + 15000;
-while (!document.querySelector('#view-module select[name="mapping-0"]')) {
-  if (Date.now() > deadline) throw new Error('the import tool never loaded the demo file');
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
+// The mapping step paints once the view's own promise chain settles: wait
+// for that paint, never for a wall-clock deadline that spends the budget.
+await new Promise((resolve, reject) => {
+  const mount = document.getElementById('view-module');
+  const ready = () => mount.querySelector('select[name="mapping-0"]') !== null;
+  if (ready()) { resolve(); return; }
+  const watch = new MutationObserver(() => {
+    if (!ready()) return;
+    watch.disconnect();
+    resolve();
+  });
+  watch.observe(mount, { childList: true, subtree: true });
+  // A refused file paints its own error line instead of the mapping: say
+  // so, never wait for a step that will not come.
+  const refused = mount.querySelector('.customer-data-error');
+  if (refused !== null) {
+    new MutationObserver(() => {
+      if (refused.textContent.trim() !== '') reject(new Error('the import tool refused the demo file: ' + refused.textContent));
+    }).observe(refused, { childList: true, characterData: true, subtree: true });
+  }
+});
 const painted = document.getElementById('view-module');
 document.getElementById('probe').textContent = JSON.stringify({
   back: painted.querySelectorAll('[data-action="back-to-clienti"]').length,
@@ -1072,14 +1241,21 @@ document.getElementById('probe').textContent = JSON.stringify({
   talk: document.querySelectorAll('#view-module .bo-agent-talk').length,
 });
 document.title = 'agenti-ready';`;
-    case 'reporting': return `
+    case 'reporting': {
+      // backlog:06d4b855fac4: the whole demo answers the period the screen
+      // asks for (backlog:c0726d0f6d13: --period, else the current UTC
+      // month): model, bundle rows, card labels and CSV name alike, never a
+      // fixed October.
+      const period = options.period ?? currentPeriod();
+      const MODEL = JSON.stringify(reportingModelFor(period));
+      const ROWS = JSON.stringify(reportingBundleRows(period));
+      return `
 import { createReportingView } from './admin-reporting.js';
-const MODEL = ${JSON.stringify(DEMO_REPORT)};
-const BUNDLE_ROWS = [{ id: 'r1', metric: 'chiamate', period: '2026-10', value: 20, unit: 'call' }];
+const MODEL = ${MODEL};
 const client = {
   async request(path) {
-    if (path.includes('/api/reporting/dashboard')) return MODEL;
-    return { items: BUNDLE_ROWS };
+    if (path.includes('/api/reporting/dashboard')) return structuredClone(MODEL);
+    return { items: ${ROWS} };
   },
 };
 const view = createReportingView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {}, log: () => {}, download: () => {} });
@@ -1088,6 +1264,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   kpis: (document.getElementById('view-module').textContent.match(/Valore pipeline aperto|Preventivi aperti|Tasso di chiusura/g) ?? []).length,
 });
 document.title = 'reporting-ready';`;
+    }
     case 'nuovo-modulo': return `
 import { createReportingView } from './admin-reporting.js';
 const client = { async request() { return { items: [] }; } };
@@ -1207,7 +1384,9 @@ const client = {
   async request(path, options) {
     const opts = options || {};
     if (path === '/api/spine/context') {
-      return { membership: { role: 'owner' }, roles: { owner: [], operator: [], observer: [] } };
+      // The production shape: the verified session subject (Elena's Google
+      // login), so «Rimuovi» shows on the other rows (backlog:9d06eb1e174b).
+      return { identity: { subject: 'google|1001', kind: 'verified-user' }, membership: { role: 'owner', subject: 'google|1001' }, roles: { owner: [], operator: [], observer: [] } };
     }
     if (path === '/api/spine/memberships' && String(opts.method || 'GET').toUpperCase() !== 'POST') {
       return { items: MEMBERS };
@@ -1281,7 +1460,7 @@ document.getElementById('probe').textContent = JSON.stringify({
   badges: document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-tile').length,
   openers: document.querySelectorAll('#view-module .bo-conn-row .bo-conn-open').length,
   flows: document.querySelectorAll('#view-module [data-action="connect-open"]').length,
-  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .bo-profilo-pill')]
+  unavailable: [...document.querySelectorAll('#view-module .bo-conn-row .ui-channel-state')]
     .filter((node) => node.textContent.includes('Non ancora disponibile')).length,
 });
 document.title = 'connettori-ready';`;
@@ -1323,6 +1502,8 @@ const MIME = Object.freeze({
  * stays in the DOM but hidden, so it can never leak into a PNG.
  * @param {string} name
  * @param {string} publicDir
+ * @param {{ period?: string|null }} [options] forwarded to fixtureScript
+ * (backlog:c0726d0f6d13)
  */
 /**
  * The login probe writer. The static login page carries no `#probe` div, so
@@ -1343,7 +1524,7 @@ document.getElementById('probe').textContent = JSON.stringify({
 });
 </script>`;
 
-export function harnessHtml(name, publicDir) {
+export function harnessHtml(name, publicDir, options = {}) {
   if (name === 'login') {
     const markup = readFileSync(join(publicDir, 'login.html'), 'utf8');
     if (!markup.includes('</body>')) {
@@ -1354,8 +1535,12 @@ export function harnessHtml(name, publicDir) {
   const screen = SCREENS.find((entry) => entry.name === name);
   if (!screen || !screen.module) throw new Error(`bo:shots has no harness for screen "${name}"`);
   return `<!doctype html><html lang="it"><head><meta charset="utf-8">`
+    + PACE_PRELUDE
     + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-    + `<link rel="stylesheet" href="/styles.css"></head>`
+    + `<link rel="stylesheet" href="/styles.css">`
+    // The text caret blinks on the real clock's beat (see PACE_PRELUDE): a
+    // focused field would show it in one run and not the next.
+    + `<style>* { caret-color: transparent !important; }</style></head>`
     + `<body><main class="bo-shell">`
     + `<aside class="bo-sidebar" id="boSidebar" aria-label="Navigazione backoffice"></aside>`
     + `<div class="bo-main"><div class="bo-topbar" id="boTopbar"></div>`
@@ -1366,17 +1551,154 @@ export function harnessHtml(name, publicDir) {
     + `<aside class="bo-assistant-slot" id="boAssistant" aria-label="Assistente AI"></aside>`
     + `<div id="probe" hidden></div>`
     + `<div id="bodiag" hidden></div>`
-    + `<script type="module">${shellBoot(name)}${fixtureScript(name)}</script></body></html>`;
+    + `<script type="module">${shellBoot(name)}${fixtureScript(name, options)}</script></body></html>`;
 }
+
+/**
+ * The pacer (backlog:30dc70e6b076). Chromium's `--virtual-time-budget`
+ * keeps the virtual clock still while a network fetch is pending, and only
+ * then: the moment the page waits on anything else with no fetch open — a
+ * webfont decoding, a Blob read, any work off the main thread — the clock
+ * jumps straight to the next timer, and with none pending to the end of
+ * the budget, so the run ends. On a loaded runner such a wait ended shots
+ * before their ready title («import desktop … no import-ready»,
+ * «nuovo-modulo phone …», then «cliente desktop … no cliente-ready» on
+ * #836 and #839). Holding each known wait (#841) cured the waits we knew
+ * of, one by one, and a hold freezes the clock outright: a webfont load
+ * that needs the clock to move then hangs until the hold gives up.
+ *
+ * The cure lives here, once, for every harness: until the harness writes
+ * its `<name>-ready` title (or throws), the page keeps one beat going — a
+ * fetch the shot server answers after PACE_MS of real time, then a virtual
+ * timer of PACE_STEP_MS. While the fetch is pending the clock stands still;
+ * during the timer it can move at most PACE_STEP_MS. So the virtual clock
+ * never runs faster than PACE_STEP_MS per PACE_MS of real time while the
+ * harness works: a wait off the main thread costs its real length, never
+ * the whole budget, and timers, frames and webfonts keep moving. At the
+ * ready title the beat stops and the budget runs out at once, as before.
+ */
+export const VIRTUAL_BUDGET_MS = 600_000;
+/**
+ * backlog:c7e97de6cf1f — the budget above is no deadline. In CI under load
+ * a harness did not reach its ready title (or the PNG came out almost
+ * blank, 11631 bytes) because 8 s of virtual time is ~16 s of real time at
+ * the pacer's rate: a module graph that took longer to compile on a busy
+ * runner simply ran out of clock. Now the run ends on the page's own
+ * signals: at the ready title the beat stops and the clock jumps to the end
+ * at once (a large budget costs nothing then), and a harness that stops
+ * making progress — no asset fetched, no DOM change, no new resource for
+ * STALL_MS of real time — is stopped by the shot server, which tells the
+ * page to stop its beat. A slow machine that keeps working keeps going.
+ */
+export const STALL_MS = 30_000;
+/** Real time of one beat. */
+export const PACE_MS = 20;
+/** Virtual time one beat may let pass. */
+export const PACE_STEP_MS = 10;
+
+export const PACE_PRELUDE = `<script>
+(() => {
+  const later = window.setTimeout.bind(window);
+  let done = false;
+  // backlog:c7e97de6cf1f: each beat carries how far the page got (DOM
+  // changes, resources loaded, ready state); the shot server answers 205
+  // once nothing moved for STALL_MS of real time, and the beat stops.
+  // Structure and text only: a blinking or pulsing attribute is no progress.
+  let changes = 0;
+  new MutationObserver(() => { changes += 1; })
+    .observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  // Resources seen by an observer (the timing buffer fills with beats), the
+  // beats themselves left out.
+  let loaded = 0;
+  try {
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) if (!entry.name.includes('/__bo-pace')) loaded += 1;
+    }).observe({ type: 'resource', buffered: true });
+  } catch {}
+  const progress = () => \`\${changes}.\${loaded}.\${document.readyState}\`;
+  const beat = () => {
+    if (done) return;
+    fetch('/__bo-pace?p=' + encodeURIComponent(progress())).then((answer) => {
+      if (answer.status === 205) {
+        document.documentElement.setAttribute('data-bo-stalled', answer.headers.get('x-bo-stall-ms') || 'true');
+        finish();
+      }
+    }, () => {}).then(() => {
+      if (!done) later(beat, ${PACE_STEP_MS});
+    });
+  };
+  const finish = () => {
+    if (done) return;
+    done = true;
+    // backlog:c7e97de6cf1f: the harness is done (or stopped). With a budget
+    // that is no deadline, a page timer still ticking (an interval, a frame
+    // loop) would walk the clock through the rest of the budget — minutes
+    // of virtual time a loaded runner pays in real time, with no request a
+    // guard could see. So the page's timers stop here and the clock jumps
+    // to the end: what was painted at the ready title is what is shot.
+    const top = later(() => {}, 0);
+    for (let id = 0; id <= top; id += 1) { clearTimeout(id); clearInterval(id); }
+    const frame = requestAnimationFrame(() => {});
+    for (let id = 0; id <= frame; id += 1) cancelAnimationFrame(id);
+    window.setTimeout = () => 0;
+    window.setInterval = () => 0;
+    window.requestAnimationFrame = () => 0;
+  };
+  new MutationObserver(() => {
+    if (/-ready$/.test(document.title)) finish();
+  }).observe(document.head, { childList: true, subtree: true, characterData: true });
+  // A harness that throws, or a module that does not load, stops the beat:
+  // the run fails at once instead of spending the budget slowly. A missing
+  // image is not the harness failing.
+  window.addEventListener('error', (event) => {
+    if (event instanceof ErrorEvent || event.target instanceof HTMLScriptElement) finish();
+  }, true);
+  window.addEventListener('unhandledrejection', finish);
+  beat();
+})();
+</script>`;
+
 
 /**
  * Serves the public /bo assets and the harness pages on 127.0.0.1 only.
  * @param {string} publicDir
  * @param {(name: string) => string} pageFor
  */
-function startServer(publicDir, pageFor) {
+export function startServer(publicDir, pageFor, { stallMs = STALL_MS, now = () => Date.now() } = {}) {
+  /** Beats not answered yet: closing the server answers them. */
+  const beats = new Set();
+  // backlog:c7e97de6cf1f: the last real moment a page moved (an asset
+  // fetched, a new progress signature on a beat) and the last request of
+  // any kind — the browser run's idle guard reads it.
+  let progressAt = now();
+  let activityAt = now();
+  let lastSignature = null;
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://shot.test');
+    activityAt = now();
+    // backlog:30dc70e6b076: one beat of the page pacer (see PACE_PRELUDE).
+    if (url.pathname === '/__bo-pace') {
+      const signature = url.searchParams.get('p');
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        progressAt = now();
+      }
+      const stalled = now() - progressAt > stallMs;
+      const answer = () => {
+        clearTimeout(timer);
+        beats.delete(answer);
+        if (res.writableEnded) return;
+        res.writeHead(stalled ? 205 : 204, { 'cache-control': 'no-store', ...(stalled ? { 'x-bo-stall-ms': String(stallMs) } : {}) });
+        res.end();
+      };
+      const timer = setTimeout(answer, PACE_MS);
+      beats.add(answer);
+      res.on('close', answer);
+      return;
+    }
+    // Anything else the page asks for is progress (a module, a font).
+    progressAt = now();
+    lastSignature = null;
     const page = /^\/shot-([a-z-]+)\.html$/.exec(url.pathname);
     if (page) {
       try {
@@ -1409,6 +1731,12 @@ function startServer(publicDir, pageFor) {
     res.writeHead(404);
     res.end('no');
   });
+  // A beat pending at shutdown never keeps the process alive.
+  server.on('close', () => {
+    for (const answer of [...beats]) answer();
+  });
+  /** The last real moment the server heard from a page (the browser run's idle guard). */
+  server.boActivityAt = () => activityAt;
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => resolve(server));
@@ -1423,25 +1751,30 @@ function readDirSafe(directory) {
   }
 }
 
-export function findChromium() {
-  const candidates = [
-    process.env.CHROMIUM_BIN,
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-  ].filter(Boolean);
+/**
+ * The Chromium binary to render with, or null. Injectable environment, home
+ * and system paths so the lookup itself is testable.
+ * backlog:d30d17880f63: the Linux CI runner carries Playwright's
+ * `chromium_headless_shell-<rev>/chrome-headless-shell-linux64/chrome-headless-shell`
+ * layout (the one scripts/site-shots.js already scans): without it every
+ * browser proof on that runner skipped as «no runnable Chromium».
+ * @param {{ env?: Record<string, string|undefined>, home?: string, system?: Array<string> }} [options]
+ */
+export function findChromium({ env = process.env, home = homedir(), system = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome'] } = {}) {
+  const candidates = [env.CHROMIUM_BIN, ...system].filter(Boolean);
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;
   }
   const bases = [
-    join(homedir(), '.cache', 'ms-playwright'),
-    join(homedir(), 'Library', 'Caches', 'ms-playwright'),
+    join(home, '.cache', 'ms-playwright'),
+    join(home, 'Library', 'Caches', 'ms-playwright'),
   ];
   for (const base of bases) {
     for (const entry of readDirSafe(base)) {
       for (const suffix of [
         ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell'],
         ['chrome-headless-shell-mac-x64', 'chrome-headless-shell'],
+        ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
         ['chrome-linux', 'headless_shell'],
       ]) {
         const path = join(base, entry, ...suffix);
@@ -1504,31 +1837,93 @@ export function chromiumFlags(binary) {
 }
 
 /**
+ * The one way browser proofs find and launch Chromium (backlog:d30d17880f63):
+ * the binary findChromium picks and the flags chromiumFlags proved it paints
+ * with — `--no-sandbox` included on sandbox-less Linux runners, where a plain
+ * probe (chromiumRuns) fails on a binary that renders fine. Null when nothing
+ * runs here.
+ * @returns {{ binary: string, flags: Array<string> } | null}
+ */
+export function runnableChromium() {
+  const binary = findChromium();
+  const flags = chromiumFlags(binary);
+  return binary !== null && flags !== null ? { binary, flags } : null;
+}
+
+/**
+ * How far a harness got when its run ended without the ready title: the
+ * title it reached, whether the shell and the view painted, and the last
+ * Chromium stderr line. A red run then says where it stopped instead of
+ * only that it stopped.
+ * @param {{ stdout: string, stderr: string }} dom
+ */
+export function harnessStage(dom) {
+  const out = String(dom.stdout ?? '');
+  const title = out.match(/<title>(.*?)<\/title>/s)?.[1] ?? null;
+  const sidebar = /id="boSidebar"[^>]*>\s*</.test(out) && !/id="boSidebar"[^>]*>\s*<\/aside>/.test(out);
+  const view = out.match(/<section id="view-module"[^>]*>([\s\S]*?)<\/section>\s*<footer/)?.[1] ?? '';
+  const stderr = String(dom.stderr ?? '').trim().split('\n').filter(Boolean).pop() ?? '';
+  // The window the server applied, as the page recorded it (review Muse #900).
+  const stalledMs = out.match(/<html[^>]*data-bo-stalled="(\d+|true)"/)?.[1] ?? null;
+  const stalled = stalledMs === null ? ''
+    : `stalled (no progress for ${stalledMs === 'true' ? STALL_MS : Number(stalledMs)} ms), `;
+  return `${stalled}title ${JSON.stringify(title)}, dom ${out.length} chars, shell ${sidebar ? 'painted' : 'empty'}, `
+    + `view ${view.length} chars${/aria-busy="true"/.test(view) ? ' (still loading)' : ''}`
+    + `${stderr ? `, stderr ${JSON.stringify(stderr.slice(-200))}` : ''}`;
+}
+
+/**
  * The browser must run WITHOUT blocking this process: the fixture server
  * lives on the same event loop, so a synchronous spawn would starve it and
  * the page could never load. Async spawn keeps the loop free to serve.
  * @param {string} binary
  * @param {Array<string>} args
- * @param {number} timeoutMs
+ * @param {{ activityAt?: () => number, idleMs?: number }} [options]
  */
-function runChromium(binary, args, timeoutMs) {
+export function runChromium(binary, args, { activityAt = () => Date.now(), idleMs = BROWSER_IDLE_MS, maxMs = BROWSER_MAX_MS } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    const timer = setTimeout(() => {
+    const startedAt = Date.now();
+    // backlog:c7e97de6cf1f: no total deadline — a browser is stopped only
+    // when neither it nor its page made any sign of life (output, a request
+    // to the shot server) for idleMs. A slow run that keeps working goes on.
+    let lifeAt = startedAt;
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); lifeAt = Date.now(); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); lifeAt = Date.now(); });
+    const guard = setInterval(() => {
+      const last = Math.max(lifeAt, activityAt());
+      // Review Muse #900 (P1): progress decides the normal case; this
+      // safety cap stops the pathological one — a page always busy and
+      // never ready. It is never reached by a normal run.
+      if (Date.now() - startedAt > maxMs) {
+        clearInterval(guard);
+        child.kill('SIGKILL');
+        reject(new Error(`chromium still running after ${maxMs}ms: safety cap (a page always busy and never ready; never reached in a normal run)`));
+        return;
+      }
+      if (Date.now() - last <= idleMs) return;
+      clearInterval(guard);
       child.kill('SIGKILL');
-      reject(new Error(`chromium timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+      reject(new Error(`chromium showed no sign of life for ${idleMs}ms`));
+    }, Math.min(1000, Math.max(50, Math.floor(Math.min(idleMs, maxMs) / 4))));
+    child.on('error', (error) => { clearInterval(guard); reject(error); });
     child.on('close', (status) => {
-      clearTimeout(timer);
+      clearInterval(guard);
       resolve({ status, stdout, stderr });
     });
   });
 }
+
+/** How long a browser run may show no sign of life before it is stopped. */
+export const BROWSER_IDLE_MS = 2 * STALL_MS;
+/**
+ * The safety cap of one browser run: 5 minutes, never reached in a normal
+ * run (a full screen takes seconds, ~60 s on a heavily loaded machine). It
+ * only stops a page that keeps changing and never signals ready.
+ */
+export const BROWSER_MAX_MS = 5 * 60_000;
 
 /**
  * Reads the #probe JSON out of a `--dump-dom` stdout. The probe is the only
@@ -1715,13 +2110,14 @@ export function assertProbe(name, probe) {
       if (probe.switches !== 6) throw new Error(`spazi-accessi: the probe holds ${String(probe.switches)} AI switches, expected 6 (the master plus the five)`);
       if (probe.master !== 1) throw new Error(`spazi-accessi: the probe holds ${String(probe.master)} master AI switches, expected 1`);
       if (probe.masterAbove !== true) throw new Error('spazi-accessi: the master AI switch is not above the five');
-      // C7: both cards paint the real statistic (2 linked channels,
-      // 2 rendered members, exact total 3). A card that cannot count paints
-      // no row, so the gate requires both rows here.
+      // C7: the open space's card paints the real statistic (2 linked
+      // channels, 2 rendered members, exact total 3). backlog:9d06eb1e174b:
+      // another space is never read (its connectors answer 403 to this
+      // session), so exactly one card carries the row.
       const stats = Array.isArray(probe.stats) ? probe.stats : [];
       const expectedStat = '2 canali · 2 persone · 3 clienti';
-      if (stats.length !== 2 || stats.some((stat) => stat !== expectedStat)) {
-        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected two ${JSON.stringify(expectedStat)}`);
+      if (stats.length !== 1 || stats.some((stat) => stat !== expectedStat)) {
+        throw new Error(`spazi-accessi: the probe holds ${JSON.stringify(probe.stats)} stats, expected one ${JSON.stringify(expectedStat)}`);
       }
       // The non-active card paints «Apri» (the wired production path passes
       // onPickSpace); the active card marks «Stai lavorando qui» instead.
@@ -1767,14 +2163,21 @@ export function assertProbe(name, probe) {
 /**
  * Renders one screen at both viewports. Throws on the first failed proof:
  * a missing PNG, a wrong width, a too-small file (nothing painted), a
- * harness that never finished, demo text missing from the painted DOM, or
- * a probe that proves an empty or half-painted render. The PNG and the DOM
- * proof come from two Chromium runs over the same harness URL with the
- * same fixtures under a frozen virtual clock, so both runs paint the same
- * logical page state and the PNG is gated on the probe of that state.
- * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string }} options
+ * harness that never finished, demo text missing from the painted DOM, a
+ * probe that proves an empty or half-painted render, a missing PNG, a wrong
+ * width, or a too-small file (nothing painted). The DOM proof and the PNG
+ * come from two Chromium runs over the same harness URL with the same
+ * fixtures under a frozen virtual clock, so both runs paint the same
+ * logical page state — and the proof run goes first: the screenshot is only
+ * taken after the harness signalled its `<name>-ready` title, never on a
+ * half-drawn page. A below-floor PNG is retaken exactly once and then fails
+ * naming the screen; the floor itself never moves down.
+ * (backlog:418b90704674).
+ * @param {{ binary: string, flags: Array<string>, port: number, screen: object, outDir: string, theme?: string, tag?: string }} options
  */
-async function renderScreen({ binary, flags, port, screen, outDir }) {
+async function renderScreen({ binary, flags, port, screen, outDir, theme = 'light', tag = '', activityAt = () => Date.now() }) {
+  // backlog:c0726d0f6d13: dark renders with Chromium --force-dark-mode.
+  const themeFlags = theme === 'dark' ? ['--force-dark-mode'] : [];
   const page = screen.name === 'login'
     ? `http://127.0.0.1:${port}/login.html`
     : `http://127.0.0.1:${port}/shot-${screen.name}.html`;
@@ -1787,32 +2190,22 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
   }
   const shots = [];
   for (const [kind, viewport] of [['desktop', DESKTOP], ['phone', PHONE]]) {
-    const file = join(outDir, `${screen.name}-${viewport.width}x${viewport.height}.png`);
-    const run = await runChromium(binary, [
-      '--headless',
-      ...flags,
-      `--screenshot=${file}`,
-      `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
-      '--hide-scrollbars',
-      '--disable-background-networking',
-      page,
-    ], 120000);
-    if (run.status !== 0) {
-      throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
-    }
+    const file = join(outDir, `${screen.name}${tag}-${viewport.width}x${viewport.height}.png`);
+    // The proof run goes first (backlog:418b90704674): only a harness that
+    // signalled its ready title gets photographed, never a half-drawn page.
     const dom = await runChromium(binary, [
-      '--headless', ...flags, '--dump-dom',
+      '--headless', ...flags, ...themeFlags, '--dump-dom',
       `--window-size=${viewport.width},${viewport.height}`,
-      '--virtual-time-budget=8000',
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
       '--disable-background-networking',
       page,
-    ], 120000);
+    ], { activityAt });
     if (dom.status !== 0) {
-      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status}`);
+      throw new Error(`${screen.name} ${kind}: the probe run exits ${dom.status} (stderr: ${(dom.stderr ?? '').slice(-500)})`);
     }
     if (screen.ready !== null && !dom.stdout.includes(`<title>${screen.ready}</title>`)) {
-      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready})`);
+      throw new Error(`${screen.name} ${kind}: the harness module did not run to completion (no ${screen.ready}; ${harnessStage(dom)})`);
     }
     if (screen.module !== null) {
       if (!dom.stdout.includes('id="boSidebar"') || !dom.stdout.includes('id="boTopbar"')) {
@@ -1842,16 +2235,36 @@ async function renderScreen({ binary, flags, port, screen, outDir }) {
         throw new Error(`${screen.name} ${kind}: the painted screen misses its demo data (${JSON.stringify(expected)})`);
       }
     }
-    if (!existsSync(file)) {
-      throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} without writing the screenshot`);
+    // Reduced motion: the pacer lets the virtual clock follow the real one
+    // while a harness works, so the moment a looping animation (the Stato
+    // sync dot, a skeleton pulse) starts differs run to run. The still
+    // shows each element at rest, and two runs give the same PNG.
+    // A below-floor PNG is a paint race, so it gets exactly one retake and
+    // then fails naming the screen; the floor itself never moves down.
+    const take = () => runChromium(binary, [
+      '--headless',
+      ...flags,
+      ...themeFlags,
+      `--screenshot=${file}`,
+      `--window-size=${viewport.width},${viewport.height}`,
+      `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`,
+      '--force-prefers-reduced-motion',
+      '--hide-scrollbars',
+      '--disable-background-networking',
+      page,
+    ], { activityAt });
+    const floor = shotFloor(kind);
+    let shot = null;
+    for (let attempt = 1; attempt <= SHOT_MAX_ATTEMPTS; attempt += 1) {
+      const run = await take();
+      if (run.status !== 0) {
+        throw new Error(`${screen.name} ${kind}: chromium exits ${run.status} (stderr: ${(run.stderr ?? '').slice(-500)})`);
+      }
+      shot = checkShotSize(file, screen.name, kind, viewport);
+      if (shot.bytes >= floor || attempt === SHOT_MAX_ATTEMPTS) break;
     }
-    const shot = readPngSize(file);
-    if (shot.width !== viewport.width || shot.height !== viewport.height) {
-      throw new Error(`${screen.name} ${kind}: the PNG is ${shot.width}x${shot.height}, expected ${viewport.width}x${viewport.height}`);
-    }
-    const floor = kind === 'desktop' ? MIN_BYTES.desktop : MIN_BYTES.phone;
     if (shot.bytes < floor) {
-      throw new Error(`${screen.name} ${kind}: the PNG holds ${shot.bytes} bytes, below the ${floor}-byte painted floor`);
+      throw new Error(`${screen.name} ${kind}: the PNG holds ${shot.bytes} bytes, below the ${floor}-byte painted floor (retaken once)`);
     }
     shots.push({ file, width: shot.width, height: shot.height, bytes: shot.bytes, viewport: kind });
     console.log(`  ✓ ${screen.name} ${kind} ${shot.width}×${shot.height} ${shot.bytes} bytes`);
@@ -1886,10 +2299,17 @@ async function main() {
     return;
   }
   const wanted = args.screen ?? null;
-  const screens = SCREENS.filter((screen) => wanted === null || screen.name === wanted);
+  // backlog:c0726d0f6d13: the asked month names the painted cards; the tag
+  // keeps non-default runs from overwriting the default PNGs.
+  const screens = SCREENS
+    .filter((screen) => wanted === null || screen.name === wanted)
+    .map((screen) => (args.period !== null && screen.name === 'reporting'
+      ? { ...screen, expect: ['Valore pipeline aperto', `Vinte in ${formatMonth(args.period)}`] }
+      : screen));
+  const tag = `${args.period !== null ? `-${args.period}` : ''}${args.theme === 'dark' ? '-dark' : ''}`;
   const outDir = args.out;
   mkdirSync(outDir, { recursive: true });
-  const server = await startServer(publicDir, (name) => harnessHtml(name, publicDir));
+  const server = await startServer(publicDir, (name) => harnessHtml(name, publicDir, { period: args.period }));
   const address = server.address();
   if (!address || typeof address !== 'object') {
     console.error('bo:shots: the fixture server did not listen on 127.0.0.1.');
@@ -1900,7 +2320,10 @@ async function main() {
   const manifest = [];
   try {
     for (const screen of screens) {
-      const shots = await renderScreen({ binary, flags, port: address.port, screen, outDir });
+      const shots = await renderScreen({
+        binary, flags, port: address.port, screen, outDir, theme: args.theme, tag,
+        activityAt: () => server.boActivityAt(),
+      });
       for (const shot of shots) manifest.push({ screen: screen.name, ...shot });
     }
   } catch (error) {

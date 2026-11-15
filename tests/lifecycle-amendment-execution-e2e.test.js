@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 
 import {
   BUSINESS_NOW, POLICY, boot, project, signedOrder,
-} from './helpers/contracts-project.js';
+} from './helpers/contracts-project-cache.js';
 
 /**
  * **M16b — renewal and amendment execution, against a running application.**

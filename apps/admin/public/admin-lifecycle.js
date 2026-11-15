@@ -1,5 +1,7 @@
 // @ts-check
 
+import { uiBusy } from './admin-ui.js';
+
 /**
  * Renewal & amendment execution Admin (M16b, ADR-035).
  *
@@ -246,14 +248,14 @@ export async function renderAmendment({ contract, schema, mount, el, client, mon
     const button = el('button', undefined, 'Open amendment run');
     button.setAttribute('data-action', 'open-amendment-run');
     busy.push(button);
-    button.addEventListener('click', () => withBusy(async () => {
+    button.addEventListener('click', () => uiBusy(button, 'Apro…', () => withBusy(async () => {
       if (String(reason.value ?? '').trim() === '') {
         // Refused before any request leaves the browser, and the message is
         // thrown so the parent does not treat it as a success.
         throw new Error('A reason is required to open an amendment run.');
       }
       await runAction(client, 'commercial-contract', contract.id, 'open-amendment-run', { reason: String(reason.value) });
-    }));
+    })));
     start.appendChild(reason);
     start.appendChild(button);
     panel.appendChild(start);
@@ -293,13 +295,13 @@ export async function renderAmendment({ contract, schema, mount, el, client, mon
   const attachButton = el('button', undefined, 'Attach successor order');
   attachButton.setAttribute('data-action', 'attach-successor-order');
   busy.push(attachButton);
-  attachButton.addEventListener('click', () => withBusy(async () => {
+  attachButton.addEventListener('click', () => uiBusy(attachButton, 'Collego…', () => withBusy(async () => {
     if (String(orderInput.value ?? '').trim() === '') throw new Error('A signed successor order id is required.');
     const [name, version] = String(policySelect.value).split('@');
     await runAction(client, 'amendment-run', open.id, 'attach-successor-order', {
       successorOrderId: String(orderInput.value).trim(), policy: name, policyVersion: Number(version),
     });
-  }));
+  })));
   attach.appendChild(el('p', 'muted', 'Attaching records what the evidence says right now. It authorises nothing: executing re-proves every one of these facts inside its own transaction.'));
   attach.appendChild(orderInput);
   attach.appendChild(policySelect);
@@ -370,12 +372,12 @@ export async function renderAmendment({ contract, schema, mount, el, client, mon
     const executeButton = el('button', undefined, 'Execute renewal or amendment');
     executeButton.setAttribute('data-action', 'execute-amendment');
     busy.push(executeButton);
-    executeButton.addEventListener('click', () => withBusy(async () => {
+    executeButton.addEventListener('click', () => uiBusy(executeButton, 'Eseguo…', () => withBusy(async () => {
       const [name, version] = String(policySelect.value).split('@');
       await runAction(client, 'amendment-run', open.id, 'execute-amendment', {
         policy: name, policyVersion: Number(version),
       });
-    }));
+    })));
     execute.appendChild(el('p', 'muted', 'Executing creates the successor agreement, its subscription and its lineage in one transaction. It modifies nothing on the agreement it succeeds.'));
     execute.appendChild(executeButton);
     panel.appendChild(execute);
@@ -393,10 +395,10 @@ export async function renderAmendment({ contract, schema, mount, el, client, mon
   const abandonButton = el('button', 'danger', 'Abandon this round');
   abandonButton.setAttribute('data-action', 'abandon-amendment-run');
   busy.push(abandonButton);
-  abandonButton.addEventListener('click', () => withBusy(async () => {
+  abandonButton.addEventListener('click', () => uiBusy(abandonButton, 'Chiudo…', () => withBusy(async () => {
     if (String(abandonReason.value ?? '').trim() === '') throw new Error('A reason is required to abandon a round.');
     await runAction(client, 'amendment-run', open.id, 'abandon-amendment-run', { reason: String(abandonReason.value) });
-  }));
+  })));
   abandon.appendChild(el('p', 'muted', 'Abandoning closes this round with a reason. It cancels nothing, ends nothing and changes no commercial record; a new round may be opened afterwards.'));
   abandon.appendChild(abandonReason);
   abandon.appendChild(abandonButton);

@@ -45,10 +45,26 @@ function fakeAppointments(seed = []) {
   };
 }
 
-const weekOf = (storage, filter = {}) => readTeamWeek(
-  { appointments: storage },
+const weekOf = (storage, filter = {}, calendarSync = null) => readTeamWeek(
+  { appointments: storage, calendarSync },
   { teamMemberIds: ['coach-guido', 'coach-maria'], from: FROM, to: TO, ...filter },
 );
+
+/** A composed calendar-sync handle answering fixed owner blocks, like the deployment store. */
+const storeWith = (blocks) => ({
+  seen: [],
+  async listOwnerBlocks(query) {
+    storeWith.last = query;
+    return blocks;
+  },
+});
+const failingStore = () => ({
+  async listOwnerBlocks() {
+    const error = new Error('sync store down');
+    error.code = 'SYNC_STORE_DOWN';
+    throw error;
+  },
+});
 
 test('groups overlapping bookings per person, soonest slot first', async () => {
   const storage = fakeAppointments([
@@ -96,7 +112,88 @@ test('cancelled rows stay listed with their status', async () => {
 test('a member with no bookings reads as an empty group, never an error', async () => {
   const storage = fakeAppointments([row({ id: 'a-1' })]);
   const week = await weekOf(storage);
-  assert.deepEqual(week.members[1], { teamMemberId: 'coach-maria', appointments: [] });
+  assert.deepEqual(week.members[1], { teamMemberId: 'coach-maria', appointments: [], busy: [] });
+});
+
+test('an owner block with no guest reads as Occupato beside the bookings (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const calendarSync = storeWith([
+    { teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'test accordo' },
+    { teamMemberId: 'coach-maria', startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z' },
+    { teamMemberId: 'coach-unknown', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' },
+  ]);
+  const week = await weekOf(storage, {}, calendarSync);
+  assert.deepEqual(week.members[0].busy, [{
+    startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'test accordo',
+  }]);
+  assert.deepEqual(week.members[1].busy, [{
+    startsAt: '2026-10-21T09:00:00.000Z', endsAt: '2026-10-21T10:00:00.000Z', title: 'Occupato',
+  }]);
+  assert.deepEqual(week.members[0].appointments.map((booking) => booking.id), ['a-1']);
+});
+
+test('a filter busyBlocks key is never read: forged or omitted, the store decides (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const forged = [
+    { teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'forged' },
+  ];
+  const calendarSync = storeWith([]);
+  const week = await weekOf(storage, { busyBlocks: forged }, calendarSync);
+  assert.deepEqual(week.members[0].busy, [], 'a forged filter block holds nobody');
+  assert.deepEqual(week.members[0].appointments.map((booking) => booking.id), ['a-1']);
+});
+
+test('a padded store identity still holds its member (backlog:af190faf)', async () => {
+  const storage = fakeAppointments();
+  const calendarSync = storeWith([
+    { teamMemberId: ' coach-guido ', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' },
+  ]);
+  const week = await weekOf(storage, { teamMemberIds: ['coach-guido'] }, calendarSync);
+  assert.deepEqual(week.members[0].busy, [{
+    startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', title: 'Occupato',
+  }]);
+});
+
+test('a malformed store block fails the week read closed like every other path (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const bad = [
+    [null],
+    [{ startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: 'not-a-date', endsAt: '2026-10-20T16:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T16:00:00.000Z', endsAt: '2026-10-20T15:00:00.000Z' }],
+    [{ teamMemberId: '', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', status: 'cancelled' }],
+    [{ teamMemberId: 'coach-guido', startsAt: '2026-10-20T15:00:00.000Z', endsAt: '2026-10-20T16:00:00.000Z', id: 'x-1' }],
+  ];
+  for (const blocks of bad) {
+    await assert.rejects(
+      weekOf(storage, {}, storeWith(blocks)),
+      (error) => error instanceof ValidationError && error.details?.field === 'busyBlocks',
+      `week rejects ${JSON.stringify(blocks)}`,
+    );
+  }
+});
+
+test('a silent store fails the week read closed, never an empty grid over unknown state (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  await assert.rejects(
+    weekOf(storage, {}, failingStore()),
+    (error) => error.code === 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE' && error.status === 503,
+  );
+});
+
+test('a store answering nothing fails closed, never an empty grid (backlog:af190faf)', async () => {
+  const storage = fakeAppointments();
+  await assert.rejects(
+    weekOf(storage, {}, storeWith(null)),
+    (error) => error.code === 'APPOINTMENTS_OWNER_BLOCKS_UNAVAILABLE' && error.status === 503,
+  );
+});
+
+test('without the store composed the week keeps main behaviour: busy is empty (backlog:af190faf)', async () => {
+  const storage = fakeAppointments([row({ id: 'a-1' })]);
+  const week = await weekOf(storage);
+  assert.deepEqual(week.members[0].busy, []);
 });
 
 test('duplicate member ids collapse to one group', async () => {

@@ -1,5 +1,6 @@
 // @ts-check
 
+import { uiBusy } from './admin-ui.js';
 import { humanReadError } from './admin-core.js';
 
 /**
@@ -284,7 +285,7 @@ function renderActivation({ meta, contract, body, el, client, withBusy, busy, re
       planButton.disabled = false;
     }
   };
-  planButton.addEventListener('click', () => { void plan(); });
+  planButton.addEventListener('click', () => { void uiBusy(planButton, 'Preparo…', plan); });
   section.__plan = plan;
   section.__policy = policySelect;
   body.appendChild(section);
@@ -373,7 +374,7 @@ function renderPlan({ contract, plan, policy, appliedOverrides, meta, result, el
         applyButton.disabled = false;
       }
     };
-    applyButton.addEventListener('click', () => { void apply(); });
+    applyButton.addEventListener('click', () => { void uiBusy(applyButton, 'Applico…', apply); });
     result.appendChild(applyButton);
     result.appendChild(errorLine);
     // No coverage form and no activation control exist while anything is
@@ -399,7 +400,7 @@ function renderPlan({ contract, plan, policy, appliedOverrides, meta, result, el
   activateButton.setAttribute('type', 'button');
   busy.push(activateButton);
   activateButton.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(activateButton, 'Attivo…', () => withBusy(async () => {
       errorLine.textContent = '';
       activateButton.disabled = true; // no double submit while the request is in flight
       try {
@@ -419,7 +420,7 @@ function renderPlan({ contract, plan, policy, appliedOverrides, meta, result, el
         activateButton.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   form.appendChild(activateButton);
   form.appendChild(errorLine);
@@ -481,7 +482,7 @@ function endControls({ coverage, el, client, withBusy, busy, refresh }) {
   button.setAttribute('type', 'button');
   busy.push(button);
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Chiudo…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -495,7 +496,7 @@ function endControls({ coverage, el, client, withBusy, busy, refresh }) {
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   controls.appendChild(reason);
   controls.appendChild(endDate);
@@ -655,7 +656,7 @@ function recordCaseControls({ data, meta, el, client, withBusy, busy, refresh, s
   button.setAttribute('type', 'button');
   busy.push(button);
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Registro…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -681,7 +682,7 @@ function recordCaseControls({ data, meta, el, client, withBusy, busy, refresh, s
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   for (const control of [entitlement, covered, caseKey, title, description, category, priority, source, contactRef, ownerRef, button, error]) {
     form.appendChild(control);
@@ -746,7 +747,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
     button.setAttribute('type', 'button');
     busy.push(button);
     button.addEventListener('click', () => {
-      void withBusy(async () => {
+      void uiBusy(button, 'Registro…', () => withBusy(async () => {
         error.textContent = '';
         button.disabled = true;
         try {
@@ -759,7 +760,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
           button.disabled = false;
           throw failure;
         }
-      });
+      }));
     });
     for (const node of [note, visibility, button, error]) block.appendChild(node);
     controls.appendChild(block);
@@ -786,7 +787,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
     button.setAttribute('type', 'button');
     busy.push(button);
     button.addEventListener('click', () => {
-      void withBusy(async () => {
+      void uiBusy(button, 'Sposto…', () => withBusy(async () => {
         error.textContent = '';
         button.disabled = true;
         try {
@@ -799,7 +800,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
           button.disabled = false;
           throw failure;
         }
-      });
+      }));
     });
     for (const node of [toStatus, note, summary, button, error]) move.appendChild(node);
     move.appendChild(el('p', 'muted svc-transition-limitation',
@@ -829,7 +830,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
   activityButton.setAttribute('type', 'button');
   busy.push(activityButton);
   activityButton.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(activityButton, 'Registro…', () => withBusy(async () => {
       activityError.textContent = '';
       activityButton.disabled = true;
       try {
@@ -845,7 +846,7 @@ function renderCaseControls({ supportCase, meta, detail, el, client, withBusy, b
         activityButton.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   for (const node of [activityKey, type, bodyText, visibility, evidenceRef, activityButton, activityError]) {
     activity.appendChild(node);
@@ -892,7 +893,7 @@ function renderSla({ data, meta, supportCase, detail, el, client, withBusy, busy
   const currentError = el('small', 'field-error', '');
   const previewButton = el('button', 'preview-sla', 'Preview SLA now');
   previewButton.setAttribute('type', 'button');
-  previewButton.addEventListener('click', async () => {
+  previewButton.addEventListener('click', () => uiBusy(previewButton, 'Calcolo…', async () => {
     // Read-only and open to an agent: it is deliberately NOT wrapped in the
     // parent's re-render, because previewing must not disturb the page.
     currentError.textContent = '';
@@ -909,7 +910,7 @@ function renderSla({ data, meta, supportCase, detail, el, client, withBusy, busy
     } finally {
       previewButton.disabled = false;
     }
-  });
+  }));
   current.appendChild(el('p', 'muted', 'A preview is what the clock says at the instant you ask. It writes nothing — no record, no audit row and no event — and an agent may run it.'));
   current.appendChild(previewButton);
   current.appendChild(currentValue);
@@ -941,7 +942,7 @@ function renderSla({ data, meta, supportCase, detail, el, client, withBusy, busy
   button.setAttribute('type', 'button');
   busy.push(button);
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Registro…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -953,7 +954,7 @@ function renderSla({ data, meta, supportCase, detail, el, client, withBusy, busy
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   persisted.appendChild(key);
   persisted.appendChild(button);
@@ -998,7 +999,7 @@ function renderEscalations({ data, supportCase, detail, el, client, withBusy, bu
   button.setAttribute('type', 'button');
   busy.push(button);
   button.addEventListener('click', () => {
-    void withBusy(async () => {
+    void uiBusy(button, 'Registro…', () => withBusy(async () => {
       error.textContent = '';
       button.disabled = true;
       try {
@@ -1014,7 +1015,7 @@ function renderEscalations({ data, supportCase, detail, el, client, withBusy, bu
         button.disabled = false;
         throw failure;
       }
-    });
+    }));
   });
   for (const node of [key, level, reason, targetRef, evaluation, evidenceRef, button, error]) section.appendChild(node);
   section.__key = key;
