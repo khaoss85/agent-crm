@@ -448,4 +448,39 @@ test('il link pubblico non apre serie: una richiesta con ricorrenza è 400 senza
   assert.equal(service.rows.length, 0, 'nessuna occorrenza scritta dal link pubblico');
 });
 
+test('una serie vuota è 400 in proposta e in conferma, senza scrivere (backlog:0f2ae629e09b)', async () => {
+  // P1 review giro 8: regola e finestra che non si incontrano (until prima
+  // dell'inizio) espandono a zero occorrenze: la conferma rispondeva 500 e
+  // la proposta abbozzava una serie vuota ma non prenotabile.
+  const recurrence = { kind: 'weekly', until: '2026-11-01' };
+  const confirming = fakeAppointments();
+  await assert.rejects(
+    confirmBooking(
+      { ...contextFor(confirming), permissionGate: allowGate() },
+      { ...booking({ sourceKey: 'gym:series:vuota:1', recurrence }), spaceId: 'spazio-1', confirmed: true },
+    ),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.details?.field, 'recurrence');
+      assert.match(String(error.message), /non produce nessun appuntamento/);
+      return true;
+    },
+  );
+  assert.equal(confirming.rows.length, 0, 'nessuna riga scritta dalla conferma di una serie vuota');
+  const proposing = fakeAppointments();
+  await assert.rejects(
+    proposeBooking(
+      { ...contextFor(proposing), permissionGate: allowGate() },
+      { ...booking({ sourceKey: 'gym:series:vuota:2', recurrence }), spaceId: 'spazio-1' },
+    ),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.details?.field, 'recurrence');
+      assert.match(String(error.message), /non produce nessun appuntamento/);
+      return true;
+    },
+  );
+  assert.equal(proposing.rows.length, 0, 'nessuna riga scritta dalla proposta di una serie vuota');
+});
+
 

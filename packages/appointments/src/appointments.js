@@ -792,6 +792,21 @@ function assertSeriesHeadSlot(input, slots) {
 }
 
 /**
+ * A rule that meets no day (a window the rule never lands on) expands to
+ * nothing: refused 400 naming `recurrence` on every path — propose and book
+ * share this gate — never drafted and never a 500. The draft of an empty
+ * series could never be booked, so failing it closed keeps propose and
+ * confirm answering the same refusal.
+ */
+function assertSeriesNonEmpty(slots) {
+  if (Array.isArray(slots) && slots.length === 0) {
+    throw new ValidationError('Questa ricorrenza non produce nessun appuntamento: controlla giorni e data di fine', {
+      field: 'recurrence',
+    });
+  }
+}
+
+/**
  * First conflicting occurrence of a series against held rows (plus the
  * series' own earlier slots, so a rule overlapping itself is refused naming
  * the pair). Null when every occurrence is free.
@@ -1089,11 +1104,7 @@ async function bookSeries(context, input) {
   }
   if (input.remindAt !== null) requireBookingTransaction(appointments);
   const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
-  if (slots.length === 0) {
-    throw new AppError('The series expands to no occurrence: a rule that books nothing is refused', {
-      code: 'APPOINTMENTS_SERIES_EMPTY', status: 500,
-    });
-  }
+  assertSeriesNonEmpty(slots);
   assertSeriesHeadSlot(input, slots);
   const keys = slots.map((_, index) => validateSourceKey(`${input.sourceKey}:r${index + 1}`, 'sourceKey'));
   const ruleJson = JSON.stringify(input.recurrence);
@@ -2351,6 +2362,7 @@ export async function proposeBooking(context, request) {
   // proposal with the same message the booking would answer.
   if (input.recurrence !== null) {
     const slots = expandRecurrence({ startsAtMs: input.startMs, endsAtMs: input.endMs, recurrence: input.recurrence });
+    assertSeriesNonEmpty(slots);
     assertSeriesHeadSlot(input, slots);
     // Like bookSeries: the proposal checks every occurrence against the
     // owner holds over the whole series window, not just the head slot.
