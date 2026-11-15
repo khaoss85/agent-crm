@@ -4,6 +4,9 @@ import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
+/** The non-breaking space the quote view keeps with its number (backlog:cf270ae1f808). */
+const NBSP = String.fromCharCode(160);
+
 /**
  * The Admin contract activation section (Milestone 12, ADR-018 domain
  * package). It proves the human path end to end against a stub server:
@@ -373,7 +376,7 @@ test('an activated order shows evidence only — no obligation, billing or renew
   assert.ok(text.includes('commercial treatment overridden by admin (the policy said "ambiguous")'), text);
   assert.ok(text.includes('post-signature-operational-activation'), 'the term provenance is evidence too');
   assert.ok(text.includes('subscription line · no further obligation'), 'both axes are readable per line');
-  assert.ok(text.includes('2.850 € net per period'), 'subscription lines show the per-period amount in the Italian screen form');
+  assert.ok(text.includes('2.850' + NBSP + '€ net per period'), 'subscription lines show the per-period amount in the Italian screen form');
   assert.ok(text.includes('pending_handover'), 'the delivery obligation is a pending marker');
   assert.ok(text.includes('Nothing executes, schedules, staffs or completes them'));
   // Those words exist only inside the "not modeled" disclosure — never as a
