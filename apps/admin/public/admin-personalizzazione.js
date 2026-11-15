@@ -29,7 +29,7 @@
 
 import { CHANNEL_CONNECT_ROUTES, channelState } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { CONNECTOR_CATALOG, matchConnections } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-connectors.js';
 import { humanReadError } from './admin-core.js';
 import { plural } from './admin-labels.js';
 import { readProfile } from './admin-profilo.js';
@@ -395,27 +395,47 @@ export function connettoriHref(entry) {
 
 /**
  * The card state from the live rows, read through the one shared channel
- * state (`channelState`, backlog:e381c48581fa): `collegato` when the
- * channel is linked — the same predicate as «<n> di 9 collegati», so a
- * Google Calendar linked on Profilo is in «I tuoi» too (`countAs` names the
- * counted channel of a card the guided flow does not serve); `da-collegare`
- * otherwise when the card has a destination; `non-disponibile` for a card
- * with neither (Stripe).
+ * state (`channelState`, backlog:e381c48581fa extended here): `collegato`
+ * when the channel is linked — the same predicate as «<n> di 9 collegati»,
+ * so a Google Calendar linked on Profilo is in «I tuoi» too (`countAs`
+ * names the counted channel of a card the guided flow does not serve);
+ * `da-collegare` when the shared state offers a destination (a
+ * `da-completare` card keeps its `+`: the detail finishes it); and
+ * `non-disponibile` where the shared state offers nothing (TikTok,
+ * Telefono and Form sito in the pilot read like Stato sync: no adapter, no
+ * Collega). Without the schema adapters the screen cannot know what is
+ * connectable, so it keeps the previous answer (a channel card offers its
+ * detail, like before).
  * @param {{ channel?: unknown, countAs?: unknown, href?: unknown }} entry
  * @param {unknown} connectors
  * @param {unknown} [profile] the /api/profile answer, null when unread
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function connettoriCardState(entry, connectors, profile = null) {
+export function connettoriCardState(entry, connectors, profile = null, adapters = null) {
   const guided = entry && typeof entry.channel === 'string' && entry.channel !== '' ? entry.channel : '';
   const counted = guided !== '' ? guided
     : entry && typeof entry.countAs === 'string' ? entry.countAs : '';
-  // The profile (GET /api/profile) merges like the shared count: a link
-  // that lives only on Profilo is one of yours too (review #782 P1).
-  if (counted !== '' && channelState(counted, { rows: Array.isArray(connectors) ? connectors : [], profile }).state === 'collegato') {
-    return 'collegato';
+  if (counted !== '' && !Array.isArray(adapters)) {
+    // The profile (GET /api/profile) merges like the shared count: a link
+    // that lives only on Profilo is one of yours too (review #782 P1).
+    if (channelState(counted, { rows: Array.isArray(connectors) ? connectors : [], profile }).state === 'collegato') {
+      return 'collegato';
+    }
+    if (guided !== '') return 'da-collegare';
+    // No guided channel: connectable only where its destination leads.
+    return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
   }
-  if (guided !== '') return 'da-collegare';
-  // No guided channel: connectable only where its destination leads.
+  if (counted !== '') {
+    const shared = channelState(counted, {
+      rows: Array.isArray(connectors) ? connectors : [],
+      profile,
+      adapters: matchAdapters(counted, adapters),
+      guided: CONNECTOR_CATALOG.map((item) => item.channel),
+    });
+    if (shared.state === 'collegato') return 'collegato';
+    if (shared.state === 'da-completare' || shared.state === 'da-collegare') return 'da-collegare';
+    return 'non-disponibile';
+  }
   return entry && typeof entry.href === 'string' && entry.href !== '' ? 'da-collegare' : 'non-disponibile';
 }
 
@@ -428,12 +448,12 @@ export function connettoriCardState(entry, connectors, profile = null) {
  * order (no usage counts exist server-side, so the catalog order is the
  * honest ranking), `stato` sorts connected cards first.
  */
-export function filterConnettori({ connectors = [], profile = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
+export function filterConnettori({ connectors = [], profile = null, adapters = null, query = '', sort = 'nome', view = 'scopri', stato = 'tutti' } = {}) {
   const needle = String(query ?? '').trim().toLowerCase();
   return CONNETTORI_SECTIONS.map((section) => {
     const cards = [];
     for (const entry of section.entries) {
-      const state = connettoriCardState(entry, connectors, profile);
+      const state = connettoriCardState(entry, connectors, profile, adapters);
       if (view === 'tuoi' && state !== 'collegato') continue;
       if (stato === 'attivi' && state !== 'collegato') continue;
       if (stato === 'da-attivare' && state !== 'da-collegare') continue;
@@ -494,6 +514,7 @@ export function createPersonalizzazioneView(deps) {
     unitsError: null,
     /** @type {Array<any> | null} */ connectors: null,
     /** @type {any} the /api/profile answer, null when unreadable */ profile: null,
+    /** @type {Array<any> | null} the schema's composed channel adapters, null when unread */ adapters: null,
     connectorsMissing: false,
     connectorsForbidden: false,
     /** @type {string | null} */ previewFor: null,
@@ -571,12 +592,24 @@ export function createPersonalizzazioneView(deps) {
   async function loadConnectors() {
     const space = readSpace().trim();
     state.connectors = null;
+    state.adapters = null;
     state.connectorsMissing = false;
     state.connectorsForbidden = false;
     if (space === '') return;
     // The profile links merge like the shared count (review #782 P1);
     // readProfile never throws — an unreadable profile adds nothing.
     state.profile = await readProfile(deps.client);
+    // The card Collega follows the shared channel state, like Stato sync
+    // and #/connettori: it needs the schema's composed adapters (a card
+    // nothing serves offers no Collega). A failed schema read keeps the
+    // previous answer instead of hiding every card.
+    try {
+      const schema = await client.request('/api/schema');
+      const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
+      state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
+    } catch {
+      state.adapters = null;
+    }
     try {
       const sync = await client.request(`/api/connectors?spaceId=${encodeURIComponent(space)}`);
       state.connectors = Array.isArray(sync?.connectors) ? sync.connectors : [];
@@ -1138,7 +1171,8 @@ export function createPersonalizzazioneView(deps) {
     if (state.view !== 'tuoi') renderConnettoriHero(box);
     const connectors = state.connectors ?? [];
     const groups = filterConnettori({
-      connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+      connectors, profile: state.profile, adapters: state.adapters,
+      query: state.query, sort: state.sort, view: state.view, stato: state.stato,
     });
     const sections = el(doc, 'div', { cls: 'connettori-sections' });
     let shown = 0;
@@ -1251,9 +1285,10 @@ export function createPersonalizzazioneView(deps) {
     for (const card of group.cards) {
       const href = connettoriHref(card.entry);
       const article = el(doc, 'article', { cls: 'ui-card ui-conn-card' });
-      // A card nothing can connect (Stripe, owner decision 08/11 on #680)
-      // carries no action at all: no `+`, no link, no keyboard activation —
-      // only the same «Non disponibile» Stato sync shows.
+      // A card nothing can connect (Stripe, owner decision 08/11 on #680,
+      // TikTok/Telefono/Form in the pilot: no adapter) carries no action at
+      // all: no `+`, no link, no keyboard activation — only the same
+      // «Non ancora disponibile» the Connettori list shows.
       const unavailable = card.state === 'non-disponibile';
       // Clicking the card opens its detail (spec C19); the `+` action
       // stops the event so it opens the collegamento instead. The fake
@@ -1309,7 +1344,7 @@ export function createPersonalizzazioneView(deps) {
         badge.setAttribute('title', 'Collegato');
         actions.appendChild(badge);
       } else if (unavailable) {
-        actions.appendChild(el(doc, 'span', { text: 'Non disponibile', cls: 'bo-muted' }));
+        actions.appendChild(el(doc, 'span', { text: 'Non ancora disponibile', cls: 'bo-muted' }));
       } else {
         const add = uiButton(doc, {
           variant: 'secondary', small: true, label: '+',
@@ -1358,7 +1393,8 @@ export function createPersonalizzazioneView(deps) {
       count = filterUnits({ units, active: known, tab: state.tab, view: state.view, query: state.query, sort: state.sort }).length;
     } else if (Array.isArray(state.connectors)) {
       count = filterConnettori({
-        connectors: state.connectors, profile: state.profile, query: state.query, sort: state.sort, view: state.view, stato: state.stato,
+        connectors: state.connectors, profile: state.profile, adapters: state.adapters,
+        query: state.query, sort: state.sort, view: state.view, stato: state.stato,
       }).reduce((total, group) => total + group.cards.length, 0);
     }
     renderToolbar(toolRow, count);

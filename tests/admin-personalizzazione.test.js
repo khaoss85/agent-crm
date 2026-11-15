@@ -1046,9 +1046,10 @@ test('Connettori shows no line under the toolbar; Skill and Pacchetti speak plai
 });
 
 // Owner decision 08/11 on #680: Stripe has no real connect flow, so its
-// card shows what Stato sync shows — «Non disponibile», no «+», no link,
-// no keyboard activation — never a button that connects nothing.
-test('#680: the Stripe card reads Non disponibile and carries no action', async () => {
+// card shows what the Connettori list shows — «Non ancora disponibile»,
+// no «+», no link, no keyboard activation — never a button that connects
+// nothing.
+test('#680: the Stripe card reads Non ancora disponibile and carries no action', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
@@ -1061,7 +1062,7 @@ test('#680: the Stripe card reads Non disponibile and carries no action', async 
   await flush();
   const stripe = mount.findAll('article').find((node) => node.textContent.includes('Stripe'));
   assert.ok(stripe, 'the Stripe card is listed');
-  assert.ok(stripe.textContent.includes('Non disponibile'), 'it says Non disponibile, like Stato sync');
+  assert.ok(stripe.textContent.includes('Non ancora disponibile'), 'it says Non ancora disponibile, like the Connettori list');
   assert.equal(stripe.findAll('button').length, 0, 'no «+» button');
   assert.equal(stripe.getAttribute('role'), null, 'not a link');
   assert.equal(stripe.getAttribute('tabindex'), null, 'not focusable as an action');
