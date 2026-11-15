@@ -145,10 +145,11 @@ test('harness pages photograph the full /bo shell with a hidden probe', () => {
   }
 });
 
-test('the clienti harness names counted pills and one label-only fallback', () => {
+test('the clienti harness names counted pills and a bare label for the uncounted view', () => {
   // backlog:22d4dd0f, C10: the next render paints counted pills for the
-  // views the demo server knows, and the bare label for rinnovi, whose
-  // dependency reads as unavailable — both states the P2 asks to see.
+  // views the demo server knows, and a bare label for rinnovi, whose
+  // dependency reads as unavailable — honest absence, never a false 0
+  // (backlog:5af848afdb63: a missing count shows no number).
   const page = harnessHtml('clienti', publicDir);
   for (const view of [
     "{ id: 'tutti', label: 'Tutti', count: 3 }",

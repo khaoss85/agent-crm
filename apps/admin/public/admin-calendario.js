@@ -26,6 +26,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
@@ -127,22 +128,15 @@ export function eventPopoverPlacement(input) {
 }
 
 /**
- * The week the calendar opens on (backlog:df55cf25): the Rome Mon..Sun week
- * containing `now`, except on Saturday/Sunday — when the painted Mon..Fri
- * work days would already be over — when the following Mon..Sun opens
- * instead, so the grid shows the coming days, never the past ones. Pure and
- * DOM-free so it is unit-tested without a browser.
+ * The week the calendar opens on (backlog:c51dca86dc66, was df55cf25): the
+ * Rome Mon..Sun week containing `now`, Saturday and Sunday included — the
+ * painted week shows the current day even on the weekend, never the coming
+ * days while today still holds bookings. Pure and DOM-free so it is
+ * unit-tested without a browser.
  */
 export function openingWeekKeys(now = new Date()) {
   const instant = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  const todayKey = romeDayKey(instant);
-  if (!todayKey) return romeWeekKeys(instant);
-  // Noon UTC of the Rome day is afternoon in Rome on the same calendar
-  // day, so its UTC weekday is the Rome weekday — no DST arithmetic.
-  const dayIndex = (new Date(`${todayKey}T12:00:00Z`).getUTCDay() + 6) % 7;
-  if (dayIndex < 5) return romeWeekKeys(instant);
-  const monday = new Date(Date.parse(`${todayKey}T12:00:00Z`) + (7 - dayIndex) * 24 * 3600 * 1000);
-  return romeWeekKeys(monday);
+  return romeWeekKeys(instant);
 }
 
 /** Rome week (Monday..Sunday) containing `now`, as YYYY-MM-DD keys. */
@@ -228,14 +222,21 @@ export function weekLabel(weekKeys) {
 }
 
 /**
- * BO-F6-11 fetta 4 (specs/calendario.md C13): the prototype shows a work
- * week — Monday..Friday against an 09:00–18:00 hour axis. The loaded week
- * stays Monday..Sunday (the pager and the window do not move); only the
- * painted columns are the first five keys.
+ * BO-F6-11 fetta 4 (specs/calendario.md C13, backlog:c51dca86dc66): the
+ * prototype shows a work week — Monday..Friday against an 09:00–18:00 hour
+ * axis — plus the current Rome day when it falls on the weekend, so the
+ * grid shows today even on Saturday and Sunday. The loaded week stays
+ * Monday..Sunday (the pager and the window do not move); only the painted
+ * columns are the first five keys and, on the weekend, today's key.
  * @param {Array<string>} weekKeys
+ * @param {Date} [now]
  */
-export function displayKeys(weekKeys) {
-  return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
+export function displayKeys(weekKeys, now = new Date()) {
+  if (!Array.isArray(weekKeys)) return [];
+  const painted = weekKeys.slice(0, 5);
+  const todayKey = romeDayKey(now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date());
+  if (todayKey !== null && !painted.includes(todayKey) && weekKeys.includes(todayKey)) painted.push(todayKey);
+  return painted;
 }
 
 /**
@@ -361,9 +362,12 @@ export function teamRows(named, hidden) {
  * with no roster name and no mailbox paints the teamPeople label (plain
  * words for a stored id, the operator's own typed words, a pipe id never
  * paints anywhere); such a row falls back to the generic «Membro del
- * team». No role line: the E2E takes the «Proprietario» chip out
+ * team». No role chip: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
- * accessi. Tint stays hashed on the stable primary subject and initials
+ * accessi. Each row still carries a small sub-line like Spazi e accessi:
+ * the mailbox when it adds to the painted name, else the access kind
+ * («Accesso Google», …), else nothing. Tint stays hashed on the stable
+ * primary subject and initials
  * follow the painted name, so a block and its toggle always match.
  * @param {unknown} named @param {unknown} hidden @param {unknown} members
  */
@@ -442,11 +446,19 @@ export function personRows(named, hidden, members) {
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
+    const email = group.email ?? null;
+    // backlog:c0b718741f0f — the small sub-line like Spazi e accessi: the
+    // mailbox when it adds to the painted name, else the access kind of the
+    // person's subjects, else nothing (a row whose label already is the
+    // mailbox never repeats it).
+    const sub = email !== null && name !== email ? email : (accessLabel(group.subjects) ?? null);
     return {
       ids: [...group.subjects],
       id: primary,
       name,
       label,
+      email,
+      sub,
       listed,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
@@ -2228,11 +2240,11 @@ export function createCalendarioView(deps) {
     // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
     // eyebrow and title never carry data. The lede stays because the
     // bo:shots probe reads the pinned week from it (`.cal-wrap .lede`).
-    // Fetta 4: the label names the painted work week (Mon..Fri), not the
-    // loaded seven days.
+    // Fetta 4 (backlog:c51dca86dc66): the label names the painted work week
+    // (Mon..Fri, plus today on the weekend), not the loaded seven days.
     titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
     titleBox.appendChild(el(doc, 'h2', { className: 'cal-page-title', text: 'Agenda del team' }));
-    const label = weekLabel(displayKeys(state.weekKeys));
+    const label = weekLabel(displayKeys(state.weekKeys, clock()));
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
     const nav = el(doc, 'div', { className: 'actions' });
@@ -2317,7 +2329,7 @@ export function createCalendarioView(deps) {
         if (day !== null) held.add(day);
       }
     }
-    const painted = [...displayKeys(state.weekKeys)];
+    const painted = [...displayKeys(state.weekKeys, clock())];
     for (const key of state.weekKeys ?? []) {
       if (!painted.includes(key) && held.has(key)) painted.push(key);
     }
@@ -2346,8 +2358,9 @@ export function createCalendarioView(deps) {
    * backlog:df55cf25 (specs/calendario.md C10, C11): the Team card — one
    * toggle row per PERSON, never a technical id. Each row paints the person
    * name (displayName, mailbox, or the operator's own typed words), tinted
-   * and initialled to match its grid blocks. No role line: the E2E takes
-   * the «Proprietario» chip out of the card (roles live on in Spazi e
+   * and initialled to match its grid blocks, with the mailbox or the access
+   * kind in piccolo underneath like Spazi e accessi. No role chip: the E2E
+   * takes the «Proprietario» chip out of the card (roles live on in Spazi e
    * accessi). A click on a listed person hides all of their identities'
    * blocks (C11) with no reload; a click on a roster person nobody named yet
    * lists all of their subjects and loads their week instead of typing
@@ -2396,7 +2409,18 @@ export function createCalendarioView(deps) {
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
-      toggle.appendChild(el(doc, 'span', { text: row.label }));
+      // backlog:c0b718741f0f — the name with its small sub-line (mailbox or
+      // access kind, like Spazi e accessi) underneath, never a role chip.
+      const names = el(doc, 'span', { className: 'cal-team-names' });
+      names.appendChild(el(doc, 'span', { text: row.label }));
+      if (row.sub !== null && row.sub !== undefined) {
+        names.appendChild(el(doc, 'div', {
+          className: 'bo-spazi-status',
+          attrs: row.sub === row.email ? { title: row.email } : {},
+          text: row.sub,
+        }));
+      }
+      toggle.appendChild(names);
       toggle.addEventListener('click', () => {
         // A toggle click is the operator's own choice: the roster auto-fill
         // no longer owns the filter from here on.

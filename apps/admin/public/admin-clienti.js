@@ -305,6 +305,8 @@ export function createCustomerListView(deps) {
     // list stayed grey for 30 s with no sign of work), so the wait never
     // reads as a stuck screen. A later read without a search keeps the
     // old line: only the table reads busy, the bar never jumps.
+    // (Same outcomes as backlog:88ab568cdcba: first read «Caricamento…»,
+    // later read with a search «Ricerca in corso…», rows and focus kept.)
     if (statusLine && (data === null || state.q !== '')) {
       statusLine.textContent = data === null ? 'Caricamento…' : 'Ricerca in corso…';
     }
@@ -582,6 +584,7 @@ export function createCustomerListView(deps) {
     // beside the table it speaks about: its text never pushes the search
     // and the tools down (backlog:754918ad8da7).
     const status = el('p', 'bo-muted bo-clienti-status', '');
+    status.setAttribute('aria-live', 'polite');
 
     // ── search (the prototype's ✦ field), then views and tools on one bar ──
     const form = el('form', 'bo-clienti-search');
@@ -694,11 +697,12 @@ export function createCustomerListView(deps) {
     const viewsRow = frame.viewsRow;
     while (viewsRow.firstChild) viewsRow.removeChild(viewsRow.firstChild);
     for (const view of views) {
-      // The server names a finite `count` per view when it can know it; a
-      // view without one renders its label only — honest absence, never a
-      // guessed number.
-      const count = Number(view.count);
-      const label = view.label + (Number.isFinite(count) ? ` ${count}` : '');
+      // backlog:5af848afdb63: every view carries its number when the server
+      // named it — even 0. A view whose count was never read (the answer is
+      // not in yet, or the server refused that derived view) shows its bare
+      // label: a missing count is «unknown», never a false 0.
+      const count = typeof view.count === 'number' && Number.isFinite(view.count) ? view.count : null;
+      const label = count === null ? view.label : `${view.label} ${count}`;
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);
@@ -1027,17 +1031,26 @@ export function createCustomerListView(deps) {
     const range = total === 0 ? '0 di 0' : `${from}–${to} di ${prefix}${total}`;
     const statusLine = frame?.status ?? null;
     if (statusLine) {
-      // backlog:ee1244a145c9: a view emptied by no search reads as itself —
-      // «Nessun cliente corrisponde…» only answers an actual search or filter.
-      const searching = state.q !== '' || state.canale !== 'all' || state.stato !== 'all' || state.campo !== '';
+      // backlog:ee1244a145c9 + backlog:5af848afdb63: an empty page names what
+      // excludes — the view, the filters, or both — never a bare «no
+      // customers». «Nessun cliente corrisponde…» only answers an actual
+      // search or filter.
       const views = data?.views ?? FALLBACK_VIEWS;
       const viewLabel = views.find((view) => view?.id === state.vista)?.label ?? null;
+      const inView = state.vista !== 'tutti' && viewLabel !== null ? ` in «${viewLabel}»` : '';
+      const excluding = [];
+      if (state.q !== '') excluding.push(`ricerca «${state.q}»`);
+      if (state.canale !== 'all') excluding.push(`canale ${channelLabel(state.canale)}`);
+      if (state.stato !== 'all') excluding.push(`stato ${STATO_LABELS[state.stato] ?? state.stato}`);
+      if (state.campo !== '') {
+        const campoLabel = columnsMeta.find((column) => column.id === `campo:${state.campo}`)?.label ?? state.campo;
+        excluding.push(state.valore !== '' ? `${campoLabel}: «${state.valore}»` : `campo ${campoLabel}`);
+      }
       statusLine.textContent = total === 0
-        ? (searching
-          ? 'Nessun cliente corrisponde. Prova con un nome, una città o un canale.'
-          : (state.vista === 'tutti' || viewLabel === null
-            ? 'Nessun cliente ancora.'
-            : `Nessun cliente in «${viewLabel}».`))
+        ? (excluding.length === 0
+          ? (inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
+          : (`Nessun cliente${inView} con ${excluding.join(', ')}.`
+            + (state.q !== '' ? ' Prova con un nome, una città o un canale.' : '')))
         : '';
       if (data.totalIsExact === false) statusLine.setAttribute('title', 'conteggio parziale: la scansione è limitata');
     }

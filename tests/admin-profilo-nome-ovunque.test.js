@@ -48,7 +48,8 @@ test('3136d15da7bd Salva reports the fresh person through onMember', async () =>
   mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
   mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
   await flush(20);
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti');
+  // merge lotto #908: the name is the page h1 (backlog c51dca86dc66), not h2.
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Presti');
   assert.equal(seen.length, 1, 'one fresh person after the save');
   assert.equal(seen[0]?.name, 'Elena Presti', 'the shell footer learns the new name without a reload');
 });
@@ -131,7 +132,8 @@ test('3136d15da7bd a failed shell member push logs its cause and keeps the saved
   mount.findAll('input').find((node) => node.getAttribute('name') === 'profile-name').value = 'Elena Presti';
   mount.findAll('button').find((node) => node.textContent === 'Salva').dispatch('click');
   await flush(20);
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti');
+  // merge lotto #908: the name is the page h1 (backlog c51dca86dc66), not h2.
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Presti');
   assert.ok(logged.some((line) => /shell member push failed/.test(line) && /TypeError/.test(line)),
     'the swallowed push leaves a cause in the log');
   assert.ok(logged.every((line) => !/Elena Presti/.test(line)), 'the log names no person');

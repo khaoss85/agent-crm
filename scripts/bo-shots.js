@@ -963,8 +963,9 @@ import { createCustomerListView } from './admin-clienti.js';
 const ROWS = ${JSON.stringify(DEMO_CLIENTS)};
 const MENUS = {
   // Demo-shaped counts (Tutti 3 covers the 3 demo rows); rinnovi names no
-  // count on purpose, so the render also proves the label-only fallback for
-  // an unreadable dependency (backlog:22d4dd0f, C10).
+  // count on purpose, so the render proves the honest absence (bare label,
+  // never a false 0) for an unreadable dependency
+  // (backlog:22d4dd0f, C10; backlog:5af848afdb63).
   views: [
     { id: 'tutti', label: 'Tutti', count: 3 },
     { id: 'ricontattare-oggi', label: 'Da ricontattare oggi', count: 1 },

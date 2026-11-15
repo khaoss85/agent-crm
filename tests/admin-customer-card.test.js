@@ -697,6 +697,125 @@ test('a failed listino read still reads slug words and warns with the cause', as
   assert.ok(String(lines[0].join(' ')).includes('503'), 'the warn carries the status');
 });
 
+// backlog:26afd13657c5: the Appuntamenti vista names the booked service like
+// the listino does — the same name as the cronologia «Appuntamento fissato»
+// row, never the slug words once the listino has landed.
+test('26afd13657c5: the Appuntamenti vista shows the listino name, not slug words', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'pt-single', name: 'Scheda singola', priceCents: 4000, currency: 'EUR' },
+    ],
+  }));
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(recap.textContent.includes('Scheda singola'), `the vista names the listino service: ${recap.textContent}`);
+  assert.ok(!recap.textContent.includes('Pt single'), 'no slug words when the listino names the service');
+});
+
+// backlog:26afd13657c5: without the listino the Appuntamenti vista still
+// reads — as slug words, like the cronologia row — never blank.
+test('26afd13657c5: without the listino the Appuntamenti vista still reads slug words', async () => {
+  const mount = await renderCard(stubClient());
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(recap.textContent.includes('Pt single'), `the vista falls back to slug words: ${recap.textContent}`);
+});
+
+// backlog:26afd13657c5 (repro del NON PASSA 14/11, verifica Mac 06:5xZ: la
+// riga «Appuntamento fissato» mostrava ~0,8 s il nome breve del servizio e
+// poi il listino). Finché il listino è in volo la cronologia dipinge senza
+// la riga e «Prossimo appuntamento» resta scheletro; all'arrivo del listino
+// la riga nasce già col nome giusto. Mai le parole slug prima del listino.
+test('26afd13657c5: the appointment row waits for the listino, never slug words first', async () => {
+  const gates = new Map();
+  const hold = (name) => {
+    if (!gates.has(name)) {
+      let release;
+      const promise = new Promise((resolve, reject) => { release = { resolve, reject }; });
+      gates.set(name, { promise, release });
+    }
+    return gates.get(name);
+  };
+  const booked = {
+    ...TIMELINE,
+    appointments: {
+      available: true,
+      count: 1,
+      truncated: false,
+      items: [{
+        id: 'b9', status: 'booked', startsAt: '2099-10-23T16:00:00.000Z', endsAt: '2099-10-23T17:00:00.000Z',
+        serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+      }],
+    },
+  };
+  const noOffers = {
+    ...PROFILE,
+    opportunities: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+    quotes: { available: true, count: 0, countIsComplete: true, items: [], truncated: false },
+  };
+  const client = {
+    requested: [],
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if ((options?.method ?? 'GET') !== 'GET') return {};
+      this.requested.push(path);
+      if (path.startsWith('/api/customer-hub/card/')) return CARD;
+      if (path.startsWith('/api/customer-hub/timeline/')) return hold('timeline').promise;
+      if (path.startsWith('/api/customer-data/profile/')) return noOffers;
+      if (path.startsWith('/api/customer-data/enriched/')) return ENRICHED;
+      if (path.startsWith('/api/call-intelligence/calls/')) return null;
+      if (path.startsWith('/api/customer-data/fields')) return path.includes('/values') ? { values: [] } : { definitions: [] };
+      if (path === '/api/schema') return { pipelines: [] };
+      if (path.startsWith('/api/audit')) return { items: [] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      if (path === '/api/spine/context') return { actor: { id: 'u-me' } };
+      if (path === '/api/appointments/services') return hold('services').promise;
+      if (path.startsWith('/api/catalog/products')) return { products: [] };
+      throw new Error(`unexpected request ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const shown = createCustomerCardView({ doc, mount, client }).renderCard('contact', 'c1');
+  await flush();
+  gates.get('timeline').release.resolve(booked);
+  await flush();
+  // The cronologia paints from the timeline alone — but without the
+  // appointment row while the listino is still in flight.
+  assert.ok(mount.textContent.includes('vorrei prenotare una prova'), 'the timeline paints without the listino');
+  const bookedRows = () => mount.findAll('div')
+    .filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(bookedRows().length, 0, 'no appointment row before the listino lands');
+  assert.ok(!mount.textContent.includes('Lezione prova'), 'never the slug words before the listino');
+  assert.ok(!mount.textContent.includes('Appuntamento fissato'), 'the fixed row waits for the listino too');
+  assert.equal(mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title')).length, 0,
+    'no next-appointment title before the listino lands');
+  // The Appuntamenti vista holds grey bars while the listino loads.
+  const vista = mount.findAll('button').find((node) => node.getAttribute('data-vista') === 'appuntamenti');
+  assert.ok(vista, 'the recap keeps its Appuntamenti vista');
+  vista.dispatch('click');
+  await flush();
+  const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
+  assert.ok(recap, 'the recap body paints the vista');
+  assert.ok(!recap.textContent.includes('Lezione prova'), 'the vista never flashes slug words either');
+  // The listino lands: the row is born with the right name, nothing flashes.
+  gates.get('services').release.resolve({ services: [{ serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' }] });
+  await shown;
+  await flush();
+  assert.equal(bookedRows().length, 1, 'one cronologia row per confirmed booking');
+  assert.ok(bookedRows()[0].textContent.includes('Appuntamento fissato · Lezione di prova ·'),
+    `the row reads the listino name: ${bookedRows()[0].textContent}`);
+  assert.ok(!mount.textContent.includes('Lezione prova'), 'no slug words once the listino has landed');
+  const titles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-appt-title'));
+  assert.ok(titles.some((node) => node.textContent.includes('Lezione di prova')), 'the next appointment names the listino too');
+});
+
 test('the channel filter narrows the timeline to one channel', async () => {
   const client = stubClient();
   const doc = createFakeDocument();
@@ -2294,7 +2413,7 @@ test('714433c2: Aggiungi nota POSTs the operator note and re-reads the timeline'
   assert.deepEqual(client.writes[0].body,
     { resource: 'contact', id: 'c1', body: 'Richiamare giovedì' },
     'the note carries its subject and plain-text body');
-  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }], 'the note toasts in Italian');
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta in cima alla cronologia', error: false }], 'the note toasts in Italian');
 });
 
 // Voce 714433c2: lo stato si cambia da un menu. The menu moves the shown
@@ -2321,8 +2440,9 @@ test('714433c2: Cambia stato lists the legal moves in Italian and moves the oppo
   const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
   const labels = voices.map((node) => node.textContent);
   // qualification allows proposal/approval_pending/lost; approval_pending is
-  // a system state, so only proposta and persa are offered.
-  assert.deepEqual(labels, ['proposta', 'persa'], 'from qualificazione only proposta and persa are offered');
+  // a system state, so only proposta and persa are offered — with the
+  // board's labels (26afd13657c5), like the state pill and the offer page.
+  assert.deepEqual(labels, ['Proposta', 'Persa'], 'from qualificazione only Proposta and Persa are offered');
   assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'qualification'),
     'the current stage key is not a voice');
   assert.ok(!voices.some((node) => node.getAttribute('data-stage') === 'approval_pending'),
@@ -2994,6 +3114,19 @@ test('e9b4fc2f: with no linked channel every row is off and Invia stays disabled
   assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
 });
 
+test('backlog:88ab568cdcba: with no channel the reason sits beside the switched-off Invia, one Collega only', async () => {
+  const { panel } = await openComposerMount({
+    client: composerClient({ connectors: { connectors: [] } }),
+  });
+  const send = panel.findAll('button').find((node) => node.getAttribute('data-action') === 'composer-send');
+  assert.ok(send, 'the Invia button exists');
+  assert.equal(send.getAttribute('disabled'), 'disabled', 'with nothing linked there is nothing to send on');
+  const hint = panel.findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-hint'));
+  assert.ok(hint && hint.textContent !== '', 'the reason reads beside the switched-off Invia');
+  const links = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.equal(links.length, 1, 'one way to Connettori, never one per channel');
+});
+
 // Voce a935af6a6d19 (acceptance 1): Gmail linked in the space profile, no
 // email channel connection — Email reads connected and names its sender.
 test('a935af6a6d19: with Gmail linked in the profile Email is connected and shows its sender', async () => {
@@ -3588,7 +3721,8 @@ test('every card write carries a submission-owned Idempotency-Key, as the real c
   mount.findAll('button').find((node) => node.getAttribute('data-action') === 'add-note').dispatch('click');
   await flushClicks();
   assert.deepEqual(writes, [{ path: '/api/customer-hub/notes', method: 'POST' }], 'the note leaves with its key');
-  assert.deepEqual(seen, [{ message: 'Nota aggiunta', error: false }]);
+  // backlog:92829060f8ff: the notice says where the note went (top of the cronologia).
+  assert.deepEqual(seen, [{ message: 'Nota aggiunta in cima alla cronologia', error: false }]);
 });
 
 // Composer stile Gmail (Dan 04/11): ✕ and Esc close the window but never
@@ -4229,11 +4363,15 @@ test('backlog:d30d17880f63: no channel and AI off — the AI reason leads, the c
     const { panel } = await openComposerMount({ client, role });
     const line = aiLine(panel);
     assert.match(line.textContent, aiSentence, role);
-    assert.match(line.textContent, /Manca anche un canale collegato: Collega in Connettori/, role);
+    assert.match(line.textContent, /Manca anche un canale collegato\./, role);
     assert.ok(!line.textContent.includes('Genera si accende con un canale collegato'), `${role}: never the channel alone`);
     assert.ok(!line.textContent.includes('scrivi il messaggio qui sotto'), `${role}: nothing to send on, so no «scrivi qui sotto»`);
     const actions = line.findAll('a').map((node) => node.getAttribute('data-action'));
-    assert.deepEqual(actions, aiLink ? ['composer-ai-settings', 'composer-connectors'] : ['composer-connectors'], role);
+    assert.deepEqual(actions, aiLink ? ['composer-ai-settings'] : [], role);
+    // backlog:88ab568cdcba: one Collega per composer — the off line above
+    // already links Connettori, the AI line names it in words.
+    const connectors = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
+    assert.equal(connectors.length, 1, `${role}: a single Collega per composer`);
     const { input, go } = aiParts(panel);
     assert.equal(input.getAttribute('readonly'), 'readonly', `${role}: the request is off like with a channel`);
     assert.equal(input.getAttribute('aria-disabled'), 'true');
@@ -4293,7 +4431,7 @@ test('backlog:d30d17880f63 (review #880): the off request keeps its words copyab
   assert.equal(prevented, false, 'the words can be selected with the mouse');
 });
 
-test('backlog:d30d17880f63 (review #880): the AI-off state landing while the person is in the request moves focus to the message field', async () => {
+test('backlog:88ab568cdcba (was d30d17880f63 review #880): the AI-off state landing while the person is in the request keeps the focus, never jumps', async () => {
   let release;
   const status = new Promise((resolve) => { release = resolve; });
   const inner = draftClient({ body: 'x' });
@@ -4318,7 +4456,9 @@ test('backlog:d30d17880f63 (review #880): the AI-off state landing while the per
   release({ freeQuestions: 'disabled', code: 'LLM_SPACE_DISABLED' });
   await flushComposer();
   assert.equal(input.getAttribute('readonly'), 'readonly');
-  assert.equal(area.__focused, true, 'the person lands in the message field, never on the page body');
+  assert.equal(area.__focused, false, 'no unexplained jump: the focus stays where the person put it');
+  assert.equal(doc.activeElement, input, 'the words stay selectable under the focus');
+  assert.match(aiLine(panel).textContent, /L’AI non è attiva in questo spazio/, 'the reason line says where to write instead');
 });
 
 test('backlog:f48593bb06d4: AI off for a member who is not the titolare names whom to ask, no settings link', async () => {
@@ -4517,7 +4657,12 @@ test('backlog:f48593bb06d4: with no usable channel Genera is off at opening with
   assert.equal(go.getAttribute('aria-disabled'), 'true');
   const line = aiLine(panel);
   assert.equal(line.textContent, COMPOSER_NO_CHANNEL_LINE, 'the reason sits beside Genera from the opening');
-  assert.equal(line.findAll('a')[0]?.getAttribute('href'), '#/connettori');
+  // backlog:88ab568cdcba: the single Collega lives in the off line above,
+  // never a second one in the AI line.
+  assert.equal(line.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors').length, 0);
+  const single = panel.findAll('a').filter((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.equal(single.length, 1, 'one Collega per composer');
+  assert.equal(single[0].getAttribute('href'), '#/connettori');
   const chips = panel.findAll('label').filter((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-composer-channel'));
   assert.ok(chips.length > 0);
   for (const chip of chips) {
@@ -4659,8 +4804,8 @@ test('review #599 P3: a 400 says to write the prompt shorter and Genera stays', 
   assert.ok(!panel.textContent.includes('BO_DRAFT_REFUSED'), 'no code on screen');
 });
 
-/** backlog:f48593bb06d4: Genera's reason when no channel can be picked. */
-const COMPOSER_NO_CHANNEL_LINE = 'Genera si accende con un canale collegato · Collega in Connettori';
+/** backlog:f48593bb06d4: Genera's reason when no channel can be picked. backlog:88ab568cdcba: the off line above already links Connettori, so the AI line names it in words — one Collega per composer. */
+const COMPOSER_NO_CHANNEL_LINE = 'Genera si accende con un canale collegato.';
 
 test('review #599 P3: with no connected channel Genera asks no draft and says why', async () => {
   const inner = draftClient({ body: 'x' });
@@ -4686,8 +4831,9 @@ test('review #599 P3: with no connected channel Genera asks no draft and says wh
   const line = panel.findAll('p').find((node) => String(node.getAttribute('class') ?? '').includes('bo-composer-ai-line'));
   assert.ok(line, 'the AI row has its line');
   assert.equal(line.textContent, COMPOSER_NO_CHANNEL_LINE);
-  const go2 = line.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
-  assert.ok(go2, 'the line links Connettori');
+  assert.ok(!line.findAll('a').some((node) => node.getAttribute('data-action') === 'composer-connectors'), 'no second Collega in the AI line');
+  const go2 = panel.findAll('a').find((node) => node.getAttribute('data-action') === 'composer-connectors');
+  assert.ok(go2, 'the single Collega links Connettori');
   assert.equal(go2.getAttribute('href'), '#/connettori', 'the link opens the Connettori screen of the /bo');
   assert.ok(!panel.textContent.includes('canale scelto'), 'no sentence about a channel nobody can pick');
 });
@@ -5184,15 +5330,38 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
-test('59def6cb805d: the next appointment reads title then day and hours (C26)', async () => {
+test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'service made readable, member by name');
+  assert.equal(title.textContent, 'Pt single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
+});
+
+test('backlog:c51dca86dc66 review P2: the appointment title keeps the member when the contact has no name (C26)', async () => {
+  const mount = await renderCard(stubClient({ card: { ...CARD, name: '' } }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
+});
+
+test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
+  const unreadableMember = {
+    ...TIMELINE,
+    appointments: {
+      ...TIMELINE.appointments,
+      items: [{ ...TIMELINE.appointments.items[0], teamMemberId: null }],
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: unreadableMember }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.equal(title.textContent, 'Pt single · per Guido Presti', 'the booking reads as held for the client, never by the client');
 });
 
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {

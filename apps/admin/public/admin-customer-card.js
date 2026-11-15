@@ -2070,7 +2070,7 @@ export function createCustomerCardView(deps) {
    * button.
    */
   const COMPOSER_PROMPT_MAX = 500;
-  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline }) {
+  function composerAiRow({ spaceId, navCtx, text, channel, subject, restoreSubject, changed, baseline, setBaseline, connectorLink }) {
     const row = el('div', 'bo-composer-ai');
     // The composer generation this row was built in: Scrivi again, ✕ or Esc
     // supersede it (openComposer bumps the counter on every opening).
@@ -2168,7 +2168,11 @@ export function createCustomerCardView(deps) {
       } else if (status === 404 || status === 405) {
         line.appendChild(el('span', undefined, `La scrittura con l’AI non è ancora disponibile qui${hand}.`));
       }
-      if (!canWrite) {
+      if (!canWrite && connectorLink === true) {
+        // backlog:88ab568cdcba: a single Collega per composer — the off line
+        // above already links Connettori.
+        line.appendChild(el('span', undefined, ' · Manca anche un canale collegato.'));
+      } else if (!canWrite) {
         line.appendChild(el('span', undefined, ' · Manca anche un canale collegato: '));
         line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
       }
@@ -2187,10 +2191,11 @@ export function createCustomerCardView(deps) {
       prompt.setAttribute('tabindex', '-1');
       prompt.setAttribute('aria-describedby', line.getAttribute('id'));
       prompt.setAttribute('placeholder', 'Scrittura con l’AI non disponibile');
-      // Focus inside the request field (an off state that lands while the
-      // person is in it) moves to the message field, where words go now.
-      const active = doc?.activeElement ?? null;
-      if (active === prompt && typeof text.focus === 'function') text.focus({ preventScroll: true });
+      // backlog:88ab568cdcba: no unexplained cursor jump — an off state
+      // landing while the person is in the request leaves the focus where
+      // the person put it (words stay selectable); the reason line says
+      // where to write instead. Only an explicit press on the empty off
+      // row moves to the message field (see the mousedown below).
       offState = { code: typeof code === 'string' ? code : null, status: typeof status === 'number' ? status : null };
       paintOff();
     };
@@ -2246,8 +2251,14 @@ export function createCustomerCardView(deps) {
     // No channel to write on: the one way forward is Connettori. Genera is
     // off with this reason beside it from the opening (backlog:f48593bb06d4):
     // the draft is written for one channel, and Invia has none either.
+    // backlog:88ab568cdcba: the composer carries a single Collega — when the
+    // off line above already links Connettori this line names it in words.
     const sayConnect = () => {
       say('');
+      if (connectorLink === true) {
+        line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato.'));
+        return;
+      }
       line.appendChild(el('span', undefined, 'Genera si accende con un canale collegato · '));
       line.appendChild(link('#/connettori', 'Collega in Connettori', 'composer-connectors'));
     };
@@ -2647,8 +2658,11 @@ export function createCustomerCardView(deps) {
     body.appendChild(fromRow);
     body.appendChild(toRow);
     body.appendChild(subjectHolder);
+    // backlog:88ab568cdcba: the off line above is the composer's single
+    // Collega when it links Connettori — the AI row then names it in words.
     const ai = composerAiRow({
       spaceId, navCtx, text,
+      connectorLink: Boolean(offLine.firstChild),
       channel: () => (selected !== null ? selected.channel : null),
       subject: () => subjectInput,
       restoreSubject: (value) => {
@@ -2670,6 +2684,12 @@ export function createCustomerCardView(deps) {
     if (selected !== null) select(selected);
     else {
       send.setAttribute('disabled', 'disabled');
+      // backlog:88ab568cdcba: with nothing to send on the reason sits
+      // beside the switched-off Invia; the way to Connettori stays the one
+      // single link in the off line above, never one per channel.
+      channelHint.textContent = spaceUnlinked
+        ? 'Serve un canale collegato per inviare'
+        : 'Nessun canale collegato per questo cliente';
       // backlog:bd9ae1482194: the space has no channel at all, or only
       // channels this customer cannot be reached on.
       toLine.textContent = spaceUnlinked ? 'Nessun canale collegato' : 'Nessun canale collegato per questo cliente';
@@ -3760,7 +3780,7 @@ export function createCustomerCardView(deps) {
     return form;
   }
 
-  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null) {
+  function timelineBox(box, timeline, noteCtx, profile = null, pipelines = [], profilePending = false, serviceNames = null, servicesReady = true) {
     // Voce 59def6cb805d (C14): the prototype names this section, not the
     // record kind behind it.
     box.appendChild(el('h4', undefined, 'Tutti i contatti'));
@@ -3772,11 +3792,15 @@ export function createCustomerCardView(deps) {
     const timelineKey = noteCtx ? `${noteCtx.resource}/${noteCtx.id}` : null;
     const withdrawing = (item) => item?.entry === 'note' && timelineKey !== null
       && pendingWithdrawals.has(withdrawalKey(activeSpaceId(), noteCtx.resource, noteCtx.id, item.id));
+    // backlog:26afd13657c5: the appointment rows wait for the listino —
+    // while the services read is still in flight the cronologia paints
+    // without them, so no row ever flashes the slug words first; they
+    // join on the repaint the listino read triggers.
     const entries = [
       ...collapseDuplicatePassages(Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])
         .filter((item) => !withdrawing(item)),
-      ...bookedAppointmentEntries(timeline, serviceNames),
-      ...cancelledAppointmentEntries(timeline, serviceNames),
+      ...(servicesReady ? bookedAppointmentEntries(timeline, serviceNames) : []),
+      ...(servicesReady ? cancelledAppointmentEntries(timeline, serviceNames) : []),
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
@@ -4328,7 +4352,10 @@ export function createCustomerCardView(deps) {
           // the toast says so; then only the cronologia is read again.
           const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
             (loaded) => withNote(loaded, saved, written));
-          toast('Nota aggiunta');
+          // backlog:92829060f8ff (production 14/11: at 500 px the new note
+          // lands at the top of the cronologia, ~1.650 px above the box, out
+          // of view): the notice says where it went.
+          toast('Nota aggiunta in cima alla cronologia');
           // backlog:4eceae80a5ca (production 14/11: after Invio the focus
           // was on the page body, and a second note typed at once lost its
           // letters): the cursor stays in the empty field, through the
@@ -4580,7 +4607,9 @@ export function createCustomerCardView(deps) {
             historySettled.delete(stageMenu.id);
             const refreshed = refreshParts(offerCtx.resource, offerCtx.id, ['card', 'profile'],
               (loaded) => withOfferStage(loaded, stageMenu.id, 'pipeline', voice.key));
-            toast(`Spostata in ${voice.label}.`);
+            // backlog:26afd13657c5: the board's words (upperFirst), like the
+            // offer page — never the raw lowercase core voice.
+            toast(`Spostata in ${upperFirst(voice.label)}.`);
             await refreshed;
           } else {
             const result = await client.request(
@@ -4637,7 +4666,11 @@ export function createCustomerCardView(deps) {
         confirmPanel.box.setAttribute('class', 'card-confirm hidden');
       });
       for (const voiceDef of stageMenu.voices) {
-        const voice = el('button', undefined, voiceDef.label);
+        // backlog:26afd13657c5: the voices read the board's labels — the
+        // state pill above and the board columns upper-case them, and so
+        // does the offer page; the menu never shows the raw lowercase core
+        // voice («proposta») beside a «Proposta» pill.
+        const voice = el('button', undefined, upperFirst(voiceDef.label) ?? voiceDef.key);
         voice.setAttribute('type', 'button');
         voice.setAttribute('role', 'menuitem');
         voice.setAttribute('data-stage', voiceDef.key);
@@ -4888,7 +4921,7 @@ export function createCustomerCardView(deps) {
     });
   };
   /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
-  function appointmentBody(box, next, serviceNames = null) {
+  function appointmentBody(box, next, serviceNames = null, customerName = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
     // the slot reads as a plain Italian date — no ISO instants, no member id.
     const start = dateTimeParts(next?.startsAt);
@@ -4898,14 +4931,23 @@ export function createCustomerCardView(deps) {
     }
     const endTime = timeParts(next?.endsAt);
     const sameDay = dateParts(next?.startsAt) === dateParts(next?.endsAt);
-    // Voce 59def6cb805d (C26): the prototype card — a title, then
-    // `<giorno> · <orari>`. The title is the booked service (its listino key
-    // made readable) with the team member when the handle reads as a name;
-    // the row names the long Rome day. No place and no Google sync line:
-    // the booking records neither, so none is written.
+    // Voce 59def6cb805d (C26, backlog:c51dca86dc66, review #908 P2): the
+    // prototype card — a title, then `<giorno> · <orari>`. The title keeps
+    // the team member suffix (`con …`, chi tiene l'appuntamento) and names
+    // the same contact Oggi names for this appointment (`per …`), so the
+    // booking reads as one person in both places and the operator still
+    // sees who holds it. The contact-only fallback reads `per …`, never
+    // `con …`, so the booking never reads as held by the client. Each name falls back silently when unreadable,
+    // down to the service alone. The row names the long Rome day. No place
+    // and no Google sync line: the booking records neither, so none is written.
+    const contact = typeof customerName === 'string' && customerName.trim() !== '' ? customerName.trim() : null;
     const service = serviceTitle(next?.serviceKey, serviceNames);
     const member = teamName(next?.teamMemberId);
-    box.appendChild(el('p', 'bo-scheda-appt-title', member ? `${service} · con ${member}` : service));
+    const title = contact && member ? `${service} · con ${member} · per ${contact}`
+      : contact ? `${service} · per ${contact}`
+      : member ? `${service} · con ${member}`
+      : service;
+    box.appendChild(el('p', 'bo-scheda-appt-title', title));
     const day = dayParts(next?.startsAt);
     const startTime = timeParts(next?.startsAt);
     const hours = endTime && endTime !== startTime ? `${startTime}–${endTime}` : startTime;
@@ -4915,7 +4957,8 @@ export function createCustomerCardView(deps) {
     box.appendChild(el('p', 'bo-scheda-appt', when));
   }
 
-  function nextAppointment(box, timeline, timelineError = null, serviceNames = null) {
+  // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  function nextAppointment(box, timeline, timelineError = null, serviceNames = null, customerName = null) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // section too, instead of vanishing as "no appointment booked".
     if (timelineError) {
@@ -4928,7 +4971,7 @@ export function createCustomerCardView(deps) {
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) return false;
     box.appendChild(el('h4', undefined, 'Prossimo appuntamento'));
-    appointmentBody(box, upcoming[0], serviceNames);
+    appointmentBody(box, upcoming[0], serviceNames, customerName);
     return true;
   }
 
@@ -5165,7 +5208,8 @@ export function createCustomerCardView(deps) {
   }
 
   /** The Appuntamenti vista body: the next booking that can still happen. */
-  function appointmentVistaBody(box, timeline, timelineError = null) {
+  // backlog:c51dca86dc66: the contact name rides along so the title matches Oggi.
+  function appointmentVistaBody(box, timeline, timelineError = null, serviceNames = null, customerName = null, servicesReady = true) {
     // Voce 908f2eb9bbfb, review round 2: a failed timeline read fails this
     // vista too, instead of vanishing as "none booked".
     if (timelineError) {
@@ -5177,7 +5221,17 @@ export function createCustomerCardView(deps) {
       box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
       return;
     }
-    appointmentBody(box, upcoming[0]);
+    // backlog:26afd13657c5: the listino names the service here too — like
+    // the cronologia «Appuntamento fissato» row and «Prossimo appuntamento»,
+    // never slug words once the listino has landed. While the listino
+    // loads the vista holds grey bars; the listino repaint paints the row.
+    // backlog:c51dca86dc66: with a contact name the title matches Oggi.
+    if (!servicesReady) {
+      box.appendChild(uiSkeleton(doc, { width: '62%', block: true }));
+      box.appendChild(uiSkeleton(doc, { width: '40%', block: true }));
+      return;
+    }
+    appointmentBody(box, upcoming[0], serviceNames, customerName);
     if (upcoming.length > 1) {
       box.appendChild(el('p', 'bo-muted', `+ ${upcoming.length - 1} appuntamenti successivi`));
     }
@@ -5195,7 +5249,7 @@ export function createCustomerCardView(deps) {
    * panel would drop the failure contract.
    */
   function recapPanel(box, parts) {
-    const { card, calls, callsError, timeline, timelineError, profile, profileError, stepCtx } = parts;
+    const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
     const name = typeof card?.name === 'string' && card.name.trim() !== '' ? card.name.trim() : null;
     box.appendChild(el('h4', undefined, name ? `✦ Recap per ${name}` : '✦ Recap'));
     const vistas = el('p', 'bo-scheda-viste');
@@ -5204,7 +5258,9 @@ export function createCustomerCardView(deps) {
     const painters = {
       chiamate: (target) => callVistaBody(target, calls, callsError, timeline),
       messaggi: (target) => messageVistaBody(target, timeline, timelineError),
-      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError),
+      // backlog:26afd13657c5: the listino names the service under the vista title.
+      // backlog:c51dca86dc66: the contact's name, so the title matches Oggi.
+      appuntamenti: (target) => appointmentVistaBody(target, timeline, timelineError, serviceNames, name, servicesReady),
     };
     const order = [['chiamate', 'Chiamate'], ['messaggi', 'Messaggi'], ['appuntamenti', 'Appuntamenti']];
     let current = 'chiamate';
@@ -6077,6 +6133,11 @@ export function createCustomerCardView(deps) {
     // backlog:1a96094db71d: a part still in flight paints its section as a
     // skeleton (the same card, its title, grey bars), never an empty claim.
     const waits = (...parts) => pending !== null && parts.some((part) => pending.has(part));
+    // backlog:26afd13657c5: the appointment rows wait for the listino — a
+    // row never flashes the slug words while the services read is still in
+    // flight. A settled read paints at once, even failed or 404 (slug
+    // words then, like the screen the scheda replaces).
+    const servicesReady = !waits('services');
     if (waits('card')) {
       const head = el('div', 'bo-scheda-head');
       head.setAttribute('data-loading', 'true');
@@ -6150,7 +6211,7 @@ export function createCustomerCardView(deps) {
         readError(box, timelineError, 'La cronologia non si è potuta leggere. Riprova più tardi.');
       });
     } else {
-      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames);
+      section(center, 'bo-scheda-card-timeline', timelineBox, timeline, { resource, id }, profile, pipelines, waits('profile'), serviceNames, servicesReady);
     }
     // Voce 2c1c0e149cf9: the prototype's violet panel takes the place of the
     // «✦ Riepilogo AI» and «Chiamate» cards — the scheda holds no card the
@@ -6160,6 +6221,9 @@ export function createCustomerCardView(deps) {
     } else {
       section(right, 'bo-scheda-ai bo-scheda-recap', recapPanel, {
         card, calls, callsError, timeline, timelineError, profile, profileError,
+        // backlog:26afd13657c5: the listino for the Appuntamenti vista.
+        serviceNames,
+        servicesReady,
         stepCtx: { resource, id },
       });
     }
@@ -6168,8 +6232,12 @@ export function createCustomerCardView(deps) {
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
     if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
-    if (waits('timeline')) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
-    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames);
+    // backlog:26afd13657c5: like the cronologia rows, the card waits for the
+    // listino — a grey skeleton while the services read is in flight, never
+    // the slug words first.
+    if (waits('timeline') || !servicesReady) skeleton(right, 'bo-scheda-card-appt', 'Prossimo appuntamento');
+    // backlog:c51dca86dc66: the card name rides along so the title matches Oggi.
+    else section(right, 'bo-scheda-card-appt', nextAppointment, timeline, timelineError, serviceNames, card?.name ?? null);
     grid.appendChild(left);
     grid.appendChild(center);
     grid.appendChild(right);

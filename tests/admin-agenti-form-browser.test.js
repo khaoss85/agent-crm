@@ -76,7 +76,7 @@ test('f06d06f242d6: after a refused «Nuovo agente», field and error sit below 
   try {
     const address = server.address();
     assert.ok(address && typeof address === 'object');
-    for (const [width, height] of [[1280, 600], [390, 700]]) {
+    for (const [width, height] of [[1280, 600], [500, 700], [390, 700]]) {
       const dom = await runChromium([
         '--headless', ...RUNNABLE.flags, '--dump-dom', `--window-size=${width},${height}`,
         `--virtual-time-budget=${VIRTUAL_BUDGET_MS}`, '--force-prefers-reduced-motion', '--disable-background-networking',

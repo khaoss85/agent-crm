@@ -945,6 +945,14 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     addError: '',
     notice: '',
     /**
+     * backlog:26afd13657c5: the «Modifica» save confirmation, on the card
+     * it belongs to (by source key) — the edit panel closes on save, so a
+     * page-top notice is out of sight; the card itself keeps the line until
+     * the panel opens again or the space changes.
+     * @type {{ key: string, text: string } | null}
+     */
+    editSaved: null,
+    /**
      * backlog:1f7cb20d3c30: the open «Nuovo agente» panel, or null.
      * `pending` is the body of a create whose answer was lost: the panel
      * is locked and «Riprova» sends exactly that body under its key
@@ -1288,6 +1296,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     const status = el(documentNode, 'span', `bo-agent-status bo-agent-status-${card.status}`, card.statusLabel);
     head.appendChild(status);
     box.appendChild(head);
+    // backlog:26afd13657c5: the save confirmation lives on the edited card,
+    // where the eye already is — the panel just closed above it.
+    if (state.editSaved !== null && state.editSaved.key === card.sourceKey) {
+      const saved = el(documentNode, 'p', 'bo-agent-done', state.editSaved.text);
+      saved.setAttribute('role', 'status');
+      box.appendChild(saved);
+    }
 
     const facts = el(documentNode, 'dl', 'bo-agent-facts');
     const factRows = [['Autonomia', card.autonomy], ['Speso questo mese', card.spentLabel], ['Da approvare', String(card.pending)]];
@@ -1400,6 +1415,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       attrs: { type: 'button', 'data-action': 'edit-agent', 'aria-expanded': editOpen ? 'true' : 'false' },
     });
     edit.addEventListener('click', () => {
+      if (state.editSaved !== null && state.editSaved.key === card.sourceKey) state.editSaved = null;
       if (state.editing.has(card.sourceKey)) state.editing.delete(card.sourceKey);
       else editOf(card);
       paint();
@@ -1650,6 +1666,28 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     }
   }
 
+  /**
+   * Backlog 92829060f8ff: after a team write (Nuovo agente, Ritira/Riattiva)
+   * the new line lands at the top of the page, far from the box the
+   * operator acted on — on a narrow screen (500 px) it is out of view and
+   * reads as lost. Bring it under the sticky top bar and into view, so the
+   * operator sees where it ended up. No-ops when the DOM cannot scroll.
+   */
+  function revealNotice() {
+    if (!mount || typeof mount.querySelector !== 'function') return;
+    const note = mount.querySelector('.bo-agent-done');
+    if (!note || typeof note.setAttribute !== 'function') return;
+    try {
+      const bar = typeof documentNode?.querySelector === 'function' ? documentNode.querySelector('.bo-topbar') : null;
+      const barHeight = bar && typeof bar.getBoundingClientRect === 'function' ? Number(bar.getBoundingClientRect().height) : 0;
+      const top = Math.ceil((Number.isFinite(barHeight) ? barHeight : 0) + FIELD_SCROLL_GAP);
+      note.setAttribute('style', `scroll-margin-top: ${top}px; scroll-margin-bottom: ${FIELD_SCROLL_GAP}px`);
+      if (typeof note.scrollIntoView === 'function') note.scrollIntoView({ block: 'nearest' });
+    } catch {
+      // A note that cannot scroll is still painted: the line stays.
+    }
+  }
+
   function openNewAgent() {
     // One caller key per open panel: a retry or a double click replays it.
     // `nameError`: the live check of Nome (review Muse #895), its own slot
@@ -1823,6 +1861,9 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (await reload()) paint();
       else paint();
       focusIn('button[data-action="new-agent"]');
+      // backlog:92829060f8ff: the line lands at the top, far from the new
+      // box — bring it into view so it reads as found, at 500 px too.
+      revealNotice();
     } catch (error) {
       form.busy = false;
       form.error = newAgentErrorText(error);
@@ -1948,7 +1989,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     try {
       await updateHandAgent(card, body, form.key);
       state.editing.delete(card.sourceKey);
-      state.notice = `${checked.body.name} aggiornato.`;
+      state.editSaved = { key: card.sourceKey, text: `${checked.body.name} aggiornato.` };
       if (await reload()) paint();
       else paint();
     } catch (error) {
@@ -2005,18 +2046,24 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (entry.key === null) entry.key = issueAdminKey();
       await setHandAgentStatus(card, pause ? 'paused' : 'active', entry.key);
       state.retiring.delete(card.sourceKey);
+      // backlog:92829060f8ff: after Riattiva the line uses the badge's own
+      // words from the start — an agent with no engine is «Pronto, in
+      // attesa del motore», never «attivo» — even when the follow-up read
+      // cannot confirm it (the card already knows its engine).
       state.notice = pause
         ? `${card.name} ritirato: resta nel team ma non riceve più incarichi.`
-        : `${card.name} riattivato.`;
+        : `${card.name} riattivato: ${lowerFirst(card.engine ? AGENT_STATUS_LABEL.active : AGENT_NO_ENGINE_LABEL)}.`;
       const fresh = await reload();
-      // backlog:f06d06f242d6: the line uses the badge's own words — an agent
-      // with no engine is «Pronto, in attesa del motore», never «attivo».
+      // backlog:f06d06f242d6: reconciled against the fresh read, so a
+      // changed catalogue still wins over the expected label above.
       if (!pause && fresh) {
         const back = buildAgentCards({ agents: state.agents, assignments: state.assignments, runs: state.runs, nowIso: now(), catalog: state.catalog })
           .find((item) => item.sourceKey === card.sourceKey);
         if (back) state.notice = `${card.name} riattivato: ${lowerFirst(back.statusLabel)}.`;
       }
       paint();
+      // backlog:92829060f8ff: the line lands at the top, far from the card.
+      revealNotice();
     } catch (error) {
       entry.busy = false;
       if (isDecisionUnavailable(error)) {
@@ -2313,7 +2360,13 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
         'Gli agenti non sono attivi in questo spazio: niente da mostrare, e niente di finto al loro posto.'));
       return;
     }
-    if (state.notice !== '') page.appendChild(el(documentNode, 'p', 'bo-agent-done', state.notice));
+    // backlog:92829060f8ff: the line is an avviso — the screen reader
+    // announces it where it landed.
+    if (state.notice !== '') {
+      const done = el(documentNode, 'p', 'bo-agent-done', state.notice);
+      done.setAttribute('role', 'status');
+      page.appendChild(done);
+    }
     if (state.unavailable.length > 0) {
       page.appendChild(el(documentNode, 'p', 'bo-seq-error',
         `Non riesco a leggere adesso: ${state.unavailable.join(', ')}. Mostro solo quello che ho letto davvero.`));
@@ -2352,6 +2405,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       state.editing.clear();
       state.retiring.clear();
       state.notice = '';
+      state.editSaved = null;
       state.addError = '';
     }
     // A fresh read is the truth for the row state; a decision still queued

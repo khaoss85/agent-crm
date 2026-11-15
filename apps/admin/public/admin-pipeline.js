@@ -956,8 +956,11 @@ export function createPipelineBoard(deps) {
       // Review Muse #852 (P2): the place the slot showed rides Conferma too.
       const revealed = revealConfirm(pipeline, record, fromStage, toStage, placement);
       if (!revealed) {
+        // backlog:5af848afdb63: a refused loss names the arrival column, so
+        // the person knows which «Persa» asked for the reason.
+        const arrival = target.label ?? target.key;
         toast(target.type === 'lost'
-          ? 'Per la perdita serve un motivo — apri prima la card.'
+          ? `Per la perdita serve un motivo — apri prima la card (colonna «${arrival}»).`
           : 'Per la vittoria serve conferma — apri prima la card.', true);
       }
       return;

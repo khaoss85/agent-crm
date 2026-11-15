@@ -325,3 +325,31 @@ test('guardia dell’attesa: Affida e Crea l’agente dicono «Invio…»/«Creo
   assert.equal(again.textContent, 'Crea l’agente', 'il pulsante ridipinto è libero');
   assert.equal(again.disabled, false);
 });
+
+test('92829060f8ff: dopo Crea la nota resta in vista, sotto la barra', async () => {
+  // La nota atterra in cima alla pagina, lontano dalla casella nuova — a
+  // 500 px è fuori vista e sembra persa. Lo scroll la porta sotto la barra.
+  const doc = createFakeDocument();
+  const scrolled = [];
+  const make = doc.createElement;
+  doc.createElement = (tag) => {
+    const node = make(tag);
+    node.scrollIntoView = (options) => { scrolled.push(options ?? null); };
+    return node;
+  };
+  const mount = createMount();
+  const client = driveClient();
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer: () => null, clearTimer: () => {} });
+  await view.render();
+  await flush();
+  button(mount, 'new-agent').dispatch('click', {});
+  fillPanel(mount, {});
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  const note = mount.querySelector('.bo-agent-done');
+  assert.ok(note, 'la nota di conferma');
+  assert.equal(note.textContent, 'Auguri è entrato nel tuo team.');
+  assert.equal(note.getAttribute('role'), 'status', 'è un avviso');
+  assert.match(note.getAttribute('style') ?? '', /scroll-margin-top: 12px/, 'resta sotto la barra');
+  assert.ok(scrolled.some((options) => options && options.block === 'nearest'), 'scorre in vista');
+});

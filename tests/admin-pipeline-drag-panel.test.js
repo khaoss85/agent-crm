@@ -564,6 +564,44 @@ test('review #774 P2: a move started in the panel locks the card and survives cl
   assert.equal(posts(), 1, 'no second POST from the reopened panel');
 });
 
+test('5af848afdb63: a refused loss names the arrival column', async () => {
+  // A card with no live controls (here: sitting in a renewal stage) dropped
+  // onto Persa cannot reveal Conferma — the toast names the arrival column.
+  const PIPELINE_RINNOVO = {
+    ...PIPELINE,
+    stages: [
+      ...PIPELINE.stages.slice(0, 2),
+      { key: 'attesa', label: 'Attesa rinnovo', order: 40, type: 'renewal', probability: 50 },
+      ...PIPELINE.stages.slice(2),
+    ],
+  };
+  const doc = listeningDocument();
+  const mount = createMount();
+  const toasts = [];
+  const records = [record('a', 'attesa')];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { pipelineContract: 1, pipelines: [PIPELINE_RINNOVO] };
+      if (path === '/api/spine/memberships') return { items: [] };
+      return { items: records };
+    },
+  };
+  const view = createPipelineBoard({
+    doc, mount, client,
+    toast: (message, error) => toasts.push({ message: String(message), error: Boolean(error) }),
+    wait: () => new Promise(() => {}),
+  });
+  await view.renderBoard('b2b-sales');
+  const { transfer } = startDrag(mount, 'a');
+  const lost = columnOf(mount, 'lost');
+  lost.dispatch('drop', { preventDefault() {}, dataTransfer: transfer });
+  await tick();
+  await tick();
+  assert.ok(toasts.some((item) => item.message.includes('colonna «Persa»')),
+    `the refused loss names its column: ${JSON.stringify(toasts.map((item) => item.message))}`);
+});
+
 test('review #774 P2: a panel move with no answer turns «Non ancora confermato» with Riprova, a re-read only', async () => {
   let elapse = () => {};
   const timer = new Promise((resolve) => { elapse = resolve; });
