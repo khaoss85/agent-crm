@@ -952,7 +952,8 @@ export function createAgentOperations(options = {}) {
           );
         }
       }
-      if (modules.has('teammate-squad')) {
+      const squadEntry = typeof modules.get === 'function' ? modules.get('teammate-squad') : undefined;
+      if (squadEntry?.service) {
         const squadRows = await squads().listWhere({ spaceId });
         for (const squadRow of squadRows) {
           if (squadRow?.spendingCapCents === null || squadRow?.spendingCapCents === undefined) continue;
