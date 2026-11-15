@@ -5,8 +5,8 @@
  * Il form «Nuovo appuntamento» ha la scelta «Si ripete» con le etichette
  * calcolate dalla data scelta e «Personalizza…» (intervallo, giorni,
  * fine dopo N volte o in una data); Conferma manda la regola nella claim.
- * Annullare o spostare un'occorrenza di serie muove la riga singola,
- * come per una riga fuori serie (lo scope è una voce a parte); la riga
+ * Annullare o spostare un'occorrenza di serie chiede lo scope
+ * (backlog:573a1e85942f, tests/admin-calendario-scope.test.js); la riga
  * singola non chiede nessuno scope e non lo manda.
  */
 import test from 'node:test';

@@ -888,6 +888,11 @@ export function calendarRefusalText(error) {
   if (code === 'APPOINTMENTS_INVALID_STATE') {
     return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
   }
+  // backlog:573a1e85942f — a Google-linked series moves as one event: only
+  // «tutti» is accepted, so the grid never diverges from Google.
+  if (code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED') {
+    return 'Questa serie è collegata a Google Calendar: da qui si sposta solo «tutti» insieme, così Google resta uguale alla griglia. Scegli «Tutti», oppure sposta l’evento su Google.';
+  }
   return null;
 }
 
@@ -904,6 +909,10 @@ export function cancelRefusalText(error) {
   if (code === 'VALIDATION_ERROR' || error?.status === 400) {
     return 'Il motivo è troppo lungo o contiene caratteri non validi: accorcialo e riprova.';
   }
+  // backlog:573a1e85942f — the cancel twin of the move sentence above.
+  if (code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED') {
+    return 'Questa serie è collegata a Google Calendar: da qui si annulla solo «tutti» insieme, così Google resta uguale alla griglia. Scegli «Tutti», oppure annulla l’evento su Google.';
+  }
   return null;
 }
 
@@ -916,6 +925,31 @@ export function cancelRefusalText(error) {
 export function cancelReasonFrom(typed) {
   const text = String(typed ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
   return text === '' ? 'Annullato dal calendario' : text.slice(0, 300);
+}
+
+/**
+ * backlog:573a1e85942f — the scope question for one series occurrence:
+ * «Solo questo», «Questo e i successivi», «Tutti». Only series rows paint
+ * it; a single row keeps its wire with no scope at all.
+ */
+const SERIES_SCOPE_OPTIONS = Object.freeze([
+  { value: 'single', label: 'Solo questo' },
+  { value: 'following', label: 'Questo e i successivi' },
+  { value: 'all', label: 'Tutti' },
+]);
+
+function seriesScopeField(doc, name, current, onPick) {
+  const wrap = el(doc, 'fieldset', { className: 'cal-move-field', attrs: { 'data-role': 'series-scope' } });
+  wrap.appendChild(el(doc, 'legend', { text: 'Quale appuntamento della serie?' }));
+  for (const option of SERIES_SCOPE_OPTIONS) {
+    const label = el(doc, 'label', { className: 'cal-scope-option', text: option.label });
+    const input = el(doc, 'input', { attrs: { name, type: 'radio', value: option.value } });
+    input.checked = option.value === current;
+    input.addEventListener('change', () => { onPick(option.value); });
+    label.appendChild(input);
+    wrap.appendChild(label);
+  }
+  return wrap;
 }
 
 /**
@@ -1357,6 +1391,12 @@ export function createCalendarioView(deps) {
     state.cancelAsk = false;
     state.cancelNote = '';
     state.cancelReason = '';
+    // backlog:573a1e85942f — a folded question forgets its scope pick and any
+    // drag still waiting for one: the next series question starts at «solo
+    // questo», never on a stale wider scope.
+    state.cancelScope = null;
+    state.moveScope = null;
+    state.pendingDragMove = null;
   }
 
   /** This view's popover handle, registered while its popover is painted. */
@@ -1489,6 +1529,12 @@ export function createCalendarioView(deps) {
     cancelNote: '',
     /** The optional reason the operator typed, kept across repaints. */
     cancelReason: '',
+    /** backlog:573a1e85942f — the scope picked for a series cancel, null until a series question paints. */
+    cancelScope: null,
+    /** backlog:573a1e85942f — the scope picked for a series move, null until a series question paints. */
+    moveScope: null,
+    /** backlog:573a1e85942f — a series drag waiting for its scope: `{ id, startsAt, endsAt }`, null otherwise. */
+    pendingDragMove: null,
     /** backlog:0f2ae629e09b — the recurrence rule the manual form books: null is «Non si ripete». @type {any} */
     manualRecurrence: null,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
@@ -2880,6 +2926,20 @@ export function createCalendarioView(deps) {
       suppressEventClick = false;
       return;
     }
+    // backlog:573a1e85942f — a series occurrence never moves on drop alone:
+    // the drop waits in the move form, where the operator picks the scope.
+    // A single row keeps the old direct move.
+    if (drag.row?.seriesKey) {
+      suppressEventClick = true;
+      resetPopSteps();
+      state.selectedId = String(drag.row.id ?? '');
+      state.moveOpen = true;
+      state.cancelAsk = false;
+      state.moveNote = '';
+      state.pendingDragMove = { id: drag.row.id, startsAt: startIso, endsAt: endIso };
+      renderAll();
+      return;
+    }
     await commitEventMove(drag.row, startIso, endIso, { fromDrag: true });
   }
 
@@ -2907,9 +2967,9 @@ export function createCalendarioView(deps) {
    * (`BO_CRM_PENDING`) stays where the operator dropped it and the week is
    * read again shortly, never reverted as if refused.
    * @param {any} row @param {string} startsAt @param {string} endsAt
-   * @param {{fromDrag?: boolean}} [options]
+   * @param {{fromDrag?: boolean, scope?: string}} [options]
    */
-  async function commitEventMove(row, startsAt, endsAt, { fromDrag = false } = {}) {
+  async function commitEventMove(row, startsAt, endsAt, { fromDrag = false, scope = null } = {}) {
     // The generation this write started from (review #757): a route away
     // during the request invalidates the view, and the late answer must not
     // repaint the calendar over the next screen nor start another week load.
@@ -2948,6 +3008,8 @@ export function createCalendarioView(deps) {
       const body = row.id !== undefined && row.id !== null && String(row.id) !== ''
         ? { id: row.id, startsAt, endsAt }
         : { sourceKey: row.sourceKey, startsAt, endsAt };
+      // backlog:573a1e85942f — the scope rides only for a series occurrence.
+      if (scope !== null) body.scope = scope;
       const answer = await client.request('/api/appointments/reschedule', { method: 'POST', body });
       const moved = answer?.appointment ?? null;
       if (moved && typeof moved === 'object') {
@@ -2956,6 +3018,9 @@ export function createCalendarioView(deps) {
       }
       const day = romeDayKey(row.startsAt);
       state.moveOpen = false;
+      // backlog:573a1e85942f — a confirmed move answers any drag that waited
+      // for its scope; a refused one keeps the drop so the operator retries.
+      state.pendingDragMove = null;
       // backlog:7587307d5215: the day and the date, like a person says it —
       // «Spostato a martedì 10 novembre, 10:30–11:15.».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
@@ -3583,6 +3648,12 @@ export function createCalendarioView(deps) {
         text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
+    // backlog:573a1e85942f — one occurrence of a series asks which part of
+    // the series goes: a single row keeps its wire with no scope at all.
+    if (row?.seriesKey) {
+      if (state.cancelScope === null) state.cancelScope = 'single';
+      box.appendChild(seriesScopeField(doc, 'cancel-scope', state.cancelScope, (value) => { state.cancelScope = value; }));
+    }
     const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
     const reason = el(doc, 'input', { attrs: { name: 'cancel-reason', type: 'text', autocomplete: 'off', maxlength: '300' } });
     reason.value = state.cancelReason;
@@ -3639,9 +3710,15 @@ export function createCalendarioView(deps) {
     renderAll();
     let ok = false;
     let failure = '';
+    let scope = null;
     try {
       const reason = cancelReasonFrom(state.cancelReason);
       const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
+      // backlog:573a1e85942f — the scope rides only for a series occurrence,
+      // read once: the success path folds the question (resetting the pick)
+      // before the toast speaks.
+      scope = row?.seriesKey ? (state.cancelScope ?? 'single') : null;
+      if (scope !== null) body.scope = scope;
       await client.request('/api/appointments/cancel', { method: 'POST', body });
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
@@ -3672,7 +3749,10 @@ export function createCalendarioView(deps) {
         state.moveNote = '';
       }
       renderAll();
-      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      // backlog:573a1e85942f — the toast names the part that went, like the question did.
+      if (typeof deps.toast === 'function') {
+        deps.toast(scope !== null && scope !== 'single' ? 'Serie annullata: la settimana si rilegge.' : 'Appuntamento annullato.');
+      }
       const members = parseMemberFilter(state.memberFilter);
       if (members.length > 0) void loadWeek(members);
       return;
@@ -3703,11 +3783,31 @@ export function createCalendarioView(deps) {
   function renderMoveForm(row) {
     const box = el(doc, 'div', { className: 'cal-move', attrs: { 'data-role': 'move-form' } });
     box.appendChild(el(doc, 'h3', { className: 'cal-move-title', text: 'Sposta' }));
-    const dayKey = romeDayKey(row?.startsAt) ?? '';
+    // backlog:573a1e85942f — a drag that landed on a series occurrence waits
+    // here for its scope: the fields show the drop, nothing moves yet.
+    const pending = state.pendingDragMove !== null && String(state.pendingDragMove.id ?? '') === String(row?.id ?? '')
+      ? state.pendingDragMove
+      : null;
+    if (pending !== null) {
+      box.appendChild(el(doc, 'p', {
+        className: 'cal-pop-hint',
+        attrs: { 'data-role': 'move-drag-scope' },
+        text: 'Occorrenza di serie trascinata: scegli cosa spostare, poi premi Sposta.',
+      }));
+    }
+    // backlog:573a1e85942f — like the cancel question, a series occurrence
+    // asks which part moves; a single row keeps its wire.
+    if (row?.seriesKey) {
+      if (state.moveScope === null) state.moveScope = 'single';
+      box.appendChild(seriesScopeField(doc, 'move-scope', state.moveScope, (value) => { state.moveScope = value; }));
+    }
+    const dayKey = pending?.startsAt !== undefined && pending !== null
+      ? romeDayKey(pending.startsAt) ?? ''
+      : romeDayKey(row?.startsAt) ?? '';
     const fields = [
       { name: 'move-date', label: 'Giorno (AAAA-MM-GG)', value: dayKey },
-      { name: 'move-start', label: 'Inizio (HH:MM)', value: romeTime(row?.startsAt) ?? '' },
-      { name: 'move-end', label: 'Fine (HH:MM)', value: romeTime(row?.endsAt) ?? '' },
+      { name: 'move-start', label: 'Inizio (HH:MM)', value: pending !== null ? romeTime(pending.startsAt) ?? '' : romeTime(row?.startsAt) ?? '' },
+      { name: 'move-end', label: 'Fine (HH:MM)', value: pending !== null ? romeTime(pending.endsAt) ?? '' : romeTime(row?.endsAt) ?? '' },
     ];
     const inputs = {};
     for (const field of fields) {
@@ -3759,7 +3859,10 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
-    await commitEventMove(row, startsAt, endsAt);
+    // backlog:573a1e85942f — the scope rides only for a series occurrence,
+    // and a confirmed drag answers the drop it waited on.
+    const scope = row?.seriesKey ? (state.moveScope ?? 'single') : null;
+    await commitEventMove(row, startsAt, endsAt, scope !== null ? { scope } : {});
   }
 
   /**
