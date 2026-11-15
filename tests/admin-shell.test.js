@@ -27,6 +27,7 @@ import {
   spaceBadgeColor,
   spaceBadgeClass,
   spaceBadgeHue,
+  spaceBadgeIndex,
   spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
@@ -326,16 +327,18 @@ test('backlog:ecb26347d12c — the «Cambia spazio» button names only the short
   // class to the same hsl the helper computes.
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
-  const hues = badges.map((badge) => {
-    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
-    assert.ok(cls, 'badge carries its hue class');
-    return Number(cls.slice('bo-space-badge--h'.length));
+  const slots = badges.map((badge) => {
+    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+    assert.ok(cls, 'badge carries its palette class');
+    return cls;
   });
-  assert.ok(new Set(hues).size > 1, 'the two spaces have different colors');
-  for (const hue of hues) {
+  assert.ok(new Set(slots).size > 1, 'the two spaces have different colors');
+  for (const id of ['b1', 'presti-group']) {
+    const cls = spaceBadgeClass(id);
+    assert.ok(slots.includes(cls), `badge list carries ${cls} for space ${id}`);
     assert.ok(
-      css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
-      `stylesheet maps hue ${hue} to the helper color`,
+      css.includes(`.${cls} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${cls} to the helper color`,
     );
   }
 });
@@ -355,20 +358,23 @@ test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color w
     assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
     for (const badge of badges) {
       assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP refuses inline styles)');
-      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
-      assert.ok(cls, 'fallback badge carries its hue class');
-      const hue = Number(cls.slice('bo-space-badge--h'.length));
-      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space hue');
+      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+      assert.ok(cls, 'fallback badge carries its palette class');
+      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space slot');
       assert.ok(
-        css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
-        'stylesheet maps the fallback hue to the helper color',
+        css.includes(`.${cls} { background-color: ${spaceBadgeColor('locale')}; }`),
+        'stylesheet maps the fallback slot to the helper color',
       );
     }
   }
-  // The class and the color string always agree on the hue.
+  // The class and the color string always agree on the palette slot.
   for (const id of ['locale', 'aurora', 'presti-group', '']) {
-    assert.equal(spaceBadgeClass(id), `bo-space-badge--h${spaceBadgeHue(id)}`);
-    assert.equal(spaceBadgeColor(id), `hsl(${spaceBadgeHue(id)} 45% 42%)`);
+    assert.equal(spaceBadgeClass(id), `bo-space-badge--p${spaceBadgeIndex(id)}`);
+    assert.equal(spaceBadgeColor(id), spaceBadgeColor(id));
+    assert.ok(
+      css.includes(`.${spaceBadgeClass(id)} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${spaceBadgeClass(id)} to the helper color`,
+    );
   }
 });
 
