@@ -43,6 +43,15 @@ import {
   validateSubject,
 } from './appointments.js';
 import {
+  RECURRENCE_ISO_DAYS,
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  recurrenceToRRule,
+  validateRecurrence,
+} from './recurrence.js';
+import {
   APPOINTMENT_REMINDER_SEND_ACTION,
   APPOINTMENT_REMINDER_SWEEP_HANDLER,
   APPOINTMENT_REMINDER_SWEEP_KIND,
@@ -93,6 +102,13 @@ export const APPOINTMENTS_DOMAIN = APPOINTMENTS_PACKAGE;
 export const APPOINTMENTS_RESOURCES = Object.freeze([APPOINTMENT_MODULE]);
 
 export {
+  RECURRENCE_ISO_DAYS,
+  RECURRENCE_KINDS,
+  RECURRENCE_MAX_OCCURRENCES,
+  expandRecurrence,
+  recurrenceOptions,
+  recurrenceToRRule,
+  validateRecurrence,
   APPOINTMENT_INITIAL,
   APPOINTMENT_STATES,
   APPOINTMENT_TERMINAL,
@@ -227,13 +243,19 @@ export function createAppointmentsPackage(options = {}) {
     // a reason through `app.cancelAppointmentBooking` — the lifecycle's own
     // `-> cancelled` advance, idempotent on an already cancelled row.
     // Additive: the transition table and the booking contract are untouched.
-    // 5 (backlog:af190faf): owner holds with no guest from the composed
-    // calendar-sync handle (`listOwnerBlocks`) hold on team-week, suggest,
-    // propose, confirm, link and reschedule — shown as Occupato (`busy`,
-    // required on every member group) and never offered as free. Server
-    // seam only: no caller/request input carries blocks, so nothing to
-    // forge and nothing to omit. Old callers unchanged.
-    version: 5,
+    // 5 (backlog:af190faf, backlog:0f2ae629e09b): owner holds with no
+    // guest from the composed calendar-sync handle (`listOwnerBlocks`)
+    // hold on team-week, suggest, propose, confirm, link and reschedule —
+    // shown as Occupato (`busy`, required on every member group) and never
+    // offered as free — plus Google-Calendar-style series: `recurrence` on
+    // the booking request expands to one row per occurrence (each with the
+    // series key and its index), every occurrence conflict-checked before
+    // the first write. Additive: server seam only for holds (no caller input
+    // carries blocks) and singles book exactly as before.
+    // 6 (backlog:0f2ae629e09b): series guards — empty series refused (400),
+    // public link books singles only (normalized rule), count+until refused.
+    // Additive: booking contract and reads untouched.
+    version: 6,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
@@ -435,8 +457,11 @@ export function createAppointmentsPackage(options = {}) {
           'The reminder send is the booking\'s own approved template to the booking\'s own recipient, and nothing else: no free text ever sends from this path.',
           'A failed automatic send leaves the follow-up open: the human still owes the reminder, and the jobs table shows why the try failed.',
         ],
+        recurrence: 'a series is one validated rule (daily, weekly, monthly, yearly, weekdays, custom) expanded to one row '
+          + 'per occurrence with the series key and index; each occurrence is conflict-checked before the first write, '
+          + 'only the head carries the reminder',
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
-          'free-text notifications or sends', 'package credits or payments', 'recurrence or series', 'waitlists'],
+          'free-text notifications or sends', 'package credits or payments', 'waitlists'],
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],
       };
     },

@@ -1489,6 +1489,8 @@ export function createCalendarioView(deps) {
     cancelNote: '',
     /** The optional reason the operator typed, kept across repaints. */
     cancelReason: '',
+    /** backlog:0f2ae629e09b — the recurrence rule the manual form books: null is «Non si ripete». @type {any} */
+    manualRecurrence: null,
     /** Slot chosen on the grid by press-and-drag (Google/Apple style): `{key, start, end}` in Rome minutes. @type {any} */
     selection: null,
     /** Resolved customer display names by `resource:id`, null when the profile is unavailable. @type {Record<string, string|null>} */
@@ -2603,6 +2605,7 @@ export function createCalendarioView(deps) {
     state.selection = null;
     state.manualOpen = false;
     state.manual = null;
+    state.manualRecurrence = null;
     // backlog:134f3ed7 (review giro 1 P2) — like markBooked(): the typed
     // marks go with the values, or the next opening reads the proposed
     // date as «written» and raises a false unsaved-text warning.
@@ -4498,6 +4501,7 @@ export function createCalendarioView(deps) {
     state.aiNote = '';
     state.bookingNote = '';
     state.serviceError = '';
+    state.manualRecurrence = null;
     state.customerPick = null;
     state.customerQuery = '';
     state.customerItems = [];
@@ -4803,6 +4807,219 @@ export function createCalendarioView(deps) {
     return select;
   }
 
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» choices of the manual form, in
+   * the server's own words (`recurrenceOptions` in packages/appointments):
+   * «Non si ripete» first, then the options computed from the chosen day,
+   * then «Personalizza…». The form paints from a YYYY-MM-DD Rome day, so
+   * the weekday and the month position come straight from that day.
+   * @param {string} dayKey
+   */
+  function recurrenceChoiceLabels(dayKey) {
+    const weekdays = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+    const months = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+      'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+    const ok = /^\d{4}-\d{2}-\d{2}$/.test(dayKey) && !Number.isNaN(Date.parse(`${dayKey}T12:00:00Z`));
+    if (!ok) {
+      return [
+        { value: 'none', label: 'Non si ripete' },
+        { value: 'daily', label: 'Ogni giorno' },
+        { value: 'weekly', label: 'Ogni settimana' },
+        { value: 'monthly', label: 'Ogni mese' },
+        { value: 'yearly', label: 'Ogni anno' },
+        { value: 'weekdays', label: 'Tutti i giorni feriali (lun-ven)' },
+        { value: 'custom', label: 'Personalizza…' },
+      ];
+    }
+    const [year, month, date] = dayKey.split('-').map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, date)).getUTCDay();
+    const firstWeekday = new Date(Date.UTC(year, month - 1, 1)).getUTCDay();
+    const nth = Math.floor((date - 1 - ((weekday - firstWeekday + 7) % 7)) / 7) + 1;
+    return [
+      { value: 'none', label: 'Non si ripete' },
+      { value: 'daily', label: 'Ogni giorno' },
+      { value: 'weekly', label: `Ogni settimana di ${weekdays[weekday]}` },
+      { value: 'monthly', label: `Ogni mese il ${nth}° ${weekdays[weekday]}` },
+      { value: 'yearly', label: `Ogni anno il ${date} ${months[month - 1]}` },
+      { value: 'weekdays', label: 'Tutti i giorni feriali (lun-ven)' },
+      { value: 'custom', label: 'Personalizza…' },
+    ];
+  }
+
+  /**
+   * backlog:0f2ae629e09b — the recurrence rule the manual form will book,
+   * from the «Si ripete» choice and the «Personalizza…» fields. Null is
+   * «Non si ripete». A custom rule with no usable end or no weekday fails
+   * closed with a ValidationError-shaped `{field: 'recurrence'}` the submit
+   * turns into a plain sentence, never a guessed rule.
+   */
+  function recurrenceRuleFromState() {
+    const rec = state.manualRecurrence;
+    if (rec === null || rec === undefined || typeof rec !== 'object') return null;
+    const kind = String(rec.kind ?? 'none');
+    if (kind === '' || kind === 'none') return null;
+    if (kind !== 'custom') return { kind };
+    const unit = String(rec.unit ?? 'week');
+    if (!['day', 'week', 'month'].includes(unit)) {
+      throw Object.assign(new Error('recurrence unit must be day, week or month'), { field: 'recurrence' });
+    }
+    const interval = Number(rec.interval ?? 1);
+    if (!Number.isSafeInteger(interval) || interval < 1 || interval > 99) {
+      throw Object.assign(new Error('recurrence interval must be an integer from 1 to 99'), { field: 'recurrence' });
+    }
+    /** @type {any} */
+    const rule = { kind: 'custom', unit, interval };
+    if (unit === 'week') {
+      const days = Array.isArray(rec.days) ? rec.days.filter((day) => Number.isSafeInteger(day) && day >= 1 && day <= 7) : [];
+      if (days.length === 0) {
+        throw Object.assign(new Error('a custom weekly recurrence names its days: choose at least one weekday'), { field: 'recurrence' });
+      }
+      rule.days = [...new Set(days)].sort((a, b) => a - b);
+    }
+    const end = String(rec.end ?? 'never');
+    if (end === 'count') {
+      const count = Number(rec.count ?? 0);
+      // The server's own bound (validateRecurrence): 1 to 365. A count of
+      // 1 is one booking, never an error.
+      if (!Number.isSafeInteger(count) || count < 1) {
+        throw Object.assign(new Error('a series ending after N times names how many, from 1 to 365'), { field: 'recurrence' });
+      }
+      rule.count = Math.min(count, 365);
+    } else if (end === 'until') {
+      const until = String(rec.until ?? '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(until) || Number.isNaN(Date.parse(`${until}T12:00:00Z`))) {
+        throw Object.assign(new Error('a series ending on a date needs that date as AAAA-MM-GG'), { field: 'recurrence' });
+      }
+      rule.until = until;
+    }
+    return rule;
+  }
+
+  /**
+   * backlog:0f2ae629e09b — the «Si ripete» row of the manual form: the
+   * server's choices with the labels computed from the chosen day, plus
+   * the «Personalizza…» fields (every N days/weeks/months, weekdays, end
+   * after N times or on a date) only while «Personalizza…» is chosen.
+   * @param {any} form
+   */
+  function renderRecurrenceChoice(form) {
+    const rec = state.manualRecurrence !== null && typeof state.manualRecurrence === 'object'
+      ? state.manualRecurrence : { kind: 'none' };
+    const dayKey = String(state.manual?.date ?? '');
+    const wrap = uiSelect(doc, {
+      name: 'recurrence', value: String(rec.kind ?? 'none'), options: recurrenceChoiceLabels(dayKey),
+    });
+    const select = wrap.querySelector('select') ?? wrap;
+    // Explicit: the fake DOM in tests has no first-option default, and the
+    // claim reads this node — the painted choice and the node agree.
+    select.value = String(rec.kind ?? 'none');
+    const trackKind = () => {
+      state.manualRecurrence = { ...(state.manualRecurrence ?? {}), kind: String(select.value ?? 'none') };
+      state.manualTyped.add('recurrence');
+      renderAll();
+    };
+    select.addEventListener('input', trackKind);
+    select.addEventListener('change', trackKind);
+    form.appendChild(fieldBox('Si ripete', wrap, { wide: true }));
+    // The labels follow the chosen day: a day picked after the choice
+    // renames «Ogni settimana di …» in place, without losing the choice.
+    const dayInput = form.querySelector?.('input[name="date"]') ?? null;
+    if (dayInput && typeof dayInput.addEventListener === 'function') {
+      dayInput.addEventListener('input', () => {
+        const labels = recurrenceChoiceLabels(String(dayInput.value ?? ''));
+        const options = select.findAll ? select.findAll('option') : [...(select.childNodes ?? [])].filter((node) => node.tagName === 'OPTION');
+        for (const option of options) {
+          const hit = labels.find((entry) => entry.value === option.getAttribute('value'));
+          if (hit) option.textContent = hit.label;
+        }
+      });
+    }
+    if (String(rec.kind ?? 'none') !== 'custom') return select;
+    const box = el(doc, 'div', { attrs: { 'data-role': 'recurrence-custom' } });
+    const interval = el(doc, 'input', { attrs: { type: 'number', name: 'recurrence-interval', min: '1', max: '99' } });
+    interval.value = String(rec.interval ?? 1);
+    interval.addEventListener('input', () => {
+      state.manualRecurrence = { ...(state.manualRecurrence ?? {}), interval: String(interval.value ?? '1') };
+      state.manualTyped.add('recurrence');
+    });
+    box.appendChild(fieldBox('Ogni (numero)', interval));
+    const unitWrap = uiSelect(doc, {
+      name: 'recurrence-unit', value: String(rec.unit ?? 'week'),
+      options: [
+        { value: 'day', label: 'giorni' },
+        { value: 'week', label: 'settimane' },
+        { value: 'month', label: 'mesi' },
+      ],
+    });
+    const unit = unitWrap.querySelector('select') ?? unitWrap;
+    unit.value = String(rec.unit ?? 'week');
+    const trackUnit = () => {
+      state.manualRecurrence = { ...(state.manualRecurrence ?? {}), unit: String(unit.value ?? 'week') };
+      state.manualTyped.add('recurrence');
+      renderAll();
+    };
+    unit.addEventListener('input', trackUnit);
+    unit.addEventListener('change', trackUnit);
+    box.appendChild(fieldBox('Periodo', unitWrap));
+    if (String(rec.unit ?? 'week') === 'week') {
+      const days = Array.isArray(rec.days) ? rec.days : [];
+      const names = [['1', 'Lun'], ['2', 'Mar'], ['3', 'Mer'], ['4', 'Gio'], ['5', 'Ven'], ['6', 'Sab'], ['7', 'Dom']];
+      for (const [value, label] of names) {
+        const check = el(doc, 'input', { attrs: { type: 'checkbox', name: 'recurrence-day', value } });
+        if (days.includes(Number(value))) check.checked = true;
+        check.addEventListener('input', () => {
+          const kept = new Set(Array.isArray(state.manualRecurrence?.days) ? state.manualRecurrence.days : []);
+          if (check.checked) kept.add(Number(value));
+          else kept.delete(Number(value));
+          state.manualRecurrence = { ...(state.manualRecurrence ?? {}), days: [...kept].sort((a, b) => a - b) };
+          state.manualTyped.add('recurrence');
+        });
+        const lab = el(doc, 'label', { className: 'cal-day-check' });
+        lab.appendChild(check);
+        lab.appendChild(el(doc, 'span', { text: label }));
+        box.appendChild(lab);
+      }
+    }
+    const endWrap = uiSelect(doc, {
+      name: 'recurrence-end', value: String(rec.end ?? 'never'),
+      options: [
+        { value: 'never', label: 'Senza fine (max un anno)' },
+        { value: 'count', label: 'Dopo un numero di volte' },
+        { value: 'until', label: 'In una data' },
+      ],
+    });
+    const end = endWrap.querySelector('select') ?? endWrap;
+    end.value = String(rec.end ?? 'never');
+    const trackEnd = () => {
+      state.manualRecurrence = { ...(state.manualRecurrence ?? {}), end: String(end.value ?? 'never') };
+      state.manualTyped.add('recurrence');
+      renderAll();
+    };
+    end.addEventListener('input', trackEnd);
+    end.addEventListener('change', trackEnd);
+    box.appendChild(fieldBox('Fine', endWrap));
+    if (String(rec.end ?? 'never') === 'count') {
+      const count = el(doc, 'input', { attrs: { type: 'number', name: 'recurrence-count', min: '1', max: '365' } });
+      count.value = String(rec.count ?? 10);
+      count.addEventListener('input', () => {
+        state.manualRecurrence = { ...(state.manualRecurrence ?? {}), count: String(count.value ?? '') };
+        state.manualTyped.add('recurrence');
+      });
+      box.appendChild(fieldBox('Numero di volte', count));
+    }
+    if (String(rec.end ?? 'never') === 'until') {
+      const until = el(doc, 'input', { attrs: { type: 'date', name: 'recurrence-until' } });
+      until.value = String(rec.until ?? '');
+      until.addEventListener('input', () => {
+        state.manualRecurrence = { ...(state.manualRecurrence ?? {}), until: String(until.value ?? '') };
+        state.manualTyped.add('recurrence');
+      });
+      box.appendChild(fieldBox('Ultimo giorno', until));
+    }
+    form.appendChild(box);
+    return select;
+  }
+
   function renderManual() {
     // Closed until «Nuovo appuntamento → Compila manualmente» (prototype): the
     // form stays in the DOM inside its hidden popover, so a draft can still
@@ -4864,6 +5081,9 @@ export function createCalendarioView(deps) {
       // no date ever gets cut on the 340 px popover.
       form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
+    // backlog:0f2ae629e09b — «Si ripete» rides below the day and times, so
+    // its labels are computed from the chosen day (see above).
+    renderRecurrenceChoice(form);
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
@@ -5004,6 +5224,9 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        // backlog:0f2ae629e09b — «Non si ripete» is null; anything else is
+        // the validated rule the series books.
+        recurrence: recurrenceRuleFromState(),
       }),
     };
   }
@@ -5125,7 +5348,18 @@ export function createCalendarioView(deps) {
 
   async function submitBooking(inputs, confirm) {
     await ensureServices();
-    const { claim } = claimFrom(inputs);
+    let claim;
+    try {
+      ({ claim } = claimFrom(inputs));
+    } catch (error) {
+      // backlog:0f2ae629e09b — an unusable «Personalizza…» rule (no
+      // weekday, bad count or date) never leaves the form as a guess.
+      state.bookingNote = error?.field === 'recurrence'
+        ? 'La ricorrenza non è completa: controlla i campi di «Personalizza…» (giorni, numero di volte o data di fine).'
+        : 'Il form non è completo: controlla i campi e riprova.';
+      renderAll();
+      return;
+    }
     // The manual form is the source of truth for this submit: remember every
     // raw value (draft-derived ones included) so the re-render after propose
     // shows the same form Conferma will book. The draft has been absorbed.
@@ -5199,6 +5433,16 @@ export function createCalendarioView(deps) {
         console.warn('bo-calendario booking refused:', String(error?.code ?? 'unknown'), `spaceId=${readSpace()}`);
         state.serviceError = calendarRefusalText(error) ?? '';
         state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_OVERLAP' && claim?.recurrence) {
+        // backlog:0f2ae629e09b — a series is checked occurrence by
+        // occurrence: the refusal names which one is busy, never a bare
+        // «riprova più tardi».
+        const details = error?.details ?? {};
+        const total = Number(details.occurrenceCount ?? 0);
+        const at = Number(details.occurrenceIndex ?? 0) + 1;
+        state.bookingNote = Number.isFinite(total) && total > 0
+          ? `L'occorrenza ${at} di ${total} è occupata per questa persona: scegli un altro orario o annulla l'appuntamento che la occupa, poi riprova.`
+          : 'Una delle occorrenze è occupata per questa persona: scegli un altro orario, poi riprova.';
       } else {
         state.bookingNote = humanWriteError(error, {
           failed: 'Prenotazione non riuscita. Riprova più tardi.',
@@ -5342,6 +5586,7 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    recurrence: input.recurrence ?? null,
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,
