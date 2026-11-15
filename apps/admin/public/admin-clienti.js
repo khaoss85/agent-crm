@@ -23,6 +23,8 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // ("marco whatsapp") needs no LLM and always works.
 
 import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
+// backlog:2262771da550 — system mailboxes never paint: the one team filter.
+import { memberText } from './admin-labels.js';
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -85,6 +87,7 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
   { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
   { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+  { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
   { id: 'email', label: 'Email', always: false, ai: false, def: false },
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
@@ -108,6 +111,7 @@ const COLUMN_TRACKS = Object.freeze({
   stato: [88, '.6fr'],
   ultimo: [200, '2.4fr'],
   prossimo: [110, '1fr'],
+  calendario: [110, '1fr'],
 });
 const OTHER_TRACK = [120, '1fr'];
 const CLIENT_TRACK = [170, '1.4fr'];
