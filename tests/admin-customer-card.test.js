@@ -4936,8 +4936,8 @@ test('Dan 06/11: notes read as notes, with a Note chip and one chip per writer',
   let text = mount.textContent;
   assert.ok(text.includes('Richiamare lunedì') && text.includes('Preferisce la sera') && text.includes('Nota di sistema'));
   assert.ok(!text.includes('vorrei prenotare una prova'), 'messages are filtered out');
-  assert.ok(chipOf('note:dan') && chipOf('note:elena') && chipOf('note:'), 'one chip per writer');
-  assert.equal(chipOf('note:').textContent, 'dal team');
+  assert.ok(chipOf('note:dan') && chipOf('note:elena'), 'one chip per named writer');
+  assert.equal(chipOf('note:'), undefined, 'no chip for the unnamed writer');
 
   chipOf('note:elena').dispatch('click');
   text = mount.textContent;

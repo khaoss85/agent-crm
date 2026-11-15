@@ -170,7 +170,8 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(text.includes('Cambio di stato'), 'the stage event paints in Italian');
   // A UUID actor is a technical id, never a name; a named actor paints.
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
-  assert.ok(text.includes('utente'), 'the UUID actor degrades to a generic word');
+  assert.ok(!text.includes('utente'), 'no actor hides behind «utente»');
+  assert.ok(text.includes('da —'), 'the UUID actor reads as unknown');
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
   // The quote opens in the quote page, never inline.
@@ -336,7 +337,8 @@ test('technical actor handles never paint, even off the UUID shape', async () =>
   const text = mount.textContent;
   assert.ok(!text.includes('admin-ui'), 'the service handle never paints');
   assert.ok(!text.includes('stranger-handle'), 'an uncorroborated handle never paints');
-  assert.ok(text.includes('Creata · da utente'), 'the author degrades to a generic word');
+  assert.ok(!text.includes('utente'), 'no actor hides behind «utente»');
+  assert.ok(text.includes('Creata · da —'), 'an unnameable author reads as unknown');
 });
 
 test('a full linked page says it shows only the first rows', async () => {
