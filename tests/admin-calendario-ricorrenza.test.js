@@ -5,8 +5,9 @@
  * Il form «Nuovo appuntamento» ha la scelta «Si ripete» con le etichette
  * calcolate dalla data scelta e «Personalizza…» (intervallo, giorni,
  * fine dopo N volte o in una data); Conferma manda la regola nella claim.
- * Annullare o spostare un'occorrenza di serie chiede «solo questo /
- * questo e i successivi / tutti» e lo scope viaggia nella scrittura.
+ * Annullare o spostare un'occorrenza di serie muove la riga singola,
+ * come per una riga fuori serie (lo scope è una voce a parte); la riga
+ * singola non chiede nessuno scope e non lo manda.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -104,10 +105,10 @@ function stubClient() {
         return { decision: 'booked', appointment: { ...body, id: 'b1', status: 'confirmed' }, replayed: false, spaceId: 'locale' };
       }
       if (path === '/api/appointments/cancel') {
-        return { appointment: { id: body.id, status: 'cancelled' }, cancelled: true, occurrences: [], scope: body.scope ?? 'single' };
+        return { appointment: { id: body.id, status: 'cancelled' }, cancelled: true };
       }
       if (path === '/api/appointments/reschedule') {
-        return { appointment: { id: body.id, status: 'booked', startsAt: body.startsAt, endsAt: body.endsAt }, moved: true, scope: body.scope ?? 'single' };
+        return { appointment: { id: body.id, status: 'booked', startsAt: body.startsAt, endsAt: body.endsAt }, moved: true };
       }
       throw new Error(`unexpected path ${path}`);
     },
@@ -229,30 +230,6 @@ test('ricorrenza: senza scelta la claim non ha ricorrenza', async () => {
   assert.equal(confirms[0].body.recurrence, null, '«Non si ripete» manda null');
 });
 
-test('ricorrenza: annullare un’occorrenza chiede solo/seguiti/tutti e lo scope viaggia', async () => {
-  const { mount, client } = await openCalendar();
-  // The roster names Marco: his week (with the series) loads on its own.
-  mount.findAll('button').find((node) => node.getAttribute('data-event-id') === 's2').dispatch('click');
-  await settle();
-  const pop = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
-  assert.ok(pop, 'il popover dell’occorrenza si apre');
-  pop.findAll('button').find((node) => node.getAttribute('data-action') === 'event-cancel').dispatch('click');
-  const box = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'cancel-confirm');
-  assert.ok(box, 'la domanda si apre');
-  const scopeBox = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'cancel-scope')
-    ?? box.findAll('fieldset')[0];
-  assert.ok(scopeBox, 'la scelta dello scope c’è solo per la serie');
-  const radios = box.findAll('input').filter((node) => node.getAttribute('name') === 'cancel-scope');
-  assert.deepEqual(radios.map((node) => node.getAttribute('value')), ['single', 'following', 'all']);
-  assert.equal(radios.find((node) => node.checked)?.getAttribute('value'), 'single', '«Solo questo» è il predefinito');
-  radios.find((node) => node.getAttribute('value') === 'following').checked = true;
-  radios.find((node) => node.getAttribute('value') === 'following').dispatch('change');
-  box.findAll('button').find((node) => node.getAttribute('data-action') === 'cancel-yes').dispatch('click');
-  await settle();
-  const cancels = client.calls.filter((call) => call.path === '/api/appointments/cancel');
-  assert.equal(cancels.length, 1);
-  assert.equal(cancels[0].body.scope, 'following', 'lo scope viaggia nella scrittura');
-});
 
 test('ricorrenza: annullare una riga singola non chiede lo scope e non lo manda', async () => {
   const { mount, client } = await openCalendar();
@@ -270,24 +247,3 @@ test('ricorrenza: annullare una riga singola non chiede lo scope e non lo manda'
   assert.ok(!('scope' in cancels[0].body), 'la riga singola tiene il suo wire');
 });
 
-test('ricorrenza: spostare un’occorrenza chiede quanto si sposta e lo scope viaggia', async () => {
-  const { mount, client } = await openCalendar();
-  // The roster names Marco: his week (with the series) loads on its own.
-  mount.findAll('button').find((node) => node.getAttribute('data-event-id') === 's1').dispatch('click');
-  await settle();
-  mount.querySelector('button[data-action="event-edit"]').dispatch('click');
-  const form = mount.querySelector('div[data-role="move-form"]');
-  assert.ok(form, 'il form Sposta si apre');
-  const scope = form.querySelector('select[name="move-scope"]');
-  assert.ok(scope, 'la scelta dello scope c’è solo per la serie');
-  scope.value = 'all';
-  scope.dispatch('change');
-  form.querySelector('input[name="move-date"]').value = '2026-11-18';
-  form.querySelector('input[name="move-start"]').value = '17:00';
-  form.querySelector('input[name="move-end"]').value = '18:00';
-  form.findAll('button').find((node) => node.textContent.includes('Sposta')).dispatch('click');
-  await settle();
-  const moves = client.calls.filter((call) => call.path === '/api/appointments/reschedule');
-  assert.equal(moves.length, 1);
-  assert.equal(moves[0].body.scope, 'all', 'lo scope viaggia nella scrittura');
-});

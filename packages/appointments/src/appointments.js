@@ -761,23 +761,6 @@ function replayOrConflict(existing, submitted) {
   );
 }
 
-/**
- * Series scope (backlog:0f2ae629e09b): «solo questo / questo e i successivi /
- * tutti» for cancel and reschedule. Anything else is refused naming `scope`,
- * never guessed.
- */
-export const SERIES_SCOPES = Object.freeze(['single', 'following', 'all']);
-export function validateSeriesScope(value) {
-  if (value === undefined || value === null || value === '') return 'single';
-  const scope = String(value).trim();
-  if (!SERIES_SCOPES.includes(scope)) {
-    throw new ValidationError('scope must be one of single, following, all: solo questo, questo e i successivi, tutti', {
-      field: 'scope',
-    });
-  }
-  return scope;
-}
-
 /** Short Italian label of an occurrence slot for 409 messages the operator reads. */
 function seriesOccurrenceLabel(startsAt) {
   try {
@@ -790,13 +773,6 @@ function seriesOccurrenceLabel(startsAt) {
   }
 }
 
-/**
- * The rows a scoped cancel/move touches: `single` is the named row alone;
- * `following` adds every same-series row from its slot on; `all` is the
- * whole series. A scope wider than one on a row that belongs to no series
- * is refused — cancelling «tutti» of one booking must never silently cancel
- * one. Sorted soonest first, so messages and writes read in grid order.
- */
 /**
  * The head instant owns the series: propose and book expand from it, so the
  * first expanded slot must be that same instant. A rule that starts on
@@ -813,41 +789,6 @@ function assertSeriesHeadSlot(input, slots) {
       field: 'recurrence',
     });
   }
-}
-
-export async function seriesScopeRows(appointments, row, scope) {
-  if (scope === 'single' || !row?.seriesKey) return Object.freeze([row]);
-  if (typeof appointments?.listWhere !== 'function') {
-    throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
-      code: 'APPOINTMENTS_STORAGE_INVALID', status: 500,
-    });
-  }
-  const siblings = await appointments.listWhere({ seriesKey: row.seriesKey });
-  const fromMs = Date.parse(row.startsAt);
-  const inScope = siblings.filter((candidate) => {
-    if (!candidate || typeof candidate.startsAt !== 'string') return false;
-    if (scope === 'all') return true;
-    const ms = Date.parse(candidate.startsAt);
-    return Number.isFinite(ms) && Number.isFinite(fromMs) && ms >= fromMs;
-  });
-  inScope.sort((a, b) => String(a.startsAt ?? '').localeCompare(String(b.startsAt ?? ''))
-    || String(a.id ?? '').localeCompare(String(b.id ?? '')));
-  if (!inScope.some((candidate) => candidate && candidate.id === row.id)) inScope.unshift(row);
-  return Object.freeze(inScope);
-}
-
-/**
- * Review giro 6 (backlog:0f2ae629e09b): a series the calendar edge knows
- * moves as one Google event — «solo questo» and «questo e i successivi»
- * would move the grid while Google keeps the old rule, so they are refused
- * before any write and only «tutti» stays. The guard keys on the SAVED row
- * (`seriesKey`) and the composed calendar edge, never on a request `calendar`
- * field the first-party UI never sends — otherwise it is dead code on the
- * real path. Without the edge every scope works as before.
- */
-function googleLinkedSeriesScopeRefused(calendarSync, row, scope) {
-  const edge = calendarSync != null && typeof calendarSync.pushAppointment === 'function';
-  return edge && Boolean(row?.seriesKey) && scope !== 'all';
 }
 
 /**
@@ -1659,84 +1600,7 @@ export async function rescheduleAppointment(context, request) {
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
-  // Series scope (backlog:0f2ae629e09b): «solo questo» moves one row to the
-  // named slot; «questo e i successivi» / «tutti» shift every in-scope row by
-  // the same delta, so the series keeps its rhythm. A wider scope on a row
-  // that belongs to no series is refused, never silently single.
-  const scope = validateSeriesScope(record.scope);
-  if (scope !== 'single' && !first.seriesKey) {
-    throw new ValidationError('scope following and all need a series occurrence: this appointment belongs to no series', {
-      field: 'scope',
-    });
-  }
-  // A series linked to Google moves as one event: «solo questo» and «questo
-  // e i successivi» would move the grid while Google keeps the old rule (the
-  // push through the head is a noop), so they are refused before any write.
-  // «Tutti» stays as it is. Per-occurrence Google exceptions (EXDATE/UNTIL)
-  // are not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
-    throw new AppError(
-      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
-      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
-    );
-  }
   const runInTransaction = bookingTransaction(appointments);
-  const checkReminderSurvives = (row, nextStartMs, nextStartIso) => {
-    const dueAt = row.reminderDueAt ?? null;
-    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
-      const dueMs = Date.parse(dueAt);
-      if (Number.isFinite(dueMs) && nextStartMs <= dueMs) {
-        throw new AppError(
-          `The stored reminder is due at ${dueAt}: the new slot starts at ${nextStartIso}, at or after the reminder, `
-          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
-          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
-        );
-      }
-    }
-  };
-  const checkSlotFree = (held, memberIdFor, startMs, endMs, excludeIds, occurrence) => {
-    const others = held.filter((row) => row && !excludeIds.has(row.id));
-    const conflict = findOverlap({ teamMemberId: memberIdFor, startMs, endMs }, others);
-    if (conflict) {
-      const where = occurrence
-        ? `L'occorrenza ${occurrence.index + 1} di ${occurrence.total} (${seriesOccurrenceLabel(occurrence.startsAt)}) è occupata: `
-        : '';
-      if (conflict.kind === OWNER_BLOCK_KIND) {
-        throw new AppError(
-          `${where}Il membro "${memberIdFor}" ha un impegno del titolare in questa fascia oraria `
-          + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
-          + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
-          {
-            code: 'APPOINTMENTS_OVERLAP',
-            status: 409,
-            details: {
-              conflictingId: null,
-              status: null,
-              ...(occurrence
-                ? { occurrenceIndex: occurrence.index, occurrenceStartsAt: occurrence.startsAt, occurrenceCount: occurrence.total }
-                : {}),
-            },
-          },
-        );
-      }
-      throw new AppError(
-        `${where}Il membro "${memberIdFor}" ha già un altro appuntamento in questa fascia oraria `
-        + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
-        + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
-        {
-          code: 'APPOINTMENTS_OVERLAP',
-          status: 409,
-          details: {
-            conflictingId: conflict.id ?? null,
-            status: conflict.status ?? null,
-            ...(occurrence
-              ? { occurrenceIndex: occurrence.index, occurrenceStartsAt: occurrence.startsAt, occurrenceCount: occurrence.total }
-              : {}),
-          },
-        },
-      );
-    }
-  };
   const critical = async () => {
     const current = await lookup();
     if (APPOINTMENT_TERMINAL.includes(current.status)) {
@@ -1745,104 +1609,53 @@ export async function rescheduleAppointment(context, request) {
         { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: null } },
       );
     }
-    const targets = await seriesScopeRows(appointments, current, scope);
-    // A scoped move shifts the series, never restretches it: the request
-    // duration must equal the stored one, or the grid would keep the old
-    // length while the caller believes the new endsAt was stored. A new
-    // duration is a «solo questo» move, one row at a time.
-    if (scope !== 'single') {
-      const storedDurationMs = Date.parse(current.endsAt) - Date.parse(current.startsAt);
-      if (endsAt.ms - startsAt.ms !== storedDurationMs) {
-        throw new ValidationError(
-          '«Questo e i successivi» e «tutti» spostano la serie senza cambiarne la durata: '
-          + 'per cambiare la durata sposta con «solo questo»',
-          { field: 'endsAt' },
-        );
-      }
+    if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
+      return { appointment: current, moved: false };
     }
-    if (scope === 'single') {
-      if (current.startsAt === startsAt.iso && current.endsAt === endsAt.iso) {
-        return { appointment: current, moved: false, occurrences: Object.freeze([]) };
-      }
-      // The booking invariant survives the drag: the stored reminder still
-      // fires before the slot. Re-read inside the critical section, so a
-      // reminder written between the two reads is seen too.
-      checkReminderSurvives(current, startsAt.ms, startsAt.iso);
-      const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
-      const singleBlocks = await ownerBlocksFor(context.calendarSync, current.teamMemberId, startsAt.iso, endsAt.iso);
-      checkSlotFree([...held, ...singleBlocks], current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
-      return {
-        appointment: await appointments.applyManaged(
-          current.id,
-          { startsAt: startsAt.iso, endsAt: endsAt.iso },
-          { actor: who },
-        ),
-        moved: true,
-        occurrences: Object.freeze([]),
-      };
-    }
-    const deltaMs = startsAt.ms - Date.parse(current.startsAt);
-    const inScopeIds = new Set(targets.map((row) => row.id));
-    const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
-    // Each row keeps its own duration: an earlier «solo questo» stretch is
-    // never silently normalized to the named row's length by a later scoped
-    // move.
-    const plans = targets.map((row, position) => {
-      const fromMs = Date.parse(row.startsAt);
-      const rowDurationMs = Date.parse(row.endsAt) - Date.parse(row.startsAt);
-      const nextStartMs = fromMs + deltaMs;
-      const next = {
-        row,
-        nextStartsAt: new Date(nextStartMs).toISOString(),
-        nextEndsAt: new Date(nextStartMs + rowDurationMs).toISOString(),
-        nextStartMs,
-        nextEndMs: nextStartMs + rowDurationMs,
-        position,
-      };
-      return next;
-    });
-    const envelopeFromMs = Math.min(...plans.map((plan) => plan.nextStartMs));
-    const envelopeToMs = Math.max(...plans.map((plan) => plan.nextEndMs));
-    const scopeBlocks = await ownerBlocksFor(
-      context.calendarSync,
-      current.teamMemberId,
-      new Date(envelopeFromMs).toISOString(),
-      new Date(envelopeToMs).toISOString(),
-    );
-    const heldWithBlocks = [...held, ...scopeBlocks];
-    for (const plan of plans) {
-      if (APPOINTMENT_TERMINAL.includes(plan.row.status)) {
+    // The booking invariant survives the drag: the stored reminder still
+    // fires before the slot. Re-read inside the critical section, so a
+    // reminder written between the two reads is seen too.
+    const dueAt = current.reminderDueAt ?? null;
+    if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
+      const dueMs = Date.parse(dueAt);
+      if (Number.isFinite(dueMs) && startsAt.ms <= dueMs) {
         throw new AppError(
-          `An appointment in state "${plan.row.status}" cannot be rescheduled; it is terminal and moves nowhere`,
-          { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: plan.row.status, to: null, occurrenceStartsAt: plan.row.startsAt } },
+          `The stored reminder is due at ${dueAt}: the new slot starts at ${startsAt.iso}, at or after the reminder, `
+          + 'so nobody would be reminded before the appointment — move to a later slot or cancel the reminder first.',
+          { code: 'APPOINTMENTS_REMINDER_AFTER_SLOT', status: 409, details: { reminderDueAt: dueAt } },
         );
       }
-      checkReminderSurvives(plan.row, plan.nextStartMs, plan.nextStartsAt);
-      checkSlotFree(heldWithBlocks, current.teamMemberId, plan.nextStartMs, plan.nextEndMs, inScopeIds, {
-        index: plan.row.occurrenceIndex ?? plan.position,
-        total: targets.length,
-        startsAt: plan.nextStartsAt,
-      });
     }
-    const moved = [];
-    for (const plan of plans) {
-      if (plan.row.startsAt === plan.nextStartsAt && plan.row.endsAt === plan.nextEndsAt) {
-        moved.push(plan.row);
-        continue;
+    const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
+    const others = held.filter((row) => row && row.id !== current.id);
+    const blocks = await ownerBlocksFor(context.calendarSync, current.teamMemberId, startsAt.iso, endsAt.iso);
+    const conflict = findOverlap(
+      { teamMemberId: current.teamMemberId, startMs: startsAt.ms, endMs: endsAt.ms },
+      [...others, ...blocks],
+    );
+    if (conflict) {
+      if (conflict.kind === OWNER_BLOCK_KIND) {
+        throw new AppError(
+          `Il membro "${current.teamMemberId}" ha un impegno del titolare in questa fascia oraria `
+          + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}): `
+          + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+          { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: null, status: null } },
+        );
       }
-      moved.push(await appointments.applyManaged(
-        plan.row.id,
-        { startsAt: plan.nextStartsAt, endsAt: plan.nextEndsAt },
-        { actor: who },
-      ));
+      throw new AppError(
+        `Il membro "${current.teamMemberId}" ha già un altro appuntamento in questa fascia oraria `
+        + `(dalle ${conflict.startsAt} alle ${conflict.endsAt}, stato "${conflict.status}"): `
+        + "sposta l'appuntamento in una fascia libera oppure scegli un altro membro.",
+        { code: 'APPOINTMENTS_OVERLAP', status: 409, details: { conflictingId: conflict.id ?? null, status: conflict.status ?? null } },
+      );
     }
-    const named = moved.find((row) => row.id === current.id) ?? moved[0];
     return {
-      appointment: named,
+      appointment: await appointments.applyManaged(
+        current.id,
+        { startsAt: startsAt.iso, endsAt: endsAt.iso },
+        { actor: who },
+      ),
       moved: true,
-      occurrences: Object.freeze(moved.map((row) => Object.freeze({
-        id: row.id, sourceKey: row.sourceKey, startsAt: row.startsAt, endsAt: row.endsAt,
-      }))),
     };
   };
   // The move serializes on the appointment identity as well as the member:
@@ -1853,7 +1666,7 @@ export async function rescheduleAppointment(context, request) {
   // refuses 409 or advances the winner's row, never a terminal row silently
   // moved to a new slot.
   const recordId = safeText(first.id, 'id', MAX_ID);
-  const { appointment, moved, occurrences } = await withMemberBooking(
+  const { appointment, moved } = await withMemberBooking(
     memberId,
     () => withAppointmentAdvance(
       recordId,
@@ -1865,22 +1678,11 @@ export async function rescheduleAppointment(context, request) {
   // the moved row is already committed and the caller would observe a
   // failure for a move that happened — so it is answered as data. Only the
   // provider's code is surfaced, never its text.
-  // A series converges through its head: the head carries the Google RRULE,
-  // so the push names the head's key — never a later occurrence, which would
-  // leave no link on Google and be exported as a new standalone single event
-  // duplicating the series. When the head moved its push carries the new
-  // slot; when it did not move the push is a noop.
-  let pushKey = appointment.sourceKey;
-  if (first.seriesKey) {
-    const siblings = await appointments.listWhere({ seriesKey: first.seriesKey });
-    const head = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
-    if (head) pushKey = head.sourceKey;
-  }
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
     try {
-      push = await calendarPush(calendarId, pushKey, { spaceId, actor: who });
+      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
     } catch (error) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code
@@ -1888,7 +1690,7 @@ export async function rescheduleAppointment(context, request) {
       pushError = Object.freeze({ code });
     }
   }
-  return Object.freeze({ appointment, moved, occurrences: occurrences ?? Object.freeze([]), scope, push, pushError });
+  return Object.freeze({ appointment, moved, push, pushError });
 }
 
 /**
@@ -1973,135 +1775,41 @@ export async function cancelAppointment(context, request) {
     return row;
   };
   const first = await lookup();
-  // Series scope (backlog:0f2ae629e09b): «solo questo / questo e i successivi
-  // / tutti». A wider scope on a row that belongs to no series is refused —
-  // «tutti» of one booking must never silently cancel one.
-  const scope = validateSeriesScope(record.scope);
-  if (scope !== 'single' && !first.seriesKey) {
-    throw new ValidationError('scope following and all need a series occurrence: this appointment belongs to no series', {
-      field: 'scope',
-    });
-  }
-  // A series linked to Google cancels as one event: «solo questo» and «questo
-  // e i successivi» would cancel the grid while Google keeps the old rule
-  // (the push through the head is a noop), so they are refused before any
-  // write. «Tutti» stays as it is. Per-occurrence Google exceptions
-  // (EXDATE/UNTIL) are not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
-    throw new AppError(
-      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
-      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
-    );
-  }
-  const runInTransaction = bookingTransaction(appointments);
-  const advanceOne = async (row) => {
-    if (row.status === CANCELLED_STATE) return { row, cancelled: false };
+  let appointment = first;
+  let cancelled = false;
+  if (first.status !== CANCELLED_STATE) {
     try {
-      const next = await advanceAppointment(
+      appointment = await advanceAppointment(
         { appointments, actor: who, now: context.now },
-        row,
+        first,
         CANCELLED_STATE,
         reason,
       );
-      return { row: next, cancelled: true };
+      cancelled = true;
     } catch (error) {
       // Another cancellation won the race between the read and the write:
       // its row is the answer, never a 409 on the operator's own intent.
       if (!(error instanceof AppError) || error.code !== 'APPOINTMENTS_INVALID_STATE' || error.details?.from !== CANCELLED_STATE) {
         throw error;
       }
-      // The winner's row is the TARGET occurrence being advanced — never the
-      // named row of the request, which may be another occurrence of the
-      // scope. It is re-read by its own id, so the loser answers the row
-      // the race was actually lost on.
-      let fresh = row;
-      try {
-        if (row && row.id !== undefined && row.id !== null) {
-          fresh = await appointments.get(row.id);
-        } else if (row && typeof row.sourceKey === 'string' && row.sourceKey !== '') {
-          fresh = (await appointments.listWhere({ sourceKey: row.sourceKey }))[0] ?? row;
-        }
-      } catch (readError) {
-        if (!(readError instanceof NotFoundError)) throw readError;
-        fresh = row;
-      }
-      // The loser answers the winner's row (never a 409 on the operator's
-      // own intent) but reports cancelled:false: it wrote nothing, the
-      // winner's single write is the cancellation.
-      return { row: fresh.status === CANCELLED_STATE ? fresh : row, cancelled: false };
+      appointment = await lookup();
     }
-  };
-  const critical = async () => {
-    // Re-read inside the member chain, so a cancel racing a move or another
-    // cancel sees the winner's committed rows instead of a stale first read.
-    const current = await lookup();
-    const scoped = await seriesScopeRows(appointments, current, scope);
-    // A scoped cancellation proves every in-scope row cancellable before the
-    // first write — exactly like the reschedule path: a terminal row in scope
-    // refuses the whole scope with 409 instead of leaving a half-cancelled
-    // series behind. The race handler inside advanceOne stays for rows that
-    // turn terminal between this read and their write.
-    for (const target of scoped) {
-      if (target.status === CANCELLED_STATE) continue;
-      if (APPOINTMENT_TERMINAL.includes(target.status)) {
-        throw new AppError(
-          `An appointment in state "${target.status}" cannot be cancelled; it is terminal and keeps its history`,
-          {
-            code: 'APPOINTMENTS_INVALID_STATE',
-            status: 409,
-            details: { from: target.status, to: CANCELLED_STATE, occurrenceStartsAt: target.startsAt },
-          },
-        );
-      }
-    }
-    const settled = [];
-    for (const target of scoped) settled.push(await advanceOne(target));
-    const namedEntry = settled.find((entry) => entry.row.id === current.id) ?? settled[0];
-    const appointment = namedEntry.row;
-    const cancelled = namedEntry.cancelled;
-    const occurrences = Object.freeze(settled.map((entry) => Object.freeze({
-      id: entry.row.id,
-      sourceKey: entry.row.sourceKey,
-      startsAt: entry.row.startsAt,
-      cancelled: entry.cancelled,
-    })));
-    // The push rides the idempotent path on a replay too: a first attempt
-    // whose push failed converges Google on the retry. A scoped cancellation
-    // also converges the series head — it carries the Google RRULE, so Google
-    // sees the series change even when the named row is a later occurrence.
-    const pushKeys = [appointment.sourceKey];
-    const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
-    if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
-    return { appointment, cancelled, occurrences, pushKeys };
-  };
-  // The lookup, the scope read, the terminal pre-check and the advance loop
-  // run serialized on the member and inside one storage transaction when the
-  // service carries one — the same order as the reschedule path — so a crash
-  // or a race between the pre-check and the writes can no longer leave a
-  // half-cancelled series behind. The calendar push stays outside: it runs
-  // after the commit and answers as data, never as a throw.
-  const { appointment, cancelled, occurrences, pushKeys } = await withMemberBooking(
-    first.teamMemberId,
-    runInTransaction ? () => runInTransaction(critical) : critical,
-  );
+  }
+  // The push rides the idempotent path on a replay too: a first attempt
+  // whose push failed converges Google on the retry.
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
-    for (const key of pushKeys) {
-      try {
-        const answered = await calendarPush(calendarId, key, { spaceId, actor: who });
-        if (push === null) push = answered;
-      } catch (error) {
-        if (pushError === null) {
-          const code = typeof error?.code === 'string' && error.code !== ''
-            ? error.code
-            : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
-          pushError = Object.freeze({ code });
-        }
-      }
+    try {
+      push = await calendarPush(calendarId, appointment.sourceKey, { spaceId, actor: who });
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
     }
   }
-  return Object.freeze({ appointment, cancelled, occurrences, scope, push, pushError });
+  return Object.freeze({ appointment, cancelled, push, pushError });
 }
 
 /**
@@ -2217,10 +1925,8 @@ function projectTeamWeekRow(row) {
     currency: row.currency,
     notes: row.notes ?? null,
     sourceKey: row.sourceKey,
-    // Series paint (backlog:0f2ae629e09b): the grid shows every occurrence,
-    // and the cancel/move dialogs offer «solo questo / questo e i successivi
-    // / tutti» only on rows that belong to a series. Old rows read back with
-    // nulls — singles, like before.
+    // Series paint (backlog:0f2ae629e09b): the grid shows every occurrence
+    // of a series. Old rows read back with nulls — singles, like before.
     seriesKey: row.seriesKey ?? null,
     occurrenceIndex: row.occurrenceIndex ?? null,
     recurrenceRule: row.recurrenceRule ?? null,

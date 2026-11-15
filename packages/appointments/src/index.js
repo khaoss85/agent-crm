@@ -33,9 +33,6 @@ import {
   readSchedule,
   readTeamWeek,
   rescheduleAppointment,
-  SERIES_SCOPES,
-  seriesScopeRows,
-  validateSeriesScope,
   reminderMessageKey,
   reminderSourceKey,
   reminderThreadKey,
@@ -141,9 +138,6 @@ export {
   reminderHistoryBody,
   reminderMessageKey,
   reminderSourceKey,
-  SERIES_SCOPES,
-  seriesScopeRows,
-  validateSeriesScope,
   reminderThreadKey,
   seedReminderSweep,
   suggestSlots,
@@ -256,9 +250,8 @@ export function createAppointmentsPackage(options = {}) {
     // offered as free — plus Google-Calendar-style series: `recurrence` on
     // the booking request expands to one row per occurrence (each with the
     // series key and its index), every occurrence conflict-checked before
-    // the first write; cancel/reschedule take a `scope` (single, following,
-    // all). Additive: server seam only for holds (no caller input carries
-    // blocks) and singles book exactly as before.
+    // the first write. Additive: server seam only for holds (no caller input
+    // carries blocks) and singles book exactly as before.
     version: 5,
     label: 'Appointments',
     description:

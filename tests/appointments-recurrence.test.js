@@ -4,8 +4,10 @@
  *
  * La regola descrive la serie, l'espansione la apre in occorrenze una per
  * una (ognuna controllata sui conflitti con il suo 409 che nomina la
- * data), e recurrenceToRRule è la riga RRULE che calendar-sync spinge su
- * Google: la serie arriva lì come un evento ricorrente, non N singoli.
+ * data), e recurrenceToRRule è la riga RRULE che descrive la regola
+ * (la spinta su Google è una voce a parte). Modifica e annullo con scope
+ * («solo questo / questo e i successivi / tutti») sono fuori da questa
+ * voce: un'occorrenza si sposta o si annulla come una riga singola.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,13 +21,11 @@ import {
 import {
   bookAppointment,
   bookFromLink,
-  cancelAppointment,
   confirmBooking,
   proposeBooking,
-  rescheduleAppointment,
   validateAppointmentRequest,
 } from '../packages/appointments/src/appointments.js';
-import { AppError, NotFoundError, ValidationError } from '../packages/core/index.js';
+import { NotFoundError, ValidationError } from '../packages/core/index.js';
 
 // Martedì 17 novembre 2026, 17:00 ora di Roma.
 const TUE = '2026-11-17T17:00:00+01:00';
@@ -104,6 +104,36 @@ test('le regole personalizzate falliscono chiuse, mai indovinate', () => {
   assert.throws(() => validateRecurrence({ kind: 'custom', unit: 'year' }), /one of day, week, month/);
   const rule = validateRecurrence({ kind: 'custom', unit: 'week', interval: 2, days: [2, 4], count: 6 });
   assert.deepEqual(rule, { kind: 'custom', unit: 'week', interval: 2, days: [2, 4], count: 6, until: null });
+});
+
+test('i feriali hanno intervallo 1: un intervallo diverso viene rifiutato, mai espanso a metà', () => {
+  // P1 review giro 6 (backlog:0f2ae629e09b): l'intervallo dei feriali era
+  // validato e salvato ma ignorato dall'espansione — griglia e RRULE
+  // divergevano. Ora la validazione lo rifiuta: solo intervallo 1.
+  assert.deepEqual(validateRecurrence({ kind: 'weekdays', count: 3 }), {
+    kind: 'weekdays', interval: 1, days: null, unit: 'week', count: 3, until: null,
+  });
+  for (const interval of [2, 3, 99]) {
+    assert.throws(() => validateRecurrence({ kind: 'weekdays', interval, count: 3 }), (error) => (
+      error instanceof ValidationError && error.details?.field === 'recurrence'
+    ), `i feriali con intervallo ${interval} sono 400`);
+    assert.throws(() => recurrenceToRRule({ kind: 'weekdays', interval, count: 3 }), (error) => (
+      error instanceof ValidationError
+    ), `la riga RRULE non indovina i feriali con intervallo ${interval}`);
+  }
+});
+
+test('prenotare i feriali con intervallo rifiuta prima di ogni scrittura', async () => {
+  const service = fakeAppointments();
+  await assert.rejects(
+    bookAppointment(contextFor(service), booking({ recurrence: { kind: 'weekdays', interval: 2, count: 3 } })),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.details?.field, 'recurrence');
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'nessuna occorrenza scritta con la regola rifiutata');
 });
 
 test('le etichette si calcolano dalla data scelta', () => {
@@ -202,60 +232,9 @@ test('se una occorrenza è occupata il 409 nomina quale, e niente viene scritto'
   assert.equal(service.rows.length, 1, 'nessuna occorrenza scritta quando una è occupata');
 });
 
-test('annullare chiede solo questo / successivi / tutti e fa esattamente quello', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const second = booked.occurrences[1];
 
-  // «Solo questo»: le altre restano prenotate.
-  await cancelAppointment(context, { id: second.id, scope: 'single', reason: 'spostato dal cliente' });
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
 
-  // «Questo e i successivi»: dal secondo in poi.
-  await cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', reason: 'serie finita' });
-  assert.deepEqual(service.rows.map((row) => row.status), ['cancelled', 'cancelled', 'cancelled']);
-});
 
-test('annullare «tutti» chiude la serie intera', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const cancelled = await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'all', reason: 'serie finita' });
-  assert.equal(cancelled.occurrences.length, 3);
-  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
-});
-
-test('spostare «questo e i successivi» tiene il ritmo della serie', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const moved = await rescheduleAppointment(context, {
-    id: booked.occurrences[1].id,
-    startsAt: '2026-11-25T16:00:00.000Z',
-    endsAt: '2026-11-25T17:00:00.000Z',
-    scope: 'following',
-  });
-  assert.deepEqual(moved.occurrences.map((row) => row.startsAt), [
-    '2026-11-25T16:00:00.000Z',
-    '2026-12-02T16:00:00.000Z',
-  ]);
-  assert.deepEqual(service.rows.map((row) => row.startsAt), [
-    '2026-11-17T16:00:00.000Z',
-    '2026-11-25T16:00:00.000Z',
-    '2026-12-02T16:00:00.000Z',
-  ]);
-});
-
-test('uno scope largo su una riga fuori serie viene rifiutato', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const single = await bookAppointment(context, booking());
-  await assert.rejects(
-    cancelAppointment(context, { id: single.appointment.id, scope: 'all', reason: 'serie finita' }),
-    (error) => error.details?.field === 'scope',
-  );
-});
 
 test('la richiesta di prenotazione porta la ricorrenza alla proposta: un conflitto dopo la testa ferma tutto', async () => {
   // validateAppointmentRequest legge e normalizza la ricorrenza della claim.
@@ -327,26 +306,6 @@ test('mensile personalizzato: griglia ed RRULE dicono lo stesso giorno', () => {
   ]);
 });
 
-test('annullare con una riga terminale nello scope rifiuta tutto senza scrivere niente', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  // Una visita già avvenuta: stato terminale dentro lo scope «tutti».
-  await service.applyManaged(booked.occurrences[1].id, { status: 'done' });
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', reason: 'serie finita' }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_INVALID_STATE');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(
-    service.rows.map((row) => row.status),
-    ['booked', 'done', 'booked'],
-    'nessuna cancellazione parziale: il rifiuto arriva prima della prima scrittura',
-  );
-});
 
 test('la serie deve partire dalla data scelta: feriali dal sabato e custom senza il giorno di inizio sono 400', async () => {
   const service = fakeAppointments();
@@ -387,115 +346,8 @@ test('la stessa regola vale in proposta: una testa fuori regola ferma tutto con 
   );
 });
 
-test('serie collegata a Google: solo «tutti» si sposta, single e following sono 409 prima di ogni scrittura', async () => {
-  const service = fakeAppointments();
-  const pushes = [];
-  const calendarSync = {
-    async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
-      return { status: 'noop', sourceKey, reason: 'finto' };
-    },
-  };
-  const context = { ...contextFor(service), calendarSync };
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const headKey = booked.occurrences[0].sourceKey;
-  const before = service.rows.map((row) => row.startsAt);
-  // «Solo questo» con calendario: 409, niente scritto, niente spinto.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[2].id,
-      startsAt: '2026-12-03T16:00:00.000Z',
-      endsAt: '2026-12-03T17:00:00.000Z',
-      scope: 'single',
-      calendar: { calendarId: 'cal-1' },
-      spaceId: 'spazio-1',
-    }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Questo e i successivi» con calendario: stesso 409, stessa quiete.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[1].id,
-      startsAt: '2026-11-25T16:00:00.000Z',
-      endsAt: '2026-11-25T17:00:00.000Z',
-      scope: 'following',
-      calendar: { calendarId: 'cal-1' },
-      spaceId: 'spazio-1',
-    }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Tutti» con calendario resta com'era: la serie si muove e la push nomina
-  // la testa, che porta la RRULE su Google.
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[0].id,
-    startsAt: '2026-11-18T16:00:00.000Z',
-    endsAt: '2026-11-18T17:00:00.000Z',
-    scope: 'all',
-    calendar: { calendarId: 'cal-1' },
-    spaceId: 'spazio-1',
-  });
-  assert.deepEqual(pushes, [headKey]);
-});
 
-test('serie collegata a Google: single e following non annullano, «tutti» annulla e spinge la testa', async () => {
-  const service = fakeAppointments();
-  const pushes = [];
-  const calendarSync = {
-    async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
-      return { status: 'ok', sourceKey };
-    },
-  };
-  const context = { ...contextFor(service), calendarSync };
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const headKey = booked.occurrences[0].sourceKey;
-  const cal = { calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1', reason: 'serie finita' };
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', ...cal }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', ...cal }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  const out = await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'all', ...cal });
-  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
-  assert.ok(pushes.includes(headKey), 'la push nomina la testa che porta la RRULE');
-  assert.equal(out.scope, 'all');
-});
 
-test('senza bordo calendario single e following funzionano come ora', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  // Senza calendarSync nel contesto il bordo non esiste: gli scope parziali
-  // restano permessi.
-  await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' });
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[2].id,
-    startsAt: '2026-12-03T16:00:00.000Z',
-    endsAt: '2026-12-03T17:00:00.000Z',
-    scope: 'single',
-  });
-  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
-});
 
 test('la serie rifiuta un «owner hold» su un’occorrenza dopo la prima, come la singola (backlog:0f2ae629e09b)', async () => {
   // Seconda occorrenza (mar 24 nov, 16:00Z) coperta da un impegno del
@@ -532,96 +384,8 @@ test('la serie rifiuta un «owner hold» su un’occorrenza dopo la prima, come 
   }
 });
 
-test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:0f2ae629e09b)', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const [first, raced, third] = booked.occurrences;
-  // La seconda occorrenza la cancella un altro operatore tra la lettura
-  // dello scope e la sua scrittura: lo storage rifiuta la scrittura
-  // perdente con il 409 di transizione, come fa Postgres sulla seconda
-  // connessione.
-  let racedOnce = false;
-  const realApply = service.applyManaged;
-  service.applyManaged = async (id, patch, options) => {
-    if (id === raced.id && !racedOnce) {
-      racedOnce = true;
-      const winner = service.rows.find((row) => row.id === raced.id);
-      winner.status = 'cancelled';
-      winner.cancelReason = 'altro operatore';
-      throw new AppError(
-        `An appointment in state "cancelled" cannot advance to "cancelled"; it is terminal and advances nowhere`,
-        { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: 'cancelled', to: 'cancelled' } },
-      );
-    }
-    return realApply(id, patch, options);
-  };
-  const out = await cancelAppointment(context, { id: first.id, scope: 'all', reason: 'serie finita' });
-  assert.equal(out.appointment.id, first.id, 'la risposta nomina la riga richiesta');
-  assert.equal(out.cancelled, true);
-  const byId = Object.fromEntries(out.occurrences.map((entry) => [entry.id, entry]));
-  assert.deepEqual(Object.keys(byId).sort(), [first.id, raced.id, third.id].sort());
-  assert.equal(byId[raced.id].cancelled, false, 'il perdente non scrive ma risponde con la riga del vincitore');
-  assert.equal(
-    service.rows.find((row) => row.id === raced.id).startsAt,
-    raced.startsAt,
-    'la riga del vincitore è il bersaglio, non la nominata',
-  );
-  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
-});
 
-test('spostare «tutti» con una durata diversa è 400 field endsAt e niente si muove', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const before = service.rows.map((row) => ({ startsAt: row.startsAt, endsAt: row.endsAt }));
-  // Stesso inizio, 30 minuti in più: la durata richiesta non è quella
-  // prenotata.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[0].id,
-      startsAt: '2026-11-17T16:00:00.000Z',
-      endsAt: '2026-11-17T17:30:00.000Z',
-      scope: 'all',
-    }),
-    (error) => {
-      assert.equal(error.status, 400);
-      assert.equal(error.details?.field, 'endsAt');
-      return true;
-    },
-  );
-  assert.deepEqual(
-    service.rows.map((row) => ({ startsAt: row.startsAt, endsAt: row.endsAt })),
-    before,
-    'il rifiuto arriva prima della prima scrittura',
-  );
-});
 
-test('«questo e i successivi» tiene la durata di ogni riga, mai quella della nominata', async () => {
-  const service = fakeAppointments();
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 2 } }));
-  // Allungo solo la seconda con «solo questo»: da qui in poi le durate
-  // divergono (60 min la prima, 90 la seconda).
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[1].id,
-    startsAt: '2026-11-24T16:00:00.000Z',
-    endsAt: '2026-11-24T17:30:00.000Z',
-    scope: 'single',
-  });
-  assert.equal(service.rows[1].endsAt, '2026-11-24T17:30:00.000Z');
-  // Sposto «tutti» di un giorno con la durata della testa: la seconda resta
-  // da 90 minuti, non viene normalizzata a 60.
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[0].id,
-    startsAt: '2026-11-18T16:00:00.000Z',
-    endsAt: '2026-11-18T17:00:00.000Z',
-    scope: 'all',
-  });
-  assert.equal(service.rows[0].endsAt, '2026-11-18T17:00:00.000Z');
-  assert.equal(service.rows[1].startsAt, '2026-11-25T16:00:00.000Z');
-  assert.equal(service.rows[1].endsAt, '2026-11-25T17:30:00.000Z', 'ogni riga tiene la sua durata');
-});
 
 test('la conferma di una serie è atomica: una conferma a metà fallita lascia tutto prenotato', async () => {
   const service = fakeAppointments();
@@ -664,44 +428,6 @@ test('la conferma di una serie è atomica: una conferma a metà fallita lascia t
   );
 });
 
-test('annullare «tutti» con la seconda scrittura che fallisce non lascia niente annullato', async () => {
-  const service = fakeAppointments();
-  // Transazione finta con rollback: fotografa le righe e le ripristina se il
-  // giro fallisce, come fa lo storage vero.
-  const snapshot = () => service.rows.map((row) => ({ ...row }));
-  const database = {
-    storage: { activeTransaction: () => null },
-    async transactionAsync(critical) {
-      const before = snapshot();
-      try {
-        return await critical();
-      } catch (error) {
-        service.rows.length = 0;
-        for (const row of before) service.rows.push(row);
-        throw error;
-      }
-    },
-  };
-  service.database = database;
-  let writes = 0;
-  const realApply = service.applyManaged;
-  service.applyManaged = async (id, patch) => {
-    writes += 1;
-    if (writes === 2) throw new Error('injected storage failure');
-    return realApply(id, patch);
-  };
-  const context = contextFor(service);
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', reason: 'serie finita' }),
-    /injected storage failure/,
-  );
-  assert.deepEqual(
-    service.rows.map((row) => row.status),
-    ['booked', 'booked', 'booked'],
-    'la serie resta intera quando una scrittura fallisce a metà giro',
-  );
-});
 
 test('il link pubblico non apre serie: una richiesta con ricorrenza è 400 senza scrivere', async () => {
   const service = fakeAppointments();
@@ -722,80 +448,4 @@ test('il link pubblico non apre serie: una richiesta con ricorrenza è 400 senza
   assert.equal(service.rows.length, 0, 'nessuna occorrenza scritta dal link pubblico');
 });
 
-test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto, single e following sono 409 anche senza «calendar»', async () => {
-  const service = fakeAppointments();
-  const pushes = [];
-  const calendarSync = {
-    async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
-      return { status: 'noop', sourceKey, reason: 'finto' };
-    },
-  };
-  const context = { ...contextFor(service), calendarSync };
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const before = service.rows.map((row) => row.startsAt);
-  // «Solo questo» senza «calendar» nella richiesta: 409 prima di ogni scrittura.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[2].id,
-      startsAt: '2026-12-03T16:00:00.000Z',
-      endsAt: '2026-12-03T17:00:00.000Z',
-      scope: 'single',
-    }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  // «Questo e i successivi» senza «calendar»: stesso 409, stessa quiete.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[1].id,
-      startsAt: '2026-11-25T16:00:00.000Z',
-      endsAt: '2026-11-25T17:00:00.000Z',
-      scope: 'following',
-    }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Tutti» senza «calendar» resta com'era: la serie si sposta, senza push.
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[0].id,
-    startsAt: '2026-11-18T16:00:00.000Z',
-    endsAt: '2026-11-18T17:00:00.000Z',
-    scope: 'all',
-  });
-  assert.notDeepEqual(service.rows.map((row) => row.startsAt), before, '«tutti» sposta la serie');
-  assert.deepEqual(pushes, [], 'senza «calendar» la richiesta non spinge');
-});
 
-test('la guardia serie-Google vale anche per l’annullo senza «calendar» nella richiesta', async () => {
-  const service = fakeAppointments();
-  const pushes = [];
-  const calendarSync = {
-    async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
-      return { status: 'ok', sourceKey };
-    },
-  };
-  const context = { ...contextFor(service), calendarSync };
-  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', reason: 'serie finita' }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-});
