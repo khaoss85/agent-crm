@@ -869,8 +869,10 @@ export function createAgentOperations(options = {}) {
 
   /**
    * Approve one proposed run: a human actor, the optional space permission
-   * gate, then every proposal through the `applyAction` seam. Proposals
-   * become writes here and nowhere else.
+   * gate, the agent's monthly cap and the owning squad's monthly cap (both
+   * read fresh from the month's ledger; over the cap refuses with 409 and
+   * the run stays proposed), then every proposal through the `applyAction`
+   * seam. Proposals become writes here and nowhere else.
    *
    * Concurrency: approvals of one run serialize on a same-process FIFO
    * chain, and the approval itself is a conditional claim on the row read
@@ -927,6 +929,75 @@ export function createAgentOperations(options = {}) {
       }
       if (current.outcome === 'applied') return { run: current, applied: [], duplicate: true };
       assertRunTransition(current.outcome, 'approve');
+      // Cap enforcement (backlog:70e194b94156): the month's ledger, read
+      // fresh from production rows, decides. The run's own cost is already
+      // recorded, so the check is `spent > cap` — never `spent + cost`,
+      // which would count the run twice. A refusal leaves the run proposed:
+      // the owner can raise the cap and retry. The ledger (and the run's
+      // own row) never carries secrets: the seams below receive only
+      // spaceId, actor, run key, proposal and idempotency key.
+      const ledgerAt = now();
+      const ledgerRuns = await runs().listWhere({ spaceId });
+      // The run being decided spends its execution month (`decidedAt`,
+      // the instant the ledger attributes its cost to), never the wall
+      // clock: a cross-month approval must read the run's own month on
+      // both sides, or it checks the wrong month's spend (review
+      // agent-crm#940 P1). `spentSince` has no upper bound, so the window
+      // is closed here: rows decided after the approval (a new month's
+      // spend) must not count toward the run's own month.
+      const decidedMonth = typeof current.decidedAt === 'string' && current.decidedAt !== ''
+        ? current.decidedAt
+        : ledgerAt;
+      const windowStartIso = monthStartIso(decidedMonth);
+      const windowStartMs = Date.parse(windowStartIso);
+      const windowStart = new Date(windowStartMs);
+      const windowEndMs = Date.UTC(windowStart.getUTCFullYear(), windowStart.getUTCMonth() + 1, 1);
+      const inExecutionMonth = (row) => {
+        const raw = row && typeof row.decidedAt === 'string' && row.decidedAt !== ''
+          ? row.decidedAt
+          : row?.startedAt;
+        const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
+        return Number.isFinite(at) && at >= windowStartMs && at < windowEndMs;
+      };
+      const spentMonth = (keys) => spentSince(
+        ledgerRuns.filter((row) => row && keys.has(row.agentSourceKey) && inExecutionMonth(row)),
+        windowStartIso,
+      );
+      const agent = await loadAgent(spaceId, current.agentSourceKey);
+      if (agent.spendingCapCents !== null && agent.spendingCapCents !== undefined) {
+        const spent = spentMonth(new Set([current.agentSourceKey]));
+        if (spent > agent.spendingCapCents) {
+          throw new AppError(
+            `This approval would bless overspend: spent ${spent}c of ${agent.spendingCapCents}c this month.`,
+            { code: 'AGENT_APPROVAL_OVER_CAP', status: 409 },
+          );
+        }
+      }
+      const squadEntry = typeof modules.get === 'function' ? modules.get('teammate-squad') : undefined;
+      if (squadEntry?.service) {
+        const squadRows = await squads().listWhere({ spaceId });
+        for (const squadRow of squadRows) {
+          if (squadRow?.spendingCapCents === null || squadRow?.spendingCapCents === undefined) continue;
+          let members = null;
+          try {
+            members = JSON.parse(String(squadRow.membersJson ?? '[]'));
+          } catch {
+            continue;
+          }
+          if (!Array.isArray(members)) continue;
+          const keys = new Set(members
+            .map((member) => member?.agentSourceKey)
+            .filter((key) => typeof key === 'string' && key !== ''));
+          if (!keys.has(current.agentSourceKey)) continue;
+          const spent = spentMonth(keys);
+          if (spent > squadRow.spendingCapCents) {
+            throw new AppError(
+              `This approval would break the squad cap: spent ${spent}c of ${squadRow.spendingCapCents}c this month.`,
+              { code: 'AGENT_APPROVAL_SQUAD_OVER_CAP', status: 409 },
+            );
+          }
+        }
+      }
       // Re-validate the stored proposals right before applying: corrupt
       // or empty proposals refuse instead of applying blind.
       let raw;

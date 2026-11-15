@@ -180,6 +180,57 @@ export function takePendingCalendarEvent(storage) {
 
 const CLIENTI_VIEW_KEY = 'accordo.bo.clienti-view';
 
+/** A Clienti view id, on the wire and in the address: never a lookup. */
+const CLIENTI_VIEW_PATTERN = /^[a-z0-9-]{1,40}$/;
+
+/**
+ * The shareable address of a Clienti view (backlog:7cf5c4931cfc: the view
+ * lives in the address, so the link saves and reopens it).
+ * @param {unknown} view a view id (`da-rispondere`)
+ * @returns {string} e.g. `#/customer-data?vista=da-rispondere`
+ */
+export function clientiViewHash(view) {
+  return `#/customer-data?vista=${encodeURIComponent(String(view ?? ''))}`;
+}
+
+/**
+ * The Clienti view named by a hash query (`#/customer-data?vista=...`),
+ * null when the address names none. Format-checked only: a view the server
+ * does not know refuses there with its own message, like the handoff below.
+ * @param {unknown} hash the current hash
+ * @returns {string | null}
+ */
+export function vistaOfHash(hash) {
+  const query = String(hash ?? '').split('?').slice(1).join('?').split('#')[0];
+  if (query === '') return null;
+  let value = null;
+  try {
+    value = new URLSearchParams(query).get('vista');
+  } catch {
+    return null;
+  }
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return CLIENTI_VIEW_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * The same hash with the Clienti view set, other query entries kept.
+ * @param {unknown} hash the current hash
+ * @param {unknown} vista a view id
+ * @returns {string}
+ */
+export function hashWithVista(hash, vista) {
+  const raw = String(hash ?? '');
+  const cut = raw.indexOf('?');
+  const path = cut === -1 ? raw : raw.slice(0, cut);
+  const tail = (cut === -1 ? '' : raw.slice(cut + 1)).split('#')[0];
+  const params = new URLSearchParams(tail);
+  params.set('vista', String(vista ?? ''));
+  const base = path === '' ? '#/customer-data' : path;
+  return `${base}?${params.toString()}`;
+}
+
 /**
  * Stash the Clienti view the list opens on (backlog:c2bf6b206d96: Oggi's
  * «Vedi tutte» lands on Clienti › Da rispondere). Same one-time handoff as
