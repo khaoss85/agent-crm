@@ -625,14 +625,19 @@ export function createQuoteView(deps) {
       const lineDiscount = (line.discountBps ?? 0) > 0
         ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%${Number.isSafeInteger(line.discountAmountCents) && line.discountAmountCents > 0 ? ` (−${money(line.discountAmountCents, quote.currency)})` : ''}`
         : '';
-      const head = el('span', 'quote-line-head');
-      head.appendChild(el('span', 'quote-line-name', line.offerName));
-      head.appendChild(el('span', 'quote-line-meta', `Quantità ${line.quantity}${lineDiscount}`));
-      head.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
-      row.appendChild(head);
       // The price components only for a composite offer or a tiered one: a
       // single fixed price repeated the line above word for word.
       const breakdown = parseBreakdown(line.breakdownJson);
+      // backlog:b9b7912320f8: una riga di sole quote fisse non ha una
+      // quantità che cambia il prezzo (ADR-016: la quota fissa si addebita
+      // una volta per riga) — si legge «Quota fissa», mai «Quantità 2».
+      const flatOnly = breakdown.length > 0 && breakdown.every((component) =>
+        component?.pricingModel === 'flat_fee' && (component.tierBreakdown ?? []).length === 0);
+      const head = el('span', 'quote-line-head');
+      head.appendChild(el('span', 'quote-line-name', line.offerName));
+      head.appendChild(el('span', 'quote-line-meta', flatOnly ? `Quota fissa${lineDiscount}` : `Quantità ${line.quantity}${lineDiscount}`));
+      head.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
+      row.appendChild(head);
       const componentList = el('div', 'quote-components');
       if (breakdown.length <= 1 && !(breakdown[0]?.tierBreakdown ?? []).length) componentList.setAttribute('hidden', '');
       for (const component of breakdown) {
@@ -656,6 +661,12 @@ export function createQuoteView(deps) {
         const quantityInput = el('input');
         quantityInput.setAttribute('type', 'number');
         quantityInput.value = String(line.quantity);
+        // backlog:b9b7912320f8: la quantità di una quota fissa non si tocca:
+        // il campo resta visibile ma bloccato, con la spiegazione.
+        if (flatOnly) {
+          quantityInput.disabled = true;
+          quantityInput.setAttribute('title', 'Quota fissa: la quantità non cambia il prezzo');
+        }
         const discountInput = percentInput(bpsToPercentText(line.discountBps ?? 0));
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
@@ -672,6 +683,7 @@ export function createQuoteView(deps) {
         }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
+        if (flatOnly) edit.appendChild(el('small', 'muted', 'Quota fissa: la quantità non cambia il prezzo.'));
         edit.appendChild(labelled('Sconto (%)', discountInput));
         edit.appendChild(updateButton);
         edit.appendChild(removeButton);
