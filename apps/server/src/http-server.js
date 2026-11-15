@@ -1351,7 +1351,10 @@ export function buildRouter(app) {
     if (typeof app.summarizeCall !== 'function') {
       throw new NotFoundError('Operation', 'call summary');
     }
-    return await app.summarizeCall({ ...stripServerControlledKeys(body), actor });
+    // Voce 5c9e006a: the caller organization comes from the verified
+    // identity, never the body: a spaceId of another organization refuses
+    // inside `complete` before any provider is touched.
+    return await app.summarizeCall({ ...stripServerControlledKeys(body), actor, organizationId });
   });
 
   // The explicit operator path for the retention purge (BO-F1-08): the same
@@ -1373,7 +1376,10 @@ export function buildRouter(app) {
     if (typeof app.structureVoiceNote !== 'function') {
       throw new NotFoundError('Operation', 'voice note');
     }
-    return await app.structureVoiceNote({ ...stripServerControlledKeys(body), actor });
+    // Voce 5c9e006a: same shape as summarize — the caller organization comes
+    // from the verified identity, never the body: a spaceId of another
+    // organization refuses inside `complete` before any provider is touched.
+    return await app.structureVoiceNote({ ...stripServerControlledKeys(body), actor, organizationId });
   });
 
   router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
