@@ -115,7 +115,7 @@ async function open(options = {}) {
   });
   await view.renderCard('contact', 'c1');
   await flush();
-  return { mount, client, toasts };
+  return { mount, client, toasts, view };
 }
 
 const byAction = (mount, action) => mount.findAll('button')
@@ -250,6 +250,50 @@ test('5036bc435465: a draft structured from older words never saves as the new d
     mount.textContent.includes('La bozza è di un dettato diverso'),
     'the refused save names the stale draft and the reorder that fixes it',
   );
+});
+
+test('5036bc435465: an open dictation panel survives a repaint with the same words', async () => {
+  const { mount, view } = await open({ dictate: stubDictate([]) });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'il cliente vuole provare prima di Natale';
+  field(mount, 'voiceRiassunto').value = 'bozza di riassunto';
+  field(mount, 'voiceDecisioni').value = 'bozza di decisioni';
+  // A section landing while the panel is open repaints the whole scheda.
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(field(mount, 'voiceNoteText'), 'the panel stays open through a repaint');
+  assert.equal(
+    field(mount, 'voiceNoteText').value,
+    'il cliente vuole provare prima di Natale',
+    'the dictated text survives the repaint',
+  );
+  assert.equal(field(mount, 'voiceRiassunto').value, 'bozza di riassunto', 'the draft survives the repaint');
+  assert.equal(field(mount, 'voiceDecisioni').value, 'bozza di decisioni');
+  assert.equal(
+    byAction(mount, 'dictate-note').textContent,
+    'Chiudi dettato',
+    'the toggle still reads as open after the repaint',
+  );
+});
+
+test('5036bc435465: a structured draft still refuses a changed dictation after a repaint', async () => {
+  const { mount, client, view } = await open({ dictate: stubDictate([]) });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'il cliente vuole provare prima di Natale';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.equal(field(mount, 'voiceRiassunto').value, DRAFT.riassunto, 'the reorder fills the draft');
+  await view.renderCard('contact', 'c1');
+  await flush();
+  field(mount, 'voiceNoteText').value = 'il cliente vuole provare prima di Natale e chiede lo sconto';
+  byAction(mount, 'save-voice-note').listeners.click[0]();
+  await flush();
+  assert.equal(
+    client.writes.filter((write) => write.path === '/api/customer-hub/notes').length,
+    0,
+    'no stale draft lands in the cronologia after a repaint',
+  );
+  assert.ok(mount.textContent.includes('La bozza è di un dettato diverso'));
 });
 
 test('5036bc435465: device dictation reads array-like results without Symbol.iterator', () => {
