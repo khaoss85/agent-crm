@@ -1360,6 +1360,22 @@ export function buildRouter(app) {
   // The instant is server-controlled: a caller-supplied `now` could erase
   // every transcript early by naming a far-future date, so only the space
   // scope is read from the body and `now` is never forwarded.
+  // Dictated post-call voice note (voce 5036bc435465): the operator dictates
+  // after a call from any phone, the browser transcribes on the device, and
+  // this structures the text into riassunto, decisioni and prossimi passi
+  // for the scheda cronologia. Same enumerated-adapter shape as summarize:
+  // the kernel gates records.write and delegates to the composed
+  // operation — without intelligence composed it answers the honest 404.
+  // Stateless: it stores nothing and receives no audio, so retention has
+  // nothing to erase; with the AI off it answers 409 and the card says why.
+  router.add('POST', '/api/call-intelligence/voice-note', async ({ body, actor, identity, organizationId }) => {
+    await gate(app, identity, organizationId, 'records.write');
+    if (typeof app.structureVoiceNote !== 'function') {
+      throw new NotFoundError('Operation', 'voice note');
+    }
+    return await app.structureVoiceNote({ ...stripServerControlledKeys(body), actor });
+  });
+
   router.add('POST', '/api/call-intelligence/purge', async ({ body, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.write');
     if (typeof app.purgeExpiredTranscripts !== 'function') {

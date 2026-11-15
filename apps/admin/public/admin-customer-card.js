@@ -900,6 +900,60 @@ const NOTE_MAX = 1000;
 const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri.`;
 
 /**
+ * Device dictation for the post-call voice note (voce 5036bc435465): the
+ * browser's own speech recognition transcribes on the device, so no audio
+ * ever leaves the phone. Answers null (like the probe) where the browser
+ * has no recognition; otherwise a `{ stop }` handle delivering said text
+ * to `hooks.onText` and the end to `hooks.onEnd`.
+ * @param {any} docNode @param {{ onText?: (text: string) => void, onEnd?: () => void, probe?: boolean }} [hooks]
+ */
+export function defaultDeviceDictate(docNode, hooks = {}) {
+  const view = docNode?.defaultView ?? null;
+  const Recognition = view?.SpeechRecognition ?? view?.webkitSpeechRecognition ?? null;
+  if (typeof Recognition !== 'function') return null;
+  if (hooks?.probe === true) return { stop() {} };
+  let instance = null;
+  try {
+    instance = new Recognition();
+  } catch {
+    return null;
+  }
+  instance.lang = 'it-IT';
+  instance.interimResults = false;
+  instance.maxAlternatives = 1;
+  instance.onresult = (event) => {
+    // Indexed walk (voce 5036bc435465): SpeechRecognitionResultList is an
+    // indexed array-like but not iterable on every implementation
+    // (historically webkit), so for...of would throw and no chunk would
+    // ever reach the transcript.
+    const results = event?.results ?? [];
+    const count = typeof results?.length === 'number' ? results.length : 0;
+    for (let index = 0; index < count; index += 1) {
+      const result = results[index];
+      if (result?.isFinal !== true) continue;
+      const said = String(result?.[0]?.transcript ?? '').trim();
+      if (said !== '') hooks?.onText?.(said);
+    }
+  };
+  instance.onend = () => hooks?.onEnd?.();
+  instance.onerror = () => hooks?.onEnd?.();
+  try {
+    instance.start();
+  } catch {
+    return null;
+  }
+  return {
+    stop() {
+      try {
+        instance.stop();
+      } catch {
+        // Already stopped: the onend already fired.
+      }
+    },
+  };
+}
+
+/**
  * What a refused note says (backlog:82235e46e3e9 seguito, production
  * 12/11): a validation refusal names what to correct, never «Riprova più
  * tardi» — retrying the same text would be refused again. Anything else
@@ -1317,6 +1371,28 @@ export function createCustomerCardView(deps) {
         const input = adding.querySelector(`[name="${name}"]`);
         if (input && typeof input.value === 'string') drafts.fieldAdd[name] = input.value;
       }
+    }
+    // Voce 5036bc435465 (design check 15/11): the open dictation panel is
+    // typing in progress like «Scrivi una nota» — a section landing while
+    // the panel is open repaints the scheda, and the panel must stay open
+    // with the same dictated text and draft. The draftWrap carries which
+    // text the draft was structured from (data-structured-for, read through
+    // the class selector: the fake-DOM querySelector only answers
+    // tag[attr="value"] and .class).
+    const keptVoiceText = root.querySelector('[name="voiceNoteText"]');
+    if (keptVoiceText) {
+      const keptVoice = { open: true, text: String(keptVoiceText.value ?? '') };
+      const keptRiassunto = root.querySelector('[name="voiceRiassunto"]');
+      if (keptRiassunto) keptVoice.riassunto = String(keptRiassunto.value ?? '');
+      const keptDecisioni = root.querySelector('[name="voiceDecisioni"]');
+      if (keptDecisioni) keptVoice.decisioni = String(keptDecisioni.value ?? '');
+      const keptPassi = root.querySelector('[name="voiceProssimiPassi"]');
+      if (keptPassi) keptVoice.prossimiPassi = String(keptPassi.value ?? '');
+      const keptDraftWrap = root.querySelector('.bo-scheda-voice-draft');
+      const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
+        ? keptDraftWrap.getAttribute('data-structured-for') : null;
+      if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      drafts.voice = keptVoice;
     }
     return Object.keys(drafts).length > 0 ? drafts : null;
   }
@@ -4392,6 +4468,276 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
       box.appendChild(noteForm);
+      // Voce 5036bc435465: «Detta nota vocale» — after a call from any
+      // phone (CRM-logged or tel: fallback) the operator dictates how it
+      // went. The browser transcribes on the device (the `dictate` seam,
+      // so tests dictate without a microphone); where the browser cannot
+      // dictate the same field is typed. «Ordina con l'AI» structures the
+      // text into riassunto, decisioni and prossimi passi through POST
+      // /api/call-intelligence/voice-note: the three fields stay editable
+      // and «Salva in cronologia» writes them through the existing
+      // subject-note write, signed like every note. No audio ever leaves
+      // the device, so retention has nothing to erase; the spend lands
+      // through the workspace LLM caps. With the AI off the option says so
+      // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
+      // still be saved as-is.
+      const voiceWrap = el('div', 'bo-scheda-voice-note');
+      const voiceToggle = el('button', undefined, 'Detta nota vocale');
+      voiceToggle.setAttribute('type', 'button');
+      voiceToggle.setAttribute('data-action', 'dictate-note');
+      voiceWrap.appendChild(voiceToggle);
+      const voicePanel = el('div', 'bo-scheda-voice-panel');
+      // Voce 5036bc435465 (design check 15/11): open/closed, the dictation
+      // and the three draft fields survive a repaint of the scheda — the
+      // sections of a first read land one by one while the panel can be
+      // open. The previous paint's words travel through pendingDrafts
+      // (readDrafts), like «Scrivi una nota». A live microphone handle
+      // cannot travel: a repaint keeps the said words, not the recording.
+      const keptVoice = pendingDrafts?.voice?.open === true ? pendingDrafts.voice : null;
+      let voiceOpen = keptVoice !== null;
+      let voiceDictation = null;
+      // The dictated text the AI draft was structured from (voce
+      // 5036bc435465). Saving refuses a draft whose dictation changed
+      // since, so a stale draft never lands in the cronologia as the new
+      // dictation. Null until the first successful «Ordina». It travels
+      // through pendingDrafts through data-structured-for on the draftWrap.
+      let structuredFor = typeof keptVoice?.structuredFor === 'string' ? keptVoice.structuredFor : null;
+      // Words said or typed before this paint (or before a close-then-reopen
+      // inside one paint): the panel rebuilds with them.
+      let carriedText = typeof keptVoice?.text === 'string' ? keptVoice.text : '';
+      let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
+      let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
+      let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      const stopDictation = () => {
+        try {
+          voiceDictation?.stop?.();
+        } catch {
+          // A stopped-twice device handle is already silent: nothing to say.
+        }
+        voiceDictation = null;
+      };
+      const stashPanelWords = () => {
+        const curText = voicePanel.querySelector('[name="voiceNoteText"]');
+        if (!curText) return;
+        carriedText = String(curText.value ?? '');
+        const curRiassunto = voicePanel.querySelector('[name="voiceRiassunto"]');
+        if (curRiassunto) carriedRiassunto = String(curRiassunto.value ?? '');
+        const curDecisioni = voicePanel.querySelector('[name="voiceDecisioni"]');
+        if (curDecisioni) carriedDecisioni = String(curDecisioni.value ?? '');
+        const curPassi = voicePanel.querySelector('[name="voiceProssimiPassi"]');
+        if (curPassi) carriedPassi = String(curPassi.value ?? '');
+      };
+      const buildVoicePanel = () => {
+        voicePanel.appendChild(el('p', 'bo-muted',
+          'Dopo la chiamata detta com’è andata: la trascrizione resta su questo dispositivo finché non la salvi. L’audio non lascia mai il dispositivo.'));
+        const dictateRow = el('div', 'bo-scheda-form-actions');
+        const dictateButton = el('button', undefined, 'Detta');
+        dictateButton.setAttribute('type', 'button');
+        dictateButton.setAttribute('data-action', 'dictate-start');
+        const dictateState = el('p', 'bo-muted', '');
+        const voiceInput = el('textarea', 'bo-scheda-note-input');
+        voiceInput.setAttribute('name', 'voiceNoteText');
+        voiceInput.setAttribute('rows', '3');
+        voiceInput.setAttribute('aria-label', 'Dettato della chiamata');
+        voiceInput.setAttribute('placeholder', 'Detta qui com’è andata la chiamata, oppure scrivilo…');
+        if (carriedText !== '') voiceInput.value = carriedText;
+        // The device dictation seam: `dictate(doc, hooks)` returns null when
+        // the browser cannot dictate (then the probe below answers null
+        // too), else a `{ stop }` handle delivering text to `hooks.onText`
+        // and `hooks.onEnd`. With `{ probe: true }` it only answers whether
+        // dictation is available, starting nothing.
+        const startDictate = typeof deps.dictate === 'function' ? deps.dictate : defaultDeviceDictate;
+        const canDictate = (() => {
+          try {
+            return startDictate(doc, { probe: true }) !== null;
+          } catch {
+            return false;
+          }
+        })();
+        if (!canDictate) {
+          dictateButton.setAttribute('disabled', '');
+          dictateState.textContent = 'Questo browser non detta: scrivi qui sotto.';
+        }
+        dictateButton.addEventListener('click', () => {
+          if (voiceDictation !== null) {
+            stopDictation();
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+            return;
+          }
+          dictateState.textContent = 'Detto… premi Stop quando hai finito.';
+          dictateButton.textContent = 'Stop';
+          try {
+            voiceDictation = startDictate(doc, {
+              onText: (chunk) => {
+                const said = typeof chunk === 'string' ? chunk : '';
+                if (said === '') return;
+                voiceInput.value = String(voiceInput.value ?? '') === ''
+                  ? said : `${String(voiceInput.value).replace(/\s+$/, '')} ${said}`;
+              },
+              onEnd: () => {
+                voiceDictation = null;
+                dictateButton.textContent = 'Detta';
+                if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
+                  dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+                }
+              },
+            });
+          } catch {
+            voiceDictation = null;
+          }
+          if (voiceDictation === null || typeof voiceDictation?.stop !== 'function') {
+            voiceDictation = null;
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Il dettato non è partito: scrivi qui sotto.';
+          }
+        });
+        dictateRow.appendChild(dictateButton);
+        voicePanel.appendChild(dictateRow);
+        voicePanel.appendChild(dictateState);
+        voicePanel.appendChild(voiceInput);
+        const voiceError = el('small', 'field-error', '');
+        const structureButton = el('button', undefined, 'Ordina con l’AI');
+        structureButton.setAttribute('type', 'button');
+        structureButton.setAttribute('data-action', 'structure-voice-note');
+        const draftWrap = el('div', 'bo-scheda-voice-draft');
+        const draftField = (name, label, rows) => {
+          const wrap = el('div');
+          const title = el('label', 'bo-scheda-field-label', label);
+          title.setAttribute('for', name);
+          const field = el('textarea', 'bo-scheda-note-input');
+          field.setAttribute('name', name);
+          field.setAttribute('id', name);
+          field.setAttribute('rows', String(rows));
+          field.setAttribute('aria-label', label);
+          wrap.appendChild(title);
+          wrap.appendChild(field);
+          draftWrap.appendChild(wrap);
+          return field;
+        };
+        const riassuntoField = draftField('voiceRiassunto', 'Riassunto', 3);
+        const decisioniField = draftField('voiceDecisioni', 'Decisioni', 2);
+        const passiField = draftField('voiceProssimiPassi', 'Prossimi passi', 2);
+        if (carriedRiassunto !== '') riassuntoField.value = carriedRiassunto;
+        if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
+        if (carriedPassi !== '') passiField.value = carriedPassi;
+        if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
+        const saveButton = el('button', undefined, 'Salva in cronologia');
+        saveButton.setAttribute('type', 'button');
+        saveButton.setAttribute('data-action', 'save-voice-note');
+        structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
+          const spaceId = activeSpaceId();
+          if (spaceId === null) {
+            voiceError.textContent = 'Scegli uno spazio per ordinare la nota con l’AI.';
+            return;
+          }
+          const text = String(voiceInput.value ?? '').trim();
+          if (text === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          voiceError.textContent = '';
+          try {
+            const draft = await client.request('/api/call-intelligence/voice-note', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, text }),
+            });
+            riassuntoField.value = String(draft?.riassunto ?? '');
+            decisioniField.value = String(draft?.decisioni ?? '');
+            passiField.value = String(draft?.prossimiPassi ?? '');
+            structuredFor = text;
+            draftWrap.setAttribute('data-structured-for', text);
+            voiceError.textContent = '';
+          } catch (error) {
+            const code = typeof error?.code === 'string' ? error.code : '';
+            if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
+              voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
+            } else {
+              voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
+            }
+          }
+        }));
+        saveButton.addEventListener('click', () => uiBusy(saveButton, 'Salvo…', async () => {
+          if (noteSaving) return;
+          const riassunto = String(riassuntoField.value ?? '').trim();
+          const decisioni = String(decisioniField.value ?? '').trim();
+          const passi = String(passiField.value ?? '').trim();
+          const dictated = String(voiceInput.value ?? '').trim();
+          // Without an AI draft the dictated text itself is the note, so the
+          // AI-off path still saves — the option said why, it never blocks.
+          const body = riassunto !== '' || decisioni !== '' || passi !== ''
+            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
+            : dictated;
+          if (body === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          if (body.length > NOTE_MAX) {
+            voiceError.textContent = NOTE_TOO_LONG;
+            return;
+          }
+          // A draft structured from older words never saves as the current
+          // dictation (voce 5036bc435465): reordering after the dictation
+          // changed — or clearing the draft to save the words as-is — comes
+          // first. Untouched manual drafts (never structured) still save.
+          if (body !== dictated && structuredFor !== null && dictated !== structuredFor) {
+            voiceError.textContent = 'La bozza è di un dettato diverso: premi di nuovo «Ordina con l’AI» prima di salvare.';
+            return;
+          }
+          noteSaving = true;
+          voiceError.textContent = '';
+          try {
+            const saved = await client.request('/api/customer-hub/notes', {
+              method: 'POST',
+              body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body }),
+            });
+            voiceInput.value = '';
+            riassuntoField.value = '';
+            decisioniField.value = '';
+            passiField.value = '';
+            structuredFor = null;
+            carriedText = '';
+            carriedRiassunto = '';
+            carriedDecisioni = '';
+            carriedPassi = '';
+            draftWrap.removeAttribute('data-structured-for');
+            const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+              (loaded) => withNote(loaded, saved, body));
+            toast('Nota aggiunta in cima alla cronologia');
+            await refreshed;
+          } catch (error) {
+            const said = noteRefusalText(error);
+            voiceError.textContent = said;
+            toast(said, true);
+          } finally {
+            noteSaving = false;
+          }
+        }));
+        voicePanel.appendChild(structureButton);
+        voicePanel.appendChild(voiceError);
+        voicePanel.appendChild(draftWrap);
+        voicePanel.appendChild(saveButton);
+      };
+      voiceToggle.addEventListener('click', () => {
+        if (voiceOpen) {
+          stashPanelWords();
+          voiceOpen = false;
+          voiceToggle.textContent = 'Detta nota vocale';
+          while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
+          stopDictation();
+          return;
+        }
+        voiceOpen = true;
+        voiceToggle.textContent = 'Chiudi dettato';
+        while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
+        buildVoicePanel();
+      });
+      if (voiceOpen) {
+        voiceToggle.textContent = 'Chiudi dettato';
+        buildVoicePanel();
+      }
+      voiceWrap.appendChild(voicePanel);
+      box.appendChild(voiceWrap);
     }
   }
 
