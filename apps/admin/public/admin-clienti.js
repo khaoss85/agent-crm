@@ -23,8 +23,39 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 // ("marco whatsapp") needs no LLM and always works.
 
 import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
-// backlog:2262771da550 — system mailboxes never paint: the one team filter.
-import { memberText } from './admin-labels.js';
+
+/**
+ * backlog:2262771da550 — which customer mailboxes never paint. Only real
+ * system identities hide: the broker's reserved domain (`…@accordo.invalid`)
+ * and provider subjects that carry no address shape (`google|…`, `github|…`
+ * with no `@`). A deliverable customer mailbox always reads — even a
+ * plus-addressed one (`broker+tag@gmail.com`: `broker+` is a local part, not
+ * the broker) or one containing `|` — so the team filter in admin-labels.js
+ * (which hides any `broker+…` or `|` string for team screens) never applies
+ * here.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isSystemCustomerEmail(value) {
+  if (typeof value !== 'string') return true;
+  const text = value.trim();
+  if (text === '') return true;
+  if (text.toLowerCase().endsWith('@accordo.invalid')) return true;
+  if (!text.includes('@') && text.includes('|')) return true;
+  return false;
+}
+
+/**
+ * backlog:2262771da550 — a customer mailbox worth showing, trimmed, or null
+ * when it is empty or a system identity (see isSystemCustomerEmail).
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function customerEmailText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text !== '' && !isSystemCustomerEmail(text) ? text : null;
+}
 
 /**
  * Where the governed file import lives since the Clienti screen stopped
@@ -1026,18 +1057,21 @@ export function createCustomerListView(deps) {
         }
         const next = row.nextAppointment ?? null;
         if (!next || typeof next.startsAt !== 'string' || next.startsAt === '') return el('span', 'bo-muted', '—');
-        const statusLabel = CALENDAR_STATUS_LABELS[String(next.status ?? '').toLowerCase()] ?? String(next.status ?? '');
+        // Unknown states never paint the raw server key (backlog:7471d0bd718f
+        // bans raw English on screen): date-only, like a state with no label.
+        const statusLabel = CALENDAR_STATUS_LABELS[String(next.status ?? '').toLowerCase()] ?? '';
         const text = statusLabel !== '' ? `${contactWhen(next.startsAt)} · ${statusLabel}` : contactWhen(next.startsAt);
         const node = el('span', undefined, text);
         node.setAttribute('title', `Prossimo appuntamento: ${next.startsAt}${typeof next.endsAt === 'string' && next.endsAt !== '' ? `–${next.endsAt}` : ''}`);
         return node;
       }
       case 'email': {
-        // backlog:2262771da550 — system mailboxes never paint: the one team
-        // filter (memberText in admin-labels.js) reads technical identities
-        // («broker+…@accordo.invalid», «google|…», «github|…») as null, so
-        // they render «—» like a missing email.
-        const shown = memberText(row.email);
+        // backlog:2262771da550 — system mailboxes never paint: the customer
+        // predicate (customerEmailText, here) reads reserved identities
+        // («…@accordo.invalid», «google|…», «github|…» with no address) as
+        // null, so they render «—» like a missing email — while a real
+        // plus-addressed mailbox always reads.
+        const shown = customerEmailText(row.email);
         return shown ? el('span', undefined, shown) : el('span', 'bo-muted', '—');
       }
       case 'telefono':
@@ -1165,7 +1199,7 @@ export function createCustomerListView(deps) {
       // stored placeholder such as `Unknown (…)`, which the API reads as
       // none) shows its email instead (production 10/11) — unless the email
       // is a system mailbox, which never paints (backlog:2262771da550).
-      const sub = row.company?.name ? String(row.company.name) : (memberText(row.email) ?? '');
+      const sub = row.company?.name ? String(row.company.name) : (customerEmailText(row.email) ?? '');
       if (sub !== '') who.appendChild(el('span', 'bo-muted bo-clienti-sub', sub));
       head.appendChild(who);
       card.appendChild(head);

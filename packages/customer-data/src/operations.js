@@ -1358,9 +1358,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
     // backlog:2262771da550 — the row's calendar state: the soonest live
-    // appointment at or after now. Terminal states mirror APPOINTMENT_TERMINAL
-    // in packages/appointments (done, no-show, cancelled): they name history,
-    // never the next slot. A partial or unreadable appointment scan shapes
+    // appointment at or after now. Only live states (booked, confirmed, the
+    // complement of APPOINTMENT_TERMINAL in packages/appointments) name the
+    // next slot: an allowlist, so a malformed or future unknown state never
+    // reads as live. A partial or unreadable appointment scan shapes
     // no «next»: the row says so in calendarComplete instead.
     const myAppointments = appointmentsComplete
       ? selectSubjectRows(appointmentIndex, subjectKeys, mine)
@@ -1370,7 +1371,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       const nowMs = Date.parse(new Date().toISOString());
       for (const row of myAppointments) {
         const status = String(row?.status ?? '');
-        if (status === 'done' || status === 'no-show' || status === 'cancelled') continue;
+        if (status !== 'booked' && status !== 'confirmed') continue;
         const startMs = Date.parse(String(row?.startsAt ?? ''));
         if (!Number.isFinite(startMs) || startMs < nowMs) continue;
         if (nextAppointment === null || startMs < Date.parse(String(nextAppointment.startsAt))) {

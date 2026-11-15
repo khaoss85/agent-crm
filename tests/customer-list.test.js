@@ -1046,3 +1046,32 @@ test('backlog:2262771da550: a hole in the appointment scan reads partial, never 
   assert.equal(adaPartial.nextAppointment, null, 'a partial scan shapes no next over the hole');
   assert.equal(adaPartial.calendarComplete, false);
 });
+
+test('backlog:2262771da550 repro review rev-agent-crm-938-1443ea09: only live states name the next slot', async () => {
+  // P2: the scan kept any status that was not exactly done/no-show/cancelled,
+  // so a malformed row (missing or unknown status) with a future startsAt
+  // shipped as the next live appointment. Only booked/confirmed count.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    appointments: [
+      { id: 'a-empty', status: '', startsAt: '2030-06-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-unknown', status: 'pending', startsAt: '2030-06-01T11:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-live', status: 'booked', startsAt: '2030-06-10T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.deepEqual(ada.nextAppointment, {
+    startsAt: '2030-06-10T10:00:00.000Z',
+    endsAt: null,
+    status: 'booked',
+  }, 'malformed and unknown states never read as the next slot');
+});

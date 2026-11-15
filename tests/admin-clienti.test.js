@@ -1549,3 +1549,44 @@ test('backlog:2262771da550: system mailboxes never paint, the row calendar state
   const tiles = fact('c9', 'canali').findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-clienti-tiles'));
   assert.equal(tiles?.getAttribute('title'), 'Elenco parziale: alcuni messaggi non si sono letti.', 'a best-effort union says it is partial');
 });
+
+test('backlog:2262771da550 repro review rev-agent-crm-938-1443ea09: real plus-addressed mailboxes paint, unknown calendar states stay date-only', async () => {
+  // P1: the list filter hid every string starting with `broker+` (any
+  // domain) or containing `|` as technical. A deliverable customer mailbox
+  // such as `broker+tag@gmail.com` — or one containing `|` — must read, in
+  // the Email column and under the name; only `…@accordo.invalid` and
+  // address-less provider subjects (`github|…`) hide.
+  // P2: the Calendario cell fell back to the raw server status string for
+  // unknown states: it must read date-only instead.
+  const columns = [...MENUS.columns, { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true }];
+  const items = [
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c3', name: 'Paolo Neri', company: null,
+      email: 'broker+tag@gmail.com', channels: ['email'], channelsComplete: true,
+      calendarComplete: true,
+      nextAppointment: { startsAt: '2030-06-02T09:30:00.000Z', endsAt: '2030-06-02T10:00:00.000Z', status: 'pending' },
+    },
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c4', name: 'Sara Blu', company: null,
+      email: 'sara|blu@example.com', channels: ['email'], channelsComplete: true,
+      calendarComplete: true, nextAppointment: null,
+    },
+  ];
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items, total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS, columns,
+  });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  await flush();
+  const card = (id) => mount.findAll('article').find((node) => node.getAttribute('data-customer') === `contact:${id}`);
+  const fact = (id, column) => card(id).findAll('p').find((node) => node.getAttribute('data-column') === column);
+  assert.ok(fact('c3', 'email').textContent.includes('broker+tag@gmail.com'), 'a real plus-addressed mailbox reads');
+  assert.ok(card('c3').textContent.includes('broker+tag@gmail.com'), 'it also reads under the name when there is no company');
+  assert.ok(fact('c4', 'email').textContent.includes('sara|blu@example.com'), 'a real mailbox containing | reads');
+  const cal = fact('c3', 'calendario').textContent;
+  assert.ok(!cal.includes('pending'), 'no raw server status key paints');
+  assert.ok(!cal.includes('·'), 'an unknown state reads date-only, with no state suffix');
+  assert.ok(cal.includes('giu'), 'an unknown state still names the date');
+});
