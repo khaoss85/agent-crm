@@ -1919,7 +1919,13 @@ async function main() {
 }
 
 // Importing this module (the unit test does) must not run the gate: only
-// a direct invocation selects and runs tests.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// a direct invocation selects and runs tests. `scripts/ci-pilot-browser.sh`
+// imports only `touchesAdminClient` through `node -e` (same backlog) and
+// opts out the same way through CI_TOUCHED_NO_MAIN.
+if (
+  process.env.CI_TOUCHED_NO_MAIN !== '1' &&
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   await main();
 }
