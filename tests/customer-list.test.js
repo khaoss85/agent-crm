@@ -445,6 +445,71 @@ test('backlog:5c2f8bc67859: a contact row sums only its own offers, never its co
   assert.equal(bea.status.value, 'cliente');
 });
 
+test('backlog:1adf95307b31: solo vinte o nessuna aperta legge null, valute miste restano separate', async () => {
+  // (a) A contact with only won offers — like one with no offers at all —
+  // reads null («—»), never «0 €». (b) Mixed open currencies never sum into
+  // one naked number: each keeps its subtotal with its own code, and lost
+  // offers never count.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+    { id: 'c2', companyId: 'co1', firstName: 'Bea', lastName: 'Bianchi', email: 'bea@palestra-uno.example' },
+    { id: 'c3', companyId: 'co1', firstName: 'Leo', lastName: 'Verdi', email: 'leo@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      { id: 'op-won', companyId: 'co1', contactId: 'c1', valueCents: 50000, currency: 'EUR', stage: 'won' },
+      { id: 'op-eur', companyId: 'co1', contactId: 'c2', valueCents: 100000, currency: 'EUR', stage: 'proposal' },
+      { id: 'op-usd', companyId: 'co1', contactId: 'c2', valueCents: 50000, currency: 'USD', stage: 'negotiation' },
+      { id: 'op-lost', companyId: 'co1', contactId: 'c2', valueCents: 70000, currency: 'EUR', stage: 'lost' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, null, 'solo vinte: nessun valore aperto');
+  assert.equal(ada.offerCurrency, null);
+  assert.equal(ada.offerParts, null);
+  const bea = page.items.find((item) => item.id === 'c2');
+  assert.equal(bea.offerCurrency, null, 'valute miste: nessuna valuta sola');
+  assert.deepEqual(bea.offerParts, [
+    { valueCents: 100000, currency: 'EUR' },
+    { valueCents: 50000, currency: 'USD' },
+  ], 'la persa da 70000 non conta');
+  const leo = page.items.find((item) => item.id === 'c3');
+  assert.equal(leo.offerValueCents, null, 'nessuna offerta: «—»');
+  assert.equal(leo.offerParts, null);
+});
+
+test('backlog:0acf5809: a company row sums the contact offers and the company offers', async () => {
+  // The wide rule, mirror of 5c2f8bc67859: a company row (no contact of its
+  // own) counts every open opportunity filed on the company, whether the
+  // offer names a contact or the company alone. Closed stages stay out.
+  const companies = [{ id: 'co9', name: 'Azienda Nove', domain: 'nove.example' }];
+  const modules = fakeModules({
+    contacts: [],
+    companies,
+    opportunities: [
+      { id: 'op-sede', companyId: 'co9', contactId: null, valueCents: 35000, currency: 'EUR', stage: 'qualification' },
+      { id: 'op-ref', companyId: 'co9', contactId: 'cx', valueCents: 1500, currency: 'EUR', stage: 'proposal' },
+      { id: 'op-won', companyId: 'co9', contactId: null, valueCents: 99900, currency: 'EUR', stage: 'won' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  assert.equal(page.total, 1);
+  const azienda = page.items[0];
+  assert.equal(azienda.id, 'co9');
+  assert.equal(azienda.offerValueCents, 36500, 'company row sums contact and company offers, never the won one');
+  assert.equal(azienda.offerCurrency, 'EUR');
+});
+
 test('views, filters and search run on the same page the server returns', async () => {
   const { contacts, companies, identities } = SCENE();
   const modules = fakeModules({ contacts, companies, identities });

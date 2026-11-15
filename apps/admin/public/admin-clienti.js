@@ -992,6 +992,13 @@ export function createCustomerListView(deps) {
       case 'telefono':
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
+        // backlog:1adf95307b31: valute miste — ogni subtotale con la sua
+        // valuta («1.000 € + 500 USD»), mai un numero nudo.
+        if (Array.isArray(row.offerParts) && row.offerParts.length > 1) {
+          return el('span', undefined, row.offerParts
+            .map((part) => formatAmount(Number(part?.valueCents), part?.currency ?? ''))
+            .join(' + '));
+        }
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
         // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
         return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
