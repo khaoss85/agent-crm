@@ -4,7 +4,6 @@ import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { priceBookLabel } from './admin-labels.js';
 
 /**
  * Quote builder Admin (ADR-016), built on the ADR-009 override seam: a small
@@ -116,6 +115,22 @@ export function createQuoteView(deps) {
   let renderToken = 0;
 
   const el = elFor(doc); // BO-F6-02: shared element builder.
+  /**
+   * Voce 47b89e19: every link on this screen stays in the hash router. A
+   * bare `<a href="#/...">` resolves against the shell's `<base href>`
+   * mount (admin-base.js), so opening a quote moved the path from `/bo`
+   * to `/bo/` and reloaded the whole app (pilota 12/11). preventDefault
+   * plus navigate() sets only the hash, like every other /bo screen.
+   */
+  const linkTo = (href, text, className) => {
+    const anchor = el('a', className, text);
+    anchor.setAttribute('href', href);
+    anchor.addEventListener('click', (event) => {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      navigate(href);
+    });
+    return anchor;
+  };
   /** A small labelled field: the label names the input (never a bare «1» / «0»). */
   const labelled = (text, input) => {
     const field = el('label', 'quote-field');
@@ -247,9 +262,9 @@ export function createQuoteView(deps) {
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
-    // and the other quotes live there.
-    const offer = el('a', 'quote-offer-link', 'Apri l’offerta →');
-    offer.setAttribute('href', `#/offerte/${encodeURIComponent(opportunityId)}`);
+    // and the other quotes live there. Voce 47b89e19: through the router,
+    // never a bare anchor (see linkTo).
+    const offer = linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`, 'Apri l’offerta →', 'quote-offer-link');
     offer.setAttribute('data-action', 'quote-open-offer');
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
@@ -259,10 +274,7 @@ export function createQuoteView(deps) {
     const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
     const name = typeof rawName === 'string' && rawName.trim() !== '' ? rawName : null;
     if (name === null) return { back: null, offer, opportunityName, customerName: null };
-    const back = el('a', 'quote-back');
-    back.setAttribute('href', `#/customer-card/${resource}/${encodeURIComponent(subjectId)}`);
-    // Text only: a hostile customer name stays inert text inside the link.
-    back.textContent = `← ${name}`;
+    const back = linkTo(`#/customer-card/${resource}/${encodeURIComponent(subjectId)}`, `← ${name}`, 'quote-back');
     return { back, offer, opportunityName, customerName: name };
   }
 
@@ -274,11 +286,22 @@ export function createQuoteView(deps) {
     mount.appendChild(status);
     let schema;
     let quotes;
-    let books;
+    /** Best-effort offer names for the «offerta collegata» line, like readOffer's list fallback. */
+    let offerNames = null;
     try {
       schema = await client.request('/api/schema');
       quotes = await fetchRows('quote');
-      books = await fetchRows('price-book', (book) => book.active === true);
+      try {
+        const offers = await client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
+        offerNames = new Map();
+        for (const offer of offers?.items ?? []) {
+          if (offer !== null && typeof offer === 'object' && typeof offer.id === 'string' && offer.id !== '') {
+            offerNames.set(offer.id, typeof offer.name === 'string' && offer.name.trim() !== '' ? offer.name : null);
+          }
+        }
+      } catch {
+        offerNames = null;
+      }
     } catch (error) {
       if (token !== renderToken) return;
       status.textContent = humanReadError(error, { failed: 'Preventivi non leggibili. Riprova più tardi.' });
@@ -293,59 +316,40 @@ export function createQuoteView(deps) {
       ? `Mostro solo i primi ${LIST_LIMIT} preventivi.`
       : `${quotes.rows.length} preventiv${quotes.rows.length === 1 ? 'o' : 'i'}.`;
 
-    // Create form: opportunity id + active price book → the server action.
-    const form = el('div', 'quote-create');
-    form.appendChild(el('h3', undefined, 'Nuovo preventivo'));
-    const opportunityInput = el('input');
-    opportunityInput.setAttribute('name', 'opportunityId');
-    opportunityInput.setAttribute('placeholder', 'ID offerta');
-    const bookSelect = el('select');
-    bookSelect.setAttribute('name', 'priceBookId');
-    for (const book of books.rows) {
-      const option = el('option', undefined, priceBookLabel(book));
-      option.setAttribute('value', book.id);
-      bookSelect.appendChild(option);
-      if (bookSelect.value === undefined || bookSelect.value === '') bookSelect.value = book.id;
+    // Voce 47b89e19: quotes are created from their offer page («Crea
+    // preventivo» there, backlog 169cd4bc988c) — never by typing an id
+    // here. No manual id field on this screen.
+    const page = el('div', 'bo-offer');
+    const panel = el('section', 'offer-quotes');
+    panel.appendChild(el('h3', undefined, 'Tutti i preventivi'));
+    panel.appendChild(el('p', 'bo-muted', 'I preventivi si creano dall’offerta: apri l’offerta e premi «Crea preventivo».'));
+    if (offerNames === null) {
+      panel.appendChild(el('p', 'bo-muted', 'Offerte collegate non leggibili adesso: righe, stato e importo restano.'));
     }
-    const createButton = el('button', undefined, 'Crea preventivo');
-    const createError = el('small', 'field-error', '');
-    createButton.addEventListener('click', () => uiBusy(createButton, 'Creo…', async () => {
-      const opportunityId = String(opportunityInput.value ?? '').trim();
-      if (!opportunityId) {
-        createError.textContent = 'Scegli l’offerta per cui creare il preventivo.';
-        return;
-      }
-      createButton.disabled = true;
-      try {
-        const created = await client.request(
-          `/api/modules/opportunity/records/${encodeURIComponent(opportunityId)}/actions/create-quote`,
-          { method: 'POST', body: JSON.stringify({ priceBookId: bookSelect.value }) },
-        );
-        navigate(`#/quotes/${created.result.quote.id}`);
-      } catch (error) {
-        createError.textContent = error?.message ?? 'Creazione non riuscita';
-      } finally {
-        createButton.disabled = false;
-      }
-    }));
-    form.appendChild(opportunityInput);
-    form.appendChild(bookSelect);
-    form.appendChild(createButton);
-    form.appendChild(createError);
-    mount.appendChild(form);
-
-    const list = el('div', 'quote-list');
     for (const quote of quotes.rows) {
-      const row = el('div', 'quote-row');
+      // Same components as the offer page: stato pill, importo, offerta
+      // collegata, and the open link through the router (see linkTo).
+      const row = el('div', 'offer-quote');
       row.setAttribute('data-quote', quote.id);
-      const quoteTotals = parseTotals(quote.totalsJson);
-      const link = el('a', undefined,
-        `Preventivo · ${quoteStatusLabel(quote.status)} · ${quoteTotalSummary(quoteTotals, quote.currency)}`);
-      link.setAttribute('href', `#/quotes/${quote.id}`);
-      row.appendChild(link);
-      list.appendChild(row);
+      const head = el('div', 'offer-quote-head');
+      head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
+      head.appendChild(el('h4', 'offer-quote-total',
+        quoteTotalSummary(parseTotals(quote.totalsJson), quote.currency)));
+      head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}`, 'Apri il preventivo', 'offer-quote-open'));
+      row.appendChild(head);
+      const opportunityId = typeof quote.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
+      if (opportunityId !== null && offerNames !== null) {
+        const line = el('p', 'bo-muted');
+        line.appendChild(el('span', undefined, 'Offerta: '));
+        const name = offerNames.get(opportunityId);
+        line.appendChild(linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`,
+          name ?? 'apri l’offerta', 'offer-quote-open'));
+        row.appendChild(line);
+      }
+      panel.appendChild(row);
     }
-    mount.appendChild(list);
+    page.appendChild(panel);
+    mount.appendChild(page);
   }
 
   async function renderQuoteDetail(quoteId) {
@@ -685,9 +689,9 @@ export function createQuoteView(deps) {
       });
       const periods = valuedParts.length > 0 ? valuedParts.join(' · ') : '—';
       const policy = policyTag(version);
-      const link = el('a', undefined,
-        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${periods}`);
-      link.setAttribute('href', `#/modules/quote-version/${version.id}`);
+      const link = linkTo(`#/modules/quote-version/${encodeURIComponent(version.id)}`,
+        `Versione ${version.versionNumber} · ${policyDecisionLabel(version.policyDecision)}${policy ? ` · ${policy}` : ''} · ${periods}`,
+        'quote-version-open');
       row.appendChild(link);
       if (version.decisionReason) row.appendChild(el('span', 'muted', ` — ${percentReason(version.decisionReason)}`));
       versionsPanel.appendChild(row);
