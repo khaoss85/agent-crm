@@ -25,11 +25,11 @@ import {
   dashboardPath,
   downloadCsv,
   forecastStatus,
-  formatMoney,
   isDashboardPayload,
   ownerSigla,
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
+import { formatAmount } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { METRIC_DEFINITIONS } from '../packages/analytics/src/index.js';
 import { dashboardSpecs } from '../packages/analytics/src/dashboard.js';
@@ -158,10 +158,10 @@ test('period options, dashboard path and bar widths are pure and pinned', () => 
   assert.equal(barWidth(0, 0), '0%');
   assert.equal(barWidth(5, 0), '0%');
   assert.equal(barWidth(-3, 100), '0%');
-  assert.equal(formatMoney(26000, 'EUR'), '260,00 €');
-  assert.equal(formatMoney(0, 'USD'), '0,00 USD');
-  assert.equal(formatMoney(1.5, 'EUR'), 'n.d.');
-  assert.equal(formatMoney(NaN), 'n.d.');
+  assert.equal(formatAmount(26000, 'EUR'), '260 €');
+  assert.equal(formatAmount(0, 'USD'), '0 USD');
+  assert.equal(formatAmount(1.5, 'EUR'), '—');
+  assert.equal(formatAmount(NaN), '—');
 });
 
 test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', async () => {
@@ -486,7 +486,7 @@ test('forecastStatus is on track at and past the obiettivo, honest below it (C13
   );
   assert.equal(
     forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: 2000000 }, 'EUR'),
-    `✦ Ti mancano ${formatMoney(1976667, 'EUR')} per l\u2019obiettivo`,
+    `✦ Ti mancano ${formatAmount(1976667, 'EUR')} per l\u2019obiettivo`,
     'below target names the honest gap in Italian money',
   );
   assert.equal(forecastStatus({ closedMinor: 0, probableMinor: 0, targetMinor: 0 }, 'EUR'),
@@ -542,10 +542,10 @@ test('obiettivo 20.000 € renders as 20.000 € with the honest gap (backlog:1c
   const { mount, view } = harness();
   await view.renderReporting();
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
-  assert.ok(text.includes(`Obiettivo ${formatMoney(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
+  assert.ok(text.includes(`Obiettivo ${formatAmount(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
   assert.ok(!text.includes('2.000.000'), 'cents are never shown as euros');
   assert.ok(
-    text.includes(`✦ Ti mancano ${formatMoney(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
+    text.includes(`✦ Ti mancano ${formatAmount(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
     'the gap is target minus reached, in Italian money',
   );
 });
@@ -683,7 +683,7 @@ test('c3e66b36ddb7: the funnel lists each stage with n · amount over a full bar
   const [funnel] = byClass(mount, 'section', 'bo-preventivi');
   assert.ok(funnel);
   const steps = byClass(funnel, 'div', 'bo-rep-step-line').map((node) => node.textContent);
-  const eur = (minor) => formatMoney(minor, 'EUR');
+  const eur = (minor) => formatAmount(minor, 'EUR');
   assert.deepEqual(steps, [`Qualifica3 · ${eur(14500)}`, `Trattativa2 · ${eur(10000)}`, `Vinte2 · ${eur(14000)}`]);
   assert.ok(!/%/.test(funnel.textContent), 'stage counts are a snapshot: no conversion percentage is claimed');
 });
@@ -693,9 +693,9 @@ test('c3e66b36ddb7: the forecast names its goal in the head, carries amounts in 
   await view.renderReporting();
   const forecast = mount.findAll('div').find((node) => classesOf(node).includes('pipeline-forecast'));
   const head = byClass(forecast, 'div', 'bo-rep-head')[0];
-  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatMoney(2000000, 'EUR')}`);
+  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatAmount(2000000, 'EUR')}`);
   const amounts = byClass(forecast, 'strong', 'bo-rep-amount').map((node) => node.textContent);
-  assert.deepEqual(amounts, [formatMoney(14000, 'EUR'), `+${formatMoney(9333, 'EUR')}`, `+${formatMoney(14000, 'EUR')}`]);
+  assert.deepEqual(amounts, [formatAmount(14000, 'EUR'), `+${formatAmount(9333, 'EUR')}`, `+${formatAmount(14000, 'EUR')}`]);
   assert.match(forecast.textContent, /✦ Stima: .*non è una promessa/, 'the heuristic is labelled, never a promise');
   assert.equal((forecast.textContent.match(/Obiettivo/g) ?? []).length, 1, 'the goal is said once, in the head');
 });

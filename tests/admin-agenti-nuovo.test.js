@@ -197,7 +197,8 @@ test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio
   assert.equal(status.textContent, AGENT_NO_ENGINE_LABEL);
   assert.ok(status.classList.contains('bo-agent-status-waiting'));
   assert.ok(card.textContent.includes(AGENT_NO_ENGINE_NOTE));
-  assert.ok(card.textContent.includes('10,00 €') || card.textContent.includes('10 €'), 'il tetto si legge sulla card');
+  assert.ok(card.textContent.includes('10 €'), 'il tetto si legge sulla card nella forma unica (backlog:93e26f3d2cdc)');
+  assert.ok(!card.textContent.includes('10,00 €'), 'mai la forma con i centesimi quando sono zero');
   const catalogCard = mount.querySelector(`article[data-agent="${RIAGGANCIO.sourceKey}"]`);
   assert.equal(catalogCard.querySelector('.bo-agent-status').textContent, 'Attivo', 'un agente del catalogo resta «Attivo»');
   assert.ok(button(mount, 'new-agent').__focused, 'il fuoco torna su «Nuovo agente»');

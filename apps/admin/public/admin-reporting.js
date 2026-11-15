@@ -17,7 +17,8 @@
 // the renderer uses DOM APIs only — createElement + textContent/setAttribute
 // — never innerHTML with data, so hostile bundle rows are inert text.
 
-import { euro, personLabel, teamPeople } from './admin-labels.js';
+import { formatAmount } from './admin-core.js';
+import { personLabel, teamPeople } from './admin-labels.js';
 import { el, uiButton, uiSegmented } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /** Hash route of the Reporting screen. */
@@ -87,7 +88,7 @@ export function forecastStatus(forecast, currency = REPORTING_CURRENCY) {
   if (targetMinor === null || targetMinor === undefined) return null;
   if (!Number.isInteger(targetMinor) || targetMinor < 0) return null;
   if (closedMinor + probableMinor >= targetMinor) return '✦ Sei in linea con l\u2019obiettivo';
-  return `✦ Ti mancano ${formatMoney(targetMinor - closedMinor - probableMinor, currency)} per l\u2019obiettivo`;
+  return `✦ Ti mancano ${formatAmount(targetMinor - closedMinor - probableMinor, currency)} per l\u2019obiettivo`;
 }
 
 /**
@@ -180,17 +181,6 @@ export function dashboardPath({ period, owner = null, currency = REPORTING_CURRE
   const params = new URLSearchParams({ period, currency });
   if (owner !== null && owner !== undefined && owner !== '') params.set('owner', owner);
   return `/api/reporting/dashboard?${params.toString()}`;
-}
-
-/**
- * Money for display: integer minor units to an Italian currency string.
- * Non-integers are never formatted as money — 'n.d.', not a guess. The
- * shared euro() groups the thousands always («1.080,00 €», never
- * «1080,00 €»: backlog:9236684c96a7).
- * @param {number} minor @param {string} [currency]
- */
-export function formatMoney(minor, currency = REPORTING_CURRENCY) {
-  return euro(minor, currency) ?? 'n.d.';
 }
 
 /**
@@ -688,7 +678,7 @@ export function createReportingView(deps) {
       const row = el(doc, 'div', { class: 'bo-rep-step' });
       const line = el(doc, 'div', { class: 'bo-rep-step-line' });
       line.appendChild(el(doc, 'span', { class: 'bo-rep-step-name', text: entry.label }));
-      line.appendChild(el(doc, 'span', { class: 'bo-rep-step-value', text: `${entry.count} · ${formatMoney(entry.minor, model.currency)}` }));
+      line.appendChild(el(doc, 'span', { class: 'bo-rep-step-value', text: `${entry.count} · ${formatAmount(entry.minor, model.currency)}` }));
       row.appendChild(line);
       const track = el(doc, 'div', { class: 'bo-rep-step-track' });
       const fill = el(doc, 'div', { class: 'bo-rep-step-fill' });
@@ -710,7 +700,7 @@ export function createReportingView(deps) {
     const head = el(doc, 'div', { class: 'bo-rep-head' });
     head.appendChild(el(doc, 'h3', { text: `Previsione di ${model.periodLabel}` }));
     if (Number.isInteger(forecast.targetMinor) && forecast.targetMinor >= 0) {
-      head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: `Obiettivo ${formatMoney(forecast.targetMinor, model.currency)}` }));
+      head.appendChild(el(doc, 'p', { class: 'bo-rep-sub', text: `Obiettivo ${formatAmount(forecast.targetMinor, model.currency)}` }));
     }
     panel.appendChild(head);
     const scale = Math.max(
@@ -750,9 +740,9 @@ export function createReportingView(deps) {
     // Each legend voice carries its amount, as in the prototype («Chiuse
     // 78.850 €», «Probabili +34.750 €», «Se chiudi tutto +23.170 €»).
     const amounts = [
-      formatMoney(forecast.closedMinor, model.currency),
-      `+${formatMoney(forecast.probableMinor, model.currency)}`,
-      `+${formatMoney(forecast.bestMinor, model.currency)}`,
+      formatAmount(forecast.closedMinor, model.currency),
+      `+${formatAmount(forecast.probableMinor, model.currency)}`,
+      `+${formatAmount(forecast.bestMinor, model.currency)}`,
     ];
     FORECAST_LEGEND.forEach((label, index) => {
       const dot = el(doc, 'span');
@@ -817,8 +807,8 @@ export function createReportingView(deps) {
       const row = el(doc, 'tr');
       row.appendChild(el(doc, 'td', { text: entry.owner }));
       row.appendChild(el(doc, 'td', { text: String(entry.openCount) }));
-      row.appendChild(el(doc, 'td', { text: formatMoney(entry.openMinor, model.currency) }));
-      row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${formatMoney(entry.wonMinor, model.currency)})` }));
+      row.appendChild(el(doc, 'td', { text: formatAmount(entry.openMinor, model.currency) }));
+      row.appendChild(el(doc, 'td', { text: `${entry.wonCount} (${formatAmount(entry.wonMinor, model.currency)})` }));
       row.appendChild(el(doc, 'td', { text: entry.winRateDisplay }));
       tbody.appendChild(row);
     }
@@ -964,15 +954,15 @@ export function createReportingView(deps) {
     kpiCards(host, model);
     // Supervisor design pass (prototype 09): charts on a six-column grid —
     // channels wide beside the funnel, three charts per row, the forecast
-    // full width, the team table beside the insights. Money reads as euro,
-    // never as raw minor units.
+    // full width, the team table beside the insights. Money reads through
+    // the shared formatAmount helper, never as raw minor units.
     const grid = el(doc, 'div', { class: 'bo-rep-grid' });
     host.appendChild(grid);
     // Voce 19c2e22a64a1 (4): the layout class lands on the panel just
     // built, by direct reference — never via lastChild, so the grid classes
     // stay assertable under the view doubles.
     const tag = (panel, cls) => { if (panel && panel.classList) panel.classList.add(cls); };
-    const eur = (minor) => formatMoney(minor, model.currency);
+    const eur = (minor) => formatAmount(minor, model.currency);
     tag(channelsCard(grid, model), 'bo-rep-wide');
     tag(funnelCard(grid, model), 'bo-rep-narrow');
     tag(barChart(grid, 'Valore per fase', 'valore aperto per fase', model.valueByStage.map((entry) => ({
