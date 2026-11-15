@@ -341,9 +341,13 @@ export function createQuoteView(deps) {
       if (opportunityId !== null && offerNames !== null) {
         const line = el('p', 'bo-muted');
         line.appendChild(el('span', undefined, 'Offerta: '));
-        const name = offerNames.get(opportunityId);
-        line.appendChild(linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`,
-          name ?? 'apri l’offerta', 'offer-quote-open'));
+        const name = offerNames.has(opportunityId) ? offerNames.get(opportunityId) : undefined;
+        if (typeof name === 'string' && name !== '') {
+          line.appendChild(linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`,
+            name, 'quote-offer-link'));
+        } else {
+          line.appendChild(el('span', undefined, 'Offerta non leggibile'));
+        }
         row.appendChild(line);
       }
       panel.appendChild(row);

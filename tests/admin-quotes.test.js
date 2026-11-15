@@ -645,6 +645,21 @@ test('47b89e19: each row shows stato, importo and the linked offer like the offe
   const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.ok(open, 'the open link uses the offer-page component');
   assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
+  assert.equal(opens.length, 1, 'one quote link per row');
+  const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
+  assert.equal(offerLinks.length, 1, 'one offer link per row, with its own class');
+  assert.equal(offerLinks[0].getAttribute('href'), '#/offerte/opp1');
+  assert.equal(offerLinks[0].textContent, 'Pacchetto 10 PT');
+});
+
+test('47b89e19: a linked offer missing from the map reads as plain text, without a link', async () => {
+  const { mount, render } = listView({ opportunities: [] });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.ok(row.textContent.includes('Offerta non leggibile'), 'no link to an offer that may not exist');
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link').length, 0);
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open').length, 1, 'the quote still opens');
 });
 
 test('47b89e19: opening a quote from the list stays in the router, without a reload', async () => {
