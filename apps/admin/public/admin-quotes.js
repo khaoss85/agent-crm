@@ -522,8 +522,12 @@ export function createQuoteView(deps) {
     const { back, offer = null, opportunityName, customerName } = backLinkResolved;
     if (token !== renderToken) return;
     // backlog:cf270ae1f808: il titolo porta il cliente quando si conosce,
-    // altrimenti l'offerta, mai un «Preventivo» senza nome.
-    const titleName = customerName ?? opportunityName;
+    // con il nome dell'offerta accanto quando si conosce anche quello —
+    // due preventivi dello stesso cliente da offerte diverse non hanno mai
+    // lo stesso titolo. Mai un «Preventivo» senza nome.
+    const titleName = customerName !== null && opportunityName !== null
+      ? `${customerName} — ${opportunityName}`
+      : (customerName ?? opportunityName);
     if (titleName !== null) heading.textContent = `Preventivo · ${titleName}`;
     if (back !== null || offer !== null) {
       mount.removeChild(heading);

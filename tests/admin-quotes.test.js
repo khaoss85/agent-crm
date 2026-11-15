@@ -444,7 +444,7 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
   await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
   const text = mount.textContent;
   const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
-  assert.equal(title?.textContent, 'Preventivo · Ada Rossi', 'backlog:cf270ae1f808: the heading names the customer, never an id');
+  assert.equal(title?.textContent, 'Preventivo · Ada Rossi — Proposta esempio — Pacchetto 10 PT', 'backlog:cf270ae1f808: the heading names the customer and the offer, never an id');
   assert.ok(text.includes('Preventivo'), 'the kicker says it is a quote');
   assert.ok(text.includes('Per Ada Rossi'), 'the quote names who it is for');
   for (const english of [
@@ -728,6 +728,23 @@ test('cf270ae1f808: each list row shows cliente and data beside stato and import
   assert.ok(row.textContent.includes(italianDay('2026-11-10')), 'the row shows the date');
 });
 
+test('cf270ae1f808 review giro 1 P2: the title keeps both names when both are known', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: {
+      id: 'o1', contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT',
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
+  assert.equal(title?.textContent, 'Preventivo · Ada Rossi — Proposta esempio — Pacchetto 10 PT',
+    'two quotes for the same customer from different offers never share a title');
+});
+
 test('cf270ae1f808: the title keeps the customer when the offer name is missing', async () => {
   const mount = createMount();
   const client = stubClient({
@@ -757,7 +774,10 @@ test('cf270ae1f808: the detail paints at once, never a blank page', async () => 
   const client = { calls: inner.calls, request: (path, options) => gate.then(() => inner.request(path, options)) };
   const pending = createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
   assert.ok(mount.textContent.includes('Preventivo'), 'the heading paints before any read lands');
-  assert.ok(mount.textContent.includes('Caricamento'), 'the wait is said while the reads are in flight');
+  // backlog:d56122ee2844 (merged as #941): the wait is a skeleton with one
+  // spoken line, not the old «Caricamento…» status.
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced while the reads are in flight');
+  assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'skeleton bars paint at once');
   release();
   await pending;
   assert.ok(mount.textContent.includes('Cosa include'), 'the content replaces the wait');
