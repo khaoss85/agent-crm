@@ -1501,7 +1501,10 @@ export function createCalendarSyncOperations(options = {}) {
      * moved). The caller (appointments) runs this BEFORE its first local
      * write: a Google refusal throws and the grid never changes, so Google
      * and the grid cannot diverge. A head with no link was never exported
-     * and answers `local-only`: there is no Google event to converge.
+     * and answers `local-only`: there is no Google event to converge. After
+     * a successful converge the head link carries the new Google stamp (and
+     * a link is stored for every created moved/tail event), so the next pull
+     * reads the converge as settled instead of as a newer remote change.
      * Inserts ride deterministic ids (`<master>-ex-<instant>` /
      * `<master>-serie-<instant>`), so a retry after a lost answer replays
      * into the same event instead of duplicating the series.
@@ -1580,7 +1583,7 @@ export function createCalendarSyncOperations(options = {}) {
       const insertOnce = async ({ id, start, end, recurrence, sourceKey }) => {
         const subject = await subjectOf(sourceKey);
         try {
-          await providerCall(calendarId, 'insertEvent', {
+          const inserted = await providerCall(calendarId, 'insertEvent', {
             calendarId,
             id,
             summary: typeof live.summary === 'string' ? live.summary : '',
@@ -1593,21 +1596,79 @@ export function createCalendarSyncOperations(options = {}) {
               ...(subject === null ? {} : { accordoSubject: subject }),
             },
           }, GRANT_PURPOSE_WRITE);
-          return { id, duplicate: false };
+          return { id, duplicate: false, updated: inserted?.updated ?? null };
         } catch (error) {
           // The deterministic id turns a retry into a replay: the event the
           // lost answer already created reads as converged, never as a second
           // series. Anything else is still the provider's refusal.
-          if (providerErrorCode(error) === 'GOOGLE_EVENT_CONFLICT') return { id, duplicate: true };
+          if (providerErrorCode(error) === 'GOOGLE_EVENT_CONFLICT') {
+            // A retry after a lost answer replays into the event the first
+            // attempt already created: read its stamp so the stored link
+            // converges instead of dangling on a null update.
+            const again = await providerCall(calendarId, 'getEvent', { calendarId, eventId: id }, GRANT_PURPOSE_WRITE);
+            return { id, duplicate: true, updated: again?.updated ?? null };
+          }
           throw error;
         }
       };
+      // The converge runs BEFORE the grid writes (the caller writes after):
+      // the link rows below name the Google identities the converge created
+      // or patched, so the next pull reads them as converged instead of as
+      // newer remote changes, and a later scoped op reuses a fresh identity.
+      // Fingerprints cover the rows as read now; the post-commit pushes
+      // re-read the written rows and heal the rest.
+      const ensureConvergedLink = async ({ eventId, updated, sourceKey }) => {
+        const known = await findLinkByEvent(calendarId, eventId);
+        if (known) {
+          if (updated !== null && updated !== known.googleUpdated) {
+            await linkService(context).applyManaged(known.id, { googleUpdated: updated }, { actor: who });
+          }
+          return known;
+        }
+        if (updated === null) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope converged on Google but the event stamp is unreadable: the grid is unchanged, retry the scope');
+        }
+        let row = null;
+        try {
+          row = await bookHandle(who).appointmentBySourceKey(sourceKey);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+        return storeLink({
+          linkKey: linkKeyFor(calendarId, eventId),
+          calendarId,
+          googleEventId: linkKeyFor(calendarId, eventId),
+          appointmentSourceKey: sourceKey,
+          appointmentId: row?.id ?? '',
+          googleUpdated: updated,
+          localFingerprint: row ? appointmentFingerprint(row) : link.localFingerprint,
+          revision: 0,
+          conflictNote: null,
+          pendingRemote: null,
+        }, who);
+      };
+      const refreshHeadLink = async (masterUpdated) => {
+        let headRow = null;
+        try {
+          headRow = await bookHandle(who).appointmentBySourceKey(headSourceKey);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+        await linkService(context).applyManaged(link.id, {
+          googleUpdated: masterUpdated,
+          localFingerprint: headRow ? appointmentFingerprint(headRow) : link.localFingerprint,
+          conflictNote: null,
+        }, { actor: who });
+      };
       if (scope === 'single') {
         const exdate = `EXDATE:${toGoogleInstant(anchorMs)}`;
+        let masterUpdated = live.updated ?? null;
         if (!lines.includes(exdate)) {
-          await providerCall(calendarId, 'patchEvent', {
+          const patched = await providerCall(calendarId, 'patchEvent', {
             calendarId, eventId, patch: { recurrence: [...lines, exdate] },
           }, GRANT_PURPOSE_WRITE);
+          masterUpdated = patched?.updated ?? masterUpdated;
         }
         let movedEventId = null;
         if (moved !== null) {
@@ -1623,7 +1684,9 @@ export function createCalendarSyncOperations(options = {}) {
             sourceKey: movedSourceKey,
           });
           movedEventId = created.id;
+          await ensureConvergedLink({ eventId: created.id, updated: created.updated, sourceKey: movedSourceKey });
         }
+        await refreshHeadLink(masterUpdated);
         return Object.freeze({
           status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-single',
           ...(movedEventId === null ? {} : { movedEventId }),
@@ -1641,12 +1704,14 @@ export function createCalendarSyncOperations(options = {}) {
         throw syncError('CALENDAR_SYNC_SERIES_NOT_RECURRING', 422,
           `l'evento Google non è una serie ricorrente: la griglia non è cambiata`);
       }
+      let masterUpdated = live.updated ?? null;
       if (lines[rruleIndex] !== closed) {
         const next = [...lines];
         next[rruleIndex] = closed;
-        await providerCall(calendarId, 'patchEvent', {
+        const patched = await providerCall(calendarId, 'patchEvent', {
           calendarId, eventId, patch: { recurrence: next },
         }, GRANT_PURPOSE_WRITE);
+        masterUpdated = patched?.updated ?? masterUpdated;
       }
       let tailEventId = null;
       if (moved !== null) {
@@ -1662,7 +1727,9 @@ export function createCalendarSyncOperations(options = {}) {
           sourceKey: tailSourceKey,
         });
         tailEventId = created.id;
+        await ensureConvergedLink({ eventId: created.id, updated: created.updated, sourceKey: tailSourceKey });
       }
+      await refreshHeadLink(masterUpdated);
       return Object.freeze({
         status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-following',
         ...(tailEventId === null ? {} : { tailEventId }),

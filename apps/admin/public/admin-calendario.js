@@ -3005,8 +3005,12 @@ export function createCalendarioView(deps) {
       // backlog:573a1e85942f — the scope rides only for a series occurrence.
       if (scope !== null) body.scope = scope;
       // backlog:6acf0a73bfc3 — the space gates the Google scoped converge, the
-      // same switch every other calendar push answers to.
-      body.spaceId = readSpace();
+      // same switch every other calendar push answers to. Like the cancel
+      // path below, it rides only when the view names one: an empty space
+      // keeps the historic body, and the server asks for the space only on
+      // a calendar-linked request.
+      const moveSpace = readSpace();
+      if (moveSpace) body.spaceId = moveSpace;
       const answer = await client.request('/api/appointments/reschedule', { method: 'POST', body });
       const moved = answer?.appointment ?? null;
       if (moved && typeof moved === 'object') {

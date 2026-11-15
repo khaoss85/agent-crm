@@ -866,7 +866,11 @@ export async function seriesScopeRows(appointments, row, scope) {
  * a Google failure answers 502 with the provider code, never a conflict.
  */
 function googleSeriesScopeEdge(calendarSync, row, scope) {
-  const edge = calendarSync != null && typeof calendarSync.pushAppointment === 'function';
+  // The edge needs the series handle itself (backlog:6acf0a73bfc3): a series
+  // that was never exported converges to `local-only` inside pushSeriesScope,
+  // so a sync composed without it stays grid-only instead of throwing 500 on
+  // a series Google never saw.
+  const edge = calendarSync != null && typeof calendarSync.pushSeriesScope === 'function';
   return edge && Boolean(row?.seriesKey) && scope !== 'all' ? calendarSync : null;
 }
 
@@ -1853,6 +1857,18 @@ export async function rescheduleAppointment(context, request) {
       };
     }
     const deltaMs = startsAt.ms - Date.parse(current.startsAt);
+    // A zero delta moves nothing (backlog:6acf0a73bfc3): like the single
+    // no-op above, it answers moved:false without touching Google or the
+    // grid, instead of reporting a move it never wrote.
+    if (scope !== 'single' && deltaMs === 0) {
+      return {
+        appointment: current,
+        moved: false,
+        occurrences: Object.freeze(targets.map((row) => Object.freeze({
+          id: row.id, sourceKey: row.sourceKey, startsAt: row.startsAt, endsAt: row.endsAt,
+        }))),
+      };
+    }
     const inScopeIds = new Set(targets.map((row) => row.id));
     const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
     // Each row keeps its own duration: an earlier «solo questo» stretch is
