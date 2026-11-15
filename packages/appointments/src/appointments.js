@@ -869,7 +869,9 @@ function googleSeriesScopeEdge(calendarSync, row, scope) {
   // The edge needs the series handle itself (backlog:6acf0a73bfc3): a series
   // that was never exported converges to `local-only` inside pushSeriesScope,
   // so a sync composed without it stays grid-only instead of throwing 500 on
-  // a series Google never saw.
+  // a series Google never saw. Scope «tutti» never takes this edge: it
+  // either rides the legacy post-commit head push (with `calendar`) or is
+  // refused before the first write (linked series without `calendar`).
   const edge = calendarSync != null && typeof calendarSync.pushSeriesScope === 'function';
   return edge && Boolean(row?.seriesKey) && scope !== 'all' ? calendarSync : null;
 }
@@ -885,7 +887,19 @@ async function convergeGoogleSeriesScope(calendarSync, plan) {
   try {
     return await calendarSync.pushSeriesScope(plan.headSourceKey, plan);
   } catch (error) {
-    if (error instanceof AppError && error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE') throw error;
+    // Auth, tenant and validation contract errors keep their own code and
+    // status (backlog:6acf0a73bfc3): a revoked grant, a foreign space or a
+    // missing master is not a Google refusal. Only a genuine provider push
+    // failure becomes 502 with the provider code.
+    if (
+      error instanceof ValidationError
+      || (error instanceof AppError && (
+        error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE'
+        || typeof error.code === 'string' && (
+          error.code.startsWith('CALENDAR_') || error.code.startsWith('APPOINTMENTS_')
+        )
+      ))
+    ) throw error;
     const providerCode = typeof error?.code === 'string' && error.code !== ''
       ? error.code
       : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
@@ -894,6 +908,26 @@ async function convergeGoogleSeriesScope(calendarSync, plan) {
       { code: 'APPOINTMENTS_SERIES_SYNC_FAILED', status: 502, details: { providerCode } },
     );
   }
+}
+
+/**
+ * A whole-series change on a Google-linked series with no converge behind
+ * it (backlog:6acf0a73bfc3): scope «tutti» never runs pushSeriesScope and
+ * the UI path sends no `calendar`, so the legacy post-commit head push
+ * stays silent and the grid would diverge from the master. Refuse BEFORE
+ * the first grid write, naming the supported scopes. A series the calendar
+ * never saw (link-absent) stays grid-only: when the probe cannot prove a
+ * link, it refuses closed rather than diverging.
+ */
+async function linkedAllNeedsRefusal(calendarSync, headSourceKey, actor) {
+  if (typeof calendarSync?.readAppointmentDetail !== 'function') return true;
+  let detail = null;
+  try {
+    detail = await calendarSync.readAppointmentDetail({ sourceKey: headSourceKey, actor });
+  } catch {
+    return true;
+  }
+  return detail?.sync !== null && detail?.sync !== undefined;
 }
 
 async function seriesHeadSourceKey(appointments, seriesKey, fallbackRow) {
@@ -1747,6 +1781,22 @@ export async function rescheduleAppointment(context, request) {
         { code: 'APPOINTMENTS_INVALID_STATE', status: 409, details: { from: current.status, to: null } },
       );
     }
+    // Scope «tutti» on a Google-linked series converges nothing
+    // (backlog:6acf0a73bfc3): without `calendar` the legacy head push stays
+    // silent too, so the grid would diverge from the master. Refuse before
+    // the first write; a link-absent series stays grid-only.
+    if (scope === 'all' && record.calendar == null && current.seriesKey
+      && typeof context?.calendarSync?.pushSeriesScope === 'function') {
+      const allHeadKey = await seriesHeadSourceKey(appointments, current.seriesKey, current);
+      if (await linkedAllNeedsRefusal(context.calendarSync, allHeadKey, who)) {
+        throw new AppError(
+          '«Tutti» su una serie collegata a Google non è ancora supportato: la griglia non è cambiata. '
+          + 'Sposta con «solo questo» o «questo e i successivi».',
+          { code: 'APPOINTMENTS_SERIES_ALL_GOOGLE', status: 409, details: { scope } },
+        );
+      }
+    }
+    let scopedConverged = false;
     const checkReminderSurvives = (row, nextStartMs, nextStartIso) => {
       const dueAt = row.reminderDueAt ?? null;
       if (dueAt !== null && dueAt !== undefined && dueAt !== '') {
@@ -1845,6 +1895,7 @@ export async function rescheduleAppointment(context, request) {
           movedEndsAt: endsAt.iso,
           movedSourceKey: current.sourceKey,
         });
+        scopedConverged = true;
       }
       return {
         appointment: await appointments.applyManaged(
@@ -1854,6 +1905,7 @@ export async function rescheduleAppointment(context, request) {
         ),
         moved: true,
         occurrences: Object.freeze([]),
+        scopedConverged,
       };
     }
     const deltaMs = startsAt.ms - Date.parse(current.startsAt);
@@ -1867,6 +1919,7 @@ export async function rescheduleAppointment(context, request) {
         occurrences: Object.freeze(targets.map((row) => Object.freeze({
           id: row.id, sourceKey: row.sourceKey, startsAt: row.startsAt, endsAt: row.endsAt,
         }))),
+        scopedConverged: false,
       };
     }
     const inScopeIds = new Set(targets.map((row) => row.id));
@@ -1934,6 +1987,7 @@ export async function rescheduleAppointment(context, request) {
         tailRuleLines: [tailRule],
         tailSourceKey: targets[0].sourceKey,
       });
+      scopedConverged = true;
     }
     const moved = [];
     for (const plan of plans) {
@@ -1954,6 +2008,7 @@ export async function rescheduleAppointment(context, request) {
       occurrences: Object.freeze(moved.map((row) => Object.freeze({
         id: row.id, sourceKey: row.sourceKey, startsAt: row.startsAt, endsAt: row.endsAt,
       }))),
+      scopedConverged,
     };
   };
   // The move serializes on the appointment identity as well as the member:
@@ -1964,7 +2019,9 @@ export async function rescheduleAppointment(context, request) {
   // refuses 409 or advances the winner's row, never a terminal row silently
   // moved to a new slot.
   const recordId = safeText(first.id, 'id', MAX_ID);
-  const { appointment, moved, occurrences } = await withMemberBooking(
+  const {
+    appointment, moved, occurrences, scopedConverged,
+  } = await withMemberBooking(
     memberId,
     () => withAppointmentAdvance(
       recordId,
@@ -1981,6 +2038,10 @@ export async function rescheduleAppointment(context, request) {
   // leave no link on Google and be exported as a new standalone single event
   // duplicating the series. When the head moved its push carries the new
   // slot; when it did not move the push is a noop.
+  // A scoped converge already wrote this series to Google BEFORE the commit
+  // (backlog:6acf0a73bfc3): pushing the head again after the commit would
+  // re-apply one occurrence onto the whole master — cancelling one occurrence
+  // could wipe the entire Google series. One write path only.
   let pushKey = appointment.sourceKey;
   if (first.seriesKey) {
     const siblings = await appointments.listWhere({ seriesKey: first.seriesKey });
@@ -1989,7 +2050,7 @@ export async function rescheduleAppointment(context, request) {
   }
   let push = null;
   let pushError = null;
-  if (calendarPush !== null) {
+  if (calendarPush !== null && scopedConverged !== true) {
     try {
       push = await calendarPush(calendarId, pushKey, { spaceId, actor: who });
     } catch (error) {
@@ -2140,6 +2201,22 @@ export async function cancelAppointment(context, request) {
     // cancel sees the winner's committed rows instead of a stale first read.
     const current = await lookup();
     const scoped = await seriesScopeRows(appointments, current, scope);
+    // Scope «tutti» on a Google-linked series converges nothing
+    // (backlog:6acf0a73bfc3): without `calendar` the legacy head push stays
+    // silent too, so the grid would diverge from the master. Refuse before
+    // the first write; a link-absent series stays grid-only.
+    if (scope === 'all' && record.calendar == null && current.seriesKey
+      && typeof context?.calendarSync?.pushSeriesScope === 'function') {
+      const allHeadKey = await seriesHeadSourceKey(appointments, current.seriesKey, current);
+      if (await linkedAllNeedsRefusal(context.calendarSync, allHeadKey, who)) {
+        throw new AppError(
+          '«Tutti» su una serie collegata a Google non è ancora supportato: la griglia non è cambiata. '
+          + 'Annulla con «solo questo» o «questo e i successivi».',
+          { code: 'APPOINTMENTS_SERIES_ALL_GOOGLE', status: 409, details: { scope } },
+        );
+      }
+    }
+    let scopedConverged = false;
     // A scoped cancellation proves every in-scope row cancellable before the
     // first write — exactly like the reschedule path: a terminal row in scope
     // refuses the whole scope with 409 instead of leaving a half-cancelled
@@ -2161,15 +2238,19 @@ export async function cancelAppointment(context, request) {
     // Google first: the EXDATE (single) or the UNTIL close (following) lands
     // before the first row cancels, so a Google refusal leaves the grid
     // untouched. «Tutti» still converges through the post-commit head push.
+    // A cancel-after-move also retires the moved/tail event the earlier
+    // scoped op created, so no orphan stays confirmed on Google.
     if (googleScope !== null) {
       const plan = scope === 'single'
         ? {
           scope: 'single',
           occurrenceStartsAt: current.startsAt,
+          movedSourceKey: current.sourceKey,
         }
         : {
           scope: 'following',
           scopeStartsAt: scoped[0].startsAt,
+          tailSourceKey: scoped[0].sourceKey,
         };
       await convergeGoogleSeriesScope(googleScope, {
         ...plan,
@@ -2177,6 +2258,7 @@ export async function cancelAppointment(context, request) {
         spaceId: record.spaceId,
         actor: who,
       });
+      scopedConverged = true;
     }
     const settled = [];
     for (const target of scoped) settled.push(await advanceOne(target));
@@ -2196,7 +2278,7 @@ export async function cancelAppointment(context, request) {
     const pushKeys = [appointment.sourceKey];
     const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
     if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
-    return { appointment, cancelled, occurrences, pushKeys };
+    return { appointment, cancelled, occurrences, pushKeys, scopedConverged };
   };
   // The lookup, the scope read, the terminal pre-check and the advance loop
   // run serialized on the member and inside one storage transaction when the
@@ -2204,15 +2286,20 @@ export async function cancelAppointment(context, request) {
   // or a race between the pre-check and the writes can no longer leave a
   // half-cancelled series behind. The calendar push stays outside: it runs
   // after the commit and answers as data, never as a throw.
-  const { appointment, cancelled, occurrences, pushKeys } = await withMemberBooking(
+  const {
+    appointment, cancelled, occurrences, pushKeys, scopedConverged,
+  } = await withMemberBooking(
     first.teamMemberId,
     runInTransaction ? () => runInTransaction(critical) : critical,
   );
   // The push rides the idempotent path on a replay too: a first attempt
-  // whose push failed converges Google on the retry.
+  // whose push failed converges Google on the retry. A scoped converge
+  // already wrote this series BEFORE the commit (backlog:6acf0a73bfc3): the
+  // legacy head push stays off, so one cancelled occurrence never wipes the
+  // whole Google series. One write path only.
   let push = null;
   let pushError = null;
-  if (calendarPush !== null) {
+  if (calendarPush !== null && scopedConverged !== true) {
     for (const key of pushKeys) {
       try {
         const answered = await calendarPush(calendarId, key, { spaceId, actor: who });

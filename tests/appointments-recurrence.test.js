@@ -729,6 +729,7 @@ test('serie collegata a Google: «solo questo» converge Google prima di scriver
   assert.equal(scoped[0].plan.movedStartsAt, '2026-12-03T16:00:00.000Z');
   assert.equal(scoped[0].plan.movedEndsAt, '2026-12-03T17:00:00.000Z');
   assert.equal(scoped[0].plan.movedSourceKey, booked.occurrences[2].sourceKey);
+  assert.equal(pushes.length, 0, 'una sola strada verso Google: la converge prima del commit, mai la spinta della testa dopo');
   // «Questo e i successivi» con calendario: UNTIL più la nuova serie, poi la griglia.
   const tail = await rescheduleAppointment(context, {
     id: booked.occurrences[1].id,
@@ -744,6 +745,7 @@ test('serie collegata a Google: «solo questo» converge Google prima di scriver
   assert.equal(scoped[1].plan.scopeStartsAt, before[1]);
   assert.deepEqual(scoped[1].plan.tailRuleLines, ['RRULE:FREQ=WEEKLY;COUNT=2'], 'la coda tiene le due occorrenze');
   assert.equal(scoped[1].plan.tailSourceKey, booked.occurrences[1].sourceKey);
+  assert.equal(pushes.length, 0, 'una sola strada verso Google anche per «questo e i successivi»');
   // «Tutti» con calendario resta com'era: la serie si muove e la push nomina
   // la testa, senza converge parziale.
   await rescheduleAppointment(context, {
@@ -826,6 +828,8 @@ test('serie collegata a Google: «solo questo» annulla con EXDATE, «questo e i
   assert.equal(scoped[0].plan.scope, 'single');
   assert.equal(scoped[0].plan.occurrenceStartsAt, '2026-11-24T16:00:00.000Z');
   assert.ok(!('movedStartsAt' in scoped[0].plan), 'un annullo non apre eventi nuovi');
+  assert.equal(scoped[0].plan.movedSourceKey, booked.occurrences[1].sourceKey, 'l’annullo ritira l’evento creato dallo spostamento');
+  assert.equal(pushes.length, 0, 'una sola strada verso Google: la converge prima del commit, mai la spinta della testa dopo');
   // «Questo e i successivi»: la serie vecchia si chiude, senza nuova serie.
   const following = await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'following', ...cal });
   assert.equal(following.scope, 'following');
@@ -834,6 +838,8 @@ test('serie collegata a Google: «solo questo» annulla con EXDATE, «questo e i
   assert.equal(scoped[1].plan.scope, 'following');
   assert.equal(scoped[1].plan.scopeStartsAt, '2026-12-01T16:00:00.000Z');
   assert.ok(!('tailRuleLines' in scoped[1].plan), 'una coda annullata non rinasce');
+  assert.equal(scoped[1].plan.tailSourceKey, booked.occurrences[2].sourceKey, 'l’annullo ritira la coda creata dallo spostamento');
+  assert.equal(pushes.length, 0, 'una sola strada verso Google anche per «questo e i successivi»');
   // «Tutti» resta com'era: annulla tutto e spinge la testa, senza converge parziale.
   const out = await cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', ...cal });
   assert.ok(service.rows.every((row) => row.status === 'cancelled'));
@@ -1001,6 +1007,9 @@ test('la converge serie-Google non dipende dalla richiesta: con il bordo compost
       scoped.push({ headSourceKey, plan });
       return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
     },
+    async readAppointmentDetail() {
+      return { appointment: null, origin: 'locale', sync: null };
+    },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
@@ -1058,6 +1067,119 @@ test('la converge serie-Google vale anche per l’annullo senza «calendar» nel
   assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'cancelled']);
   assert.equal(scoped.length, 2);
   assert.equal(scoped[1].plan.scope, 'following');
+});
+
+test('«tutti» su una serie collegata a Google senza «calendar» viene rifiutato prima di scrivere (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('la spinta della testa non deve partire: la griglia non si è mossa');
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
+    },
+    async readAppointmentDetail({ sourceKey }) {
+      return { appointment: null, origin: 'google-calendar', sync: { googleEventId: 'cal-1:evt-1', sourceKey } };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const before = service.rows.map((row) => ({ ...row }));
+  await assert.rejects(
+    rescheduleAppointment(context, {
+      id: booked.occurrences[0].id,
+      startsAt: '2026-11-18T16:00:00.000Z',
+      endsAt: '2026-11-18T17:00:00.000Z',
+      scope: 'all',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_ALL_GOOGLE');
+      assert.equal(error.status, 409);
+      assert.match(String(error.message), /griglia non è cambiata/);
+      return true;
+    },
+  );
+  assert.deepEqual(service.rows, before, 'il rifiuto arriva prima della prima scrittura');
+  assert.equal(scoped.length, 0, 'nessuna converge parziale per «tutti»');
+  await assert.rejects(
+    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', reason: 'serie finita' }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_ALL_GOOGLE');
+      assert.equal(error.status, 409);
+      return true;
+    },
+  );
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
+});
+
+test('«tutti» senza link resta solo griglia anche con il bordo composto (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      return { status: 'local-only', sourceKey: headSourceKey, reason: 'finto' };
+    },
+    async readAppointmentDetail() {
+      return { appointment: null, origin: 'locale', sync: null };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[0].id,
+    startsAt: '2026-11-18T16:00:00.000Z',
+    endsAt: '2026-11-18T17:00:00.000Z',
+    scope: 'all',
+  });
+  assert.equal(service.rows[0].startsAt, '2026-11-18T16:00:00.000Z', 'la serie mai esportata si sposta in griglia');
+});
+
+test('permesso revocato e master mancante tengono il loro codice, mai 502 (backlog:6acf0a73bfc3)', async () => {
+  const failures = [
+    new AppError('grant revocato', { code: 'CALENDAR_GRANT_REVOKED', status: 409 }),
+    new AppError('spazio sbagliato', { code: 'CALENDAR_GRANT_UNKNOWN', status: 404 }),
+    new AppError('master mancante', { code: 'CALENDAR_SYNC_EVENT_UNKNOWN', status: 404 }),
+    new AppError('non una serie', { code: 'CALENDAR_SYNC_SERIES_NOT_RECURRING', status: 422 }),
+  ];
+  for (const failure of failures) {
+    const service = fakeAppointments();
+    const calendarSync = {
+      async pushAppointment() {
+        throw new Error('non deve spingere su un rifiuto');
+      },
+      async pushSeriesScope() {
+        throw failure;
+      },
+    };
+    const context = { ...contextFor(service), calendarSync };
+    const booked = await bookAppointment(context, booking({ sourceKey: `gym:serie:err:${failure.code}`, recurrence: { kind: 'weekly', count: 3 } }));
+    const ids = new Set(booked.occurrences.map((entry) => entry.id));
+    await assert.rejects(
+      rescheduleAppointment(context, {
+        id: booked.occurrences[2].id,
+        startsAt: '2026-12-03T16:00:00.000Z',
+        endsAt: '2026-12-03T17:00:00.000Z',
+        scope: 'single',
+        calendar: { calendarId: 'cal-1' },
+        spaceId: 'spazio-1',
+      }),
+      (error) => {
+        assert.equal(error.code, failure.code, 'il codice del contratto resta, non diventa 502');
+        assert.equal(error.status, failure.status);
+        return true;
+      },
+      `il rifiuto ${failure.code} non diventa 502`,
+    );
+    assert.deepEqual(
+      service.rows.filter((row) => ids.has(row.id)).map((row) => row.startsAt),
+      ['2026-11-17T16:00:00.000Z', '2026-11-24T16:00:00.000Z', '2026-12-01T16:00:00.000Z'],
+      'la griglia non è cambiata',
+    );
+  }
 });
 
 test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:573a1e85942f)', async () => {

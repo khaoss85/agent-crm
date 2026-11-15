@@ -1300,6 +1300,128 @@ test('pushSeriesScope converges a Google series: single appends EXDATE, followin
   assert.equal(headLink().googleUpdated, master().updated, 'la testa resta al passo dopo UNTIL');
 });
 
+// backlog:6acf0a73bfc3 — sposta-poi-sposta: il secondo spostamento ancora
+// sull'istante ORIGINALE del master e riusa lo stesso evento, mai un orfano.
+test('pushSeriesScope sposta-poi-sposta senza orfani: ancora originale e stesso evento (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:2',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  const movedKey = 'gym:serie:engine:2:ex';
+  const first = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+    movedStartsAt: '2026-10-28T16:00:00.000Z', movedEndsAt: '2026-10-28T17:00:00.000Z',
+    movedSourceKey: movedKey,
+  });
+  assert.ok(first.movedEventId, 'il primo spostamento apre l’evento');
+  // La griglia ha già spostato la riga: il secondo spostamento nomina lo
+  // slot spostato, ma la converge resta sull’istanza originale del master.
+  ctx.setNow(T0 + 120000);
+  const second = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T16:00:00.000Z',
+    movedStartsAt: '2026-10-29T16:00:00.000Z', movedEndsAt: '2026-10-29T17:00:00.000Z',
+    movedSourceKey: movedKey,
+  });
+  assert.equal(second.movedEventId, first.movedEventId, 'il secondo spostamento riusa lo stesso evento Google');
+  assert.ok(master().recurrence.includes('EXDATE:20261028T090000Z'), 'la EXDATE nomina l’istanza originale');
+  assert.ok(!master().recurrence.some((line) => line.includes('20261028T160000Z')), 'nessuna EXDATE sullo slot già spostato');
+  const moved = ctx.provider.getEvent(CAL, first.movedEventId);
+  assert.equal(moved.start.dateTime, '2026-10-29T16:00:00.000Z', 'l’evento sta al secondo slot');
+  assert.equal(moved.status, 'confirmed');
+});
+
+// backlog:6acf0a73bfc3 — sposta-poi-cancella: l’annullo ritira l’evento
+// creato dallo spostamento, la EXDATE resta sull’originale.
+test('pushSeriesScope sposta-poi-cancella ritira l’evento senza orfani (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:3',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  const movedKey = 'gym:serie:engine:3:ex';
+  const moved = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+    movedStartsAt: '2026-10-28T16:00:00.000Z', movedEndsAt: '2026-10-28T17:00:00.000Z',
+    movedSourceKey: movedKey,
+  });
+  ctx.setNow(T0 + 120000);
+  const cancelled = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T16:00:00.000Z',
+    movedSourceKey: movedKey,
+  });
+  assert.equal(cancelled.retiredEventId, moved.movedEventId, 'l’annullo nomina l’evento ritirato');
+  assert.equal(ctx.provider.getEvent(CAL, moved.movedEventId).status, 'cancelled', 'l’evento spostato non resta confermato');
+  assert.ok(master().recurrence.includes('EXDATE:20261028T090000Z'), 'la EXDATE resta sull’originale');
+  assert.ok(!master().recurrence.some((line) => line.includes('20261028T160000Z')), 'nessuna EXDATE sullo slot spostato');
+});
+
+// backlog:6acf0a73bfc3 — following sposta-poi-sposta e cancella: la coda è
+// una sola e la cancella la ritira.
+test('pushSeriesScope following riusa la coda e la cancella la ritira (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:4',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  const tailKey = 'gym:serie:engine:4:coda';
+  const first = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'following', scopeStartsAt: '2026-11-04T09:00:00.000Z',
+    movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
+    tailRuleLines: ['RRULE:FREQ=WEEKLY;COUNT=1'], tailSourceKey: tailKey,
+  });
+  ctx.setNow(T0 + 120000);
+  // La griglia ha spostato la coda: il secondo spostamento nomina lo scope
+  // spostato, ma UNTIL resta sull’inizio originale e la coda è la stessa.
+  const second = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'following', scopeStartsAt: '2026-11-04T16:00:00.000Z',
+    movedStartsAt: '2026-11-05T16:00:00.000Z', movedEndsAt: '2026-11-05T17:00:00.000Z',
+    tailRuleLines: ['RRULE:FREQ=WEEKLY;COUNT=1'], tailSourceKey: tailKey,
+  });
+  assert.equal(second.tailEventId, first.tailEventId, 'un solo evento di coda');
+  const rrule = master().recurrence.find((line) => line.startsWith('RRULE:'));
+  assert.ok(rrule.includes('UNTIL=20261104T085959Z'), 'UNTIL sull’inizio originale dello scope');
+  const tail = ctx.provider.getEvent(CAL, first.tailEventId);
+  assert.equal(tail.start.dateTime, '2026-11-05T16:00:00.000Z', 'la coda sta al secondo slot');
+  ctx.setNow(T0 + 180000);
+  const cancelled = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'following', scopeStartsAt: '2026-11-05T16:00:00.000Z',
+    tailSourceKey: tailKey,
+  });
+  assert.equal(cancelled.retiredEventId, first.tailEventId, 'la cancella nomina la coda ritirata');
+  assert.equal(ctx.provider.getEvent(CAL, first.tailEventId).status, 'cancelled', 'la coda non resta confermata');
+});
+
 test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
