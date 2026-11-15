@@ -61,7 +61,7 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -69,6 +69,10 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
+      if (path.startsWith('/api/opportunities?')) {
+        if (failOffers) throw Object.assign(new Error('Service Unavailable'), { status: 503 });
+        return { items: opportunities };
+      }
       if (options.method === 'POST') {
         if (failAction) throw Object.assign(new Error(failAction.message), failAction);
         return { ok: true, result: { quote: quoteRecord } };
@@ -599,4 +603,113 @@ test('a2ea75f705fd: the quote links to its offer page; with no rule, «Invia» i
   const submitPanel = none.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-submit');
   assert.equal(submitPanel.findAll('button').length, 0, 'no «Invia» that could send without a rule');
   assert.equal(submitPanel.findAll('select').length, 0, 'no empty rule menu');
+});
+
+function listView(overrides = {}, navigate) {
+  const navigated = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createQuoteView({
+    doc, mount,
+    client: stubClient(overrides),
+    navigate: navigate ?? ((hash) => navigated.push(hash)),
+  });
+  return { doc, mount, navigated, view, render: () => view.renderQuoteList() };
+}
+
+test('47b89e19: the list has no manual id field; quotes are created from the offer', async () => {
+  const { mount, render } = listView();
+  await render();
+  assert.equal(mount.findAll('input').length, 0, 'no field to type an id by hand');
+  assert.equal(mount.findAll('select').length, 0, 'no price-book menu on the list');
+  assert.equal(mount.findAll('button').length, 0, 'no create button on the list');
+  assert.ok(!mount.textContent.includes('ID offerta'), 'no «ID offerta» placeholder');
+  assert.ok(mount.textContent.includes('si creano dall’offerta'), 'the list says where quotes are created');
+});
+
+test('47b89e19: each row shows stato, importo and the linked offer like the offer page', async () => {
+  const { mount, render } = listView({
+    opportunities: [{ id: 'opp1', name: 'Pacchetto 10 PT' }],
+  });
+  await render();
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.equal(rows.length, 1, 'one row per quote');
+  const row = rows[0];
+  assert.equal(row.getAttribute('data-quote'), 'q1');
+  const pill = row.findAll('span').find((node) => String(node.getAttribute('class') ?? '').startsWith('quote-status '));
+  assert.ok(pill, 'the stato pill is there');
+  assert.equal(pill.textContent, 'Bozza', 'the stato reads Italian, never the raw status');
+  assert.ok(row.textContent.includes('5.000 €'), 'the importo is the server total');
+  assert.ok(row.textContent.includes('Offerta:'), 'the linked offer is named');
+  assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
+  const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
+  assert.ok(open, 'the open link uses the offer-page component');
+  assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
+  assert.equal(opens.length, 1, 'one quote link per row');
+  const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
+  assert.equal(offerLinks.length, 1, 'one offer link per row, with its own class');
+  assert.equal(offerLinks[0].getAttribute('href'), '#/offerte/opp1');
+  assert.equal(offerLinks[0].textContent, 'Pacchetto 10 PT');
+});
+
+test('47b89e19: a linked offer missing from the map reads as plain text, without a link', async () => {
+  const { mount, render } = listView({ opportunities: [] });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.ok(row.textContent.includes('Offerta non leggibile'), 'no link to an offer that may not exist');
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link').length, 0);
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open').length, 1, 'the quote still opens');
+});
+
+test('47b89e19: opening a quote from the list stays in the router, without a reload', async () => {
+  const { mount, navigated, render } = listView({
+    opportunities: [{ id: 'opp1', name: 'Pacchetto 10 PT' }],
+  });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  for (const link of row.findAll('a')) {
+    let prevented = false;
+    link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
+    assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
+  }
+  assert.deepEqual(navigated, ['#/quotes/q1', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
+});
+
+test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', async () => {
+  const { mount, render } = listView({ failOffers: true });
+  await render();
+  assert.ok(mount.textContent.includes('Offerte collegate non leggibili'), 'the missing offers read plainly');
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.equal(rows.length, 1, 'righe, stato and importo still render');
+  assert.ok(rows[0].textContent.includes('Bozza'), 'the stato stays');
+  assert.ok(rows[0].textContent.includes('5.000 €'), 'the importo stays');
+});
+
+test('47b89e19: the detail links stay in the router too (offer, scheda, version)', async () => {
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [
+      { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(TOTALS), currency: 'EUR' },
+    ],
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT', stage: 'proposal',
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client, navigate: (hash) => navigated.push(hash) }).renderQuoteDetail('q1');
+  const links = mount.findAll('a').filter((node) =>
+    ['quote-offer-link', 'quote-back', 'quote-version-open'].includes(node.getAttribute('class')));
+  assert.equal(links.length, 3, 'offer, back and version links are all present');
+  for (const link of links) {
+    let prevented = false;
+    link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
+    assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
+  }
+  assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
+    'every link goes through navigate(), setting only the hash');
 });
