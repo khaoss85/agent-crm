@@ -218,10 +218,11 @@ export function parseMessageDraftResponse(text, connectedChannels) {
  *
  * @param {{complete: (request: any) => Promise<any>, spaceId: string, actor: unknown,
  *   customerName: string, history: unknown, intent: string, connectedChannels: unknown,
- *   maxTokens?: number}} input
+ *   maxTokens?: number, organizationId?: string}} input
  */
 export async function draftCustomerMessage({
   complete, spaceId, actor, customerName, history, intent, connectedChannels, maxTokens = 1024,
+  organizationId = undefined,
 }) {
   if (typeof complete !== 'function') {
     throw new ValidationError('message draft needs the llm complete handle', { field: 'complete' });
@@ -230,6 +231,10 @@ export async function draftCustomerMessage({
   const { messages } = buildMessageDraftPrompt(checked);
   const result = await complete({
     actor, spaceId, purpose: MESSAGE_DRAFT_PURPOSE, messages, maxTokens,
+    // Voce 5c9e006a: the caller organization, threaded by the caller from
+    // the verified identity (never the body), so `complete` refuses spend
+    // on another organization's space. Absent keeps historic behavior.
+    ...(organizationId === undefined ? {} : { organizationId }),
   });
   const parsed = parseMessageDraftResponse(result?.text, [...checked.connectedChannels]);
   return Object.freeze({ ...parsed, dryRun: result?.dryRun === true });

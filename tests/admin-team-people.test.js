@@ -401,5 +401,24 @@ test('review follow-up (backlog:e52c5e0dd49f): auditActorLabel corroboration pai
     auditActorLabel({ actorId: 'mario.rossi@esempio.it' }, ['mario.rossi@esempio.it'], []),
     'mario.rossi@esempio.it',
   );
-  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), 'utente');
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), '—');
+});
+
+test('backlog:3f3c143b: auditActorLabel never reads «utente» — a mailbox reads, the rest stay hidden', () => {
+  // A team member known only by mailbox reads the mailbox (the honest form).
+  const emailOnly = [{ subjects: ['google|777'], keys: [], name: null, email: 'daniele@example.com', known: true, label: 'daniele@example.com' }];
+  assert.equal(auditActorLabel({ actorId: 'google|777' }, [], emailOnly), 'daniele@example.com');
+  // A real mailbox with no roster still reads as itself.
+  assert.equal(auditActorLabel({ actorId: 'daniele@example.com' }, [], []), 'daniele@example.com');
+  // Technical ids, UUIDs and service handles stay hidden behind the dash.
+  assert.equal(auditActorLabel({ actorId: 'google|118' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: '123e4567-e89b-12d3-a456-426614174000' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'admin-ui' }, [], []), '—');
+  // A bare handle or slug names nobody and reads as unknown, never «utente».
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'stranger-handle' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'user-12345' }, [], []), '—');
+  // The system and the empty actor keep their own words.
+  assert.equal(auditActorLabel({ actorType: 'system', actorId: 'x' }, [], []), 'sistema');
+  assert.equal(auditActorLabel({ actorId: '' }, [], []), '—');
 });

@@ -45,31 +45,51 @@ export function weekStartOf(value) {
 }
 
 /**
+ * True when a customer's new observation displaces the winning one: a dated
+ * observation beats an undated one (only dated rows name a week); among
+ * dated rows the earliest first contact wins; ties — and two undated rows —
+ * break on the smallest system name, so the answer is deterministic.
+ * @param {{ system: string, week: string | null, observed: string | null }} candidate
+ * @param {{ system: string, week: string | null, observed: string | null } | undefined} current
+ */
+function displacesFirstContact(candidate, current) {
+  if (current === undefined) return true;
+  if (candidate.week !== null && current.week === null) return true;
+  if (candidate.week === null && current.week !== null) return false;
+  if (candidate.week !== null && current.week !== null && candidate.observed !== current.observed) {
+    return /** @type {string} */ (candidate.observed) < /** @type {string} */ (current.observed);
+  }
+  return candidate.system < current.system;
+}
+
+/**
  * Aggregate identity rows into per-(system, week) counts of distinct
  * customers. Pure: the same input always yields the same frozen output, so
  * the capability, the application operation and the tests share one
  * implementation.
  *
- * One customer with several handles on the same channel counts once, in the
- * week of its earliest observation on that channel: the dashboard measures
- * new customers, never new identifiers. Rows without a subject envelope
- * (unit fixtures) stay one count each, so the pure function keeps its
- * old shape there.
+ * One customer counts once, in the channel of their first contact: the card
+ * total never exceeds the new customers of the period, no matter how many
+ * channels named them. A customer with several handles on one channel still
+ * counts once, in the week of its earliest observation there. Rows without
+ * a subject envelope (unit fixtures) stay one count each, so the pure
+ * function keeps its old shape there.
  * @param {Array<Record<string, any>>} rows active external-identity rows
  * @returns {{ origins: Array<{ system: string, week: string | null, count: number }>, undated: number }}
  */
 export function aggregateChannelOrigins(rows) {
   // Nested maps, never a joined string key: a system name carrying a
   // separator must not merge two channels into one aggregate. The first
-  // level is the same nested shape; the dedupe level is a per-row customer
-  // key, never a string join of system and week.
-  const earliest = new Map();
+  // two levels name the customer (resource, then id); the value is that
+  // customer's winning observation, never a string join of system and week.
+  const customers = new Map();
   const list = Array.isArray(rows) ? rows : [];
   for (let index = 0; index < list.length; index += 1) {
     const row = list[index];
     if (row === null || typeof row !== 'object') continue;
     const system = typeof row.system === 'string' && row.system !== '' ? row.system : 'unknown';
     const week = weekStartOf(row.firstObservedAt);
+    const observed = typeof row.firstObservedAt === 'string' ? row.firstObservedAt : null;
     const hasSubject = typeof row.subjectResource === 'string' && row.subjectResource !== ''
       && typeof row.subjectId === 'string' && row.subjectId !== '';
     // A subject-less row has no customer to deduplicate by: its sourceKey
@@ -78,38 +98,27 @@ export function aggregateChannelOrigins(rows) {
       ? row.subjectResource
       : `row:${typeof row.sourceKey === 'string' ? row.sourceKey : `#${index}`}`;
     const id = hasSubject ? row.subjectId : '';
-    let byResource = earliest.get(system);
+    let byResource = customers.get(resource);
     if (!byResource) {
       byResource = new Map();
-      earliest.set(system, byResource);
+      customers.set(resource, byResource);
     }
-    let byId = byResource.get(resource);
-    if (!byId) {
-      byId = new Map();
-      byResource.set(resource, byId);
-    }
-    const seen = byId.get(id);
-    if (seen === undefined) {
-      byId.set(id, week);
-    } else if (seen === null && week !== null) {
-      byId.set(id, week);
-    } else if (seen !== null && week !== null && week < seen) {
-      byId.set(id, week);
+    const candidate = { system, week, observed };
+    if (displacesFirstContact(candidate, byResource.get(id))) {
+      byResource.set(id, candidate);
     }
   }
   const counts = new Map();
   let undated = 0;
-  for (const [system, byResource] of earliest) {
-    let byWeek = counts.get(system);
-    if (!byWeek) {
-      byWeek = new Map();
-      counts.set(system, byWeek);
-    }
-    for (const byId of byResource.values()) {
-      for (const week of byId.values()) {
-        if (week === null) undated += 1;
-        byWeek.set(week, (byWeek.get(week) ?? 0) + 1);
+  for (const byResource of customers.values()) {
+    for (const best of byResource.values()) {
+      if (best.week === null) undated += 1;
+      let byWeek = counts.get(best.system);
+      if (!byWeek) {
+        byWeek = new Map();
+        counts.set(best.system, byWeek);
       }
+      byWeek.set(best.week, (byWeek.get(best.week) ?? 0) + 1);
     }
   }
   const origins = [];

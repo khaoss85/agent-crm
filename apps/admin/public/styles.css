@@ -448,6 +448,9 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-back + .quote-offer-link { margin-left: 16px; }
 .quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-offer-link:hover { text-decoration: underline; }
+/* Voce 47b89e19: the version history link, same accent treatment as the offer link. */
+.quote-version-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-version-open:hover { text-decoration: underline; }
 .bo-quote { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 20px; align-items: start; margin-top: 4px; }
 .bo-quote-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 24px; box-shadow: var(--shadow-pop); overflow: hidden; }
 .bo-quote-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--accent); }
@@ -549,6 +552,31 @@ button[aria-busy="true"] { opacity: .6; }
   width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
   font-size: 11px; font-weight: 800; flex: none; background: var(--accent); color: var(--paper);
 }
+/* backlog:c4127dcbb7f1: badge palette of 16 distinct colors (p0-p15).
+ * The badge color lives in this stylesheet, never in an inline style, so a
+ * pilot CSP that refuses inline styles cannot strip it. Same hsl values as
+ * spaceBadgeColor/spaceBadgeClass in admin-shell.js: class pN always carries
+ * palette entry N. White badge text on every entry passes WCAG AA (>= 4.5):
+ * p0 6.75 | p1 4.89 | p2 4.68 | p3 4.70 | p4 4.54 | p5 4.56 | p6 4.57
+ * p7 4.69 | p8 4.53 | p9 4.69 | p10 7.79 | p11 9.88 | p12 8.21
+ * p13 6.27 | p14 6.09 | p15 6.51 */
+.bo-space-badge--p0 { background-color: hsl(0 60% 42%); }
+.bo-space-badge--p1 { background-color: hsl(23 60% 42%); }
+.bo-space-badge--p2 { background-color: hsl(45 60% 34%); }
+.bo-space-badge--p3 { background-color: hsl(68 60% 30%); }
+.bo-space-badge--p4 { background-color: hsl(90 60% 32%); }
+.bo-space-badge--p5 { background-color: hsl(113 60% 33%); }
+.bo-space-badge--p6 { background-color: hsl(135 60% 33%); }
+.bo-space-badge--p7 { background-color: hsl(158 60% 32%); }
+.bo-space-badge--p8 { background-color: hsl(180 60% 32%); }
+.bo-space-badge--p9 { background-color: hsl(203 60% 42%); }
+.bo-space-badge--p10 { background-color: hsl(225 60% 42%); }
+.bo-space-badge--p11 { background-color: hsl(248 60% 42%); }
+.bo-space-badge--p12 { background-color: hsl(270 60% 42%); }
+.bo-space-badge--p13 { background-color: hsl(293 60% 42%); }
+.bo-space-badge--p14 { background-color: hsl(315 60% 42%); }
+.bo-space-badge--p15 { background-color: hsl(338 60% 42%); }
+
 .bo-space-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-space-menu, .bo-add-menu {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
@@ -833,6 +861,15 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
 .bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+/* Voce 5036bc435465: the post-call voice note reads like the note form. */
+.bo-scheda-voice-note { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 0 20px 20px; }
+.bo-scheda-voice-note > button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-panel { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-panel:empty { display: none; }
+.bo-scheda-voice-panel textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; }
+.bo-scheda-voice-panel button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-draft { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-draft:empty { display: none; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
@@ -1236,6 +1273,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
 /* backlog:8618ad3f72db: a child switch paused by the space AI is off, not busy: not-allowed, never the wait cursor. */
 .bo-spazi-toggle[data-paused="true"]:disabled { cursor: not-allowed; }
+/* backlog:3136d15da7bd: no broad :disabled rule here on purpose — a switch
+ * disabled by busy keeps the wait cursor, only [data-paused="true"] reads
+ * not-allowed (rule above). */
 /* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
 .bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
@@ -1556,6 +1596,11 @@ select.bo-spazi-input { flex: none; }
 /* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
 .cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+/* backlog:667f1f1c: content reads from the top, never halfway down a long
+ * block; short blocks read on one dotted line; no line ever paints half-cut. */
+.cal-grid .cal-event { align-content: start; }
+.cal-grid .cal-event .cal-compact { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-grid .cal-event.is-medium strong { display: block; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; overflow-wrap: anywhere; }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }

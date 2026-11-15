@@ -30,14 +30,14 @@
 // - the backoffice tokens and rows of styles.css (bo-*), single column under
 //   700px like every other backoffice screen.
 
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
-import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
+import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -245,18 +245,21 @@ export function isTodayInRome(value, now = new Date()) {
 }
 
 /**
- * Whether an appointment start still lies ahead (backlog:57e3d1685e58):
- * a slot already behind us today is done showing up in «Ti resta» and
- * never offers «Prepara». Same mark rule as nextAppointment: without a
- * real `now` nothing is filtered.
- * @param {unknown} startsAt
+ * Whether an appointment still lies ahead (backlog:5e703a7bb397): its end
+ * is after `now` — a slot already over leaves «Ti resta» and never offers
+ * «Prepara», while a call in progress still counts. Rows with no readable
+ * `endsAt` keep the start rule, so a missing end never hides a call. Same
+ * mark rule as nextAppointment: without a real `now` nothing is filtered.
+ * @param {Record<string, any>} row
  * @param {Date} [now]
  */
-function startsAtOrAfterNow(startsAt, now) {
-  const start = toInstant(startsAt);
+function endsAfterNow(row, now) {
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return true;
+  const end = toInstant(row?.endsAt);
+  if (end !== null) return end.getTime() > now.getTime();
+  const start = toInstant(row?.startsAt);
   if (start === null) return false;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  return Number.isNaN(mark) || start.getTime() >= mark;
+  return start.getTime() >= now.getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -533,8 +536,8 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
     const action = followupAction(task, now);
     if (action) actions.push(action);
   }
-  // backlog:57e3d1685e58: the prep reads the next call still ahead, never an
-  // appointment already behind us today — a past slot must not offer «Prepara».
+  // backlog:5e703a7bb397: the prep reads the next call still ahead, never
+  // an appointment already over — an ended slot must not offer «Prepara».
   const next = nextAppointment(appointments, now);
   if (next !== null) {
     const prep = appointmentPrepAction(next, names, pendingNames === true);
@@ -696,16 +699,20 @@ export async function executeAdvisorAction(client, action, run) {
  * The conversations waiting in «Da rispondere» count too (production
  * 11/11: «Niente in sospeso» over «Da rispondere: 32 in attesa»): the line
  * names them, and «Niente in sospeso» is said only when nothing waits.
- * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
+ * «Da leggere» is its own wait (backlog:5cf918c2246e, production 13/11:
+ * Clienti read «4 da leggere» while Oggi read «nothing waits»): «Niente in
+ * sospeso» never covers messages still to be read, so the recap names them.
+ * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
-  // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
-  // a past slot stays in the agenda (grey) but leaves the count.
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0 } = {}) {
+  // backlog:5e703a7bb397: «Ti resta» counts what is still ahead today —
+  // only appointments ending after now; an ended slot stays in the
+  // agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
-      && startsAtOrAfterNow(row.startsAt, now));
+      && endsAfterNow(row, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
@@ -713,6 +720,7 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
   // the verb agrees with the count, and zero reads as a person says it.
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
+  const unreadN = Number.isSafeInteger(unread) && unread > 0 ? unread : 0;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
   const floor = waitingExact === false || waiting === null;
@@ -732,14 +740,21 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
       return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
-    if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
-    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
+    if (today.length === 0) {
+      return unreadN === 0
+        ? 'Niente in sospeso e nessun appuntamento per oggi.'
+        : `Solo ${plural(unreadN, 'messaggio da leggere', 'messaggi da leggere')} e nessun appuntamento per oggi.`;
+    }
+    return unreadN === 0
+      ? `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`
+      : `Ti restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere e ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
   const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
   const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
-  return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
+  if (unanswered > 0 || floor) return `${recap} ${waitingLine(true)}.`;
+  return unreadN === 0 ? recap : `${recap} Restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere.`;
 }
 
 /**
@@ -800,7 +815,14 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
       titlePending: pendingNames === true && inboxSubjectKey(row) !== null,
       whoPending: pendingNames === true && nonEmptyText(row?.teamMemberId) !== null,
       status: row.status,
-      past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
+      // backlog:5e703a7bb397: a slot reads as past only once it is over
+      // (end at or before now); a call in progress stays lit. Rows with
+      // no readable end keep the start rule.
+      past: (() => {
+        if (!(now instanceof Date) || Number.isNaN(now.getTime()) || start === null) return false;
+        const end = toInstant(row.endsAt);
+        return end !== null ? end.getTime() <= now.getTime() : start.getTime() < now.getTime();
+      })(),
       href: card ?? (calendarEvent !== null ? CALENDAR_ROUTE : null),
       calendarEvent,
     });
@@ -808,19 +830,18 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
 }
 
 /**
- * The next upcoming appointment today (booked/confirmed, startsAt >= now),
- * null when the day holds nothing else.
+ * The next upcoming appointment today (booked/confirmed, ending after
+ * now — backlog:5e703a7bb397), null when the day holds nothing else.
  * @param {Array<Record<string, any>>} [appointments]
  * @param {Date} [now]
  */
 export function nextAppointment(appointments = [], now = new Date()) {
-  const mark = now instanceof Date ? now.getTime() : NaN;
   const upcoming = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
       && toInstant(row.startsAt) !== null
-      && (Number.isNaN(mark) || toInstant(row.startsAt).getTime() >= mark));
+      && endsAfterNow(row, now));
   upcoming.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return upcoming.length > 0 ? upcoming[0] : null;
 }
@@ -837,13 +858,12 @@ export function nextAppointment(appointments = [], now = new Date()) {
 export function upcomingAppointment(appointments = [], now = new Date()) {
   const today = nextAppointment(appointments, now);
   if (today !== null) return today;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  if (Number.isNaN(mark)) return null;
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return null;
   const ahead = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && toInstant(row.startsAt) !== null
-      && toInstant(row.startsAt).getTime() >= mark);
+      && endsAfterNow(row, now));
   ahead.sort((a, b) => toInstant(a.startsAt).getTime() - toInstant(b.startsAt).getTime());
   return ahead.length > 0 ? ahead[0] : null;
 }
@@ -1307,19 +1327,32 @@ export function countConnectedNine(connections = [], profile = null) {
  * Lead channels with no active connection, in catalog order with catalog
  * labels. `calendar` and `stripe` are not lead channels and stay out of the
  * invite: connecting them loses no lead. A connected Gmail removes Email
- * from the invite, like an active Email row does.
+ * from the invite, like an active Email row does. With the schema adapters
+ * known the invite offers only what the shared channel state can connect
+ * (a channel no adapter serves is not a lead, like on Stato sync); without
+ * them the screen cannot know and keeps the previous answer.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function missingLeadChannels(connections = [], profile = null) {
+export function missingLeadChannels(connections = [], profile = null, adapters = null) {
+  const rows = Array.isArray(connections) ? connections : [];
   const active = new Set(
-    (Array.isArray(connections) ? connections : [])
+    rows
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
       .map((row) => row.channel),
   );
   for (const channel of googleNineChannels(profile)) active.add(channel);
+  const guided = CONNECTOR_CATALOG.map((entry) => entry?.channel);
   return CONNECTOR_CATALOG
     .filter((entry) => entry != null && !active.has(entry.channel))
+    .filter((entry) => {
+      if (!Array.isArray(adapters)) return true;
+      const shared = channelState(entry.channel, {
+        rows, profile, adapters: matchAdapters(entry.channel, adapters), guided,
+      });
+      return shared.state === 'da-collegare' || shared.state === 'da-completare';
+    })
     .map((entry) => Object.freeze({ channel: entry.channel, label: entry.label }));
 }
 
@@ -1328,27 +1361,66 @@ export function missingLeadChannels(connections = [], profile = null) {
  * connectable lead channels missing (the names after «Collega»), and an
  * aside for the missing channels that are not leads to connect here —
  * Google Calendar «dal Profilo» when the profile offers it, else «non
- * ancora disponibile» like Stripe — so connected + named = 9.
- * @param {{ connections?: Array<any>, profile?: unknown }} input
+ * ancora disponibile» like Stripe. With the schema adapters known the
+ * leads are the shared channel state answer, the same one Connettori and
+ * Stato sync show: a channel no adapter serves reads «non ancora
+ * disponibile» instead of «Collega», and a connectable channel outside
+ * the nine (Telegram) joins the leads while the count stays on the nine.
+ * Without the adapters the screen cannot know and keeps the previous
+ * answer.
+ * @param {{ connections?: Array<any>, profile?: unknown, adapters?: unknown }} input
  * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null }}
  */
-export function buildChannelInvite({ connections = [], profile = null } = {}) {
-  const count = channelConnectionCount(mergeProfileConnections(connections, profile));
+export function buildChannelInvite({ connections = [], profile = null, adapters = null } = {}) {
+  const rows = Array.isArray(connections) ? connections : [];
+  const count = channelConnectionCount(mergeProfileConnections(rows, profile));
   const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
   const leads = [];
   const fromProfile = [];
   const unavailable = [];
   for (const entry of count.missing) {
-    if (guided.includes(entry.channel)) {
-      leads.push(entry.label);
+    if (!Array.isArray(adapters)) {
+      if (guided.includes(entry.channel)) {
+        leads.push(entry.label);
+        continue;
+      }
+      // Outside the guided flow only Google Calendar has a destination
+      // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
+      if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
+        fromProfile.push(`${entry.label} dal Profilo`);
+      } else {
+        unavailable.push(entry.label);
+      }
       continue;
     }
-    // Outside the guided flow only Google Calendar has a destination
-    // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
-    if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
+    const shared = channelState(entry.channel, {
+      rows, profile, adapters: matchAdapters(entry.channel, adapters), guided,
+    });
+    // A channel Profilo connects (WhatsApp on a configured Meta app, Email
+    // on Gmail, Calendar on Google) is named apart, like before: its
+    // Collega lives there, not in the guided flow.
+    if (shared.state === 'da-collegare' && shared.connectRoute === '#/profilo') {
       fromProfile.push(`${entry.label} dal Profilo`);
+    } else if (shared.state === 'da-collegare' || shared.state === 'da-completare') {
+      leads.push(entry.label);
     } else {
       unavailable.push(entry.label);
+    }
+  }
+  // A connectable channel outside the nine (Telegram, SMS) loses leads
+  // like a missing nine channel: the invite names it too, while the count
+  // stays on the spec's nine (review #692). One with no adapter stays
+  // silent here — Stato sync still lists its row — and a linked one needs
+  // no invite. Without the adapters the screen cannot know, so this stays
+  // off like the per-channel answer above.
+  if (Array.isArray(adapters)) {
+    for (const item of CONNECTOR_CATALOG) {
+      if (item == null || typeof item.channel !== 'string' || item.channel === '') continue;
+      if (NINE_CHANNEL_IDS.includes(item.channel)) continue;
+      const extra = channelState(item.channel, {
+        rows, profile, adapters: matchAdapters(item.channel, adapters), guided,
+      });
+      if (extra.state === 'da-collegare' || extra.state === 'da-completare') leads.push(item.label);
     }
   }
   const notes = [...fromProfile];
@@ -1539,6 +1611,9 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     appointments: [],
     connections: [],
     profile: null,
+    // The schema's composed channel adapters: the strip's Collega follows
+    // the shared channel state, like Stato sync. Null while unread.
+    channelAdapters: null,
     briefMessages: [],
     briefCalls: [],
     inboxComposed: false,
@@ -1590,6 +1665,14 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   try {
     const schema = await timed('schema', client.request('/api/schema'));
     domains = schema?.domains ?? {};
+    // The strip's Collega reads the shared channel state, like Stato sync
+    // and #/connettori: without the composed adapters a channel nothing
+    // serves would still be invited.
+    const channelsMeta = domains?.channels?.metadata ?? domains?.channels;
+    // No adapters metadata means unknown, not "nothing serves it": only a
+    // read adapters list filters the invite (backlog:803d127c4458 keeps its
+    // invite when the schema names no adapters).
+    outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : null;
   } catch (error) {
     noteReadFailure('schema', error);
     // The profile read started already: nothing waits on it.
@@ -1948,6 +2031,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
+ *     channelAdapters?: unknown,
  *     channelsPartial?: boolean,
  *     channelsUnknown?: boolean,
  *     tasksPartial?: boolean,
@@ -2084,6 +2168,13 @@ export function renderOggi({
   // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
   // day is done only when nothing waits in «Da rispondere» either.
   const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
+  // backlog:5cf918c2246e: «da leggere» is not «da rispondere» — a customer
+  // with unread messages nobody has to answer (a teammate already replied,
+  // a notification, a closed thread) still waits to be read. The day is done
+  // only when nothing waits to be read either.
+  const unreadWaiting = home.inbox != null && home.inbox.available !== false && Number.isSafeInteger(home.inbox.unread) && home.inbox.unread > 0
+    ? home.inbox.unread
+    : 0;
   // review Muse #795: a floor from a truncated scan never reads «finito».
   // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
   const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
@@ -2093,8 +2184,12 @@ export function renderOggi({
   done.setAttribute('data-oggi-done', 'true');
   if (!allDone || home.inbox?.pending === true) {
     // Nothing to say yet: the count of the messages waiting is still reading.
-  } else if (waitingReplies === 0 && !waitingFloor) {
+  } else if (waitingReplies === 0 && !waitingFloor && unreadWaiting === 0) {
     done.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  } else if (waitingReplies === 0 && !waitingFloor) {
+    done.appendChild(el(doc, 'p', 'bo-muted', unreadWaiting === 1
+      ? 'Hai risposto a tutto. Resta 1 messaggio da leggere, qui sotto.'
+      : `Hai risposto a tutto. Restano ${unreadWaiting} messaggi da leggere, qui sotto.`));
   } else if (waitingFloor) {
     done.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
   } else {
@@ -2158,6 +2253,7 @@ export function renderOggi({
       }
       return row;
     };
+    let unreadLinked = false;
     if (home.inbox.pending === true) {
       // backlog:bab63e32acdb: the server view is reading — no word that
       // could pass for «nobody waits». backlog:ee1244a145c9: the count is
@@ -2178,13 +2274,34 @@ export function renderOggi({
       const note = el(doc, 'p', 'bo-muted', 'Non riesco a contare tutti i messaggi da rispondere qui. ');
       if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
         const all = el(doc, 'a', 'bo-oggi-more', 'Guardali in Clienti →');
-        all.setAttribute('href', '#/customer-data');
+        all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
         all.setAttribute('data-action', 'inbox-all');
         all.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
           events.openClientiView(REPLIES_VIEW);
         });
         note.appendChild(all);
+      }
+      inbox.appendChild(note);
+    } else if (inboxRows.length === 0 && unreadWaiting > 0) {
+      // backlog:5cf918c2246e: an empty «Da rispondere» with unread messages
+      // never reads «nobody waits» alone — the unread count names itself here
+      // (with its Clienti link when it can open it), and the trailing
+      // «da leggere» line stays silent.
+      const note = el(doc, 'p', 'bo-muted');
+      note.appendChild(el(doc, 'span', null, 'Nessun messaggio aspetta una risposta, ma '));
+      if (typeof events.openClientiView === 'function') {
+        const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadWaiting} da leggere in Clienti →`);
+        unreadLink.setAttribute('href', clientiViewHash(UNREAD_VIEW));
+        unreadLink.setAttribute('data-action', 'inbox-unread');
+        unreadLink.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView(UNREAD_VIEW);
+        });
+        note.appendChild(unreadLink);
+        unreadLinked = true;
+      } else {
+        note.appendChild(el(doc, 'span', null, `${unreadWaiting} da leggere.`));
       }
       inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
@@ -2200,7 +2317,7 @@ export function renderOggi({
         const more = el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} più recenti su ${home.inbox.totalIsExact === false ? 'almeno ' : ''}${waitingCount}. `);
         if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
           const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutte →');
-          all.setAttribute('href', '#/customer-data');
+          all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
           all.setAttribute('data-action', 'inbox-all');
           all.addEventListener('click', (event) => {
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2212,10 +2329,11 @@ export function renderOggi({
       }
     }
     // backlog:c2bf6b206d96: «Da leggere» stays its own count, named apart.
+    // backlog:5cf918c2246e: folded into the empty note above when it fired.
     const unread = home.inbox.available === false ? null : home.inbox.unread;
-    if (Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
+    if (!unreadLinked && Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
       const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
-      line.setAttribute('href', '#/customer-data');
+      line.setAttribute('href', clientiViewHash(UNREAD_VIEW));
       line.setAttribute('data-action', 'inbox-unread');
       line.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2417,11 +2535,12 @@ export function renderOggi({
   } else {
     // The prototype strip (9c7d1477a8d4, production 08/11 after #687):
     // «x di 9 collegati», always the line «per non perdere nessun lead», and
-    // the names are the connectable lead channels missing. The missing
+    // the names are the connectable lead channels missing (a connectable
+    // Telegram joins them, the count stays on the nine). The missing
     // channels that are not leads to connect here (Google Calendar, Stripe)
     // are named apart, so what the text promises adds up with the count.
     const invite = Array.isArray(home.connections)
-      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null })
+      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null, adapters: home.channelAdapters ?? null })
       : {
         connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS),
         total: OGGI_TOTAL_CHANNELS,
@@ -2433,7 +2552,9 @@ export function renderOggi({
     // The note renders even with no leads left, so a capped read never
     // passes for a complete one.
     const partialChannels = home.channelsPartial === true && Array.isArray(home.connections);
-    if (invite.leads.length > 0 || partialChannels) {
+    // With the adapters known the strip can name only «non ancora
+    // disponibile» channels: the count still shows, without a Collega.
+    if (invite.leads.length > 0 || invite.aside !== null || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
@@ -2448,6 +2569,11 @@ export function renderOggi({
           navigate('#/connettori');
         });
         section.appendChild(anchor);
+      } else if (invite.aside !== null) {
+        const note = el(doc, 'p', 'bo-oggi-invite-note');
+        note.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
+        note.appendChild(el(doc, 'span', undefined, ` (${invite.aside})`));
+        section.appendChild(note);
       }
       if (partialChannels) {
         section.appendChild(el(doc, 'p', 'bo-muted', `Mostro i primi ${home.connections.length} collegamenti (elenco parziale).`));
@@ -2609,12 +2735,14 @@ export function createOggiView(deps) {
   let notificationsOpen = false;
   /**
    * backlog:c2bf6b206d96: «Vedi tutte» and «N da leggere» open Clienti on
-   * that view, through the same one-time handoff as the calendar event.
+   * that view. backlog:7cf5c4931cfc: the view travels in the address
+   * (`#/customer-data?vista=...`), so the link saves and reopens it; the
+   * one-time handoff stays as the fallback when the query is lost.
    * @param {string} view
    */
   function openClientiView(view) {
     writePendingClientiView(deps.storage ?? null, view);
-    navigate('#/customer-data');
+    navigate(clientiViewHash(view));
   }
   /**
    * backlog:bd5e84545021: an appointment with no scheda opens in the
@@ -2655,7 +2783,7 @@ export function createOggiView(deps) {
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
-    const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    const missing = missingLeadChannels(last.connections, last.profile ?? null, last.channelAdapters ?? null);
     // backlog:095fb37de6bb: the «Notifiche automatiche» group decides from
     // the server's scan-wide base when it answered — per thread: the server
     // base for the threads it scanned, the page base for the rest (review
@@ -2697,7 +2825,7 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       home: {
         recapPending: inbox?.pending === true,
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0 }),
         actions,
         triage,
         capped,
@@ -2707,6 +2835,7 @@ export function createOggiView(deps) {
         inbox,
         missing,
         connections: last.connections,
+        channelAdapters: last.channelAdapters ?? null,
         channelsPartial: last.channelsPartial === true,
         channelsUnknown: last.channelsUnknown === true,
         tasksPartial: last.tasksPartial === true,

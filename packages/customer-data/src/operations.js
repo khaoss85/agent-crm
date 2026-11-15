@@ -1052,6 +1052,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
   // closed state and label; an unreadable conversation module reads none.
   const conversations = await batched('conversation');
+  // backlog:2262771da550 — the Calendario column: the same batched exact
+  // read over the appointment records, keyed by customer subject. Without
+  // the module composed the rows carry no calendar state, never an
+  // invented «nessuno».
+  const appointments = await batched('appointment');
+  const appointmentsComplete = appointments.readable === true && appointments.complete !== false;
   // The space's own mailboxes (review Muse #821): the accounts of its email
   // connections, read straight at the record module like the reads above.
   // Mail from them is the team's own, never a customer waiting.
@@ -1264,6 +1270,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const taskIndex = indexRowsByCustomer(tasks.rows);
   const messageIndex = indexRowsByCustomer(messages.rows);
   const callIndex = indexRowsByCustomer(calls.rows);
+  const appointmentIndex = indexRowsByCustomer(appointments.rows);
   const conversationIndex = indexRowsByCustomer(conversations.rows);
   const signalIndex = indexRowsByCustomer(signals.rows);
 
@@ -1317,10 +1324,25 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     const myOffers = resource === 'contact'
       ? myOpportunities.filter((row) => row?.contactId != null && row.contactId !== '' && row.contactId === id)
       : myOpportunities;
-    const openValue = myOffers
-      .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
+    // backlog:1adf95307b31: «Valore offerta» counts only open offers — won and
+    // lost never count. A customer with only won offers (or no open offer at
+    // all) reads «—», never «0 €». Mixed currencies never sum into one naked
+    // number: each currency keeps its own subtotal with its own code.
+    const openOffers = myOffers.filter((row) => row?.stage !== 'won' && row?.stage !== 'lost');
+    const openValue = openOffers
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
-    const currencies = [...new Set(myOffers.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
+    const totalsByCurrency = new Map();
+    for (const row of openOffers) {
+      const code = typeof row?.currency === 'string' ? row.currency : '';
+      totalsByCurrency.set(code, (totalsByCurrency.get(code) ?? 0) + (Number(row?.valueCents ?? 0) || 0));
+    }
+    const currencyKeys = [...totalsByCurrency.keys()].filter((code) => code !== '');
+    const singleCurrency = currencyKeys.length === 1 && !totalsByCurrency.has('')
+      ? currencyKeys[0]
+      : null;
+    const currencyParts = singleCurrency === null && openOffers.length > 0
+      ? [...totalsByCurrency.entries()].map(([code, valueCents]) => ({ valueCents, currency: code === '' ? null : code }))
+      : null;
     const myTasks = selectSubjectRows(taskIndex, subjectKeys, mine).filter((row) => row?.status === 'open');
     // The callback view filters on this one value, so it must be the most
     // actionable open task — overdue first, then due today — never the
@@ -1335,6 +1357,32 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
+    // backlog:2262771da550 — the row's calendar state: the soonest live
+    // appointment at or after now. Only live states (booked, confirmed, the
+    // complement of APPOINTMENT_TERMINAL in packages/appointments) name the
+    // next slot: an allowlist, so a malformed or future unknown state never
+    // reads as live. A partial or unreadable appointment scan shapes
+    // no «next»: the row says so in calendarComplete instead.
+    const myAppointments = appointmentsComplete
+      ? selectSubjectRows(appointmentIndex, subjectKeys, mine)
+      : [];
+    let nextAppointment = null;
+    if (appointmentsComplete) {
+      const nowMs = Date.parse(new Date().toISOString());
+      for (const row of myAppointments) {
+        const status = String(row?.status ?? '');
+        if (status !== 'booked' && status !== 'confirmed') continue;
+        const startMs = Date.parse(String(row?.startsAt ?? ''));
+        if (!Number.isFinite(startMs) || startMs < nowMs) continue;
+        if (nextAppointment === null || startMs < Date.parse(String(nextAppointment.startsAt))) {
+          nextAppointment = Object.freeze({
+            startsAt: row.startsAt,
+            endsAt: typeof row?.endsAt === 'string' ? row.endsAt : null,
+            status,
+          });
+        }
+      }
+    }
     const myMessageRows = selectSubjectRows(messageIndex, subjectKeys, mine);
     const myMessages = [...myMessageRows, ...selectSubjectRows(callIndex, subjectKeys, mine)];
     // The row's unread badge, from the message rows already in hand — no new
@@ -1399,8 +1447,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       awaitingBySubject: new Map(myAwaiting === null ? [] : [[key, myAwaiting]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject, isMessage: lastContactIsMessage }]]),
-      offerBySubject: new Map(myOffers.length === 0 ? [] : [[key, {
-        valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
+      offerBySubject: new Map(openOffers.length === 0 ? [] : [[key, {
+        valueCents: openValue, currency: singleCurrency, parts: currencyParts,
       }]]),
       taskBySubject: new Map(next === null ? [] : [[key, {
         title: next.title ?? null,
@@ -1408,6 +1456,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         overdue: typeof next.dueAt === 'string' && next.dueAt !== '' && next.dueAt.slice(0, 10) < today,
       }]]),
       renewalBySubject: new Map([[key, renewalWithinDays]]),
+      appointmentBySubject: new Map(nextAppointment === null ? [] : [[key, nextAppointment]]),
+      appointmentsComplete,
       budgetBySubject: new Map(budgetSignal === null ? [] : [[key, {
         available: true,
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,

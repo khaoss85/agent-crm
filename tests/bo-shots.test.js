@@ -145,10 +145,11 @@ test('harness pages photograph the full /bo shell with a hidden probe', () => {
   }
 });
 
-test('the clienti harness names counted pills and one label-only fallback', () => {
+test('the clienti harness names counted pills and a bare label for the uncounted view', () => {
   // backlog:22d4dd0f, C10: the next render paints counted pills for the
-  // views the demo server knows, and the bare label for rinnovi, whose
-  // dependency reads as unavailable — both states the P2 asks to see.
+  // views the demo server knows, and a bare label for rinnovi, whose
+  // dependency reads as unavailable — honest absence, never a false 0
+  // (backlog:5af848afdb63: a missing count shows no number).
   const page = harnessHtml('clienti', publicDir);
   for (const view of [
     "{ id: 'tutti', label: 'Tutti', count: 3 }",
@@ -388,11 +389,14 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
   // pass on a painted-but-empty grid. Every calendario expect must be a
   // string the static page can never contain: a painted event marker. Since
   // fetta 4 the customer link lives in the detail card (painted only after a
-  // block click), the painted proof is the Rome time range of a held event.
+  // block click), the painted proof is the blocks the week holds
+  // (backlog:667f1f1c): the short block on its compact line and the long
+  // block on its Rome range.
   const calendario = SCREENS.find((screen) => screen.name === 'calendario');
   assert.ok(calendario, 'the calendario screen exists');
   assert.ok(!calendario.expect.includes('Mostra settimana'), 'the static button is not an expect');
-  assert.ok(calendario.expect.includes('18:00–18:30'), 'a painted Rome time range is expected');
+  assert.ok(calendario.expect.includes('Taglio · Ada, 18:00'), 'a painted short-block line is expected');
+  assert.ok(calendario.expect.includes('09:00–10:30'), 'a painted long-block Rome time range is expected');
   assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
 });
 

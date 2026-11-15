@@ -7,6 +7,7 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_SPACE_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
@@ -24,6 +25,9 @@ import {
   resolveSpaceShortcut,
   spaceInitialsFor,
   spaceBadgeColor,
+  spaceBadgeClass,
+  spaceBadgeHue,
+  spaceBadgeIndex,
   spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
@@ -317,9 +321,73 @@ test('backlog:ecb26347d12c — the «Cambia spazio» button names only the short
   const rowBadges = badges.slice(1).map((badge) => badge.textContent);
   assert.notEqual(rowBadges[0], rowBadges[1]);
   assert.equal(badges[0].textContent, rowBadges[0]);
-  const styles = badges.map((badge) => badge.getAttribute('style'));
-  assert.ok(styles.every((style) => typeof style === 'string' && style.includes('background:')), 'every badge carries its space color');
-  assert.ok(new Set(styles).size > 1, 'the two spaces have different colors');
+  // backlog:b545aca18b8f: the color lives in the stylesheet class, never
+  // in an inline style, so a pilot CSP refusing inline styles cannot
+  // strip it. Each badge names its hue class AND the stylesheet maps that
+  // class to the same hsl the helper computes.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
+  const slots = badges.map((badge) => {
+    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+    assert.ok(cls, 'badge carries its palette class');
+    return cls;
+  });
+  assert.ok(new Set(slots).size > 1, 'the two spaces have different colors');
+  for (const id of ['b1', 'presti-group']) {
+    const cls = spaceBadgeClass(id);
+    assert.ok(slots.includes(cls), `badge list carries ${cls} for space ${id}`);
+    assert.ok(
+      css.includes(`.${cls} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${cls} to the helper color`,
+    );
+  }
+});
+
+test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color without inline style', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // Empty or missing lists never reach the renderers: the constructor
+  // normalizes to the single local space, and setSpaces ignores empties —
+  // those are the load-bearing invariants, so the test pins them.
+  for (const spaces of [[], null, undefined]) {
+    const { sidebar, topbar } = renderShell({ spaces });
+    const text = sidebar.textContent;
+    assert.ok(text.includes('Moduli nativi'), 'empty list still draws the native group');
+    assert.ok(text.includes('Spazio locale'), 'empty list falls back to the local space');
+    const badges = [...sidebar.findAll('span'), ...topbar.findAll('span')]
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+    assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
+    for (const badge of badges) {
+      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP refuses inline styles)');
+      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+      assert.ok(cls, 'fallback badge carries its palette class');
+      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space slot');
+      assert.ok(
+        css.includes(`.${cls} { background-color: ${spaceBadgeColor('locale')}; }`),
+        'stylesheet maps the fallback slot to the helper color',
+      );
+    }
+  }
+  // The class and the color string always agree on the palette slot.
+  for (const id of ['locale', 'aurora', 'presti-group', '']) {
+    assert.equal(spaceBadgeClass(id), `bo-space-badge--p${spaceBadgeIndex(id)}`);
+    assert.equal(spaceBadgeColor(id), spaceBadgeColor(id));
+    assert.ok(
+      css.includes(`.${spaceBadgeClass(id)} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${spaceBadgeClass(id)} to the helper color`,
+    );
+  }
+});
+
+test('backlog:b545aca18b8f — setSpaces ignores an empty list and keeps the open space', () => {
+  const { sidebar, view } = renderShell();
+  assert.ok(sidebar.textContent.includes('Studio Aurora'));
+  view.setSpaces([], 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'empty setSpaces keeps the previous spaces');
+  view.setSpaces(null, 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'null setSpaces keeps the previous spaces');
+  view.setSpaces([{ id: 'verde', name: 'Casa Verde', initials: 'CV' }], 'verde');
+  assert.ok(sidebar.textContent.includes('Casa Verde'), 'a real list still replaces the spaces');
+  assert.ok(!sidebar.textContent.includes('Studio Aurora'), 'the old space leaves the switcher');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
@@ -428,6 +496,44 @@ test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder('stato-sync'), 'Chiedi: «c’è qualcosa che non si è sincronizzato?»');
   assert.equal(aiPlaceholder('unknown-screen'), AI_ENTRY_FALLBACK);
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
+});
+
+// backlog 3136d15da7bd: with the space AI off the bar says so instead of
+// inviting a question the AI would not answer.
+test('AI entry placeholder names the off space AI on every screen', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('calendario', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('agenti', 'Mano', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /spenta/);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /Spazi e accessi/);
+});
+
+test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', () => {
+  const { view, topbar } = renderShell();
+  const input = () => topbar.findAll('input')[0];
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+  view.update({ aiSpaceOff: true });
+  assert.equal(input().getAttribute('placeholder'), AI_SPACE_OFF_PLACEHOLDER);
+  assert.ok(!/Chiedi: «cosa/.test(input().getAttribute('placeholder')), 'no inviting question while off');
+  view.update({ aiSpaceOff: false });
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+});
+
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
 });
 
 test('settings tabs list the four areas with the open one underlined', () => {

@@ -165,6 +165,32 @@ test('empty intent, empty name and no channels refuse before any provider is tou
   assert.equal(called, 0);
 });
 
+test('the draft threads the caller organization to complete, never from the body (backlog:5c9e006a)', async () => {
+  const seen = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+    organizationId: 'org-a',
+  });
+  assert.equal(seen.request.organizationId, 'org-a');
+  const absent = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: absent }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  });
+  assert.equal('organizationId' in absent.request, false, 'absent stays absent: historic behavior');
+});
+
 test('parseMessageDraftResponse validates the labeled shape on its own', () => {
   const parsed = parseMessageDraftResponse(DRAFT_JSON, CHANNELS);
   assert.equal(parsed.corta, 'Certo, ti confermo le 18 di domani.');

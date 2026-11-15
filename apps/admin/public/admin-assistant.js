@@ -1843,11 +1843,40 @@ export async function runAssistantAction(client, action, options = {}) {
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
+ * backlog:a1f2db873cf3 (production 07/11): the open panel never covers the
+ * ⌘K bar — it starts below the sticky topbar instead of at the top of the
+ * viewport. The bar's bottom edge is read live from the painted page
+ * (desktop and phone differ, and a banner above the bar moves it down),
+ * never hardcoded, with the height only as a fallback; without a measurable
+ * bar the CSS default (`top: 0`) stays, so the panel keeps working on
+ * screens without a topbar.
+ * @param {any} doc
+ * @param {any} panel
+ */
+export function setPanelTopBelowBar(doc, panel) {
+  try {
+    const bar = doc?.querySelector?.('.bo-topbar') ?? null;
+    const rect = bar?.getBoundingClientRect?.() ?? null;
+    const bottom = rect?.bottom;
+    if (typeof bottom === 'number' && Number.isFinite(bottom)) {
+      if (panel?.style) panel.style.top = `${Math.max(0, Math.round(bottom))}px`;
+      return;
+    }
+    const height = rect?.height;
+    if (typeof height === 'number' && Number.isFinite(height) && height > 0 && panel?.style) {
+      panel.style.top = `${Math.round(height)}px`;
+    }
+  } catch {
+    // The CSS default keeps the panel usable.
+  }
+}
+
+/**
  * The ⌘K side panel: suggestions for the current screen, answers with
  * clickable sources, linked actions with the confirmation gate, the
  * execution trace of every answer (BO-F4-04, kept in the session history),
  * and the free-question box (disabled with the key message in dry-run).
- * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void, spaceId?: any, role?: (() => unknown) | null, win?: { addEventListener?: (type: string, handler: (event: any) => void) => void } | null }} options
+ * @param {{ doc: any, mount: any, client: any, navigate?: (href: string) => void, notify?: (message: string) => void, spaceId?: any, role?: (() => unknown) | null, win?: { addEventListener?: (type: string, handler: (event: any) => void) => void, removeEventListener?: (type: string, handler: (event: any) => void) => void, ResizeObserver?: any } | null }} options
  */
 export function createAssistantPanel({ doc, mount, client, navigate = () => {}, notify = () => {}, spaceId = null, role = null, win = null } = {}) {
   if (!doc || !mount || !client) throw new Error('Il pannello assistente richiede doc, mount e client.');
@@ -1859,6 +1888,81 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
   let boundClient = null;
   /** The «@Agente» intent in flight, kept until it succeeds (review #661 P1). @type {any} */
   let pendingAttempt = null;
+  /**
+   * backlog:a1f2db873cf3: the live topbar watcher while the panel is open —
+   * a resize, an orientation change or a topbar reflow re-reads the bar's
+   * bottom edge, so the open panel never slides back over the ⌘K bar.
+   * Removed on close. @type {null | (() => void)}
+   */
+  let topRecalcCleanup = null;
+
+  function stopTopRecalc() {
+    if (typeof topRecalcCleanup !== 'function') return;
+    try {
+      topRecalcCleanup();
+    } catch {
+      // A hostile window never breaks the close.
+    }
+    topRecalcCleanup = null;
+  }
+
+  /** Re-apply the live bar offset to the mounted panel, if any. */
+  function refreshPanelTop() {
+    try {
+      const panel = mount?.querySelector?.('.bo-assistant') ?? mount?.firstChild ?? null;
+      if (!panel) return;
+      setPanelTopBelowBar(doc, panel);
+    } catch {
+      // The last good inline top stays.
+    }
+  }
+
+  /** Watch the viewport and the topbar while the panel is open. */
+  function startTopRecalc() {
+    stopTopRecalc();
+    try {
+      const view = win ?? doc?.defaultView ?? null;
+      const cleanups = [];
+      if (view != null && typeof view.addEventListener === 'function') {
+        const onChange = () => refreshPanelTop();
+        view.addEventListener('resize', onChange);
+        view.addEventListener('orientationchange', onChange);
+        cleanups.push(() => {
+          if (typeof view.removeEventListener === 'function') {
+            view.removeEventListener('resize', onChange);
+            view.removeEventListener('orientationchange', onChange);
+          }
+        });
+      }
+      const Observer = view?.ResizeObserver ?? doc?.defaultView?.ResizeObserver ?? null;
+      if (typeof Observer === 'function') {
+        const bar = doc?.querySelector?.('.bo-topbar') ?? null;
+        if (bar) {
+          const observer = new Observer(() => refreshPanelTop());
+          observer.observe(bar);
+          cleanups.push(() => {
+            try {
+              observer.disconnect();
+            } catch {
+              // A hostile observer never breaks the close.
+            }
+          });
+        }
+      }
+      if (cleanups.length === 0) return;
+      topRecalcCleanup = () => {
+        for (const cleanup of cleanups) {
+          try {
+            cleanup();
+          } catch {
+            // One hostile cleanup never blocks the others.
+          }
+        }
+      };
+    } catch {
+      topRecalcCleanup = null;
+    }
+  }
   const bound = () => {
     if (boundClient === null) boundClient = bindAdminMutations(client).client;
     return boundClient;
@@ -2139,7 +2243,14 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     state.queued = null;
     state.waiting = null;
     openGeneration += 1;
+    stopTopRecalc();
     render();
+  }
+
+  /** Mount the painted panel and watch the topbar while it stays open. */
+  function mountPanel(panel) {
+    mount.appendChild(panel);
+    startTopRecalc();
   }
 
   // backlog:1968c3320cd3: Esc closes the open panel, like the ✕. An Esc
@@ -2423,6 +2534,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (!state.open) return;
     const panel = el(doc, 'aside', 'bo-assistant');
     panel.setAttribute('aria-label', 'Assistente');
+    // backlog:a1f2db873cf3: never over the ⌘K bar — start below the topbar.
+    setPanelTopBelowBar(doc, panel);
     const header = el(doc, 'div', 'bo-assistant-header');
     header.appendChild(el(doc, 'h2', 'bo-assistant-name', 'Assistente'));
     const live = state.status?.mode === 'live';
@@ -2462,7 +2575,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       scroll.appendChild(waiting);
       scroll.appendChild(el(doc, 'p', 'bo-assistant-busy', 'Chiedo all\u2019assistente…'));
       panel.appendChild(scroll);
-      mount.appendChild(panel);
+      mountPanel(panel);
       return;
     }
     const mentionBox = renderMention();
@@ -2532,7 +2645,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
       if (typeof state.draft === 'string' && state.draft !== '') {
         panel.appendChild(el(doc, 'p', 'bo-assistant-draft bo-assistant-foot', state.draft));
       }
-      mount.appendChild(panel);
+      mountPanel(panel);
       return;
     }
     const free = el(doc, 'form', 'bo-assistant-free');
@@ -2558,7 +2671,7 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     });
     panel.appendChild(free);
 
-    mount.appendChild(panel);
+    mountPanel(panel);
   }
 
   return {

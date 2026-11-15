@@ -267,7 +267,10 @@ export function metaConnectionsCard({ doc, ready }) {
 /**
  * @param {{ doc: any, mount: any, client: { request: (path: string) => Promise<any> },
  *   member?: () => ({ name?: string | null, email?: string | null, role?: string | null } | null),
- *   log?: (...args: any[]) => void }} deps
+ *   log?: (...args: any[]) => void,
+ *   onMember?: (person: { name?: unknown, email?: unknown, role?: unknown }) => void }} deps
+ * backlog 3136d15da7bd: onMember reports the fresh person after Salva, so
+ * the shell footer learns the new name without a reload.
  */
 export const PROFILE_NAME_MAX = 120;
 
@@ -283,7 +286,7 @@ export function cleanProfileName(value) {
   return next;
 }
 
-export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions, navigate = null, fixCount = () => null } = {}) {
+export function createProfiloView({ doc, mount, client, member = () => null, log = () => {}, submissions, navigate = null, fixCount = () => null, onMember = () => {} } = {}) {
   let token = 0;
   // backlog:1cfc68175ab7: the name edit is local view state, never stored.
   // `draft` keeps what the user typed across saving, validation errors and
@@ -311,7 +314,9 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
     // button keeps its text measure beside the name instead of stretching
     // like an empty field between the name and the email.
     const nameRow = el(doc, 'div', 'bo-profilo-name-row');
-    nameRow.appendChild(el(doc, 'h2', 'bo-profilo-name', shown));
+    // backlog:c51dca86dc66: the person's name is the page's h1 — every
+    // screen names its subject once, at the top level.
+    nameRow.appendChild(el(doc, 'h1', 'bo-profilo-name', shown));
     if (!editing) {
       const edit = uiButton(doc, { variant: 'secondary', label: 'Modifica', small: true,
         attrs: { type: 'button', 'data-action': 'modifica-nome' } });
@@ -391,6 +396,20 @@ export function createProfiloView({ doc, mount, client, member = () => null, log
             draft = '';
             editError = '';
             paint(session, fresh);
+            // backlog 3136d15da7bd: the fresh person reaches the shell at
+            // once — title and footer repaint from the same save, no reload.
+            // A failed re-read never returns here, so this reports saved
+            // names only, never a stale one.
+            if (fresh && typeof fresh === 'object' && fresh.member && typeof fresh.member === 'object') {
+              try {
+                onMember(fresh.member);
+              } catch (error) {
+                // The page already shows the new name; the shell keeps its
+                // own — but the split stays diagnosable, never silent: cause
+                // only, never the person just saved.
+                log('bo-profilo shell member push failed:', error instanceof Error ? error.name : 'unknown');
+              }
+            }
           },
           (error) => {
             log('bo-profilo profile save failed:', error?.code ?? 'Error');

@@ -66,6 +66,11 @@ export const LLM_PURPOSES = Object.freeze([
   // attributed separately from assistant chatter. Additive: every purpose
   // accepted before stays accepted.
   'call-summary',
+  // Voce 5036bc435465: the dictated post-call voice note is structured into
+  // riassunto, decisioni and prossimi passi. Its own purpose so the spend
+  // of voice notes is attributed separately from call summaries.
+  // Additive: every purpose accepted before stays accepted.
+  'voice-note-structure',
 ]);
 
 export const LLM_AUDIT_LIMIT = 200;
@@ -657,6 +662,9 @@ function isUniqueConflict(error) {
  *   defaultModel?: string,
  *   spaces?: Record<string, any>,
  *   spaceConfig?: (spaceId: string) => any,
+ *   // Voce 5c9e006a: a space entry (or spaceConfig result) may name
+ *   // `organizationId`, the owning organization of that space. `complete`
+ *   // refuses a caller whose `request.organizationId` names another one.
  *   secretRef?: string,
  *   resolveSecret?: (reference: string, context?: any) => Promise<string | null>,
  *   defaultDailyTokenCap?: number,
@@ -836,6 +844,36 @@ export function createLlmOperations(options = {}) {
       throw new AppError('AI is not enabled for this space: no text was sent anywhere', {
         code: 'LLM_SPACE_DISABLED', status: 403,
       });
+    }
+
+    // Voce 5c9e006a: a caller-supplied spaceId alone must never move spend
+    // onto another organization's space. When the deployment names the
+    // owning organization of this space (space.organizationId) AND the
+    // caller names theirs (request.organizationId, threaded by the route
+    // from the verified identity, never the body), a mismatch refuses
+    // exactly like an unknown space — same 403, same code, same message —
+    // so the answer never confirms the space exists elsewhere. One side
+    // absent keeps the historic behavior: a deployment that names no owners,
+    // or a caller that predates the route threading, spends as before. The
+    // refusal is audited with zero tokens, like every other attempt.
+    const spaceOwner = space.organizationId ?? null;
+    const callerOrg = request?.organizationId ?? null;
+    if (spaceOwner !== null && (typeof spaceOwner !== 'string' || spaceOwner === '')) {
+      throw new ValidationError('llm space organizationId must be a non-empty string', { field: 'space.organizationId' });
+    }
+    if (callerOrg !== null && (typeof callerOrg !== 'string' || callerOrg === '')) {
+      throw new ValidationError('llm organizationId must be a non-empty string', { field: 'organizationId' });
+    }
+    if (spaceOwner !== null && callerOrg !== null) {
+      if (spaceOwner !== callerOrg) {
+        await audit(auditService, {
+          spaceId, purpose, adapter: '', model: '', inputTokens: 0, outputTokens: 0,
+          estimatedCostCents: 0, dryRun: false, refused: 'space-organization-mismatch', sources,
+        }, actor);
+        throw new AppError('AI is not enabled for this space: no text was sent anywhere', {
+          code: 'LLM_SPACE_DISABLED', status: 403,
+        });
+      }
     }
 
     const model = modelFor(space, request);

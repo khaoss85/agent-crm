@@ -131,15 +131,15 @@
       "name": "intelligence",
       "dir": "intelligence",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "7eec8f83a9d7267134418a96fff648c73b1468c2c2a4a09956e60a6c14fee58e"
+      "version": 2,
+      "fingerprint": "c0a681517f1c061751d354f792d2dbbcfb1a38b7f320867fdae0bd4a5beff5ae"
     },
     {
       "name": "intelligence",
       "dir": "intelligence",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "3ebb082100e2baa3572601b58e81575f65d5f32e9ffbc4829157d1422f0c081e"
+      "version": 2,
+      "fingerprint": "e5de1b078b5434d2090269390074074a3ccf493588937dba6b779bff66e9179a"
     },
     {
       "name": "interactions",
@@ -173,15 +173,15 @@
       "name": "llm",
       "dir": "llm",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "7a87961af50afbbd9bdb2bf09f265e612123f40954dbf402e2d1d69ab3c70bda"
+      "version": 3,
+      "fingerprint": "eac16b0082a6bce19671af7a026eb1fe2d2176c56f50388ec3667080d1f3d574"
     },
     {
       "name": "llm",
       "dir": "llm",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "85476a40475f03522fcf5bd352fe6d70d6a0bafada95487e9797d553258273fb"
+      "version": 3,
+      "fingerprint": "463a5fbce02cb5a0ee1fd0668fd449cd8880bb83b320b3d9a4975bf83f709673"
     },
     {
       "name": "magic-link",
@@ -222,15 +222,15 @@
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract1",
-      "version": 2,
-      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
+      "version": 3,
+      "fingerprint": "ef82580e4a356c11596e453990f7644a0268a54837b302cff277b5464c255167"
     },
     {
       "name": "reengagement",
       "dir": "reengagement",
       "graph": "contract2",
-      "version": 2,
-      "fingerprint": "dfe0137fed685cba1fa201546c7921281fe088b1f77d8117b0078b1302497326"
+      "version": 3,
+      "fingerprint": "ef82580e4a356c11596e453990f7644a0268a54837b302cff277b5464c255167"
     },
     {
       "name": "sequences",

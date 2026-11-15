@@ -19,13 +19,14 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { takePendingCalendarEvent, takePendingCustomerPick } from './admin-prefill.js';
 import { ACTIVE_SPACE_KEY } from './admin-shell.js';
 import { isTechnicalMemberText, nameFromProfile, subjectText, teamPeople } from './admin-labels.js';
+import { accessLabel } from './admin-spazi-accessi.js';
 import { uiAddOption, uiButton, uiChannelChip, uiIcon, uiMarkBusy, uiSearchField, uiSecondaryButton, uiSelect, uiSkeleton } from './admin-ui.js';
 
 /**
@@ -127,22 +128,15 @@ export function eventPopoverPlacement(input) {
 }
 
 /**
- * The week the calendar opens on (backlog:df55cf25): the Rome Mon..Sun week
- * containing `now`, except on Saturday/Sunday — when the painted Mon..Fri
- * work days would already be over — when the following Mon..Sun opens
- * instead, so the grid shows the coming days, never the past ones. Pure and
- * DOM-free so it is unit-tested without a browser.
+ * The week the calendar opens on (backlog:c51dca86dc66, was df55cf25): the
+ * Rome Mon..Sun week containing `now`, Saturday and Sunday included — the
+ * painted week shows the current day even on the weekend, never the coming
+ * days while today still holds bookings. Pure and DOM-free so it is
+ * unit-tested without a browser.
  */
 export function openingWeekKeys(now = new Date()) {
   const instant = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
-  const todayKey = romeDayKey(instant);
-  if (!todayKey) return romeWeekKeys(instant);
-  // Noon UTC of the Rome day is afternoon in Rome on the same calendar
-  // day, so its UTC weekday is the Rome weekday — no DST arithmetic.
-  const dayIndex = (new Date(`${todayKey}T12:00:00Z`).getUTCDay() + 6) % 7;
-  if (dayIndex < 5) return romeWeekKeys(instant);
-  const monday = new Date(Date.parse(`${todayKey}T12:00:00Z`) + (7 - dayIndex) * 24 * 3600 * 1000);
-  return romeWeekKeys(monday);
+  return romeWeekKeys(instant);
 }
 
 /** Rome week (Monday..Sunday) containing `now`, as YYYY-MM-DD keys. */
@@ -228,14 +222,21 @@ export function weekLabel(weekKeys) {
 }
 
 /**
- * BO-F6-11 fetta 4 (specs/calendario.md C13): the prototype shows a work
- * week — Monday..Friday against an 09:00–18:00 hour axis. The loaded week
- * stays Monday..Sunday (the pager and the window do not move); only the
- * painted columns are the first five keys.
+ * BO-F6-11 fetta 4 (specs/calendario.md C13, backlog:c51dca86dc66): the
+ * prototype shows a work week — Monday..Friday against an 09:00–18:00 hour
+ * axis — plus the current Rome day when it falls on the weekend, so the
+ * grid shows today even on Saturday and Sunday. The loaded week stays
+ * Monday..Sunday (the pager and the window do not move); only the painted
+ * columns are the first five keys and, on the weekend, today's key.
  * @param {Array<string>} weekKeys
+ * @param {Date} [now]
  */
-export function displayKeys(weekKeys) {
-  return Array.isArray(weekKeys) ? weekKeys.slice(0, 5) : [];
+export function displayKeys(weekKeys, now = new Date()) {
+  if (!Array.isArray(weekKeys)) return [];
+  const painted = weekKeys.slice(0, 5);
+  const todayKey = romeDayKey(now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date());
+  if (todayKey !== null && !painted.includes(todayKey) && weekKeys.includes(todayKey)) painted.push(todayKey);
+  return painted;
 }
 
 /**
@@ -361,9 +362,12 @@ export function teamRows(named, hidden) {
  * with no roster name and no mailbox paints the teamPeople label (plain
  * words for a stored id, the operator's own typed words, a pipe id never
  * paints anywhere); such a row falls back to the generic «Membro del
- * team». No role line: the E2E takes the «Proprietario» chip out
+ * team». No role chip: the E2E takes the «Proprietario» chip out
  * of the card — the Team card filters the week, roles live on in Spazi e
- * accessi. Tint stays hashed on the stable primary subject and initials
+ * accessi. Each row still carries a small sub-line like Spazi e accessi:
+ * the mailbox when it adds to the painted name, else the access kind
+ * («Accesso Google», …), else nothing. Tint stays hashed on the stable
+ * primary subject and initials
  * follow the painted name, so a block and its toggle always match.
  * @param {unknown} named @param {unknown} hidden @param {unknown} members
  */
@@ -442,11 +446,19 @@ export function personRows(named, hidden, members) {
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
+    const email = group.email ?? null;
+    // backlog:c0b718741f0f — the small sub-line like Spazi e accessi: the
+    // mailbox when it adds to the painted name, else the access kind of the
+    // person's subjects, else nothing (a row whose label already is the
+    // mailbox never repeats it).
+    const sub = email !== null && name !== email ? email : (accessLabel(group.subjects) ?? null);
     return {
       ids: [...group.subjects],
       id: primary,
       name,
       label,
+      email,
+      sub,
       listed,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
@@ -778,10 +790,12 @@ export function catalogBookingServices(payload) {
 
 /**
  * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
- * the name and the price as Italian money («Lezione di prova · 1,00 €»,
- * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
- * typing. A price that is not whole cents, or not in euros, reads as the
- * name alone.
+ * the name and the price as Italian money («Lezione di prova · 1 €»,
+ * «PT · 1.080 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. The single shared display helper (formatAmount in admin-core.js,
+ * backlog:93e26f3d2cdc): same «1.080» grouping as Clienti, Reporting,
+ * Pipeline and the scheda. A price that is not whole cents, or not in
+ * euros, reads as the name alone.
  * @param {{name: string, priceCents: number, currency?: string}} entry
  */
 export function serviceOptionLabel(entry) {
@@ -790,18 +804,7 @@ export function serviceOptionLabel(entry) {
   // The menu books euros only (catalogBookingServices keeps EUR singles):
   // any other or unknown currency reads as the name alone, never a throw.
   if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
-  return `${entry.name} · ${italianEuros(cents)}`;
-}
-
-/**
- * Italian money with the grouping pinned (review #813): «1.080,00 €», the
- * same thousands dot as the rest of the /bo, never left to the runtime's
- * locale data.
- * @param {number} cents
- */
-function italianEuros(cents) {
-  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
+  return `${entry.name} · ${formatAmount(cents, 'EUR')}`;
 }
 
 /**
@@ -2228,11 +2231,11 @@ export function createCalendarioView(deps) {
     // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome — the
     // eyebrow and title never carry data. The lede stays because the
     // bo:shots probe reads the pinned week from it (`.cal-wrap .lede`).
-    // Fetta 4: the label names the painted work week (Mon..Fri), not the
-    // loaded seven days.
+    // Fetta 4 (backlog:c51dca86dc66): the label names the painted work week
+    // (Mon..Fri, plus today on the weekend), not the loaded seven days.
     titleBox.appendChild(el(doc, 'p', { className: 'eyebrow', text: 'Calendario condiviso' }));
     titleBox.appendChild(el(doc, 'h2', { className: 'cal-page-title', text: 'Agenda del team' }));
-    const label = weekLabel(displayKeys(state.weekKeys));
+    const label = weekLabel(displayKeys(state.weekKeys, clock()));
     if (label) titleBox.appendChild(el(doc, 'p', { className: 'lede', text: `La settimana del team · ${label}` }));
     head.appendChild(titleBox);
     const nav = el(doc, 'div', { className: 'actions' });
@@ -2317,7 +2320,7 @@ export function createCalendarioView(deps) {
         if (day !== null) held.add(day);
       }
     }
-    const painted = [...displayKeys(state.weekKeys)];
+    const painted = [...displayKeys(state.weekKeys, clock())];
     for (const key of state.weekKeys ?? []) {
       if (!painted.includes(key) && held.has(key)) painted.push(key);
     }
@@ -2346,8 +2349,9 @@ export function createCalendarioView(deps) {
    * backlog:df55cf25 (specs/calendario.md C10, C11): the Team card — one
    * toggle row per PERSON, never a technical id. Each row paints the person
    * name (displayName, mailbox, or the operator's own typed words), tinted
-   * and initialled to match its grid blocks. No role line: the E2E takes
-   * the «Proprietario» chip out of the card (roles live on in Spazi e
+   * and initialled to match its grid blocks, with the mailbox or the access
+   * kind in piccolo underneath like Spazi e accessi. No role chip: the E2E
+   * takes the «Proprietario» chip out of the card (roles live on in Spazi e
    * accessi). A click on a listed person hides all of their identities'
    * blocks (C11) with no reload; a click on a roster person nobody named yet
    * lists all of their subjects and loads their week instead of typing
@@ -2396,7 +2400,18 @@ export function createCalendarioView(deps) {
       const box = el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.active ? '✓' : '' });
       toggle.appendChild(box);
       toggle.appendChild(el(doc, 'span', { className: `cal-m${row.color}`, attrs: { 'aria-hidden': 'true' }, text: row.initials }));
-      toggle.appendChild(el(doc, 'span', { text: row.label }));
+      // backlog:c0b718741f0f — the name with its small sub-line (mailbox or
+      // access kind, like Spazi e accessi) underneath, never a role chip.
+      const names = el(doc, 'span', { className: 'cal-team-names' });
+      names.appendChild(el(doc, 'span', { text: row.label }));
+      if (row.sub !== null && row.sub !== undefined) {
+        names.appendChild(el(doc, 'div', {
+          className: 'bo-spazi-status',
+          attrs: row.sub === row.email ? { title: row.email } : {},
+          text: row.sub,
+        }));
+      }
+      toggle.appendChild(names);
       toggle.addEventListener('click', () => {
         // A toggle click is the operator's own choice: the roster auto-fill
         // no longer owns the filter from here on.
@@ -2705,8 +2720,7 @@ export function createCalendarioView(deps) {
     });
     col.addEventListener('pointercancel', () => {
       if (eventDrag) {
-        eventDrag = null;
-        detachNode(mount.querySelector('.cal-drag-ghost'));
+        abortEventDrag();
         return;
       }
       drag?.node?.remove?.(); drag = null;
@@ -2755,14 +2769,24 @@ export function createCalendarioView(deps) {
    * once per view; the fake test document has no listeners and is skipped.
    */
   let docDragHooked = false;
+  /**
+   * An interrupted drag (backlog:667f1f1c review P1): a resize stretches
+   * the origin block live, so aborting must repaint — otherwise the mutated
+   * inline grid-row stays painted on rows the booking no longer covers.
+   */
+  function abortEventDrag() {
+    const aborted = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (aborted?.mode === 'resize' && aborted.moved === true && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
   function hookDocDragEnd() {
     if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
     docDragHooked = true;
     doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
     doc.addEventListener('pointercancel', () => {
       if (!eventDrag) return;
-      eventDrag = null;
-      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+      abortEventDrag();
     });
   }
 
@@ -2805,6 +2829,24 @@ export function createCalendarioView(deps) {
       drag.targetEnd = start + durationMin;
     }
     drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    if (drag.mode === 'resize') {
+      // backlog:667f1f1c: a stretch pulls the block itself, never a second
+      // block under the preview — the origin node takes the target range
+      // live, time label included (review P2), so the operator never aims
+      // blind. Compact blocks (<45 min) rewrite their single line with the
+      // live interval, which only they render (giro 3 P1).
+      const origin = paintedEvents.get(String(drag.row?.id ?? ''));
+      if (origin && typeof origin.setAttribute === 'function') {
+        const current = String(origin.getAttribute?.('style') ?? '');
+        const column = current.match(/grid-column:[^;]+;?/);
+        origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
+        const timeLabel = origin.querySelector?.('.cal-time') ?? null;
+        if (timeLabel) timeLabel.textContent = `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+        const compactLabel = origin.querySelector?.('.cal-compact') ?? null;
+        if (compactLabel) compactLabel.textContent = `${titleOf(drag.row)}, ${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+      }
+      return;
+    }
     detachNode(mount.querySelector('.cal-drag-ghost'));
     const ghost = el(doc, 'div', {
       className: 'cal-pick is-dragging cal-drag-ghost',
@@ -2814,9 +2856,8 @@ export function createCalendarioView(deps) {
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
-    // A resize ghost paints on the origin column (review #757); a move
-    // ghost paints on the hovered column.
-    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+    // A move ghost paints on the hovered column.
+    col.appendChild(ghost);
   }
 
   /**
@@ -2908,6 +2949,12 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:667f1f1c: a stretch keeps its start and changes its end —
+    // compared by value (review P2): the same instant in a different ISO
+    // spelling is still the same start. Computed before the write so the
+    // queued outcome names it too.
+    const sameStart = Date.parse(before.startsAt) === Date.parse(startsAt);
+    const isStretch = sameStart && Date.parse(before.endsAt) !== Date.parse(endsAt);
     state.moveBusy = true;
     row.startsAt = startsAt;
     row.endsAt = endsAt;
@@ -2931,15 +2978,22 @@ export function createCalendarioView(deps) {
       state.moveOpen = false;
       // backlog:7587307d5215: the day and the date, like a person says it —
       // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      // backlog:667f1f1c: a stretch keeps its start and changes its end —
+      // the toast names it, «Allungato a …», never «Spostato».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
-      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      outcome = isStretch
+        ? { text: `Allungato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false }
+        : { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
         // Still queued on the worker: the drop stands where the operator
-        // put it until the week read says otherwise.
+        // put it until the week read says otherwise. A stretch says so
+        // (review P2), never «Spostamento».
         queued = true;
-        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+        outcome = isStretch
+          ? { text: 'Allungamento in coda: lo confermo appena è registrato.', error: false }
+          : { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
       } else {
         row.startsAt = before.startsAt;
         row.endsAt = before.endsAt;
@@ -3202,6 +3256,9 @@ export function createCalendarioView(deps) {
     if (cancelled) classes.push('cal-cancelled');
     const movable = isMovableAppointment(row);
     if (movable) classes.push('is-movable');
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
+    if (durationMin < 45) classes.push('is-short');
+    else if (durationMin < 60) classes.push('is-medium');
     const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
@@ -3214,8 +3271,23 @@ export function createCalendarioView(deps) {
       },
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
-    item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-    item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    const origin = originOf(row);
+    if (durationMin < 45) {
+      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      // The origin badge stays readable on the single line when the foot
+      // below stays hidden (15-min blocks), so nothing paints half-cut.
+      // At 30+ min the foot carries avatar and badges.
+      if (durationMin < 30) {
+        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
+        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+      }
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    }
     const foot = el(doc, 'span', { className: 'cal-day-foot' });
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
@@ -3224,7 +3296,6 @@ export function createCalendarioView(deps) {
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    const origin = originOf(row);
     if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     } else if (origin === 'google') {
@@ -3237,7 +3308,10 @@ export function createCalendarioView(deps) {
     if (cancelled) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
-    item.appendChild(foot);
+    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
+    // block has room — 15-min blocks already carry origin and status on
+    // their single line, so the foot never paints half-cut.
+    if (durationMin >= 30) item.appendChild(foot);
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes

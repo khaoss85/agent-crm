@@ -118,13 +118,23 @@ const AI_PLACEHOLDERS = Object.freeze({
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
+ * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
+ * inviting a question would promise an AI that stays silent. The bar keeps
+ * working (search never needed the AI), only its words change.
+ */
+export const AI_SPACE_OFF_PLACEHOLDER = 'AI dello spazio spenta: la riaccendi in Spazi e accessi';
+
+/**
  * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
  * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
  * always reaches somebody; otherwise a neutral line.
  * @param {string} screenId
  * @param {string} [agentName]
+ * @param {boolean} [spaceAiOff] backlog 3136d15da7bd: with the space AI off
+ *   the bar says so instead of inviting a question.
  */
-export function aiPlaceholder(screenId, agentName = '') {
+export function aiPlaceholder(screenId, agentName = '', spaceAiOff = false) {
+  if (spaceAiOff === true) return AI_SPACE_OFF_PLACEHOLDER;
   if (typeof screenId !== 'string') return AI_ENTRY_FALLBACK;
   if (screenId === 'agenti' && typeof agentName === 'string' && agentName.trim() !== '') {
     return agentMentionPlaceholder([{ name: agentName.trim() }]);
@@ -409,16 +419,77 @@ export function spaceInitialsFor(name) {
 }
 
 /**
- * Badge color for one space (backlog:ecb26347d12c): a deterministic hue
- * from the space id, so two spaces never share the badge color and the
- * same space reads the same everywhere. White text stays readable on it.
+ * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
+ * each readable with white text (WCAG AA, ratios in styles.css next to
+ * the `.bo-space-badge--pN` rules). The palette fits in one screen of
+ * CSS instead of one rule per hue.
+ */
+const SPACE_BADGE_PALETTE = [
+  { h: 0, s: 60, l: 42 },
+  { h: 23, s: 60, l: 42 },
+  { h: 45, s: 60, l: 34 },
+  { h: 68, s: 60, l: 30 },
+  { h: 90, s: 60, l: 32 },
+  { h: 113, s: 60, l: 33 },
+  { h: 135, s: 60, l: 33 },
+  { h: 158, s: 60, l: 32 },
+  { h: 180, s: 60, l: 32 },
+  { h: 203, s: 60, l: 42 },
+  { h: 225, s: 60, l: 42 },
+  { h: 248, s: 60, l: 42 },
+  { h: 270, s: 60, l: 42 },
+  { h: 293, s: 60, l: 42 },
+  { h: 315, s: 60, l: 42 },
+  { h: 338, s: 60, l: 42 },
+];
+
+/**
+ * Palette slot for one space (backlog:c4127dcbb7f1): a deterministic
+ * FNV-1a hash of the space id, so the same space reads the same
+ * everywhere. Neighboring ids spread across the palette instead of
+ * landing on neighboring hues; with fewer spaces than palette entries
+ * each space normally reads its own color.
+ * @param {unknown} id
+ */
+export function spaceBadgeIndex(id) {
+  const text = typeof id === 'string' ? id : '';
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % SPACE_BADGE_PALETTE.length;
+}
+
+/**
+ * Badge hue for one space (backlog:c4127dcbb7f1): the hue of the
+ * palette entry the space maps to, so the hue and the color string
+ * never disagree.
+ * @param {unknown} id
+ */
+export function spaceBadgeHue(id) {
+  return SPACE_BADGE_PALETTE[spaceBadgeIndex(id)].h;
+}
+
+/**
+ * Badge color for one space (backlog:c4127dcbb7f1): the palette entry
+ * as an `hsl()` string, identical to the matching stylesheet rule.
  * @param {unknown} id
  */
 export function spaceBadgeColor(id) {
-  const text = typeof id === 'string' ? id : '';
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  return `hsl(${hash % 360} 45% 42%)`;
+  const entry = SPACE_BADGE_PALETTE[spaceBadgeIndex(id)];
+  return `hsl(${entry.h} ${entry.s}% ${entry.l}%)`;
+}
+
+/**
+ * Stylesheet class carrying one space's badge color (backlog:c4127dcbb7f1):
+ * the color lives in styles.css (`.bo-space-badge--p<slot>`), never in an
+ * inline `style` attribute or a CSSOM write, so a pilot CSP that refuses
+ * inline styles cannot strip it. Same slot as spaceBadgeColor, no new shade.
+ * @param {unknown} id
+ */
+export function spaceBadgeClass(id) {
+  return `bo-space-badge--p${spaceBadgeIndex(id)}`;
 }
 
 /**
@@ -472,6 +543,7 @@ export function spaceMenuItems(spaces, activeId) {
       name: space.name,
       initials,
       color: spaceBadgeColor(space?.id),
+      badgeClass: spaceBadgeClass(space?.id),
       keyHint: index < 9 ? `⌘${index + 1}` : '',
       active: space.id === activeId,
     };
@@ -611,6 +683,9 @@ export function createShellView({
     // Backlog 7d169a3b1dd2: first named team agent, told by the Agenti
     // screen once its read lands — the bar placeholder names the team.
     aiAgentName: '',
+    // Backlog 3136d15da7bd: the space AI master, told by app.js (the shell
+    // does its own reads never). True paints the off words in the bar.
+    aiSpaceOff: false,
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -717,8 +792,9 @@ export function createShellView({
     spaceButton.setAttribute('aria-haspopup', 'true');
     spaceButton.setAttribute('title', switcherLabel);
     spaceButton.setAttribute('aria-label', switcherLabel);
-    const badge = el(doc, 'span', 'bo-space-badge', space.initials);
-    badge.setAttribute('style', `background: ${space.color}`);
+    // backlog:b545aca18b8f: the color comes from the stylesheet class,
+    // never from an inline style, so the pilot CSP cannot strip it.
+    const badge = el(doc, 'span', `bo-space-badge ${space.badgeClass}`, space.initials);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -741,8 +817,7 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
-      const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
-      ini.setAttribute('style', `background: ${entry.color}`);
+      const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -946,8 +1021,7 @@ export function createShellView({
     // initials and color as the sidebar switcher.
     const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
     const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
-    const phoneBadge = el(doc, 'span', 'bo-space-badge', phoneSpaceEntry.initials);
-    phoneBadge.setAttribute('style', `background: ${phoneSpaceEntry.color}`);
+    const phoneBadge = el(doc, 'span', `bo-space-badge ${phoneSpaceEntry.badgeClass}`, phoneSpaceEntry.initials);
     phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
@@ -976,8 +1050,14 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName));
-    aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
+    // backlog 3136d15da7bd: with the space AI off the placeholder says so
+    // instead of inviting a question the AI would not answer.
+    const aiOff = state.aiSpaceOff === true;
+    const aiWords = aiOff
+      ? AI_SPACE_OFF_PLACEHOLDER
+      : aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName);
+    aiInput.setAttribute('placeholder', aiWords);
+    aiInput.setAttribute('title', aiOff ? AI_SPACE_OFF_PLACEHOLDER : 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
     form.appendChild(hint);
@@ -1072,13 +1152,15 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, aiSpaceOff, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
       if (typeof aiAgentName === 'string') state.aiAgentName = aiAgentName;
+      // backlog 3136d15da7bd: the space AI master state, pushed by app.js.
+      if (typeof aiSpaceOff === 'boolean') state.aiSpaceOff = aiSpaceOff;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {

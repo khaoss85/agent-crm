@@ -61,7 +61,7 @@ function quote(overrides = {}) {
   };
 }
 
-function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false } = {}) {
+function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions = [], failAction, opportunityRecord, failOpportunity = false, opportunities = [], failOffers = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -69,6 +69,10 @@ function stubClient({ quoteRecord = quote(), lines = [], entries = [], versions 
       enforceAdminWriteGate(path, options);
       calls.push({ path, method: options.method ?? 'GET', body: options.body });
       if (path === '/api/schema') return SCHEMA;
+      if (path.startsWith('/api/opportunities?')) {
+        if (failOffers) throw Object.assign(new Error('Service Unavailable'), { status: 503 });
+        return { items: opportunities };
+      }
       if (options.method === 'POST') {
         if (failAction) throw Object.assign(new Error(failAction.message), failAction);
         return { ok: true, result: { quote: quoteRecord } };
@@ -599,4 +603,270 @@ test('a2ea75f705fd: the quote links to its offer page; with no rule, «Invia» i
   const submitPanel = none.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-submit');
   assert.equal(submitPanel.findAll('button').length, 0, 'no «Invia» that could send without a rule');
   assert.equal(submitPanel.findAll('select').length, 0, 'no empty rule menu');
+});
+
+function listView(overrides = {}, navigate) {
+  const navigated = [];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createQuoteView({
+    doc, mount,
+    client: stubClient(overrides),
+    navigate: navigate ?? ((hash) => navigated.push(hash)),
+  });
+  return { doc, mount, navigated, view, render: () => view.renderQuoteList() };
+}
+
+test('47b89e19: the list has no manual id field; quotes are created from the offer', async () => {
+  const { mount, render } = listView();
+  await render();
+  assert.equal(mount.findAll('input').length, 0, 'no field to type an id by hand');
+  assert.equal(mount.findAll('select').length, 0, 'no price-book menu on the list');
+  assert.equal(mount.findAll('button').length, 0, 'no create button on the list');
+  assert.ok(!mount.textContent.includes('ID offerta'), 'no «ID offerta» placeholder');
+  assert.ok(mount.textContent.includes('si creano dall’offerta'), 'the list says where quotes are created');
+});
+
+test('47b89e19: each row shows stato, importo and the linked offer like the offer page', async () => {
+  const { mount, render } = listView({
+    opportunities: [{ id: 'opp1', name: 'Pacchetto 10 PT' }],
+  });
+  await render();
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.equal(rows.length, 1, 'one row per quote');
+  const row = rows[0];
+  assert.equal(row.getAttribute('data-quote'), 'q1');
+  const pill = row.findAll('span').find((node) => String(node.getAttribute('class') ?? '').startsWith('quote-status '));
+  assert.ok(pill, 'the stato pill is there');
+  assert.equal(pill.textContent, 'Bozza', 'the stato reads Italian, never the raw status');
+  assert.ok(row.textContent.includes('5.000 €'), 'the importo is the server total');
+  assert.ok(row.textContent.includes('Offerta:'), 'the linked offer is named');
+  assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
+  const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
+  assert.ok(open, 'the open link uses the offer-page component');
+  assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
+  assert.equal(opens.length, 1, 'one quote link per row');
+  const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
+  assert.equal(offerLinks.length, 1, 'one offer link per row, with its own class');
+  assert.equal(offerLinks[0].getAttribute('href'), '#/offerte/opp1');
+  assert.equal(offerLinks[0].textContent, 'Pacchetto 10 PT');
+});
+
+test('47b89e19: a linked offer missing from the map reads as plain text, without a link', async () => {
+  const { mount, render } = listView({ opportunities: [] });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.ok(row.textContent.includes('Offerta non leggibile'), 'no link to an offer that may not exist');
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link').length, 0);
+  assert.equal(row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open').length, 1, 'the quote still opens');
+});
+
+test('47b89e19: opening a quote from the list stays in the router, without a reload', async () => {
+  const { mount, navigated, render } = listView({
+    opportunities: [{ id: 'opp1', name: 'Pacchetto 10 PT' }],
+  });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  for (const link of row.findAll('a')) {
+    let prevented = false;
+    link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
+    assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
+  }
+  assert.deepEqual(navigated, ['#/quotes/q1', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
+});
+
+test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', async () => {
+  const { mount, render } = listView({ failOffers: true });
+  await render();
+  assert.ok(mount.textContent.includes('Offerte collegate non leggibili'), 'the missing offers read plainly');
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.equal(rows.length, 1, 'righe, stato and importo still render');
+  assert.ok(rows[0].textContent.includes('Bozza'), 'the stato stays');
+  assert.ok(rows[0].textContent.includes('5.000 €'), 'the importo stays');
+});
+
+test('47b89e19: the detail links stay in the router too (offer, scheda, version)', async () => {
+  const mount = createMount();
+  const navigated = [];
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [
+      { id: 'v1', quoteId: 'q1', versionNumber: 1, policy: 'standard-sales-discount', policyVersion: 1, policyDecision: 'auto_approve', decisionReason: null, totalsJson: JSON.stringify(TOTALS), currency: 'EUR' },
+    ],
+    opportunityRecord: {
+      id: 'o1', companyId: 'co1', companyName: 'Palestra Esempio',
+      contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT', stage: 'proposal',
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client, navigate: (hash) => navigated.push(hash) }).renderQuoteDetail('q1');
+  const links = mount.findAll('a').filter((node) =>
+    ['quote-offer-link', 'quote-back', 'quote-version-open'].includes(node.getAttribute('class')));
+  assert.equal(links.length, 3, 'offer, back and version links are all present');
+  for (const link of links) {
+    let prevented = false;
+    link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
+    assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
+  }
+  assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
+    'every link goes through navigate(), setting only the hash');
+});
+
+test('d56122ee2844: the detail paints a skeleton at once and reads in parallel', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let active = 0;
+  let peak = 0;
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return await inner.request(path, options);
+      } finally {
+        active--;
+      }
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  const pending = view.renderQuoteDetail('q1');
+  const bars = mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true');
+  assert.ok(bars.length > 0, 'skeleton bars paint before any read lands');
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced once to assistive tech');
+  await pending;
+  assert.ok(peak >= 2, `reads overlap instead of queuing (peak ${peak})`);
+  assert.ok(!mount.textContent.includes('Carico il preventivo'), 'the skeleton is replaced by the content');
+  assert.ok(mount.textContent.includes('Cosa include'), 'lines paint');
+  assert.ok(mount.textContent.includes('Totale'), 'totals paint');
+});
+
+test('d56122ee2844: after adding a line the old page stays while the rewrite reads', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let slow = false;
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      if (slow && (options.method ?? 'GET') === 'GET') {
+        return new Promise((resolve) => setTimeout(() => resolve(inner.request(path, options)), 30));
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the line is on the page');
+  slow = true;
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  const reload = addPanel.__add();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the old page stays visible while the rewrite reads');
+  await reload;
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the new paint lands');
+  assert.ok(client.calls.some((call) => call.method === 'POST'), 'the write went out');
+});
+
+test('d56122ee2844 review giro 1 P1: router entry on a pre-painted mount still paints the skeleton', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // The router pre-paints its generic loading line before the view runs
+  // (paintScreenLoading): the mount is never empty on a real navigation.
+  const loading = doc.createElement('p');
+  loading.setAttribute('class', 'muted');
+  loading.textContent = 'Carico …';
+  mount.appendChild(loading);
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => setTimeout(() => {
+        inner.request(path, options).then(resolve, reject);
+      }, 20));
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  const pending = view.renderQuoteDetail('q1');
+  const bars = mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true');
+  assert.ok(bars.length > 0, 'the skeleton replaces the router loading line at once');
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced once to assistive tech');
+  await pending;
+  assert.ok(mount.textContent.includes('Cosa include'), 'lines paint');
+});
+
+test('d56122ee2844 review giro 1 P1: a failed read after navigation paints the honest error, never a hanging line', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const loading = doc.createElement('p');
+  loading.setAttribute('class', 'muted');
+  loading.textContent = 'Carico …';
+  mount.appendChild(loading);
+  const client = {
+    async request() { throw Object.assign(new Error('Service Unavailable'), { status: 500 }); },
+  };
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Preventivo non leggibile'), 'the honest error replaces the loading line');
+  assert.ok(!mount.textContent.includes('Carico …'), 'no loading line hangs forever');
+});
+
+test('d56122ee2844 review giro 1 P1: a failed re-read keeps the painted page with the honest message', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let failReads = false;
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (failReads && (options.method ?? 'GET') === 'GET') {
+        throw Object.assign(new Error('boom'), { status: 500 });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the detail painted');
+  failReads = true;
+  // Arbitrato giro 2: la rilettura keep:true fallita disegna l'errore E
+  // rilancia, così il chiamante (withBusy) riattiva i controlli.
+  await assert.rejects(view.renderQuoteDetail('q1', { keep: true }), 'the failed keep re-read reports to its caller');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the old page stays');
+  const errorLine = mount.querySelector('.field-error');
+  assert.ok(errorLine, 'the painted page keeps its error line');
+  assert.ok(errorLine.textContent.includes('Preventivo non leggibile'), 'the honest message lands on the existing page');
+});
+
+test('d56122ee2844 arbitrato giro 2 P1: a failed keep re-read re-enables every edit control', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let failReads = false;
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (failReads && (options.method ?? 'GET') === 'GET') {
+        throw Object.assign(new Error('boom'), { status: 500 });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the detail painted');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  assert.ok(addPanel && typeof addPanel.__add === 'function', 'the add-line hook is exposed');
+  failReads = true;
+  await addPanel.__add();
+  const errorLine = mount.querySelector('.field-error');
+  assert.ok(errorLine && errorLine.textContent.includes('Preventivo non leggibile'), 'the honest message lands on the existing page');
+  const buttons = mount.findAll('button');
+  assert.ok(buttons.length > 0, 'edit controls exist');
+  for (const button of buttons) {
+    assert.equal(button.disabled, false, `control «${button.textContent}» is enabled again`);
+  }
 });

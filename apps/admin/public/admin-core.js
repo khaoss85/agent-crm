@@ -606,12 +606,37 @@ export function parseEuroToCents(raw) {
 }
 
 /**
+ * Whether a currency code is a well-formed ISO code this runtime lists
+ * (Intl.supportedValuesOf when present; the shape alone on older ones).
+ * A malformed or unknown code never reaches the screen raw — the amount
+ * reads bare instead (review #761, backlog:93e26f3d2cdc).
+ * @param {string} code already trimmed and upper-cased
+ */
+let KNOWN_CURRENCIES;
+function isKnownCurrency(code) {
+  if (!/^[A-Z]{3}$/.test(code)) return false;
+  if (KNOWN_CURRENCIES === undefined) {
+    try {
+      KNOWN_CURRENCIES = typeof Intl.supportedValuesOf === 'function' ? new Set(Intl.supportedValuesOf('currency')) : null;
+    } catch {
+      KNOWN_CURRENCIES = null;
+    }
+  }
+  return KNOWN_CURRENCIES === null || KNOWN_CURRENCIES.has(code);
+}
+
+/**
  * Amount for the Italian screens, the way the prototype writes it:
  * `27.120 €`, `1.200,50 €`, `25 USD`. Dot groups thousands, comma marks the
  * cents and the cents show only when they are not zero; EUR is written `€`,
- * every other currency keeps its code. Computed, never browser-locale, so
- * tests and servers agree. Same 1/100-unit contract as formatMinorUnits,
- * which stays the exact machine form for exports and logs.
+ * every other KNOWN currency keeps its code. Anything else (missing,
+ * malformed like 'EURO'/42/{}, or unknown like 'XYZ') reads the bare
+ * grouped amount — never a presumed €, never the raw code repeated, never
+ * a throw (review #761, backlog:93e26f3d2cdc). The code is trimmed and
+ * upper-cased, so 'eur' is euros; a non-string code is missing, never
+ * String(currency). Computed, never browser-locale, so tests and servers
+ * agree. Same 1/100-unit contract as formatMinorUnits, which stays the
+ * exact machine form for exports and logs.
  *
  * @param {number} minorUnits @param {string} currency
  */
@@ -622,9 +647,10 @@ export function formatAmount(minorUnits, currency) {
   const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   const cents = abs % 100;
   const number = cents === 0 ? whole : `${whole},${String(cents).padStart(2, '0')}`;
-  const code = String(currency ?? '').trim();
-  const unit = code === 'EUR' ? '€' : code;
-  return `${sign}${number} ${unit}`.trim();
+  const code = typeof currency === 'string' ? currency.trim().toUpperCase() : '';
+  if (code === 'EUR') return `${sign}${number} €`;
+  if (code !== '' && isKnownCurrency(code)) return `${sign}${number} ${code}`;
+  return `${sign}${number}`;
 }
 
 /**

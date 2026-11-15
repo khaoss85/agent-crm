@@ -104,13 +104,16 @@ for (const [label, options] of [
   ['a roster that does not name the writer', { roster: { items: [] } }],
   ['a roster that fails', { rosterFails: true }],
 ]) {
-  test(`6c40dcfaeb3f: with ${label} the note reads «dal team» once the roster has answered`, async () => {
+  test(`3f3c143b: with ${label} the note stays unnamed once the roster has answered`, async () => {
     const fake = client(options);
     const { mount } = await open(fake);
     assert.ok(!timelineText(mount).includes('dal team'), 'not before the answer');
     fake.release();
     await flush();
-    assert.ok(timelineText(mount).includes('Nota · dal team'), timelineText(mount));
+    const text = timelineText(mount);
+    assert.ok(!text.includes('dal team'), text);
+    assert.ok(!text.includes('utente'), 'nor «utente»');
+    assert.ok(/Nota · \d{1,2}:\d{2}/.test(text), 'the head names no author');
     assert.equal(pending(mount).length, 0);
   });
 }
@@ -121,7 +124,7 @@ test('6c40dcfaeb3f: a note named by the API, or with no writer at all, never wai
   const { mount } = await open(client({ items: [named, anonymous] }));
   const text = timelineText(mount);
   assert.ok(text.includes('Nota · da Operatrice Uno'), text);
-  assert.ok(text.includes('Nota · dal team'), 'no writer on record: «dal team» at once');
+  assert.ok(!text.includes('dal team'), 'no writer on record: unnamed at once, never «dal team»');
   assert.equal(pending(mount).length, 0);
 });
 

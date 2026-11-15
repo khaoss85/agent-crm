@@ -204,6 +204,7 @@ export const CUSTOMER_COLUMNS = Object.freeze([
   { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
   { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
   { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+  { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
   { id: 'email', label: 'Email', always: false, ai: false, def: false },
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
@@ -586,7 +587,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, appointmentBySubject?: Map<string, any>, appointmentsComplete?: boolean, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
  *   customFields entries are shaped `{ key, label, type, options, value, updatedAt, updatedBy }`
  *   (backlog:434cc39a): every defined field reads on every row — the list
  *   columns — with a null value when never set.
@@ -596,6 +597,9 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   exact union. Absent means exact, so hand-built reads stay honest.
  *   activity entries name `{ occurredAt, channel, text }`: `text` is the
  *   latest message body (a call carries none, so it stays null there).
+ *   appointment entries name `{ startsAt, endsAt, status }`: the next live
+ *   one shapes `nextAppointment`, with `appointmentsComplete` telling exact
+ *   from partial.
  *   observed channels name the message channels read for this customer in
  *   the same scan (backlog:826e377c), already on the canale-filter
  *   vocabulary (CUSTOMER_CHANNELS, see operations.js).
@@ -690,8 +694,24 @@ export function shapeCustomerRow(subject, reads = {}) {
     awaitingText: awaiting === null ? null : previewLastContactText(awaiting.text, awaiting.subject),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
+    // backlog:1adf95307b31: valute miste — i subtotali per valuta, ognuno con
+    // il suo codice; null quando la riga ha una sola valuta (o nessuna).
+    offerParts: Array.isArray(offer?.parts)
+      ? Object.freeze(offer.parts.map((part) => Object.freeze({
+        valueCents: Number.isSafeInteger(part?.valueCents) ? part.valueCents : null,
+        currency: typeof part?.currency === 'string' ? part.currency : null,
+      })))
+      : null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,
     renewalWithinDays: reads.renewalBySubject?.get(key) === true,
+    // backlog:2262771da550 — the row's calendar state: the next live
+    // appointment (soonest start at or after now, terminal states excluded),
+    // null when none is booked. calendarComplete is false when the
+    // appointment scan was unreadable or partial: without it the cell would
+    // read an exact «nessuno» over a hole.
+    nextAppointment: reads.appointmentBySubject?.get(key) ?? null,
+    calendarComplete: reads.appointmentBySubject !== undefined
+      && reads.appointmentsComplete !== false,
     budget: Object.freeze({
       available: budget.available === true,
       value: budget.available === true ? (budget.value ?? null) : null,

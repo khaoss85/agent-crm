@@ -71,7 +71,7 @@ test('portable dashboard without data answers 200 with an empty model, never 500
   assert.equal(model.currency, 'EUR');
   assert.equal(model.kpis.length, 5);
   for (const kpi of model.kpis) {
-    assert.match(kpi.display, /^(0|0,00 €|n\.d\.)/, `kpi ${kpi.id} reads zero, got ${kpi.display}`);
+    assert.match(kpi.display, /^(0 €|0|n\.d\.)/, `kpi ${kpi.id} reads zero, got ${kpi.display}`);
   }
   assert.deepEqual(model.insights, [
     { id: 'no-data', text: 'Ancora nessun preventivo in questa vista: i grafici si riempiono da soli.' },

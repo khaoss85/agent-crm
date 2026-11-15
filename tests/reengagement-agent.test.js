@@ -6,6 +6,7 @@ import {
   REENGAGEMENT_DEFAULT_QUIET_DAYS,
   REENGAGEMENT_INBOUND_CHANNELS,
   REENGAGEMENT_PERMISSION,
+  REENGAGEMENT_SKIP_REASONS,
   buildReengagementIntent,
   buildReengagementProposal,
   decideReengagementRoute,
@@ -163,6 +164,41 @@ test('facebook is windowed too: the fallback skips it for a channel with no obse
   assert.deepEqual(reasons, { 'cus-fb-only': 'no-sendable-route' });
 });
 
+test('channels that carry no message are never a free-text route, arrival or fallback', async () => {
+  const { proposals, skipped } = await scanReengagement({
+    customers: [
+      customer({
+        customerId: 'cus-stale-stripe-only', windowState: 'needs-template',
+        connectedChannels: ['whatsapp', 'stripe', 'calendar', 'site-form'],
+      }),
+      customer({
+        customerId: 'cus-stale-stripe-mail', windowState: 'needs-template',
+        connectedChannels: ['stripe', 'email'],
+      }),
+      customer({
+        customerId: 'cus-stale-stripe-tg', windowState: 'needs-template',
+        connectedChannels: ['stripe', 'telegram'],
+      }),
+    ],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: fakeDraftText(),
+  });
+  assert.deepEqual(proposals.map((entry) => [entry.customerRef.customerId, entry.channel]), [
+    ['cus-stale-stripe-mail', 'email'],
+    ['cus-stale-stripe-tg', 'telegram'],
+  ]);
+  const reasons = Object.fromEntries(skipped.map((entry) => [entry.customerId, entry.reason]));
+  assert.deepEqual(reasons, { 'cus-stale-stripe-only': 'no-sendable-route' });
+  for (const slug of ['stripe', 'calendar', 'site-form']) {
+    const route = decideReengagementRoute({
+      ...customer({}), channel: slug, windowState: 'in-window', connectedChannels: [slug],
+    });
+    assert.equal(route.kind, 'none');
+    assert.equal(route.reason, 'no-sendable-route');
+  }
+});
+
 test('an unusable draft skips instead of proposing a free-text knock with no text', async () => {
   for (const [name, draft] of [['null', null], ['empty-object', {}], ['blank', { text: '   ' }]]) {
     const { proposals, skipped } = await scanReengagement({
@@ -235,6 +271,37 @@ test('a throwing draftText skips that customer instead of aborting the sweep', a
   assert.deepEqual(skipped.map((entry) => [entry.customerId, entry.reason]), [
     ['cus-draft-boom', 'no-draft'],
   ]);
+});
+
+test('a refused draft records its cause, never a silent no-draft', async () => {
+  const throwing = async () => { throw new Error('LLM timeout'); };
+  const { proposals, skipped } = await scanReengagement({
+    customers: [customer({ customerId: 'cus-draft-timeout' })],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: throwing,
+  });
+  assert.deepEqual(proposals, []);
+  assert.deepEqual(skipped, [
+    { customerId: 'cus-draft-timeout', reason: 'no-draft', cause: 'LLM timeout' },
+  ]);
+  const blank = await scanReengagement({
+    customers: [customer({ customerId: 'cus-draft-blank' })],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: async () => ({ text: '   ' }),
+  });
+  assert.deepEqual(blank.proposals, []);
+  assert.deepEqual(blank.skipped, [
+    { customerId: 'cus-draft-blank', reason: 'no-draft', cause: 'empty-text' },
+  ]);
+  const thrown = await scanReengagement({
+    customers: [customer({ customerId: 'cus-draft-string' })],
+    quietDays: 7,
+    nowMs: NOW_MS,
+    draftText: async () => { throw 'provider 503'; },
+  });
+  assert.equal(thrown.skipped[0].cause, 'provider 503');
 });
 
 test('unknown consent skips fail-closed and malformed customers refuse the scan', async () => {
@@ -328,4 +395,19 @@ test('selection answers every quiet state: replied, recent, unsupported and miss
   assert.equal(recent.skip, 'recent');
   const unsupported = selectReengagementCandidate({ ...customer({}), channel: 'sms' }, base);
   assert.equal(unsupported.skip, 'unsupported-channel');
+});
+
+test('no-inbound is not a skip reason: a missing inbound is refused at the edge', async () => {
+  assert.ok(!REENGAGEMENT_SKIP_REASONS.includes('no-inbound'));
+  const { lastInboundAt, ...withoutInbound } = customer({});
+  assert.ok(typeof lastInboundAt === 'string');
+  await assert.rejects(
+    scanReengagement({
+      customers: [withoutInbound],
+      quietDays: 7,
+      nowMs: NOW_MS,
+      draftText: fakeDraftText(),
+    }),
+    /lastInboundAt/,
+  );
 });

@@ -595,6 +595,40 @@ test('flipping a switch confirms first, then runs set-permission', async () => {
   assert.equal(toggles.find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione')?.getAttribute('aria-checked'), 'true');
 });
 
+// backlog 3136d15da7bd: a confirmed flip wakes onSwitches at once, so the
+// top AI bar re-reads the master instead of keeping yesterday's words.
+test('a confirmed master flip tells onSwitches, never before the confirm', async () => {
+  const calls = [];
+  const overrides = [];
+  let switched = 0;
+  const docNode = createFakeDocument();
+  const mount = createMount();
+  const v = createSpaziAccessiView({
+    doc: docNode,
+    mount,
+    client: stubClient({ calls, overrides }),
+    navigate: () => {},
+    spaces: () => [{ id: SPACE, name: 'Negozio', initials: 'NE' }],
+    activeSpaceId: () => SPACE,
+    onPickSpace: () => {},
+    onSwitches: () => { switched += 1; },
+    toast: () => {},
+  });
+  await v.render();
+  await flush();
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'AI dello spazio');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Spegnere/, 'the master flip asks before writing');
+  assert.equal(switched, 0, 'no wake before the confirm');
+  const confirm = mount.findAll('button').find((node) => node.textContent === 'Conferma');
+  await confirm.listeners.click[0]();
+  await flush(20);
+  const flip = calls.find((call) => call.path === '/api/space-permissions/set-permission');
+  assert.deepEqual(flip?.body, { spaceId: SPACE, permission: 'ai-enabled', enabled: 'off' });
+  assert.equal(switched, 1, 'one wake after the confirmed flip');
+});
+
 test('a refused flip renders the server refusal and keeps the screen usable', async () => {
   const refusing = {
     async request(path, options = {}) {
@@ -1931,4 +1965,55 @@ test('9d06eb1e174b: with the session unknown no row offers «Rimuovi»; known, o
   await flush();
   assert.equal(removes(mount).length, 3, 'every other row offers «Rimuovi», never the own one');
   assert.doesNotMatch(text(mount), /Rimuovi non è disponibile/);
+});
+
+// backlog:2de01913d276 (verifica browser rilascio 34, 13/11: api/profile
+// 7,6 s, pagina completa in 7,1-9,3 s con «Tu: ruolo non riconosciuto»).
+// Repro: prima il rosso — sul codice di prima la pagina aspettava la
+// statistica (connettori, clienti, profilo) prima di dipingere, quindi un
+// profilo lento teneva la pagina incompleta per secondi. Ora i dati
+// dipingono appena le letture veloci atterrano, mentre il profilo è ancora
+// in volo, e la statistica segue al suo atterraggio.
+test('2de01913d276: a slow /api/profile never holds the page: role and team paint first, the statistic follows', async () => {
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const base = stubClient({
+    members,
+    connectorsBySpace: {
+      [SPACE]: [
+        { connectionKey: 'cal-1', channel: 'calendar', account: 'studio@example.test', status: 'active' },
+        { connectionKey: 'wa-1', channel: 'whatsapp', account: '+39 02 1234567', status: 'active' },
+      ],
+    },
+  });
+  let releaseProfile = null;
+  const profileGate = new Promise((resolve) => { releaseProfile = resolve; });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        await profileGate;
+        return { connections: { available: true, items: [] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  const rendering = v.render();
+  await flush(6);
+  // The profile is still out, like the 7,6 s of the 13/11 check: the data
+  // is already on screen and only the statistic waits for it.
+  assert.match(text(mount), /Tu: Titolare/, 'the role paints while the profile is still out');
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'never «ruolo non riconosciuto» for a slow profile');
+  assert.match(text(mount), /Marco/, 'the team paints while the profile is still out');
+  assert.match(text(mount), /Leggo canali e calendario/, 'only the statistic waits for the profile');
+  releaseProfile();
+  await rendering;
+  await flush();
+  assert.doesNotMatch(text(mount), /Leggo canali e calendario/, 'the waiting line lifts when the profile lands');
+  assert.match(text(mount), /canal[ei] .*person[ae] .*client[ei]/, 'the card statistic settles when the profile lands');
+});
+
+test('backlog:3136d15d only a paused child switch reads not-allowed, a busy one keeps the wait cursor', () => {
+  const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
+  assert.doesNotMatch(css, /\.bo-spazi-toggle:disabled\s*,/);
 });

@@ -59,7 +59,8 @@ import { createFakeDocument, createMount } from './helpers/fake-dom.js';
  *
  * DOM tests pin `now` to Friday 2026-10-23 06:00Z: the painted week is the
  * Oct 19–25 fixture week, and 08:00 Rome stays outside the painted hours so
- * no now-line appears (backlog:df55cf25: Sunday no longer opens this week).
+ * no now-line appears (backlog:c51dca86dc66: the opening week holds today
+ * even on the weekend, so Sunday opens this same week).
  */
 
 const WEEK = {
@@ -181,6 +182,16 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
 }
 
 function texts(mount, tag) {
+  // backlog:667f1f1c: 15–30-min blocks paint one compact span
+  // «Titolo, 12:00» instead of a separate time span plus strong title.
+  // Map the compact line back to its title so title assertions keep
+  // reading the block the way they did before the cure.
+  if (tag === 'strong') {
+    const compact = mount.findAll('span')
+      .filter((node) => (node.getAttribute?.('class') ?? '').split(/\s+/).includes('cal-compact'))
+      .map((node) => String(node.textContent ?? '').replace(/, \d{1,2}:\d{2}$/, ''));
+    return mount.findAll(tag).map((node) => node.textContent).concat(compact);
+  }
   return mount.findAll(tag).map((node) => node.textContent);
 }
 
@@ -246,22 +257,40 @@ test('week keys are Monday..Sunday in Rome and the window covers the week', () =
   assert.match(weekLabel(keys) ?? '', /ott/);
 });
 
-// backlog:df55cf25 — on Sunday 2026-11-01 the calendar opened the past
-// work week (Oct 26–30). The opening week is the containing one on work
-// days and the following one on Saturday/Sunday.
-test('opening week is the next one on Saturday and Sunday', () => {
-  // Sunday 2026-11-01 (Rome): the coming Mon..Sun opens, not Oct 26 – Nov 1.
+// backlog:c51dca86dc66 (was df55cf25) — on Sunday 2026-11-01 the calendar
+// used to open the coming week (Nov 2–8). The opening week is the
+// containing one every day, and the painted columns show the current day
+// even on the weekend, so today never vanishes from its own week.
+test('opening week is the containing one on Saturday and Sunday too', () => {
+  // Sunday 2026-11-01 (Rome): Oct 26 – Nov 1 opens, holding today.
   assert.deepEqual(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), [
-    '2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05',
-    '2026-11-06', '2026-11-07', '2026-11-08',
+    '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29',
+    '2026-10-30', '2026-10-31', '2026-11-01',
   ]);
-  // The painted work days are the coming ones, never the past ones.
+  // The painted days are the work days plus today (Sunday).
   assert.deepEqual(
-    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z'))),
-    ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'],
+    displayKeys(openingWeekKeys(new Date('2026-11-01T10:00:00Z')), new Date('2026-11-01T10:00:00Z')),
+    ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-11-01'],
   );
-  // Saturday 2026-10-31 (Rome): same — the Oct 26–30 work days are over.
-  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-11-02');
+  // Saturday 2026-10-31 (Rome): same — the week holds today, not the next one.
+  assert.deepEqual(openingWeekKeys(new Date('2026-10-31T10:00:00Z'))[0], '2026-10-26');
+  assert.deepEqual(
+    displayKeys(openingWeekKeys(new Date('2026-10-31T10:00:00Z')), new Date('2026-10-31T10:00:00Z'))[5],
+    '2026-10-31',
+  );
+});
+
+test('backlog:c51dca86dc66: displayKeys paints Mon..Fri, plus today on the weekend only', () => {
+  const week = ['2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
+  // A Wednesday paints the five work days, no weekend.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-28T10:00:00Z')), week.slice(0, 5));
+  // Saturday paints Mon..Fri plus Saturday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-10-31T10:00:00Z')), [...week.slice(0, 5), '2026-10-31']);
+  // Sunday paints Mon..Fri plus Sunday itself.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-01T10:00:00Z')), [...week.slice(0, 5), '2026-11-01']);
+  // Today outside the loaded week adds nothing.
+  assert.deepEqual(displayKeys(week, new Date('2026-11-04T10:00:00Z')), week.slice(0, 5));
+  assert.deepEqual(displayKeys(null, new Date('2026-11-01T10:00:00Z')), []);
 });
 
 test('opening week is the containing one on work days', () => {
@@ -328,8 +357,8 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(heads[0].textContent.includes('lun 19'), 'C13: the first head reads <ddd> <n>');
   assert.ok(heads[4].textContent.includes('ven 23'), 'C13: five work days, Mon..Fri');
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
-  assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
-  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
+  // backlog:667f1f1c: 30-min blocks read on one compact line «Titolo, 18:00».
+  assert.ok(texts(mount, 'span').some((text) => /taglio/i.test(text) && text.includes('18:00')), `the 30-min block reads compact: ${JSON.stringify(texts(mount, 'span'))}`);
   // Closed rows stay listed with their status, in Italian (C14); a
   // cancelled booking leaves the grid (backlog:5346ab531538).
   assert.ok(texts(mount, 'span').includes('svolto'));
@@ -381,7 +410,7 @@ test('a Saturday booking paints its own column on the same day and time', async 
   assert.ok(heads[5].textContent.includes('sab 24'), `the sixth head is Saturday: ${heads[5].textContent}`);
   const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
   assert.equal(days.length, 6);
-  assert.ok(texts(mount, 'span').some((text) => text === '10:00–10:30'), 'the Saturday block keeps its Rome time');
+  assert.ok(texts(mount, 'span').some((text) => /taglio/i.test(text) && text.includes('10:00')), 'the Saturday block keeps its Rome time on its compact line');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -1279,7 +1308,8 @@ test('the calendario view renders no raw control', async () => {
 // Mon..Fri work week against an 09:00–18:00 hour axis.
 test('the time grid shows five work days against the 09:00–18:00 axis', async () => {
   assert.deepEqual(
-    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25']),
+    displayKeys(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25'],
+      new Date('2026-10-21T10:00:00Z')),
     ['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23'],
   );
   assert.equal(dayHead('2026-10-19'), 'lun 19');
@@ -1307,8 +1337,8 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   const taglio = blocks.find((node) => /taglio/i.test(node.textContent));
   assert.ok(taglio.getAttribute('style').includes('grid-row: 36 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
   // The barba row carries hostile notes, which become its title (inert text):
-  // find it by its Rome time, Fri 11:00–11:30.
-  const barba = blocks.find((node) => node.textContent.includes('11:00–11:30'));
+  // find it by its Rome time, Fri 11:00–11:30 (compact line shows the start).
+  const barba = blocks.find((node) => node.textContent.includes('11:00'));
   assert.ok(barba, 'the barba block paints with its Rome time');
   assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
   // Colour and initials come from the opaque member id, never a name.
@@ -1410,8 +1440,8 @@ test('the now-line paints on the current day inside painted hours', async () => 
   const sunday = await load(() => new Date('2026-10-25T10:00:00Z'));
   assert.equal(
     sunday.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-now')).length,
-    0,
-    'no now-line when today is outside the work week',
+    1,
+    'backlog:c51dca86dc66: Sunday paints its own column, so the now-line crosses today',
   );
   const night = await load(() => new Date('2026-10-21T03:00:00Z'));
   assert.equal(
@@ -2087,12 +2117,32 @@ test('personRows falls back to the mailbox before typed words', () => {
   assert.deepEqual(personRows(['marco'], [], null), [
     {
       ids: ['marco'], id: 'marco', name: null, label: 'Marco',
+      email: null, sub: null,
       active: true, listed: true,
       color: memberColorIndex('marco'), initials: 'MA',
     },
   ], 'no member list: named rows keep the typed words, never invented');
   assert.deepEqual(personRows([], [], []), [], 'no names and no roster: no rows');
   assert.deepEqual(personRows(null, undefined, 'nope'), [], 'non-lists stay empty');
+});
+
+// backlog:c0b718741f0f — every Team row carries the small sub-line like Spazi
+// e accessi: the mailbox when it adds to the painted name, else the access
+// kind, else nothing.
+test('personRows carries the small sub-line: mailbox or access kind', () => {
+  const withMail = personRows(['github|1'], [], [
+    { subject: 'github|1', role: 'owner', displayName: 'Dan', email: 'dan@example.com' },
+  ]);
+  assert.equal(withMail[0].sub, 'dan@example.com', 'the mailbox paints under the name');
+  assert.equal(withMail[0].email, 'dan@example.com');
+  const mailLabel = personRows([], [], [{ subject: 'x|1', role: 'member', email: 'sara@example.com' }]);
+  assert.equal(mailLabel[0].label, 'sara@example.com');
+  assert.equal(mailLabel[0].sub, null, 'no repeat when the label already is the mailbox');
+  const access = personRows(['google|1049abc'], [], [{ subject: 'google|1049abc', role: 'owner' }]);
+  assert.equal(access[0].label, 'Membro del team');
+  assert.equal(access[0].sub, 'Accesso Google', 'the access kind stands in without a mailbox');
+  const typed = personRows(['marco'], [], null);
+  assert.equal(typed[0].sub, null, 'typed words alone paint no sub-line');
 });
 
 // backlog:df55cf25 (review P1 on #549, owner 04/11): a shared display name
@@ -2298,7 +2348,9 @@ test('the Team card merges one human across roster subjects', async () => {
   const painted = texts(mount, 'button').join('\n') + texts(mount, 'span').join('\n') + texts(mount, 'p').join('\n');
   assert.ok(!painted.includes('github|48571113'), 'no technical subject id on screen');
   assert.ok(!painted.includes('google|1049abc'), 'no technical subject id on screen');
-  assert.ok(!painted.includes('dan@example.com'), 'the mailbox is one person, not a second row');
+  // backlog:c0b718741f0f — the mailbox paints once, as the small sub-line of
+  // the single row: one person, not a second row.
+  assert.ok(teamToggles(mount)[0].textContent.includes('dan@example.com'), 'the mailbox is the sub-line of the one row');
   mount.findAll('button').find((node) => /taglio/i.test(node.textContent)).dispatch('click');
   const card = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'event-detail');
   assert.ok(card, 'the detail card opens');
@@ -4002,8 +4054,8 @@ test('the manual form offers the catalog menu with the default and price prefill
   assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
   assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
   // backlog:c2f21b5debdd: the prices read as Italian money, never «45.00 €».
-  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
-  assert.ok(labels.includes('Lezione prova · 15,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45 €'), labels.join(' | '));
+  assert.ok(labels.includes('Lezione prova · 15 €'), labels.join(' | '));
   assert.ok(!labels.some((text) => /\d\.\d{2} €/.test(text)), 'no dotted decimals in the menu');
   // backlog:6e6750ff8163: with two services nothing is preselected — the
   // first catalog entry was a test product on a real listino.
@@ -5093,13 +5145,13 @@ test('a block with a server-attached customer label reads service · customer wi
   assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
 });
 
-test('c2f21b5d: a service option reads its price as Italian money', () => {
-  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1,00 €');
-  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080,00 €');
+test('c2f21b5d: a service option reads its price as Italian money (single shape, backlog:93e26f3d2cdc)', () => {
+  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1 €');
+  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080 €');
   assert.equal(serviceOptionLabel({ name: 'Pacchetto', priceCents: 123456789 }), 'Pacchetto · 1.234.567,89 €');
   assert.equal(serviceOptionLabel({ name: 'Dollari', priceCents: 100, currency: 'USD' }), 'Dollari', 'never a currency the menu does not book');
   assert.equal(serviceOptionLabel({ name: 'Strano', priceCents: 100, currency: 'XYZ!' }), 'Strano', 'an unknown code never throws');
-  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0 €');
   assert.equal(serviceOptionLabel({ name: 'Senza prezzo', priceCents: 1.5 }), 'Senza prezzo');
 });
 
@@ -5114,8 +5166,8 @@ test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian
   await view.render();
   for (let round = 0; round < 9; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
-  assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
-  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Pacchetto annuale · 1.080 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45 €'), labels.join(' | '));
 });
 
 // Verifica 12/11: «È disponibile una nuova versione · Ricarica» answered
