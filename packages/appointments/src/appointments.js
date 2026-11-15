@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { expandRecurrence, validateRecurrence } from './recurrence.js';
+import { expandRecurrence, recurrenceToRRule, validateRecurrence } from './recurrence.js';
 import {
   ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -852,19 +852,67 @@ export async function seriesScopeRows(appointments, row, scope) {
 }
 
 /**
- * Series scope on a Google-linked series (backlog:573a1e85942f): a series the
- * calendar edge knows moves as one Google event — «solo questo» and «questo e
- * i successivi» would move the grid while Google keeps the old rule, so they
- * are refused before any write and only «tutti» stays. The guard keys on the
- * SAVED row (`seriesKey`) and the composed calendar edge, never on a request
- * `calendar` field the first-party UI never sends — otherwise it is dead code
- * on the real path. Without the edge every scope works as before.
- * Per-occurrence Google exceptions (EXDATE/UNTIL) are item 6acf0a73bfc3: until
- * then the refusal is the fail-closed answer, never a silent divergence.
+ * Series scope on a Google-linked series (backlog:6acf0a73bfc3): a series the
+ * calendar edge knows moves as one Google event — «solo questo» appends one
+ * `EXDATE:` to the master (plus a standalone event when the occurrence moved
+ * slot), «questo e i successivi» closes the master with `UNTIL:` and opens
+ * the moved tail as its own series. The converge runs through the composed
+ * `calendarSync.pushSeriesScope` handle BEFORE the first local write: a
+ * Google refusal throws and the grid never changes, so the two cannot
+ * diverge. The handle resolves the calendar from its own link on the head
+ * row, so the request needs no `calendar` field the first-party UI never
+ * sends; the link-absent series was never exported and stays local-only.
+ * Without the edge every scope works as before. Never a 409 on this path:
+ * a Google failure answers 502 with the provider code, never a conflict.
  */
-function googleLinkedSeriesScopeRefused(calendarSync, row, scope) {
+function googleSeriesScopeEdge(calendarSync, row, scope) {
   const edge = calendarSync != null && typeof calendarSync.pushAppointment === 'function';
-  return edge && Boolean(row?.seriesKey) && scope !== 'all';
+  return edge && Boolean(row?.seriesKey) && scope !== 'all' ? calendarSync : null;
+}
+
+async function convergeGoogleSeriesScope(calendarSync, plan) {
+  if (typeof calendarSync?.pushSeriesScope !== 'function') {
+    throw new AppError(
+      'Questa serie è collegata al calendario ma il sistema non sa cambiare le serie collegate: '
+      + 'componi la spinta delle serie prima di toccare questa serie.',
+      { code: 'APPOINTMENTS_CALENDAR_UNAVAILABLE', status: 500 },
+    );
+  }
+  try {
+    return await calendarSync.pushSeriesScope(plan.headSourceKey, plan);
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE') throw error;
+    const providerCode = typeof error?.code === 'string' && error.code !== ''
+      ? error.code
+      : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+    throw new AppError(
+      `Google ha rifiutato la modifica della serie (${providerCode}): la griglia non è cambiata. Riprova.`,
+      { code: 'APPOINTMENTS_SERIES_SYNC_FAILED', status: 502, details: { providerCode } },
+    );
+  }
+}
+
+async function seriesHeadSourceKey(appointments, seriesKey, fallbackRow) {
+  if (typeof appointments?.listWhere !== 'function') return fallbackRow?.sourceKey ?? null;
+  const siblings = await appointments.listWhere({ seriesKey });
+  const head = (Array.isArray(siblings) ? siblings : []).find(
+    (row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0'),
+  ) ?? null;
+  return (head && typeof head.sourceKey === 'string' ? head.sourceKey : null)
+    ?? fallbackRow?.sourceKey ?? null;
+}
+
+function tailRuleLinesFor(row, tailCount, newStartsAtIso) {
+  let rule = null;
+  try {
+    rule = JSON.parse(String(row?.recurrenceRule ?? ''));
+  } catch {
+    rule = null;
+  }
+  const valid = validateRecurrence(rule);
+  if (valid === null) return null;
+  const tail = { ...valid, ...(valid.count === null ? {} : { count: tailCount }) };
+  return recurrenceToRRule(tail, newStartsAtIso ?? row?.startsAt ?? null);
 }
 
 /**
@@ -1682,17 +1730,10 @@ export async function rescheduleAppointment(context, request) {
       field: 'scope',
     });
   }
-  // A series linked to Google moves as one event: «solo questo» and «questo
-  // e i successivi» would move the grid while Google keeps the old rule (the
-  // push through the head is a noop), so they are refused before any write.
-  // «Tutti» stays as it is. Per-occurrence Google exceptions (EXDATE/UNTIL)
-  // are item 6acf0a73bfc3, not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
-    throw new AppError(
-      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
-      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
-    );
-  }
+  // A series linked to Google converges through the calendar edge inside the
+  // critical section below, before the first write (backlog:6acf0a73bfc3):
+  // Google first, then the grid — never the grid alone.
+  const googleScope = googleSeriesScopeEdge(context?.calendarSync, first, scope);
   const runInTransaction = bookingTransaction(appointments);
   const critical = async () => {
     const current = await lookup();
@@ -1787,6 +1828,20 @@ export async function rescheduleAppointment(context, request) {
       const held = await appointments.listWhere({ teamMemberId: current.teamMemberId });
       const singleBlocks = await ownerBlocksFor(context.calendarSync, current.teamMemberId, startsAt.iso, endsAt.iso);
       checkSlotFree([...held, ...singleBlocks], current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
+      // Google first: the EXDATE (plus the moved standalone event) lands
+      // before the row moves, so a Google refusal leaves the grid untouched.
+      if (googleScope !== null) {
+        await convergeGoogleSeriesScope(googleScope, {
+          headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
+          spaceId: record.spaceId,
+          actor: who,
+          scope: 'single',
+          occurrenceStartsAt: current.startsAt,
+          movedStartsAt: startsAt.iso,
+          movedEndsAt: endsAt.iso,
+          movedSourceKey: current.sourceKey,
+        });
+      }
       return {
         appointment: await appointments.applyManaged(
           current.id,
@@ -1837,6 +1892,31 @@ export async function rescheduleAppointment(context, request) {
         index: plan.position,
         total: targets.length,
         startsAt: plan.nextStartsAt,
+      });
+    }
+    // Google first, «questo e i successivi» only: the old master closes with
+    // UNTIL and the moved tail opens as its own series before any row shifts,
+    // so a Google refusal leaves the grid untouched. «Tutti» still converges
+    // through the post-commit head push, exactly as before. A zero delta
+    // moves nothing, so Google is left alone too.
+    if (scope === 'following' && googleScope !== null && startsAt.ms !== Date.parse(current.startsAt)) {
+      const tailRule = tailRuleLinesFor(current, targets.length, plans[0].nextStartsAt);
+      if (tailRule === null) {
+        throw new AppError(
+          'Questa serie non ha una regola di ricorrenza leggibile: la griglia non è cambiata.',
+          { code: 'APPOINTMENTS_SERIES_INVALID', status: 500 },
+        );
+      }
+      await convergeGoogleSeriesScope(googleScope, {
+        headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
+        spaceId: record.spaceId,
+        actor: who,
+        scope: 'following',
+        scopeStartsAt: targets[0].startsAt,
+        movedStartsAt: plans[0].nextStartsAt,
+        movedEndsAt: plans[0].nextEndsAt,
+        tailRuleLines: [tailRule],
+        tailSourceKey: targets[0].sourceKey,
       });
     }
     const moved = [];
@@ -1997,17 +2077,10 @@ export async function cancelAppointment(context, request) {
       field: 'scope',
     });
   }
-  // A series linked to Google cancels as one event: «solo questo» and «questo
-  // e i successivi» would cancel the grid while Google keeps the old rule
-  // (the push through the head is a noop), so they are refused before any
-  // write. «Tutti» stays as it is. Per-occurrence Google exceptions
-  // (EXDATE/UNTIL) are item 6acf0a73bfc3, not covered here.
-  if (googleLinkedSeriesScopeRefused(context?.calendarSync, first, scope)) {
-    throw new AppError(
-      'Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie',
-      { code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED', status: 409, details: { scope } },
-    );
-  }
+  // A series linked to Google converges through the calendar edge inside the
+  // critical section below, before the first write (backlog:6acf0a73bfc3):
+  // Google first, then the grid — never the grid alone.
+  const googleScope = googleSeriesScopeEdge(context?.calendarSync, first, scope);
   const runInTransaction = bookingTransaction(appointments);
   const advanceOne = async (row) => {
     if (row.status === CANCELLED_STATE) return { row, cancelled: false };
@@ -2068,6 +2141,26 @@ export async function cancelAppointment(context, request) {
           },
         );
       }
+    }
+    // Google first: the EXDATE (single) or the UNTIL close (following) lands
+    // before the first row cancels, so a Google refusal leaves the grid
+    // untouched. «Tutti» still converges through the post-commit head push.
+    if (googleScope !== null) {
+      const plan = scope === 'single'
+        ? {
+          scope: 'single',
+          occurrenceStartsAt: current.startsAt,
+        }
+        : {
+          scope: 'following',
+          scopeStartsAt: scoped[0].startsAt,
+        };
+      await convergeGoogleSeriesScope(googleScope, {
+        ...plan,
+        headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
+        spaceId: record.spaceId,
+        actor: who,
+      });
     }
     const settled = [];
     for (const target of scoped) settled.push(await advanceOne(target));
@@ -2840,11 +2933,28 @@ export async function confirmBooking(context, request) {
   // failure for a booking that exists — so it is answered as data: the same
   // retry (same source key) replays the row and links the event exactly
   // once. Only the provider's code is surfaced, never its text.
+  // A confirmed series lands on Google as one recurring event
+  // (backlog:6acf0a73bfc3): the head carries the RRULE, so the later scoped
+  // changes converge through pushSeriesScope against a real master. A single
+  // booking pushes exactly as before, with no recurrence lines.
+  const seriesHead = confirmedRows.find(
+    (row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0'),
+  ) ?? null;
+  let headRuleLines = null;
+  if (calendarPush !== null && seriesHead !== null && confirmedRows.length > 1) {
+    const rule = validateRecurrence(input?.recurrence ?? null);
+    const rrule = rule === null ? null : recurrenceToRRule(rule, seriesHead.startsAt);
+    if (rrule !== null) headRuleLines = [rrule];
+  }
   let push = null;
   let pushError = null;
   if (calendarPush !== null) {
     try {
-      push = await calendarPush(calendarId, booked.appointment.sourceKey, { spaceId, actor });
+      push = await calendarPush(calendarId, booked.appointment.sourceKey, {
+        spaceId,
+        actor,
+        ...(headRuleLines === null ? {} : { recurrence: headRuleLines }),
+      });
     } catch (error) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code

@@ -888,10 +888,12 @@ export function calendarRefusalText(error) {
   if (code === 'APPOINTMENTS_INVALID_STATE') {
     return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
   }
-  // backlog:573a1e85942f — a Google-linked series moves as one event: only
-  // «tutti» is accepted, so the grid never diverges from Google.
-  if (code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED') {
-    return 'Questa serie è collegata a Google Calendar: da qui si sposta solo «tutti» insieme, così Google resta uguale alla griglia. Scegli «Tutti», oppure sposta l’evento su Google.';
+  // backlog:6acf0a73bfc3 — the scoped Google converge failed before any local
+  // write: the server message already says why in Italian and that the grid
+  // did not change, so it is shown as is (it carries only a provider code,
+  // never secrets or personal data).
+  if (code === 'APPOINTMENTS_SERIES_SYNC_FAILED') {
+    return typeof error?.message === 'string' && error.message !== '' ? error.message : null;
   }
   return null;
 }
@@ -909,9 +911,10 @@ export function cancelRefusalText(error) {
   if (code === 'VALIDATION_ERROR' || error?.status === 400) {
     return 'Il motivo è troppo lungo o contiene caratteri non validi: accorcialo e riprova.';
   }
-  // backlog:573a1e85942f — the cancel twin of the move sentence above.
-  if (code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED') {
-    return 'Questa serie è collegata a Google Calendar: da qui si annulla solo «tutti» insieme, così Google resta uguale alla griglia. Scegli «Tutti», oppure annulla l’evento su Google.';
+  // backlog:6acf0a73bfc3 — the cancel twin of the move sentence above: the
+  // server message already says why in Italian, shown as is.
+  if (code === 'APPOINTMENTS_SERIES_SYNC_FAILED') {
+    return typeof error?.message === 'string' && error.message !== '' ? error.message : null;
   }
   return null;
 }
@@ -3010,6 +3013,9 @@ export function createCalendarioView(deps) {
         : { sourceKey: row.sourceKey, startsAt, endsAt };
       // backlog:573a1e85942f — the scope rides only for a series occurrence.
       if (scope !== null) body.scope = scope;
+      // backlog:6acf0a73bfc3 — the space gates the Google scoped converge, the
+      // same switch every other calendar push answers to.
+      body.spaceId = readSpace();
       const answer = await client.request('/api/appointments/reschedule', { method: 'POST', body });
       const moved = answer?.appointment ?? null;
       if (moved && typeof moved === 'object') {
@@ -3719,6 +3725,8 @@ export function createCalendarioView(deps) {
       // before the toast speaks.
       scope = row?.seriesKey ? (state.cancelScope ?? 'single') : null;
       if (scope !== null) body.scope = scope;
+      // backlog:6acf0a73bfc3 — the space gates the Google scoped converge.
+      body.spaceId = readSpace();
       await client.request('/api/appointments/cancel', { method: 'POST', body });
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {

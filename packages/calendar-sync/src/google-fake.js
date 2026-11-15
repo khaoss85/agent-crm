@@ -311,9 +311,20 @@ export function createFakeGoogleCalendar(options = {}) {
       return snapshot(stored);
     },
 
-    /** Direct read of the live event (what the provider holds right now). */
-    getEvent(calendarId, eventId) {
-      const found = liveEvent(calendar(calendarId), checkEventId(eventId));
+    /**
+     * Direct read of the live event (what the provider holds right now).
+     * The sync engine calls the object form (`{ calendarId, eventId,
+     * secret }`, grant-checked like every other provider call); the
+     * positional form stays for the tests that read the fake directly.
+     */
+    getEvent(calendarIdOrParams, eventId = undefined) {
+      if (calendarIdOrParams !== null && typeof calendarIdOrParams === 'object') {
+        const params = calendarIdOrParams;
+        requireGrant({ secret: params.secret }, 'getEvent');
+        const found = liveEvent(calendar(params.calendarId), checkEventId(params.eventId));
+        return found ? snapshot(found) : null;
+      }
+      const found = liveEvent(calendar(calendarIdOrParams), checkEventId(eventId));
       return found ? snapshot(found) : null;
     },
 

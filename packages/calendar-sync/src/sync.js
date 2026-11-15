@@ -152,6 +152,11 @@ function checkRecurrenceOpt(value, what) {
   return Object.freeze([...value]);
 }
 
+/** One Google instant compact (`20261118T160000Z`), the EXDATE/UNTIL shape. */
+function toGoogleInstant(ms) {
+  return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+}
+
 /** Binding a grant and revoking one are human decisions, like connecting a channel. */
 function requireUserActor(actor, action) {
   if (!actor || typeof actor !== 'object' || actor.type !== 'user') {
@@ -1485,6 +1490,183 @@ export function createCalendarSyncOperations(options = {}) {
       }
       await linkService(context).applyManaged(link.id, { localFingerprint: fingerprint }, { actor: who });
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };
+    },
+
+    /**
+     * Per-occurrence Google convergence of a series (backlog:6acf0a73bfc3):
+     * «solo questo» appends one `EXDATE:` to the series master (plus a
+     * standalone event when the occurrence moved to a new slot), «questo e
+     * i successivi» swaps the `RRULE:` for the same rule closed with
+     * `UNTIL:` just before the scope (plus a new series event when the tail
+     * moved). The caller (appointments) runs this BEFORE its first local
+     * write: a Google refusal throws and the grid never changes, so Google
+     * and the grid cannot diverge. A head with no link was never exported
+     * and answers `local-only`: there is no Google event to converge.
+     * Inserts ride deterministic ids (`<master>-ex-<instant>` /
+     * `<master>-serie-<instant>`), so a retry after a lost answer replays
+     * into the same event instead of duplicating the series.
+     */
+    async pushSeriesScope(headSourceKey, {
+      spaceId, actor, scope, occurrenceStartsAt, movedStartsAt, movedEndsAt,
+      scopeStartsAt, tailRuleLines, movedSourceKey, tailSourceKey,
+    } = {}) {
+      const who = actor ?? defaultActor;
+      if (scope !== 'single' && scope !== 'following') {
+        throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+          'calendar-sync pushSeriesScope needs scope "single" or "following"');
+      }
+      const anchorIso = scope === 'single' ? occurrenceStartsAt : scopeStartsAt;
+      const anchorMs = Date.parse(String(anchorIso ?? ''));
+      if (!Number.isFinite(anchorMs)) {
+        throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+          'calendar-sync pushSeriesScope needs the scope anchor instant (occurrenceStartsAt for single, scopeStartsAt for following)');
+      }
+      let moved = null;
+      if (movedStartsAt !== undefined || movedEndsAt !== undefined) {
+        const startMs = Date.parse(String(movedStartsAt ?? ''));
+        const endMs = Date.parse(String(movedEndsAt ?? ''));
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs a real moved slot (movedStartsAt before movedEndsAt)');
+        }
+        moved = { startsAt: new Date(startMs).toISOString(), endsAt: new Date(endMs).toISOString() };
+      }
+      let tailLines = null;
+      if (scope === 'following' && moved !== null) {
+        tailLines = checkRecurrenceOpt(tailRuleLines, 'pushSeriesScope tail');
+        if (tailLines === null) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs tailRuleLines when a following scope moves');
+        }
+      }
+      const link = await findLinkBySource(headSourceKey);
+      if (!link) {
+        return { status: 'local-only', sourceKey: headSourceKey, reason: 'la serie non è su Google: cambia solo la griglia' };
+      }
+      const calendarId = canonicalCalendarId(link.calendarId);
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      await requireLiveGrant(calendarId, spaceId);
+      for (const fn of ['getEvent', 'patchEvent', 'insertEvent']) {
+        if (typeof provider?.[fn] !== 'function') {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            `il calendario "${calendarId}" è collegato ma il provider non sa cambiare le serie (manca ${fn}): aggiorna il provider prima di toccare una serie collegata`);
+        }
+      }
+      const eventId = rowLinkEventId(link, calendarId);
+      const live = await providerCall(calendarId, 'getEvent', { calendarId, eventId }, GRANT_PURPOSE_WRITE);
+      if (!live || live.status === 'cancelled') {
+        throw syncError('CALENDAR_SYNC_EVENT_UNKNOWN', 404,
+          `l'evento Google della serie non c'è più: ricrealo su Google prima di toccare la serie`);
+      }
+      const lines = checkRecurrenceOpt(
+        Array.isArray(live.recurrence) && live.recurrence.length > 0 ? live.recurrence : null,
+        'pushSeriesScope master',
+      );
+      if (lines === null) {
+        throw syncError('CALENDAR_SYNC_SERIES_NOT_RECURRING', 422,
+          `l'evento Google non è una serie ricorrente: la griglia non è cambiata`);
+      }
+      const subjectOf = async (sourceKey) => {
+        if (typeof sourceKey !== 'string' || sourceKey === '') return null;
+        try {
+          const row = await bookHandle(who).appointmentBySourceKey(sourceKey);
+          if (!row) return null;
+          return `${row.subjectResource ?? ''}:${row.subjectId ?? ''}`;
+        } catch (error) {
+          if (error instanceof NotFoundError) return null;
+          throw error;
+        }
+      };
+      const insertOnce = async ({ id, start, end, recurrence, sourceKey }) => {
+        const subject = await subjectOf(sourceKey);
+        try {
+          await providerCall(calendarId, 'insertEvent', {
+            calendarId,
+            id,
+            summary: typeof live.summary === 'string' ? live.summary : '',
+            description: typeof live.description === 'string' ? live.description : '',
+            start: { dateTime: start },
+            end: { dateTime: end },
+            ...(recurrence === null ? {} : { recurrence }),
+            extendedProperties: {
+              accordoSourceKey: sourceKey,
+              ...(subject === null ? {} : { accordoSubject: subject }),
+            },
+          }, GRANT_PURPOSE_WRITE);
+          return { id, duplicate: false };
+        } catch (error) {
+          // The deterministic id turns a retry into a replay: the event the
+          // lost answer already created reads as converged, never as a second
+          // series. Anything else is still the provider's refusal.
+          if (providerErrorCode(error) === 'GOOGLE_EVENT_CONFLICT') return { id, duplicate: true };
+          throw error;
+        }
+      };
+      if (scope === 'single') {
+        const exdate = `EXDATE:${toGoogleInstant(anchorMs)}`;
+        if (!lines.includes(exdate)) {
+          await providerCall(calendarId, 'patchEvent', {
+            calendarId, eventId, patch: { recurrence: [...lines, exdate] },
+          }, GRANT_PURPOSE_WRITE);
+        }
+        let movedEventId = null;
+        if (moved !== null) {
+          if (typeof movedSourceKey !== 'string' || movedSourceKey === '') {
+            throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+              'calendar-sync pushSeriesScope needs movedSourceKey when a single occurrence moves');
+          }
+          const created = await insertOnce({
+            id: `${eventId}-ex-${toGoogleInstant(anchorMs)}`,
+            start: moved.startsAt,
+            end: moved.endsAt,
+            recurrence: null,
+            sourceKey: movedSourceKey,
+          });
+          movedEventId = created.id;
+        }
+        return Object.freeze({
+          status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-single',
+          ...(movedEventId === null ? {} : { movedEventId }),
+        });
+      }
+      // `following`: the old master keeps every instance before the scope —
+      // UNTIL just under the first in-scope start — and the tail becomes its
+      // own series only when it moved (a cancelled tail simply ends there).
+      const until = toGoogleInstant(anchorMs - 1000);
+      const rruleIndex = lines.findIndex((line) => line.startsWith('RRULE:'));
+      const closed = rruleIndex === -1
+        ? null
+        : `${lines[rruleIndex].replace(/;UNTIL=[^;]*/g, '')};UNTIL=${until}`;
+      if (closed === null) {
+        throw syncError('CALENDAR_SYNC_SERIES_NOT_RECURRING', 422,
+          `l'evento Google non è una serie ricorrente: la griglia non è cambiata`);
+      }
+      if (lines[rruleIndex] !== closed) {
+        const next = [...lines];
+        next[rruleIndex] = closed;
+        await providerCall(calendarId, 'patchEvent', {
+          calendarId, eventId, patch: { recurrence: next },
+        }, GRANT_PURPOSE_WRITE);
+      }
+      let tailEventId = null;
+      if (moved !== null) {
+        if (typeof tailSourceKey !== 'string' || tailSourceKey === '') {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs tailSourceKey when a following scope moves');
+        }
+        const created = await insertOnce({
+          id: `${eventId}-serie-${toGoogleInstant(anchorMs)}`,
+          start: moved.startsAt,
+          end: moved.endsAt,
+          recurrence: tailLines,
+          sourceKey: tailSourceKey,
+        });
+        tailEventId = created.id;
+      }
+      return Object.freeze({
+        status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-following',
+        ...(tailEventId === null ? {} : { tailEventId }),
+      });
     },
 
     /**

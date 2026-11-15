@@ -4,13 +4,13 @@
  *
  * La regola descrive la serie, l'espansione la apre in occorrenze una per
  * una (ognuna controllata sui conflitti con il suo 409 che nomina la
- * data), e recurrenceToRRule è la riga RRULE che descrive la regola
- * (la spinta su Google è una voce a parte). Modifica e annullo con scope
- * (backlog:573a1e85942f: «solo questo / questo e i successivi / tutti»):
- * su una serie locale tutti e tre gli scope spostano o annullano le righe
- * giuste; su una serie collegata a Google solo «tutti» passa, gli altri
- * sono 409 prima di ogni scrittura (le eccezioni EXDATE/UNTIL sono la voce
- * 6acf0a73bfc3, non questa).
+ * data), e recurrenceToRRule è la riga RRULE che descrive la regola.
+ * Modifica e annullo con scope (backlog:6acf0a73bfc3: «solo questo / questo
+ * e i successivi / tutti»): su una serie collegata a Google «solo questo»
+ * aggiunge EXDATE e «questo e i successivi» chiude con UNTIL (più la nuova
+ * serie quando la coda si sposta), sempre su Google prima che sulla griglia;
+ * un rifiuto di Google lascia la griglia intatta con un 502 che nomina il
+ * motivo. Il 409 APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED non esiste più.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -691,20 +691,91 @@ test('la proposta di serie con la testa occupata nomina l’occorrenza come la p
   );
 });
 
-test('serie collegata a Google: solo «tutti» si sposta, single e following sono 409 prima di ogni scrittura (backlog:573a1e85942f)', async () => {
+test('serie collegata a Google: «solo questo» converge Google prima di scrivere (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
   const pushes = [];
+  const scoped = [];
   const calendarSync = {
     async pushAppointment(calendarId, sourceKey) {
       pushes.push(sourceKey);
       return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
     },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
   const headKey = booked.occurrences[0].sourceKey;
   const before = service.rows.map((row) => row.startsAt);
-  // «Solo questo» con calendario: 409, niente scritto, niente spinto.
+  // «Solo questo» con calendario: Google converge prima della scrittura, poi la griglia si muove.
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
+  assert.equal(service.rows[0].startsAt, before[0], 'le altre occorrenze restano ferme');
+  assert.equal(service.rows[1].startsAt, before[1], 'le altre occorrenze restano ferme');
+  assert.equal(scoped.length, 1, 'la converge corre una volta sola, prima della scrittura');
+  assert.equal(scoped[0].headSourceKey, headKey, 'la converge nomina la testa che porta la RRULE');
+  assert.equal(scoped[0].plan.scope, 'single');
+  assert.equal(scoped[0].plan.occurrenceStartsAt, before[2], 'EXDATE sull’istante originale');
+  assert.equal(scoped[0].plan.movedStartsAt, '2026-12-03T16:00:00.000Z');
+  assert.equal(scoped[0].plan.movedEndsAt, '2026-12-03T17:00:00.000Z');
+  assert.equal(scoped[0].plan.movedSourceKey, booked.occurrences[2].sourceKey);
+  // «Questo e i successivi» con calendario: UNTIL più la nuova serie, poi la griglia.
+  const tail = await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-25T16:00:00.000Z',
+    endsAt: '2026-11-25T17:00:00.000Z',
+    scope: 'following',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(tail.scope, 'following');
+  assert.equal(scoped.length, 2);
+  assert.equal(scoped[1].plan.scope, 'following');
+  assert.equal(scoped[1].plan.scopeStartsAt, before[1]);
+  assert.deepEqual(scoped[1].plan.tailRuleLines, ['RRULE:FREQ=WEEKLY;COUNT=2'], 'la coda tiene le due occorrenze');
+  assert.equal(scoped[1].plan.tailSourceKey, booked.occurrences[1].sourceKey);
+  // «Tutti» con calendario resta com'era: la serie si muove e la push nomina
+  // la testa, senza converge parziale.
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[0].id,
+    startsAt: '2026-11-18T16:00:00.000Z',
+    endsAt: '2026-11-18T17:00:00.000Z',
+    scope: 'all',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(scoped.length, 2, '«tutti» non apre EXDATE né UNTIL');
+  assert.ok(pushes.includes(headKey), '«tutti» spinge la testa');
+});
+
+test('se Google rifiuta lo spostamento parziale la griglia non cambia e il motivo si legge (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const refusal = new Error('google patchEvent refused');
+  refusal.code = 'GOOGLE_CALL_MALFORMED';
+  refusal.status = 422;
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('non deve spingere su un rifiuto');
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      throw refusal;
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const before = service.rows.map((row) => row.startsAt);
   await assert.rejects(
     rescheduleAppointment(context, {
       id: booked.occurrences[2].id,
@@ -715,74 +786,200 @@ test('serie collegata a Google: solo «tutti» si sposta, single e following son
       spaceId: 'spazio-1',
     }),
     (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      assert.match(String(error.message), /tutta la serie/);
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_SYNC_FAILED');
+      assert.equal(error.status, 502, 'mai più il 409 della serie');
+      assert.notEqual(error.status, 409);
+      assert.match(String(error.message), /griglia non è cambiata/);
+      assert.match(String(error.message), /GOOGLE_CALL_MALFORMED/);
+      assert.equal(error.details?.providerCode, 'GOOGLE_CALL_MALFORMED');
       return true;
     },
   );
   assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Questo e i successivi» con calendario: stesso 409, stessa quiete.
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[1].id,
-      startsAt: '2026-11-25T16:00:00.000Z',
-      endsAt: '2026-11-25T17:00:00.000Z',
-      scope: 'following',
-      calendar: { calendarId: 'cal-1' },
-      spaceId: 'spazio-1',
-    }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  // «Tutti» con calendario resta com'era: la serie si muove e la push nomina
-  // la testa, che porta la RRULE su Google.
-  await rescheduleAppointment(context, {
-    id: booked.occurrences[0].id,
-    startsAt: '2026-11-18T16:00:00.000Z',
-    endsAt: '2026-11-18T17:00:00.000Z',
-    scope: 'all',
-    calendar: { calendarId: 'cal-1' },
-    spaceId: 'spazio-1',
-  });
-  assert.deepEqual(pushes, [headKey]);
+  assert.equal(scoped.length, 1);
 });
 
-test('serie collegata a Google: single e following non annullano, «tutti» annulla e spinge la testa (backlog:573a1e85942f)', async () => {
+test('serie collegata a Google: «solo questo» annulla con EXDATE, «questo e i successivi» con UNTIL (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
   const pushes = [];
+  const scoped = [];
   const calendarSync = {
     async pushAppointment(calendarId, sourceKey) {
       pushes.push(sourceKey);
       return { status: 'ok', sourceKey };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
     },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
   const headKey = booked.occurrences[0].sourceKey;
   const cal = { calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1', reason: 'serie finita' };
+  // «Solo questo»: un evento solo si annulla anche su Google.
+  const single = await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', ...cal });
+  assert.equal(single.scope, 'single');
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
+  assert.equal(scoped.length, 1);
+  assert.equal(scoped[0].headSourceKey, headKey);
+  assert.equal(scoped[0].plan.scope, 'single');
+  assert.equal(scoped[0].plan.occurrenceStartsAt, '2026-11-24T16:00:00.000Z');
+  assert.ok(!('movedStartsAt' in scoped[0].plan), 'un annullo non apre eventi nuovi');
+  // «Questo e i successivi»: la serie vecchia si chiude, senza nuova serie.
+  const following = await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'following', ...cal });
+  assert.equal(following.scope, 'following');
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'cancelled']);
+  assert.equal(scoped.length, 2);
+  assert.equal(scoped[1].plan.scope, 'following');
+  assert.equal(scoped[1].plan.scopeStartsAt, '2026-12-01T16:00:00.000Z');
+  assert.ok(!('tailRuleLines' in scoped[1].plan), 'una coda annullata non rinasce');
+  // «Tutti» resta com'era: annulla tutto e spinge la testa, senza converge parziale.
+  const out = await cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'all', ...cal });
+  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
+  assert.ok(pushes.includes(headKey), 'la push nomina la testa che porta la RRULE');
+  assert.equal(out.scope, 'all');
+  assert.equal(scoped.length, 2, '«tutti» non apre EXDATE né UNTIL');
+});
+
+test('se Google rifiuta l’annullo parziale la griglia non cambia e il motivo si legge (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const refusal = new Error('google patchEvent refused');
+  refusal.code = 'GOOGLE_SYNC_TOKEN_INVALID';
+  refusal.status = 410;
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('non deve spingere su un rifiuto');
+    },
+    async pushSeriesScope() {
+      throw refusal;
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
   await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', ...cal }),
+    cancelAppointment(context, {
+      id: booked.occurrences[1].id, scope: 'single', reason: 'spostato',
+      calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
+    }),
     (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_SYNC_FAILED');
+      assert.equal(error.status, 502, 'mai più il 409 della serie');
+      assert.match(String(error.message), /griglia non è cambiata/);
+      assert.match(String(error.message), /GOOGLE_SYNC_TOKEN_INVALID/);
       return true;
     },
   );
   assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
+});
+
+test('serie mai esportata su Google: single e following cambiano solo la griglia (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'local-only', sourceKey: headSourceKey, reason: 'finto' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' });
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
+  assert.equal(scoped.length, 1, 'la converge corre, ma senza link non tocca Google');
+  await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+  });
+  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
+});
+
+test('senza la spinta delle serie la modifica parziale è 500 prima di scrivere, mai 409 (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(sourceKey);
+      return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const before = service.rows.map((row) => row.startsAt);
+  await assert.rejects(
+    rescheduleAppointment(context, {
+      id: booked.occurrences[2].id,
+      startsAt: '2026-12-03T16:00:00.000Z',
+      endsAt: '2026-12-03T17:00:00.000Z',
+      scope: 'single',
+      calendar: { calendarId: 'cal-1' },
+      spaceId: 'spazio-1',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_CALENDAR_UNAVAILABLE');
+      assert.equal(error.status, 500);
+      return true;
+    },
+  );
+  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il 500 arriva prima della prima scrittura');
   assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
   await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', ...cal }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
+    cancelAppointment(context, {
+      id: booked.occurrences[1].id, scope: 'single', reason: 'spostato',
+      calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
+    }),
+    (error) => error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE' && error.status === 500,
   );
   assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
   assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  const out = await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'all', ...cal });
-  assert.ok(service.rows.every((row) => row.status === 'cancelled'));
-  assert.ok(pushes.includes(headKey), 'la push nomina la testa che porta la RRULE');
-  assert.equal(out.scope, 'all');
+});
+
+test('la conferma di una serie con calendario esporta un solo evento ricorrente (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushed = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey, opts) {
+      pushed.push({ calendarId, sourceKey, recurrence: opts?.recurrence ?? null });
+      return { status: 'exported', sourceKey, eventId: 'evt-1' };
+    },
+  };
+  const context = { ...contextFor(service), permissionGate: allowGate(), calendarSync };
+  const result = await confirmBooking(context, {
+    ...booking({ sourceKey: 'gym:series:export:1', recurrence: { kind: 'weekly', count: 3 } }),
+    spaceId: 'spazio-1',
+    confirmed: true,
+    calendar: { calendarId: 'cal-1' },
+  });
+  assert.equal(result.decision, 'booked');
+  assert.equal(result.occurrences.length, 3);
+  assert.equal(pushed.length, 1, 'una sola esportazione per tutta la serie');
+  assert.equal(pushed[0].sourceKey, result.appointment.sourceKey, 'la testa porta la serie');
+  assert.deepEqual(pushed[0].recurrence, ['RRULE:FREQ=WEEKLY;COUNT=3'], 'la testa porta la RRULE su Google');
+});
+
+test('la conferma singola con calendario non porta righe di ricorrenza (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushed = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey, opts) {
+      pushed.push({ calendarId, sourceKey, recurrence: opts?.recurrence ?? null });
+      return { status: 'exported', sourceKey, eventId: 'evt-1' };
+    },
+  };
+  const context = { ...contextFor(service), permissionGate: allowGate(), calendarSync };
+  await confirmBooking(context, {
+    ...booking({ sourceKey: 'gym:single:export:1' }),
+    spaceId: 'spazio-1',
+    confirmed: true,
+    calendar: { calendarId: 'cal-1' },
+  });
+  assert.equal(pushed.length, 1);
+  assert.equal(pushed[0].recurrence, null, 'il singolo resta un evento singolo');
 });
 
 test('senza bordo calendario single e following funzionano come ora (backlog:573a1e85942f)', async () => {
@@ -802,43 +999,42 @@ test('senza bordo calendario single e following funzionano come ora (backlog:573
   assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
 });
 
-test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto, single e following sono 409 anche senza «calendar» (backlog:573a1e85942f)', async () => {
+test('la converge serie-Google non dipende dalla richiesta: con il bordo composto corre anche senza «calendar» (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
-  const pushes = [];
+  const scoped = [];
   const calendarSync = {
     async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
       return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
     },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
   const before = service.rows.map((row) => row.startsAt);
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[2].id,
-      startsAt: '2026-12-03T16:00:00.000Z',
-      endsAt: '2026-12-03T17:00:00.000Z',
-      scope: 'single',
-    }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[1].id,
-      startsAt: '2026-11-25T16:00:00.000Z',
-      endsAt: '2026-11-25T17:00:00.000Z',
-      scope: 'following',
-    }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il rifiuto arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
+  // Il link lo risolve la spinta dalla testa: la richiesta non nomina nessun calendario.
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+  });
+  assert.equal(moved.moved, true);
+  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
+  assert.equal(scoped.length, 1, 'la converge corre anche senza «calendar» nella richiesta');
+  assert.equal(scoped[0].plan.scope, 'single');
+  assert.equal(scoped[0].plan.occurrenceStartsAt, before[2]);
+  const tail = await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-25T16:00:00.000Z',
+    endsAt: '2026-11-25T17:00:00.000Z',
+    scope: 'following',
+  });
+  assert.equal(tail.scope, 'following');
+  assert.equal(scoped.length, 2);
+  assert.deepEqual(scoped[1].plan.tailRuleLines, ['RRULE:FREQ=WEEKLY;COUNT=2']);
   // «Tutti» senza «calendar» resta com'era: la serie si sposta, senza push.
   await rescheduleAppointment(context, {
     id: booked.occurrences[0].id,
@@ -846,36 +1042,31 @@ test('la guardia serie-Google non dipende dalla richiesta: con il bordo composto
     endsAt: '2026-11-18T17:00:00.000Z',
     scope: 'all',
   });
-  assert.notDeepEqual(service.rows.map((row) => row.startsAt), before, '«tutti» sposta la serie');
-  assert.deepEqual(pushes, [], 'senza «calendar» la richiesta non spinge');
+  assert.equal(scoped.length, 2, '«tutti» non apre EXDATE né UNTIL');
 });
 
-test('la guardia serie-Google vale anche per l’annullo senza «calendar» nella richiesta (backlog:573a1e85942f)', async () => {
+test('la converge serie-Google vale anche per l’annullo senza «calendar» nella richiesta (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
-  const pushes = [];
+  const scoped = [];
   const calendarSync = {
     async pushAppointment(calendarId, sourceKey) {
-      pushes.push(sourceKey);
-      return { status: 'ok', sourceKey };
+      return { status: 'noop', sourceKey, reason: 'finto' };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
     },
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED');
-      assert.equal(error.status, 409);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  await assert.rejects(
-    cancelAppointment(context, { id: booked.occurrences[0].id, scope: 'following', reason: 'serie finita' }),
-    (error) => error.code === 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' && error.status === 409,
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
+  await cancelAppointment(context, { id: booked.occurrences[1].id, scope: 'single', reason: 'spostato' });
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
+  assert.equal(scoped.length, 1, 'la converge corre anche senza «calendar» nella richiesta');
+  assert.equal(scoped[0].plan.scope, 'single');
+  await cancelAppointment(context, { id: booked.occurrences[2].id, scope: 'following', reason: 'serie finita' });
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'cancelled']);
+  assert.equal(scoped.length, 2);
+  assert.equal(scoped[1].plan.scope, 'following');
 });
 
 test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:573a1e85942f)', async () => {

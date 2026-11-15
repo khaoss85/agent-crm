@@ -263,11 +263,15 @@ export function createAppointmentsPackage(options = {}) {
     // 6 (backlog:0f2ae629e09b): series guards — empty series refused (400),
     // public link books singles only (normalized rule), count+until refused.
     // Additive: booking contract and reads untouched.
-    // 7 (backlog:573a1e85942f): cancel/reschedule take a `scope` (single,
-    // following, all); a Google-linked series refuses single/following with
-    // 409 before any write, only `all` moves or cancels. Additive: server
-    // seam only for holds and singles book, move and cancel exactly as before.
-    version: 7,
+    // 8 (backlog:6acf0a73bfc3): a Google-linked series converges single and
+    // following through `calendarSync.pushSeriesScope` BEFORE the first local
+    // write (EXDATE for one occurrence, UNTIL plus a new series for the tail);
+    // a Google refusal throws and the grid never changes. A confirmed series
+    // is exported as one recurring event (the head carries its RRULE), so the
+    // scoped converge always meets a real master. The 409 is gone. Additive:
+    // server seam only for holds and singles book, move and cancel exactly as
+    // before.
+    version: 8,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
