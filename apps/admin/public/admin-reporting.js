@@ -45,10 +45,9 @@ export const REPORTING_CURRENCY = 'EUR';
 export const FORECAST_LEGEND = Object.freeze(['Chiuse', 'Probabili', 'Se chiudi tutto']);
 
 /**
- * backlog:48993bed7294 (verifica 13/11: «25 nel periodo» with 19 customers
- * in Clienti, a November chart starting on 26 ott): what the channel card
- * counts, in words — each customer once per channel, in the week of their
- * first contact on it, over the four weeks the bars show.
+ * backlog:4d5ae183 (verifica 12/11: «25 nel periodo» with 18 customers in
+ * the space): what the channel card counts, in words — each customer once,
+ * in the channel of their first contact, over the four weeks the bars show.
  * @param {{ total?: unknown, weeks?: Array<{ week?: unknown }> }} breakdown
  */
 export function channelsLede(breakdown) {
@@ -65,7 +64,7 @@ export function channelsLede(breakdown) {
     || Number.isNaN(Date.parse(`${first}T00:00:00.000Z`))
     || Number.isNaN(Date.parse(`${lastStart}T00:00:00.000Z`))) return count;
   const lastEnd = new Date(Date.parse(`${lastStart}T00:00:00.000Z`) + 6 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · un cliente con più canali conta una volta per canale`;
+  return `${count} nelle ${weeks.length} settimane dal ${day(first)} al ${day(lastEnd)} · ogni cliente conta una volta, nel canale del primo contatto`;
 }
 
 /**
