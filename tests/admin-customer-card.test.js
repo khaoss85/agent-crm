@@ -5349,6 +5349,21 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
+test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
+  const unreadableMember = {
+    ...TIMELINE,
+    appointments: {
+      ...TIMELINE.appointments,
+      items: [{ ...TIMELINE.appointments.items[0], teamMemberId: null }],
+    },
+  };
+  const mount = await renderCard(stubClient({ timeline: unreadableMember }));
+  const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
+  assert.ok(card, 'the appointment card paints');
+  const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
+  assert.equal(title.textContent, 'Pt single · per Guido Presti', 'the booking reads as held for the client, never by the client');
+});
+
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
   const { panel } = await openComposerMount();
   assert.ok(panel.textContent.includes('Rispondi su'), 'the channel row is labelled');

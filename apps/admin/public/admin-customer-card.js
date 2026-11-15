@@ -4936,14 +4936,15 @@ export function createCustomerCardView(deps) {
     // the team member suffix (`con …`, chi tiene l'appuntamento) and names
     // the same contact Oggi names for this appointment (`per …`), so the
     // booking reads as one person in both places and the operator still
-    // sees who holds it. Each name falls back silently when unreadable,
+    // sees who holds it. The contact-only fallback reads `per …`, never
+    // `con …`, so the booking never reads as held by the client. Each name falls back silently when unreadable,
     // down to the service alone. The row names the long Rome day. No place
     // and no Google sync line: the booking records neither, so none is written.
     const contact = typeof customerName === 'string' && customerName.trim() !== '' ? customerName.trim() : null;
     const service = serviceTitle(next?.serviceKey, serviceNames);
     const member = teamName(next?.teamMemberId);
     const title = contact && member ? `${service} · con ${member} · per ${contact}`
-      : contact ? `${service} · con ${contact}`
+      : contact ? `${service} · per ${contact}`
       : member ? `${service} · con ${member}`
       : service;
     box.appendChild(el('p', 'bo-scheda-appt-title', title));
