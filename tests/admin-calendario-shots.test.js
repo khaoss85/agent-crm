@@ -324,7 +324,7 @@ const probe = {
   suggest: suggestProbe,
   customer: customerProbe,
   days: document.querySelectorAll('.cal-day').length,
-  events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
+  events: [...document.querySelectorAll('.cal-event strong, .cal-event .cal-compact')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
@@ -404,6 +404,7 @@ probe.stretch = await (async () => {
   const minute = (m) => Math.round(colTop + (m / 540) * col.getBoundingClientRect().height);
   col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 5))));
   col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 52))));
+  const during = { origBox: measure() };
   const ghost = document.querySelector('.cal-drag-ghost');
   const ghostBox = ghost ? ghost.getBoundingClientRect() : null;
   col.dispatchEvent(new PointerEvent('pointerup', at(minute(3 * 60 + 52))));
@@ -414,7 +415,7 @@ probe.stretch = await (async () => {
   await settleFrames(3);
   const reloaded = measure();
   return {
-    before, saved, reloaded,
+    before, saved, reloaded, during,
     ghost: ghostBox ? { top: Math.round(ghostBox.top - colTop), bottom: Math.round(ghostBox.bottom - colTop) } : null,
     writes: RESCHEDULES,
   };

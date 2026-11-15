@@ -498,21 +498,23 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
 });
 
 test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P2)', async () => {
-  const { mount, client, week, col } = await openPointerWeek();
+  const { mount, client, week, col, toasts } = await openPointerWeek();
   const { handle } = resizeHandleOf(mount);
   const before = { ...week.members[0].appointments[0] };
   const cols = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day'));
   const neighbor = cols.find((node) => node !== col);
   assert.ok(neighbor, 'another day column paints beside the origin one');
   neighbor.getBoundingClientRect = () => ({ top: 0, height: 540 });
-  const ghostsIn = (node) => (node.childNodes ?? []).filter((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  const ghostsIn = (node) => (node.findAll?.('div') ?? []).filter((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  const originStyle = () => String(eventButton(mount, 'a9').getAttribute?.('style') ?? '');
+  const styleBefore = originStyle();
   col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
   col.dispatch('pointermove', { clientY: 390 });
-  assert.equal(ghostsIn(col).length, 1, 'the stretch ghost paints on the origin column');
+  assert.equal(ghostsIn(mount).length, 0, 'backlog:667f1f1c: no second block under the stretch preview');
+  assert.notEqual(originStyle(), styleBefore, 'backlog:667f1f1c: the block itself stretches live');
   // Sideways into the next day column: ignored, so preview and commit agree.
   neighbor.dispatch('pointermove', { clientY: 390 });
-  assert.equal(ghostsIn(neighbor).length, 0, 'sideways motion paints no ghost on the other day');
-  assert.equal(ghostsIn(col).length, 1, 'the ghost stays on the origin column');
+  assert.equal(ghostsIn(mount).length, 0, 'sideways motion paints no ghost on the other day');
   neighbor.dispatch('pointerup', {});
   await settle(15);
   const reschedule = client.calls.find((call) => call.path === '/api/appointments/reschedule');
@@ -521,6 +523,7 @@ test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P
   assert.equal(Date.parse(body.startsAt), Date.parse(before.startsAt), 'the start stays where it was');
   assert.ok(Date.parse(body.endsAt) > Date.parse(before.endsAt), 'the end moves later');
   assert.equal(String(body.endsAt).slice(0, 10), String(before.startsAt).slice(0, 10), 'the commit writes the new end on the origin day');
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungato a') && !toast.error), `the stretch confirms in Italian: ${JSON.stringify(toasts)}`);
 });
 
 test('3d0fbe7d: bad move fields fail closed in Italian before any request', async () => {

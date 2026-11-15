@@ -182,6 +182,16 @@ function stubClient({ week = WEEK, slots = [], phrase = null, profiles = null, c
 }
 
 function texts(mount, tag) {
+  // backlog:667f1f1c: 15–30-min blocks paint one compact span
+  // «Titolo, 12:00» instead of a separate time span plus strong title.
+  // Map the compact line back to its title so title assertions keep
+  // reading the block the way they did before the cure.
+  if (tag === 'strong') {
+    const compact = mount.findAll('span')
+      .filter((node) => (node.getAttribute?.('class') ?? '').split(/\s+/).includes('cal-compact'))
+      .map((node) => String(node.textContent ?? '').replace(/, \d{1,2}:\d{2}$/, ''));
+    return mount.findAll(tag).map((node) => node.textContent).concat(compact);
+  }
   return mount.findAll(tag).map((node) => node.textContent);
 }
 
@@ -347,8 +357,8 @@ test('week renders five day columns with real Rome-time events', async () => {
   assert.ok(heads[0].textContent.includes('lun 19'), 'C13: the first head reads <ddd> <n>');
   assert.ok(heads[4].textContent.includes('ven 23'), 'C13: five work days, Mon..Fri');
   // Thursday 22 Oct 18:00 Rome (16:00Z in summer).
-  assert.ok(texts(mount, 'span').some((text) => text === '18:00–18:30'));
-  assert.ok(texts(mount, 'strong').some((text) => /^taglio\b/i.test(text)));
+  // backlog:667f1f1c: 30-min blocks read on one compact line «Titolo, 18:00».
+  assert.ok(texts(mount, 'span').some((text) => /taglio/i.test(text) && text.includes('18:00')), `the 30-min block reads compact: ${JSON.stringify(texts(mount, 'span'))}`);
   // Closed rows stay listed with their status, in Italian (C14); a
   // cancelled booking leaves the grid (backlog:5346ab531538).
   assert.ok(texts(mount, 'span').includes('svolto'));
@@ -400,7 +410,7 @@ test('a Saturday booking paints its own column on the same day and time', async 
   assert.ok(heads[5].textContent.includes('sab 24'), `the sixth head is Saturday: ${heads[5].textContent}`);
   const days = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-day'));
   assert.equal(days.length, 6);
-  assert.ok(texts(mount, 'span').some((text) => text === '10:00–10:30'), 'the Saturday block keeps its Rome time');
+  assert.ok(texts(mount, 'span').some((text) => /taglio/i.test(text) && text.includes('10:00')), 'the Saturday block keeps its Rome time on its compact line');
 });
 
 test('the week pager reloads the named members instead of blanking the week', async () => {
@@ -1327,8 +1337,8 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   const taglio = blocks.find((node) => /taglio/i.test(node.textContent));
   assert.ok(taglio.getAttribute('style').includes('grid-row: 36 / span 1'), `taglio clamps to the last row: ${taglio.getAttribute('style')}`);
   // The barba row carries hostile notes, which become its title (inert text):
-  // find it by its Rome time, Fri 11:00–11:30.
-  const barba = blocks.find((node) => node.textContent.includes('11:00–11:30'));
+  // find it by its Rome time, Fri 11:00–11:30 (compact line shows the start).
+  const barba = blocks.find((node) => node.textContent.includes('11:00'));
   assert.ok(barba, 'the barba block paints with its Rome time');
   assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
   // Colour and initials come from the opaque member id, never a name.

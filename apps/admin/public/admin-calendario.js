@@ -2833,7 +2833,11 @@ export function createCalendarioView(deps) {
       // backlog:667f1f1c: a stretch pulls the block itself, never a second
       // block under the preview — the origin node takes the target range live.
       const origin = paintedEvents.get(String(drag.row?.id ?? ''));
-      if (origin) origin.style.gridRow = rowsOf(drag.targetStart, drag.targetEnd);
+      if (origin && typeof origin.setAttribute === 'function') {
+        const current = String(origin.getAttribute?.('style') ?? '');
+        const column = current.match(/grid-column:[^;]+;?/);
+        origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
+      }
       return;
     }
     detachNode(mount.querySelector('.cal-drag-ghost'));
@@ -2961,8 +2965,13 @@ export function createCalendarioView(deps) {
       state.moveOpen = false;
       // backlog:7587307d5215: the day and the date, like a person says it —
       // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      // backlog:667f1f1c: a stretch keeps its start and changes its end —
+      // the toast names it, «Allungato a …», never «Spostato».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
-      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      const isStretch = before.startsAt === startsAt && before.endsAt !== endsAt;
+      outcome = isStretch
+        ? { text: `Allungato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false }
+        : { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
@@ -3232,6 +3241,9 @@ export function createCalendarioView(deps) {
     if (cancelled) classes.push('cal-cancelled');
     const movable = isMovableAppointment(row);
     if (movable) classes.push('is-movable');
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
+    if (durationMin < 45) classes.push('is-short');
+    else if (durationMin < 60) classes.push('is-medium');
     const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
@@ -3243,13 +3255,20 @@ export function createCalendarioView(deps) {
         'data-movable': movable ? '1' : '0',
       },
     });
-    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
-    if (durationMin < 45) classes.push('is-short');
-    else if (durationMin < 60) classes.push('is-medium');
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
+    const origin = originOf(row);
     if (durationMin < 45) {
       // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
       item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      // The origin badge stays readable on the single line when the foot
+      // below stays hidden (15-min blocks), so nothing paints half-cut.
+      // At 30+ min the foot carries avatar and badges.
+      if (durationMin < 30) {
+        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
+        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+      }
     } else {
       item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
       item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
@@ -3262,7 +3281,6 @@ export function createCalendarioView(deps) {
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    const origin = originOf(row);
     if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     } else if (origin === 'google') {
@@ -3275,8 +3293,10 @@ export function createCalendarioView(deps) {
     if (cancelled) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
-    // backlog:667f1f1c: the foot (avatar, badges) only fits whole on tall blocks — it never paints half-cut.
-    if (durationMin >= 90) item.appendChild(foot);
+    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
+    // block has room — 15-min blocks already carry origin and status on
+    // their single line, so the foot never paints half-cut.
+    if (durationMin >= 30) item.appendChild(foot);
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
