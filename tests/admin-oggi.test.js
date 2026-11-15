@@ -2511,3 +2511,45 @@ test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for th
     assert.ok(!`${prep.title} ${prep.why}`.includes('ospite da confermare'), `${label}: no stand-in beside a known name`);
   }
 });
+
+// Backlog 6d0df351: the pilot shape — the schema serves only WhatsApp and
+// Telegram. Oggi invites exactly those (Telegram joins from outside the
+// nine); what no adapter serves reads «non ancora disponibile», never Collega.
+test('6d0df351: with the pilot adapters Oggi invites only what the schema serves', () => {
+  const adapters = ['whatsapp', 'telegram']
+    .map((channel) => ({ channel, name: `${channel}-adapter`, version: 1 }));
+  const channels = missingLeadChannels([], null, adapters).map((entry) => entry.channel);
+  assert.ok(channels.includes('whatsapp'), 'WhatsApp served: still invited');
+  assert.ok(channels.includes('telegram'), 'Telegram served: invited like the nine');
+  for (const channel of ['instagram', 'facebook', 'tiktok', 'voice', 'site-form', 'email']) {
+    assert.ok(!channels.includes(channel), `${channel} unserved: no invite`);
+  }
+  const invite = buildChannelInvite({ connections: [], profile: null, adapters });
+  assert.ok(invite.leads.includes('WhatsApp'), 'WhatsApp invited');
+  assert.ok(invite.leads.includes('Telegram'), 'Telegram invited');
+  for (const label of ['TikTok', 'Chiamate', 'Form del sito', 'Instagram', 'Facebook', 'Email']) {
+    assert.ok(!invite.leads.includes(label), `${label}: no Collega without an adapter`);
+  }
+  assert.ok(invite.aside !== null && invite.aside.includes('non ancora disponibil'),
+    'the unserved rest reads non ancora disponibile');
+});
+
+// Backlog 6d0df351: the adapters the schema names reach the invite; a
+// schema with no adapters metadata leaves them unknown (backlog:803d127c4458
+// keeps its invite).
+test('6d0df351: loadOggiData carries the schema adapters to the invite', async () => {
+  const adapters = [{ channel: 'whatsapp', name: 'whatsapp-adapter', version: 1 }];
+  const clientFor = (schema) => ({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return schema;
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  });
+  const served = await loadOggiData(clientFor({ domains: { channels: { metadata: { adapters } } } }), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.deepEqual(served.channelAdapters, adapters, 'named adapters reach the invite');
+  const unknown = await loadOggiData(clientFor({ domains: { channels: {} } }), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(unknown.channelAdapters, null, 'no adapters metadata stays unknown');
+});
