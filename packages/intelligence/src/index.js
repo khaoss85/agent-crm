@@ -144,7 +144,7 @@ export function createIntelligenceDomain(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: INTELLIGENCE_DOMAIN,
-    version: 1,
+    version: 2,
     label: 'Lead Intelligence',
     description:
       'Enriches leads from declared providers, records behavioural signals, scores them with explainable versioned models and routes them to declared targets — every decision carrying the fingerprint of the definition that made it. Also holds call intelligence (BO-F1-08): start-of-call notices, transcripts with per-space retention, AI summaries and buying signals that cite their transcript.',
