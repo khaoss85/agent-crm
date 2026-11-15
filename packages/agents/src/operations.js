@@ -938,9 +938,30 @@ export function createAgentOperations(options = {}) {
       // spaceId, actor, run key, proposal and idempotency key.
       const ledgerAt = now();
       const ledgerRuns = await runs().listWhere({ spaceId });
+      // The run being decided spends its execution month (`decidedAt`,
+      // the instant the ledger attributes its cost to), never the wall
+      // clock: a cross-month approval must read the run's own month on
+      // both sides, or it checks the wrong month's spend (review
+      // agent-crm#940 P1). `spentSince` has no upper bound, so the window
+      // is closed here: rows decided after the approval (a new month's
+      // spend) must not count toward the run's own month.
+      const decidedMonth = typeof current.decidedAt === 'string' && current.decidedAt !== ''
+        ? current.decidedAt
+        : ledgerAt;
+      const windowStartIso = monthStartIso(decidedMonth);
+      const windowStartMs = Date.parse(windowStartIso);
+      const windowStart = new Date(windowStartMs);
+      const windowEndMs = Date.UTC(windowStart.getUTCFullYear(), windowStart.getUTCMonth() + 1, 1);
+      const inExecutionMonth = (row) => {
+        const raw = row && typeof row.decidedAt === 'string' && row.decidedAt !== ''
+          ? row.decidedAt
+          : row?.startedAt;
+        const at = typeof raw === 'string' ? Date.parse(raw) : NaN;
+        return Number.isFinite(at) && at >= windowStartMs && at < windowEndMs;
+      };
       const spentMonth = (keys) => spentSince(
-        ledgerRuns.filter((row) => row && keys.has(row.agentSourceKey)),
-        monthStartIso(ledgerAt),
+        ledgerRuns.filter((row) => row && keys.has(row.agentSourceKey) && inExecutionMonth(row)),
+        windowStartIso,
       );
       const agent = await loadAgent(spaceId, current.agentSourceKey);
       if (agent.spendingCapCents !== null && agent.spendingCapCents !== undefined) {
