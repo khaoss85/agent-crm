@@ -2608,10 +2608,12 @@ export async function bookFromLink(context, request) {
   const spaceId = record.spaceId;
   const linkToken = validateBookingLinkToken(record.linkToken);
   // Review giro 6 (backlog:0f2ae629e09b): the public link books ONE single
-  // appointment — a request naming a recurrence is refused 400 before any
-  // read or write, so one public call can never fan out into a whole series
-  // behind the link's idempotency.
-  if (record.recurrence !== undefined && record.recurrence !== null) {
+  // appointment — a request naming a real recurrence is refused 400 before
+  // any read or write, so one public call can never fan out into a whole
+  // series behind the link's idempotency. Review giro 9: the guard reads
+  // the NORMALIZED rule, so an explicit «Non si ripete» ({ kind: 'none' })
+  // still books one appointment like no recurrence at all.
+  if (validateRecurrence(record.recurrence ?? null) !== null) {
     throw new ValidationError(
       'Il link pubblico prenota un solo appuntamento, senza ricorrenza: per una serie prenota una data alla volta dal calendario',
       { field: 'recurrence' },

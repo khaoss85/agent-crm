@@ -448,6 +448,40 @@ test('il link pubblico non apre serie: una richiesta con ricorrenza è 400 senza
   assert.equal(service.rows.length, 0, 'nessuna occorrenza scritta dal link pubblico');
 });
 
+test('il link pubblico accetta «Non si ripete» esplicito come un singolo (backlog:0f2ae629e09b)', async () => {
+  // P1 review giro 9: la guardia leggeva la ricorrenza GREZZA della richiesta
+  // e rifiutava anche { kind: 'none' } — ora legge quella normalizzata e
+  // rifiuta solo una serie vera.
+  const service = fakeAppointments();
+  const context = { ...contextFor(service), permissionGate: allowGate() };
+  const result = await bookFromLink(context, {
+    ...booking(),
+    spaceId: 'spazio-1',
+    linkToken: 'booking-link-singolo-none-01',
+    recurrence: { kind: 'none' },
+  });
+  assert.equal(result.decision, 'booked');
+  assert.equal(service.rows.length, 1, 'un solo appuntamento, come senza ricorrenza');
+});
+
+test('una regola con sia count sia until è 400: griglia e RRULE non divergono (backlog:0f2ae629e09b)', () => {
+  // P1 review giro 9: la validazione accettava count e until insieme ma la
+  // riga RRULE ne scriveva uno solo — un solo cancello in validazione li
+  // rifiuta su tutti i percorsi (valida, espandi, RRULE).
+  const both = { kind: 'weekly', count: 3, until: '2026-12-31' };
+  assert.throws(() => validateRecurrence(both), (error) => (
+    error instanceof ValidationError && error.details?.field === 'recurrence'
+  ));
+  assert.throws(() => recurrenceToRRule(both), (error) => (
+    error instanceof ValidationError && error.details?.field === 'recurrence'
+  ));
+  assert.throws(() => expandRecurrence({
+    startsAtMs: TUE_MS, endsAtMs: TUE_MS + HOUR_MS, recurrence: both,
+  }), (error) => (
+    error instanceof ValidationError && error.details?.field === 'recurrence'
+  ));
+});
+
 test('una serie vuota è 400 in proposta e in conferma, senza scrivere (backlog:0f2ae629e09b)', async () => {
   // P1 review giro 8: regola e finestra che non si incontrano (until prima
   // dell'inizio) espandono a zero occorrenze: la conferma rispondeva 500 e

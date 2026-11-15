@@ -456,7 +456,7 @@ export function createAppointmentsPackage(options = {}) {
         ],
         recurrence: 'a series is one validated rule (daily, weekly, monthly, yearly, weekdays, custom) expanded to one row '
           + 'per occurrence with the series key and index; each occurrence is conflict-checked before the first write, '
-          + 'only the head carries the reminder, and cancel/reschedule take a scope (single, following, all)',
+          + 'only the head carries the reminder',
         notModeled: ['customer master data', 'staff roster or shifts', 'service catalog or pricing', 'calendar synchronization',
           'free-text notifications or sends', 'package credits or payments', 'waitlists'],
         reuses: ['contact', 'follow-up@1', 'channel-template-send@1', 'channel outbox (channel-send)', 'interaction-log@1', 'space-permission-gate@1', 'llm-complete@1'],

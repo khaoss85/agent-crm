@@ -182,6 +182,16 @@ export function validateRecurrence(rule) {
       until = new Date(ms).toISOString();
     }
   }
+  // Review giro 9 (backlog:0f2ae629e09b): count and until together are
+  // refused here, once, so the grid and the RRULE can never diverge again
+  // (the RRULE only carries one ending). Pick one: a number of times or an
+  // end date, never both.
+  if (count !== null && until !== null) {
+    throw new ValidationError(
+      'recurrence ends either after a number of times or on a date, never both: scegli o un numero di volte o una data di fine',
+      { field: 'recurrence' },
+    );
+  }
   return Object.freeze({ kind, interval, days, unit, count, until });
 }
 
