@@ -428,9 +428,14 @@ export function createCallIntelligence(options = {}) {
         code: 'CALL_SUMMARY_UNAVAILABLE', status: 409,
       });
     }
+    // Voce 5c9e006a: the caller's organization, threaded by the route from
+    // the verified identity (never the body), so spend on another
+    // organization's space refuses inside `complete` before any provider is
+    // touched. Absent keeps the historic behavior.
     const completion = await llm.complete({
       actor,
       spaceId,
+      ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
       purpose: 'call-summary',
       messages: [
         {
@@ -603,7 +608,7 @@ export function createCallIntelligence(options = {}) {
    * it refuses 409 VOICE_NOTE_UNAVAILABLE instead of inventing a draft —
    * the card names the switched-off AI, never a fake structure. Spend
    * lands through the workspace LLM caps like every other purpose.
-   * @param {{spaceId?: unknown, text?: unknown, actor?: unknown}} input
+   * @param {{spaceId?: unknown, text?: unknown, actor?: unknown, organizationId?: unknown}} input
    */
   async function structureVoiceNote(input = {}) {
     const actor = requireActor(input.actor);
@@ -617,9 +622,14 @@ export function createCallIntelligence(options = {}) {
         code: 'VOICE_NOTE_UNAVAILABLE', status: 409,
       });
     }
+    // Voce 5c9e006a: same shape as summarizeCall — the caller organization,
+    // threaded by the route from the verified identity (never the body), so
+    // spend on another organization's space refuses inside `complete` before
+    // any provider is touched. Absent keeps the historic behavior.
     const completion = await llm.complete({
       actor,
       spaceId,
+      ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
       purpose: 'voice-note-structure',
       messages: [
         {
