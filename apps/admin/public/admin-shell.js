@@ -419,16 +419,36 @@ export function spaceInitialsFor(name) {
 }
 
 /**
- * Badge color for one space (backlog:ecb26347d12c): a deterministic hue
+ * Badge hue for one space (backlog:ecb26347d12c): a deterministic hue
  * from the space id, so two spaces never share the badge color and the
  * same space reads the same everywhere. White text stays readable on it.
  * @param {unknown} id
  */
-export function spaceBadgeColor(id) {
+export function spaceBadgeHue(id) {
   const text = typeof id === 'string' ? id : '';
   let hash = 0;
   for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  return `hsl(${hash % 360} 45% 42%)`;
+  return hash % 360;
+}
+
+/**
+ * Badge color for one space (backlog:ecb26347d12c): same value as before,
+ * derived from the hue so the class and the color string never disagree.
+ * @param {unknown} id
+ */
+export function spaceBadgeColor(id) {
+  return `hsl(${spaceBadgeHue(id)} 45% 42%)`;
+}
+
+/**
+ * Stylesheet class carrying one space's badge color (backlog:b545aca18b8f):
+ * the color lives in styles.css (`.bo-space-badge--h<hue>`), never in an
+ * inline `style` attribute or a CSSOM write, so a pilot CSP that refuses
+ * inline styles cannot strip it. Same hue as spaceBadgeColor, no new shade.
+ * @param {unknown} id
+ */
+export function spaceBadgeClass(id) {
+  return `bo-space-badge--h${spaceBadgeHue(id)}`;
 }
 
 /**
@@ -482,6 +502,7 @@ export function spaceMenuItems(spaces, activeId) {
       name: space.name,
       initials,
       color: spaceBadgeColor(space?.id),
+      badgeClass: spaceBadgeClass(space?.id),
       keyHint: index < 9 ? `⌘${index + 1}` : '',
       active: space.id === activeId,
     };
@@ -730,8 +751,9 @@ export function createShellView({
     spaceButton.setAttribute('aria-haspopup', 'true');
     spaceButton.setAttribute('title', switcherLabel);
     spaceButton.setAttribute('aria-label', switcherLabel);
-    const badge = el(doc, 'span', 'bo-space-badge', space.initials);
-    badge.setAttribute('style', `background: ${space.color}`);
+    // backlog:b545aca18b8f: the color comes from the stylesheet class,
+    // never from an inline style, so the pilot CSP cannot strip it.
+    const badge = el(doc, 'span', `bo-space-badge ${space.badgeClass}`, space.initials);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -754,8 +776,7 @@ export function createShellView({
     for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
-      const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
-      ini.setAttribute('style', `background: ${entry.color}`);
+      const ini = el(doc, 'span', `bo-space-badge ${entry.badgeClass}`, entry.initials);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -959,8 +980,7 @@ export function createShellView({
     // initials and color as the sidebar switcher.
     const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
     const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
-    const phoneBadge = el(doc, 'span', 'bo-space-badge', phoneSpaceEntry.initials);
-    phoneBadge.setAttribute('style', `background: ${phoneSpaceEntry.color}`);
+    const phoneBadge = el(doc, 'span', `bo-space-badge ${phoneSpaceEntry.badgeClass}`, phoneSpaceEntry.initials);
     phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
