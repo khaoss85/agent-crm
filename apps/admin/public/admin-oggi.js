@@ -245,18 +245,21 @@ export function isTodayInRome(value, now = new Date()) {
 }
 
 /**
- * Whether an appointment start still lies ahead (backlog:57e3d1685e58):
- * a slot already behind us today is done showing up in «Ti resta» and
- * never offers «Prepara». Same mark rule as nextAppointment: without a
- * real `now` nothing is filtered.
- * @param {unknown} startsAt
+ * Whether an appointment still lies ahead (backlog:5e703a7bb397): its end
+ * is after `now` — a slot already over leaves «Ti resta» and never offers
+ * «Prepara», while a call in progress still counts. Rows with no readable
+ * `endsAt` keep the start rule, so a missing end never hides a call. Same
+ * mark rule as nextAppointment: without a real `now` nothing is filtered.
+ * @param {Record<string, any>} row
  * @param {Date} [now]
  */
-function startsAtOrAfterNow(startsAt, now) {
-  const start = toInstant(startsAt);
+function endsAfterNow(row, now) {
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return true;
+  const end = toInstant(row?.endsAt);
+  if (end !== null) return end.getTime() > now.getTime();
+  const start = toInstant(row?.startsAt);
   if (start === null) return false;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  return Number.isNaN(mark) || start.getTime() >= mark;
+  return start.getTime() >= now.getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -533,8 +536,8 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
     const action = followupAction(task, now);
     if (action) actions.push(action);
   }
-  // backlog:57e3d1685e58: the prep reads the next call still ahead, never an
-  // appointment already behind us today — a past slot must not offer «Prepara».
+  // backlog:5e703a7bb397: the prep reads the next call still ahead, never
+  // an appointment already over — an ended slot must not offer «Prepara».
   const next = nextAppointment(appointments, now);
   if (next !== null) {
     const prep = appointmentPrepAction(next, names, pendingNames === true);
@@ -702,13 +705,14 @@ export async function executeAdvisorAction(client, action, run) {
  * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number }} input
  */
 export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0 } = {}) {
-  // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
-  // a past slot stays in the agenda (grey) but leaves the count.
+  // backlog:5e703a7bb397: «Ti resta» counts what is still ahead today —
+  // only appointments ending after now; an ended slot stays in the
+  // agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
-      && startsAtOrAfterNow(row.startsAt, now));
+      && endsAfterNow(row, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
@@ -811,7 +815,14 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
       titlePending: pendingNames === true && inboxSubjectKey(row) !== null,
       whoPending: pendingNames === true && nonEmptyText(row?.teamMemberId) !== null,
       status: row.status,
-      past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
+      // backlog:5e703a7bb397: a slot reads as past only once it is over
+      // (end at or before now); a call in progress stays lit. Rows with
+      // no readable end keep the start rule.
+      past: (() => {
+        if (!(now instanceof Date) || Number.isNaN(now.getTime()) || start === null) return false;
+        const end = toInstant(row.endsAt);
+        return end !== null ? end.getTime() <= now.getTime() : start.getTime() < now.getTime();
+      })(),
       href: card ?? (calendarEvent !== null ? CALENDAR_ROUTE : null),
       calendarEvent,
     });
@@ -819,19 +830,18 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
 }
 
 /**
- * The next upcoming appointment today (booked/confirmed, startsAt >= now),
- * null when the day holds nothing else.
+ * The next upcoming appointment today (booked/confirmed, ending after
+ * now — backlog:5e703a7bb397), null when the day holds nothing else.
  * @param {Array<Record<string, any>>} [appointments]
  * @param {Date} [now]
  */
 export function nextAppointment(appointments = [], now = new Date()) {
-  const mark = now instanceof Date ? now.getTime() : NaN;
   const upcoming = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
       && toInstant(row.startsAt) !== null
-      && (Number.isNaN(mark) || toInstant(row.startsAt).getTime() >= mark));
+      && endsAfterNow(row, now));
   upcoming.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return upcoming.length > 0 ? upcoming[0] : null;
 }
@@ -848,13 +858,12 @@ export function nextAppointment(appointments = [], now = new Date()) {
 export function upcomingAppointment(appointments = [], now = new Date()) {
   const today = nextAppointment(appointments, now);
   if (today !== null) return today;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  if (Number.isNaN(mark)) return null;
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return null;
   const ahead = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && toInstant(row.startsAt) !== null
-      && toInstant(row.startsAt).getTime() >= mark);
+      && endsAfterNow(row, now));
   ahead.sort((a, b) => toInstant(a.startsAt).getTime() - toInstant(b.startsAt).getTime());
   return ahead.length > 0 ? ahead[0] : null;
 }

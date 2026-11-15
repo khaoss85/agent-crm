@@ -66,6 +66,11 @@ export const LLM_PURPOSES = Object.freeze([
   // attributed separately from assistant chatter. Additive: every purpose
   // accepted before stays accepted.
   'call-summary',
+  // Voce 5036bc435465: the dictated post-call voice note is structured into
+  // riassunto, decisioni and prossimi passi. Its own purpose so the spend
+  // of voice notes is attributed separately from call summaries.
+  // Additive: every purpose accepted before stays accepted.
+  'voice-note-structure',
 ]);
 
 export const LLM_AUDIT_LIMIT = 200;

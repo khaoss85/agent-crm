@@ -138,7 +138,8 @@ test('the llm package conforms and imports no sibling package', () => {
     dir: packageDir,
     expected: {
       name: 'llm',
-      version: 2,
+      // Voce 5036bc435465 adds the voice-note-structure purpose: package v3.
+      version: 3,
       resources: ['llm-usage-day', 'llm-call-audit'],
       provides: ['llm-complete@1'],
       requires: [],
