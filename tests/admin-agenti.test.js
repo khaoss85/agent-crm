@@ -260,6 +260,7 @@ test('the screen paints I tuoi agenti, Da fare with Approva Modifica Rifiuta liv
   }
   assert.ok(text.includes('Nel tuo team'), 'the catalogue marks the agent already added');
   assert.ok(mount.querySelector('a[href="#/sequenze"]'), 'the old Sequenze stay reachable');
+  assert.equal(mount.querySelector('a[href="#/sequenze"]').className, 'bo-oggi-more', 'Apri Sequenze reuses the accent text-link class (backlog:6795337d2f50)');
   assert.ok(client.calls.every((call) => call.method === 'GET'), 'painting writes nothing');
   assert.ok(client.calls.filter((call) => call.path.startsWith('/api/modules/')).every((call) => call.path.includes('filter.spaceId=presti')));
 });
