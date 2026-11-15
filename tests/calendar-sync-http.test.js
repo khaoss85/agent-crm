@@ -472,3 +472,30 @@ test('the factory refuses without a transport, and the grant never travels in te
   assert.equal(failure.code, 'CALENDAR_PROVIDER_UNAVAILABLE');
   assert.ok(!String(failure.message).includes(GRANT), 'fixed message, never provider text');
 });
+
+test('insertEvent refuses an overlong deterministic series id before writing (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  // A linked master with a ~110-char Google id grows a scoped id past the
+  // 128-char bound: the fake throws, so the HTTP provider must refuse too
+  // instead of dropping the id and letting Google assign a random one.
+  const overlong = `${'m'.repeat(110)}-ex-20261117T160000Z`;
+  assert.ok(overlong.length > 128, 'the deterministic series id breaks the bound');
+  const failure = await ctx.provider.insertEvent({
+    calendarId: CAL, secret: GRANT, id: overlong, summary: 'Coda',
+    start: { dateTime: '2026-11-17T16:00:00.000Z' }, end: { dateTime: '2026-11-17T17:00:00.000Z' },
+  }).then(
+    () => { throw new Error('insert should have refused'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'GOOGLE_CALL_MALFORMED');
+  assert.equal(failure.status, 422);
+  assert.equal(ctx.double.requests.length, 0, 'refused before the first write: no POST left the machine');
+  // An unnamed insert still rides without an id: Google assigns it.
+  const assigned = await ctx.provider.insertEvent({
+    calendarId: CAL, secret: GRANT, summary: 'Singolo',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' }, end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  assert.ok(typeof assigned.id === 'string' && assigned.id !== '', 'Google assigns the unnamed event');
+  assert.equal(ctx.double.requests.length, 1, 'only the unnamed insert wrote');
+});

@@ -460,7 +460,8 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side partial update (schedule or summary moved elsewhere). */
-    patchEvent({ calendarId, eventId, patch }) {
+    patchEvent({ calendarId, eventId, patch, secret }) {
+      requireGrant({ secret }, 'patchEvent');
       const cal = calendar(calendarId);
       const live = liveEvent(cal, checkEventId(eventId));
       if (!live || live.status === 'cancelled') {

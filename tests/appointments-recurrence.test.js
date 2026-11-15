@@ -1182,6 +1182,78 @@ test('permesso revocato e master mancante tengono il loro codice, mai 502 (backl
   }
 });
 
+test('gli errori di grant e chiamata del provider tengono il loro codice, mai 502 (backlog:6acf0a73bfc3)', async () => {
+  const failures = [
+    new AppError('grant revocato', { code: 'GOOGLE_GRANT_REFUSED', status: 401 }),
+    new AppError('chiamata malformata', { code: 'GOOGLE_CALL_MALFORMED', status: 422 }),
+  ];
+  for (const failure of failures) {
+    const service = fakeAppointments();
+    const calendarSync = {
+      async pushAppointment() {
+        throw new Error('non deve spingere su un rifiuto');
+      },
+      async pushSeriesScope() {
+        throw failure;
+      },
+    };
+    const context = { ...contextFor(service), calendarSync };
+    const booked = await bookAppointment(context, booking({ sourceKey: `gym:serie:google:${failure.code}`, recurrence: { kind: 'weekly', count: 3 } }));
+    await assert.rejects(
+      rescheduleAppointment(context, {
+        id: booked.occurrences[2].id,
+        startsAt: '2026-12-03T16:00:00.000Z',
+        endsAt: '2026-12-03T17:00:00.000Z',
+        scope: 'single',
+        calendar: { calendarId: 'cal-1' },
+        spaceId: 'spazio-1',
+      }),
+      (error) => {
+        assert.equal(error.code, failure.code, 'il codice del provider resta, non diventa 502');
+        assert.equal(error.status, failure.status);
+        return true;
+      },
+      `il rifiuto ${failure.code} non diventa 502`,
+    );
+    assert.deepEqual(service.rows.map((row) => row.startsAt), [
+      '2026-11-17T16:00:00.000Z', '2026-11-24T16:00:00.000Z', '2026-12-01T16:00:00.000Z',
+    ], 'la griglia non è cambiata');
+  }
+});
+
+test('«questo e i successivi» su una serie senza fine chiude la coda sulle righe della griglia (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('non deve spingere la testa: una sola strada verso Google');
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ sourceKey: 'gym:serie:aperta', recurrence: { kind: 'weekly' } }));
+  assert.ok(booked.occurrences.length > 3, 'la serie senza fine si espande nella griglia');
+  const tailRows = booked.occurrences.length - 1;
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-25T16:00:00.000Z',
+    endsAt: '2026-11-25T17:00:00.000Z',
+    scope: 'following',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.scope, 'following');
+  assert.equal(scoped.length, 1);
+  assert.deepEqual(
+    scoped[0].plan.tailRuleLines,
+    [`RRULE:FREQ=WEEKLY;COUNT=${tailRows}`],
+    'la coda di Google finisce dove finisce la griglia, mai senza fine',
+  );
+});
+
 test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:573a1e85942f)', async () => {
   const service = fakeAppointments();
   const context = contextFor(service);

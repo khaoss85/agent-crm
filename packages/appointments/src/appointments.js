@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { expandRecurrence, recurrenceToRRule, validateRecurrence } from './recurrence.js';
+import { RECURRENCE_MAX_OCCURRENCES, expandRecurrence, recurrenceToRRule, validateRecurrence } from './recurrence.js';
 import {
   ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
@@ -888,13 +888,16 @@ async function convergeGoogleSeriesScope(calendarSync, plan) {
     return await calendarSync.pushSeriesScope(plan.headSourceKey, plan);
   } catch (error) {
     // Auth, tenant and validation contract errors keep their own code and
-    // status (backlog:6acf0a73bfc3): a revoked grant, a foreign space or a
-    // missing master is not a Google refusal. Only a genuine provider push
-    // failure becomes 502 with the provider code.
+    // status (backlog:6acf0a73bfc3): a revoked grant, a foreign space, a
+    // missing master or a malformed provider call is not a Google refusal.
+    // Only a genuine provider push failure becomes 502 with the provider
+    // code.
     if (
       error instanceof ValidationError
       || (error instanceof AppError && (
         error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE'
+        || error.code === 'GOOGLE_GRANT_REFUSED'
+        || error.code === 'GOOGLE_CALL_MALFORMED'
         || typeof error.code === 'string' && (
           error.code.startsWith('CALENDAR_') || error.code.startsWith('APPOINTMENTS_')
         )
@@ -949,6 +952,15 @@ function tailRuleLinesFor(row, tailCount, newStartsAtIso) {
   }
   const valid = validateRecurrence(rule);
   if (valid === null) return null;
+  if (valid.count === null && valid.until === null) {
+    // An open-ended source rule would leave the Google tail endless while
+    // the grid holds a finite tail (backlog:6acf0a73bfc3): count the grid
+    // tail rows instead, within the series cap.
+    const bounded = Number.isSafeInteger(tailCount) && tailCount >= 1
+      ? Math.min(tailCount, RECURRENCE_MAX_OCCURRENCES)
+      : RECURRENCE_MAX_OCCURRENCES;
+    return recurrenceToRRule({ ...valid, count: bounded }, newStartsAtIso ?? row?.startsAt ?? null);
+  }
   const tail = { ...valid, ...(valid.count === null ? {} : { count: tailCount }) };
   return recurrenceToRRule(tail, newStartsAtIso ?? row?.startsAt ?? null);
 }

@@ -163,7 +163,9 @@ test('the grant resolves per call and never lands in a row', async (t) => {
   seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
   await ctx.sync.importFuture(CAL, { spaceId: SPACE, timeMin: TIME_MIN });
   ctx.setNow(T0 + 60_000);
-  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  // The Google-side edit rides the fake directly, so it carries the grant
+  // the bound fake now requires on patchEvent too (backlog:6acf0a73bfc3).
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') }, secret: GRANT });
   const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
   assert.ok(pull.entries.some((e) => e.status === 'applied'));
   assert.ok(ctx.resolveCalls.length >= 2, 'no caching: every provider call resolves again');
@@ -254,7 +256,7 @@ test('re-bind after revoke reconnects the calendar', async (t) => {
   await ctx.sync.revokeCalendarGrant({ spaceId: SPACE, calendarId: CAL, actor: ACTOR });
   await bound(ctx);
   ctx.setNow(T0 + 60_000);
-  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') } });
+  ctx.provider.patchEvent({ calendarId: CAL, eventId: 'evt1', patch: { ...slot('21', '14:00', '15:00') }, secret: GRANT });
   const pull = await ctx.sync.pullIncremental(CAL, { spaceId: SPACE });
   assert.ok(pull.entries.some((e) => e.status === 'applied'), 'the reconnected calendar syncs again');
   assert.equal(ctx.rows().states[0].grantStatus, 'active');
@@ -499,4 +501,28 @@ test('a bound-calendar reschedule converges when the spaceId rides along (backlo
   const live = ctx.provider.getEvent(CAL, 'evt1');
   assert.equal(live.start.dateTime, '2026-10-22T14:00:00.000Z');
   assert.equal(live.end.dateTime, '2026-10-22T15:00:00.000Z');
+});
+
+test('patchEvent on a bound fake needs the space grant, like every other mutating call (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await bound(ctx);
+  ctx.provider.seedEvent(CAL, {
+    id: 'series-master', summary: 'Serie',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' }, end: { dateTime: '2026-10-21T10:00:00.000Z' },
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=4'],
+  });
+  const patch = { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=4', 'EXDATE:20261028T090000Z'] };
+  assert.throws(
+    () => ctx.provider.patchEvent({ calendarId: CAL, eventId: 'series-master', patch }),
+    (error) => error?.code === 'GOOGLE_GRANT_REFUSED',
+    'no grant at all refuses instead of patching another space series',
+  );
+  assert.throws(
+    () => ctx.provider.patchEvent({ calendarId: CAL, eventId: 'series-master', patch, secret: 'grant-of-another-space' }),
+    (error) => error?.code === 'GOOGLE_GRANT_REFUSED',
+    'another space grant refuses instead of patching this space series',
+  );
+  const patched = ctx.provider.patchEvent({ calendarId: CAL, eventId: 'series-master', patch, secret: GRANT });
+  assert.deepEqual(patched.recurrence, patch.recurrence, 'the space own grant still patches');
 });

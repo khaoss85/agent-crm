@@ -367,6 +367,10 @@ export function createHttpGoogleCalendar(options = {}) {
     async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, recurrence } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
+      if (id !== undefined && !(typeof id === 'string' && EVENT_ID_RE.test(id))) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422,
+          'google insertEvent needs a bounded event id when naming one: the deterministic series id stays on the retry instead of a random one');
+      }
       const lines = checkRecurrenceLines(recurrence, 'insertEvent');
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
@@ -375,7 +379,7 @@ export function createHttpGoogleCalendar(options = {}) {
         ...(end === undefined || end === null ? {} : { end }),
         ...(lines === null ? {} : { recurrence: lines }),
         extendedProperties: { private: { ...extendedProperties } },
-        ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
+        ...(id === undefined ? {} : { id }),
       });
       return toEngineEvent(body);
     },
