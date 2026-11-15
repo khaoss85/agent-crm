@@ -713,3 +713,29 @@ test('47b89e19: the detail links stay in the router too (offer, scheda, version)
   assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
     'every link goes through navigate(), setting only the hash');
 });
+
+test('b9b7912320f8: a flat-fee line reads «Quota fissa» with its quantity locked', async () => {
+  const flatLine = {
+    ...LINE,
+    id: 'l2',
+    offerName: 'Lezione di prova',
+    quantity: 2,
+    discountBps: 0,
+    discountAmountCents: 0,
+    breakdownJson: JSON.stringify({ components: [{ componentId: 'f1', componentKey: 'trial', label: 'Lezione di prova', pricingModel: 'flat_fee', chargeType: 'one_time', listAmountCents: 3000, netAmountCents: 3000, tierBreakdown: [] }] }),
+    listAmountCents: 3000,
+    netAmountCents: 3000,
+  };
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client: stubClient({ lines: [LINE, flatLine], entries: [ENTRY] }) }).renderQuoteDetail('q1');
+  const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-line');
+  assert.equal(rows.length, 2, 'both lines render');
+  const mixed = rows.find((node) => node.getAttribute('data-line') === 'l1');
+  assert.ok(mixed.textContent.includes('Quantità 30'), 'a mixed line still offers its quantity');
+  assert.equal(mixed.__quantity.disabled, false, 'a mixed line quantity stays editable');
+  const flat = rows.find((node) => node.getAttribute('data-line') === 'l2');
+  assert.ok(flat.textContent.includes('Quota fissa'), 'a flat-fee line reads «Quota fissa»');
+  assert.ok(!flat.textContent.includes('Quantità 2'), 'never a quantity that changes nothing');
+  assert.equal(flat.__quantity.disabled, true, 'the flat quantity is locked');
+  assert.ok(flat.textContent.includes('la quantità non cambia il prezzo'), 'the lock explains itself');
+});
