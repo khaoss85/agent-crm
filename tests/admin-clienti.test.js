@@ -1135,7 +1135,7 @@ test('ee1244a145c9: an empty «Da rispondere» view without search reads as the 
   assert.ok(mount.textContent.includes('Nessun cliente ancora.'), '«Tutti» without search reads as the view');
   byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
   await flush();
-  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the empty view names itself');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the empty awaiting view reads as itself');
   assert.ok(!mount.textContent.includes('Nessun cliente corrisponde'), 'no search hint without a search');
 });
 
@@ -1166,13 +1166,139 @@ test('5af848afdb63: an empty view with a filter names both', async () => {
   const { mount } = await render(client);
   byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
   await flush();
-  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the view alone names itself');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the view alone reads as itself');
   toolToggle(mount, 'Filtri').dispatch('click');
   await flush();
   byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere» con canale WhatsApp.'),
     'the empty page names the view and the excluding filter');
+});
+
+test('7cf5c4931cfc: the address opens the view, so a reload reopens it', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // No handoff: the address alone carries the view (copy-link, reload).
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data?vista=da-rispondere',
+  });
+  await view.render();
+  const last = new URLSearchParams(client.calls[client.calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search');
+  assert.equal(view.getState().vista, 'da-rispondere');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the empty view reads as itself, not as a search');
+});
+
+test('7cf5c4931cfc: an address without a view changes nothing, a forged one is ignored', async () => {
+  const client = stubClient();
+  const plain = await render(client, { routeHash: '#/customer-data' });
+  assert.equal(plain.view.getState().vista, 'tutti', 'plain address: the list as it was');
+  const forged = await render(client, { routeHash: '#/customer-data?vista=../x' });
+  assert.equal(forged.view.getState().vista, 'tutti', 'a forged view never resolves');
+  assert.ok(!client.calls.some((path) => path.includes('vista=../x')), 'never sent to the server');
+});
+
+test('7cf5c4931cfc: the address wins over the handoff and clears it', async () => {
+  const { writePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  const views = [...MENUS.views, { id: 'da-leggere', label: 'Da leggere' }, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  writePendingClientiView(store, 'da-rispondere');
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data?vista=da-leggere',
+  });
+  await view.render();
+  assert.equal(view.getState().vista, 'da-leggere', 'the explicit address wins');
+  const { takePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  assert.equal(takePendingClientiView(store), null, 'the handoff clears either way, never stale');
+});
+
+test('7cf5c4931cfc: the handoff still opens the view when the address names none', async () => {
+  const { writePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  writePendingClientiView(store, 'da-rispondere');
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data',
+  });
+  await view.render();
+  assert.equal(view.getState().vista, 'da-rispondere', 'the fallback still lands on the view');
+});
+
+test('7cf5c4931cfc: back on the same address keeps the search', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount, view } = await render(client, { routeHash: '#/customer-data?vista=da-rispondere' });
+  assert.equal(view.getState().vista, 'da-rispondere');
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(view.getState().q, 'rossi', 'the search is on');
+  await view.render();
+  assert.equal(view.getState().q, 'rossi', 'back from a scheda keeps the search');
+  assert.equal(view.getState().vista, 'da-rispondere', 'and the view with it');
+});
+
+test('7cf5c4931cfc: a view tap writes the address, without re-routing', async () => {
+  const replaced = [];
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount, view } = await render(client, {
+    routeHash: '#/customer-data',
+    replaceHash: (next) => replaced.push(next),
+  });
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.equal(view.getState().vista, 'da-rispondere', 'the list is on the tapped view');
+  assert.deepEqual(replaced, ['#/customer-data?vista=da-rispondere'], 'the address follows silently');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
