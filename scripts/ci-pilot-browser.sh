@@ -11,12 +11,17 @@
 #
 # What it does on a client-touching diff:
 # 1. clones the pilot (shallow, main) unless PILOT_DIR names a checkout;
-# 2. installs its dependencies (`npm ci --prefer-offline`, skipped when
+# 2. ensures a drivable Chromium: the first binary of the pilot's
+#    browserBinCandidates order wins (ACCORDO_BROWSER_BIN included); when
+#    none exists — a fresh Linux runner — it installs the browser the
+#    pilot's pinned playwright-core expects (one-off, then cached) and
+#    points the proof at it through ACCORDO_BROWSER_BIN;
+# 3. installs its dependencies (`npm ci --prefer-offline`, skipped when
 #    PILOT_SKIP_INSTALL=1 — local proof only, never CI);
-# 3. replaces its pinned `accordo` dependency with THIS working tree
+# 4. replaces its pinned `accordo` dependency with THIS working tree
 #    (`npm install --no-save`), so the browser drives the PR head, not the
 #    last pin;
-# 4. runs the pilot's browser proof (`npm run test:browser`): red when the
+# 5. runs the pilot's browser proof (`npm run test:browser`): red when the
 #    shell sidebar does not draw, green otherwise. Since the pilot's own
 #    pageerror change (same backlog) the failing log also prints the page's
 #    script and console errors, not just the missing markup.
@@ -32,6 +37,8 @@
 #   BASE_REF='<pr base branch>' bash scripts/ci-pilot-browser.sh
 #
 # Env overrides (local proof and diagnoisis only):
+#   ACCORDO_BROWSER_BIN=<path>  drive this Chromium instead of resolving or
+#                              installing one (also read by the pilot itself);
 #   PILOT_DIR=<path> ......... use this pilot checkout instead of cloning;
 #   PILOT_SKIP_INSTALL=1 ..... skip `npm ci` in the pilot checkout;
 #   PILOT_BROWSER_FORCE=1 .... run the browser proof even when the diff does
@@ -85,11 +92,72 @@ if [ -z "$pilot" ]; then
   fi
 fi
 
+# A drivable Chromium in the same order as the pilot's browserBinCandidates
+# (accordo-arvo-pilot tests/browser/browser-launch.js: env override first,
+# then the Mac cache, Chrome on the Mac, the Linux cache, the Linux system
+# binaries). Keep the two lists in sync: the build number below is the one
+# the pilot's pinned playwright-core expects.
+resolve_browser_bin() {
+  home_dir="${HOME:-/root}"
+  if [ -n "${ACCORDO_BROWSER_BIN:-}" ] && [ -x "$ACCORDO_BROWSER_BIN" ]; then
+    printf '%s' "$ACCORDO_BROWSER_BIN"
+    return 0
+  fi
+  candidate=""
+  for candidate in \
+    "$home_dir/Library/Caches/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-mac-arm64/chrome-headless-shell" \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "$home_dir/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell" \
+    /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome /usr/bin/google-chrome-stable; do
+    if [ -x "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# A fresh Linux runner has no browser yet: install the headless shell the
+# pilot's pinned playwright-core drives. It lands in the Linux cache above,
+# so this is a one-off cost per runner, not per PR. The binary the proof
+# uses is exported through ACCORDO_BROWSER_BIN, which the pilot checks
+# first: even if the installed build drifts from the hardcoded one above,
+# the proof drives exactly the binary this gate resolved.
+ensure_browser() {
+  bin=""
+  if bin="$(resolve_browser_bin)"; then
+    export ACCORDO_BROWSER_BIN="$bin"
+    return 0
+  fi
+  play_version="$(cd "$pilot" && node -e 'console.log(require("./package.json").devDependencies["playwright-core"])')"
+  echo "pilot-browser: no drivable Chromium found, installing the browser for playwright-core $play_version (one-off, then cached)"
+  if ! (cd "$pilot" && npx -y "playwright@$play_version" install chromium); then
+    echo "::error::ci-pilot-browser: could not provision a Chromium on this runner (head $head_sha): pre-install one of the browserBinCandidates paths or set ACCORDO_BROWSER_BIN"
+    exit 1
+  fi
+  if bin="$(resolve_browser_bin)"; then
+    export ACCORDO_BROWSER_BIN="$bin"
+    return 0
+  fi
+  # Build-number drift between the pilot's hardcoded cache path and the
+  # playwright release: ask the pinned playwright-core itself where its
+  # browser lives.
+  if bin="$(cd "$pilot" && node -e 'console.log(require("playwright-core").chromium.executablePath())')" && [ -x "$bin" ]; then
+    export ACCORDO_BROWSER_BIN="$bin"
+    return 0
+  fi
+  echo "::error::ci-pilot-browser: the headless shell install finished but no drivable Chromium resolves (head $head_sha)"
+  exit 1
+}
+
 echo "pilot-browser: running the pilot browser proof against agent-crm head $head_sha"
 if [ "$skip_install" != "1" ]; then
   (cd "$pilot" && npm ci --prefer-offline)
 fi
 (cd "$pilot" && npm install --no-save "$root")
+# After the installs: the executablePath fallback below needs the pilot's
+# own playwright-core on disk, which a fresh clone only has from here on.
+ensure_browser
 if (cd "$pilot" && npm run test:browser); then
   echo "pilot-browser: PASS in $((SECONDS - started))s (agent-crm head $head_sha)"
 else
