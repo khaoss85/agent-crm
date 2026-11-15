@@ -132,14 +132,14 @@
       "dir": "intelligence",
       "graph": "contract1",
       "version": 1,
-      "fingerprint": "7eec8f83a9d7267134418a96fff648c73b1468c2c2a4a09956e60a6c14fee58e"
+      "fingerprint": "481379c44be8f7622120adc6a55892722fcd290b53abf98b902c52ba4bcfc184"
     },
     {
       "name": "intelligence",
       "dir": "intelligence",
       "graph": "contract2",
       "version": 1,
-      "fingerprint": "3ebb082100e2baa3572601b58e81575f65d5f32e9ffbc4829157d1422f0c081e"
+      "fingerprint": "b4b97c444dce84cbbee04078ff2fc5ac4d9059a05b77116499b04dc4abb72852"
     },
     {
       "name": "interactions",
