@@ -102,6 +102,6 @@ test('an empty mail previews the subject, otherwise the one fallback — Clienti
   // so both read one rule.
   assert.equal(oggiPreview('', 'Il tuo estratto conto è pronto'), 'Il tuo estratto conto è pronto');
   assert.equal(oggiPreview('', null), 'Messaggio senza testo');
-  assert.equal(oggiPreview('<span>Danielepelleri</span><span>400 internal URLs</span>', 'Ahrefs Site Audit'),
-    'Ahrefs Site Audit — Danielepelleri 400 internal URLs', 'inline elements never glue words, after the subject');
+  assert.equal(oggiPreview('<table><tr><td>Danielepelleri</td><td>400 internal URLs</td></tr></table>', 'Ahrefs Site Audit'),
+    'Ahrefs Site Audit — Danielepelleri 400 internal URLs', 'cells never glue words, after the subject');
 });

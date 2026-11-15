@@ -62,18 +62,12 @@ const TAG_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')' + I
 const CUT_TAG_RE = new RegExp('<\\/?' + HTML_TAG_NAMES + '(?:\\s[^<>]*)?$', 'i');
 
 /**
- * Where a removed tag stood (backlog:1740985ba18c): tags go through this
- * placeholder so adjacent tags (`</span><span>`) count as one gap. A gap
- * between two word characters reads as a space, anywhere else it vanishes —
- * `Ciao <b>Mario</b>,` keeps its comma and «Danielepelleri</span><span>400»
- * reads «Danielepelleri 400». Blocks already break on their own newlines.
- */
-const TAG_GAP = '\x00';
-/** A tag gap between two word characters: the only one that reads as a space. */
-const WORD_GAP_WORD_RE = /(?<=[\p{L}\p{N}_])\x00+(?=[\p{L}\p{N}_])/gu;
-/**
  * Blocks, cells and sections break the text (Dan 10/11: «Danielepelleri400
- * internal URLs» came from two table cells glued together).
+ * internal URLs» came from two table cells glued together). Inline tags
+ * (backlog:1740985ba18c review: formatting inside one word, e.g.
+ * `a<b>b</b>c` or `<strong>Daniele</strong>pelleri`) go away with nothing in
+ * their place, like the browser renders them — only block and cell
+ * boundaries separate words, and those already break on newlines below.
  */
 const BLOCK_NAMES = '(p|div|li|ul|ol|tr|td|th|table|tbody|thead|tfoot|caption|blockquote|section|header|footer|article|main|nav|center|hr|h[1-6])';
 const BLOCK_OPEN_RE = new RegExp('<' + BLOCK_NAMES + '(?=[\\s/>])', 'gi');
@@ -212,11 +206,9 @@ export function htmlToText(html) {
     .replace(BREAK_RE, '\n')
     .replace(BLOCK_OPEN_RE, '\n<$1')
     .replace(BLOCK_CLOSE_RE, '\n')
-    .replace(TAG_RE, TAG_GAP)
+    .replace(TAG_RE, '')
     .replace(CUT_TAG_RE, '')
     .replace(ATTRIBUTE_RESIDUE_RE, '$1')
-    .replace(WORD_GAP_WORD_RE, ' ')
-    .replace(/\x00+/g, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n');
 }

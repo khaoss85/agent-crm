@@ -81,6 +81,21 @@ export function previewLastContactText(value, subject = null) {
   return preview === '' ? null : preview;
 }
 
+/**
+ * Whether a latest-contact activity reads as a message for the no-text
+ * fallback (backlog:1740985ba18c review). The isMessage flag operations.js
+ * threads is authoritative; without it (legacy or direct readers, pre-flag
+ * shape) the content decides — a body (even an empty one), a subject or an
+ * attachment reads as a message, while neither reads like a call, which
+ * carries no text — so no excerpt is ever invented for a call.
+ * @param {any} entry the activityBySubject entry, if any
+ */
+export function isMessageActivity(entry) {
+  if (entry == null || entry.isMessage === false) return false;
+  if (entry.isMessage === true || entry.hasAttachment === true) return true;
+  return entry.text != null || entry.subject != null;
+}
+
 /** Server page sizes from the approved prototype ("04 Clienti"). */
 export const CUSTOMER_PAGE_SIZES = Object.freeze([10, 25, 50]);
 
@@ -595,8 +610,14 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   message or call scan behind the observed channels was partial or
  *   unreadable — the row then reads channelsComplete:false instead of an
  *   exact union. Absent means exact, so hand-built reads stay honest.
- *   activity entries name `{ occurredAt, channel, text }`: `text` is the
- *   latest message body (a call carries none, so it stays null there).
+ *   activity entries name `{ occurredAt, channel, text, subject, isMessage,
+ *   hasAttachment }`: `text` is the latest message body (a call carries
+ *   none, so it stays null there), `subject` its mail subject, `isMessage`
+ *   false only for a call, and `hasAttachment` true when the latest message
+ *   carried a file (then an empty body previews as 'Allegato', like the Oggi
+ *   inbox). The flag is authoritative (see isMessageActivity): without it a
+ *   present body, subject or attachment still reads as a message, while
+ *   neither reads like a call — no excerpt is ever invented for a call.
  *   appointment entries name `{ startsAt, endsAt, status }`: the next live
  *   one shapes `nextAppointment`, with `appointmentsComplete` telling exact
  *   from partial.
@@ -682,10 +703,15 @@ export function shapeCustomerRow(subject, reads = {}) {
     // backlog:1740985ba18c: an empty message reads the same fallback as Oggi
     // (the subject when there is one, MESSAGE_NO_TEXT otherwise) instead of a
     // blank cell. A latest call still previews as nothing — the fallback is
-    // for messages only, and attachments stay uncovered (the row carries no
-    // attachment flag, so an attachment-only mail reads the text fallback).
+    // for messages only. The isMessage flag is authoritative; without it
+    // (legacy or direct readers, pre-flag shape) the content decides: a body
+    // (even an empty one), a subject or an attachment reads as a message,
+    // while neither reads like a call, which carries no text. When the empty
+    // message carried a file, the row names it like the Oggi inbox does
+    // ('Allegato', see apps/admin/public/admin-oggi.js).
     lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
-      ?? (activity?.isMessage === true ? MESSAGE_NO_TEXT : null),
+      ?? (isMessageActivity(activity)
+        ? (activity.hasAttachment === true ? 'Allegato' : MESSAGE_NO_TEXT) : null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     awaitingReplyCount: awaiting === null ? null : awaiting.count,

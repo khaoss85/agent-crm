@@ -842,6 +842,60 @@ test('an empty message previews the same fallback as Oggi, a call previews nothi
   assert.equal(callAfter.lastContactText, null, 'a newer call still names no excerpt');
 });
 
+test('an attachment-only mail previews «Allegato» like Oggi, the subject first when there is one', async () => {
+  // backlog:1740985ba18c review (P2): the row carries the attachment flag
+  // through operations, so an empty body with a file never reads the
+  // affirmative «Messaggio senza testo» while Oggi reads 'Allegato'.
+  const { contacts, companies, identities } = SCENE();
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities, ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const attached = (await run({
+    messages: [{
+      id: 'm-a', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+      attachmentKind: 'document', attachmentRef: 'ref-a1',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(attached.lastContactText, 'Allegato', 'empty body with a file names it, like Oggi');
+  const attachedSubject = (await run({
+    messages: [{
+      id: 'm-b', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+      mailSubject: 'Ecco il file', attachmentKind: 'document', attachmentRef: 'ref-b1',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(attachedSubject.lastContactText, 'Ecco il file', 'the subject still heads the preview');
+});
+
+test('a legacy activity without the isMessage flag still reads the fallback, an explicit call reads nothing', () => {
+  // backlog:1740985ba18c review (P2): direct readers handing over the
+  // pre-flag shape must not reintroduce the blank cell. The flag is
+  // authoritative; without it the content decides — a body (even empty), a
+  // subject or an attachment reads as a message, while neither reads like a
+  // call, which carries no text.
+  const legacy = (activity) => rowOf({}, {
+    ...baseReads(),
+    activityBySubject: new Map([['contact:c1', activity]]),
+  }).lastContactText;
+  const at = '2026-11-12T10:00:00.000Z';
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: 'Il tuo estratto conto è pronto' }),
+    'Il tuo estratto conto è pronto', 'legacy shape without the flag: the subject');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null }),
+    'Messaggio senza testo', 'legacy shape without the flag: the one fallback');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null, isMessage: true }),
+    'Messaggio senza testo', 'operations shape');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null, hasAttachment: true }),
+    'Allegato', 'legacy shape with the attachment flag');
+  assert.equal(legacy({ occurredAt: at, channel: 'phone', text: null, subject: null, isMessage: false }),
+    null, 'an explicit call still names no excerpt');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: null, subject: null }),
+    null, 'no content and no flag reads like a call: nothing is invented');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: 'ciao', subject: null }),
+    'ciao', 'a body still previews as itself');
+});
+
 test('826e377c: the CANALI column unions held identities with observed message channels', () => {
   // CANALI unions every held identity system with the observed channels in
   // the filter vocabulary (not the scheda section's wider display
