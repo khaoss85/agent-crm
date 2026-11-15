@@ -116,7 +116,7 @@ const panelClient = {
 };
 const panel = createAssistantPanel({ doc: document, mount: document.getElementById('boAssistant'), client: panelClient, navigate: () => {}, notify: () => {} });
 await panel.open('oggi');
-const bar = document.querySelector('.bo-topbar .bo-ai');
+const bar = document.querySelector('.bo-topbar');
 const panelEl = document.querySelector('#boAssistant .bo-assistant');
 const round = (rect) => ({ top: Math.round(rect.top), bottom: Math.round(rect.bottom), left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width), height: Math.round(rect.height) });
 const probe = bar && panelEl
@@ -219,10 +219,13 @@ async function measureRoom({ width, height }) {
 
 function assertRoom(probe) {
   assert.ok(probe.bar && probe.panel, 'the bar and the open panel both paint');
-  assert.ok(probe.bar.width > 0 && probe.panel.width > 0, 'both are visible');
   assert.ok(
-    probe.panel.top >= probe.bar.bottom - 1,
-    `the open panel starts at or below the bar (bar bottom ${probe.bar.bottom}, panel top ${probe.panel.top})`,
+    probe.bar.width > 0 && probe.panel.width > 0 && probe.panel.height > 0,
+    'both are visible, the panel with a real size',
+  );
+  assert.ok(
+    Math.abs(probe.panel.top - probe.bar.bottom) <= 1,
+    `the open panel starts right below the topbar (bar bottom ${probe.bar.bottom}, panel top ${probe.panel.top})`,
   );
 }
 

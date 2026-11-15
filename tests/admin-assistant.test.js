@@ -1861,20 +1861,99 @@ test('a684ecf5: spazio non attivo dice spento e come si accende', () => {
 
 test('backlog:a1f2db873cf3: the open panel starts below the topbar, never over the cmdk bar', () => {
   const panelWith = (top) => ({ style: { top } });
-  const docWith = (height) => ({
+  const docWith = (rect) => ({
     querySelector: (selector) => (selector === '.bo-topbar'
-      ? { getBoundingClientRect: () => ({ height }) }
+      ? { getBoundingClientRect: () => ({ ...rect }) }
       : null),
   });
   const desktop = panelWith('');
-  setPanelTopBelowBar(docWith(64), desktop);
-  assert.equal(desktop.style.top, '64px', 'the desktop bar height is read live');
+  setPanelTopBelowBar(docWith({ height: 64, bottom: 64 }), desktop);
+  assert.equal(desktop.style.top, '64px', 'the desktop bar bottom is read live');
   const phone = panelWith('');
-  setPanelTopBelowBar(docWith(118), phone);
-  assert.equal(phone.style.top, '118px', 'the phone bar height is read live, never hardcoded');
+  setPanelTopBelowBar(docWith({ height: 118, bottom: 118 }), phone);
+  assert.equal(phone.style.top, '118px', 'the phone bar bottom is read live, never hardcoded');
   const fractional = panelWith('');
-  setPanelTopBelowBar(docWith(63.6), fractional);
+  setPanelTopBelowBar(docWith({ height: 63.6, bottom: 63.6 }), fractional);
   assert.equal(fractional.style.top, '64px', 'fractions round to whole pixels');
+});
+
+test('backlog:a1f2db873cf3: the panel follows the bar bottom, not the bar height', () => {
+  const panelWith = (top) => ({ style: { top } });
+  const docWith = (rect) => ({
+    querySelector: (selector) => (selector === '.bo-topbar'
+      ? { getBoundingClientRect: () => ({ ...rect }) }
+      : null),
+  });
+  // A banner above the topbar (admin-version.js) pushes the bar down: the
+  // height alone would park the panel 40px too high, over the ⌘K bar.
+  const pushed = panelWith('');
+  setPanelTopBelowBar(docWith({ top: 40, bottom: 104, height: 64 }), pushed);
+  assert.equal(pushed.style.top, '104px', 'the viewport-relative bottom wins over the height');
+  const negative = panelWith('');
+  setPanelTopBelowBar(docWith({ top: -8, bottom: -8, height: 64 }), negative);
+  assert.equal(negative.style.top, '0px', 'a bottom above the viewport clamps to zero, never negative');
+  const noBottom = panelWith('');
+  setPanelTopBelowBar(docWith({ height: 64, bottom: Number.NaN }), noBottom);
+  assert.equal(noBottom.style.top, '64px', 'a non-finite bottom falls back to the height');
+});
+
+test('backlog:a1f2db873cf3: the open panel re-reads the bar bottom on resize and stops on close', async () => {
+  // Like a real element, every fake node carries a style bag.
+  const base = createFakeDocument();
+  const withStyle = (node) => {
+    node.style = {};
+    return node;
+  };
+  const barRect = { top: 0, bottom: 64, height: 64 };
+  const doc = {
+    ...base,
+    createElement: (tag) => withStyle(base.createElement(tag)),
+    createElementNS: (ns, tag) => withStyle(base.createElementNS(ns, tag)),
+    activeElement: null,
+    querySelector: (selector) => (selector === '.bo-topbar'
+      ? { getBoundingClientRect: () => ({ ...barRect }) }
+      : null),
+  };
+  const listeners = new Map();
+  const win = {
+    listeners,
+    addEventListener(type, handler) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(handler);
+    },
+    removeEventListener(type, handler) {
+      listeners.set(type, (listeners.get(type) ?? []).filter((h) => h !== handler));
+    },
+    fire(type, event = {}) {
+      for (const handler of [...(listeners.get(type) ?? [])]) handler(event);
+    },
+  };
+  const mount = createMount();
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      const error = new Error(`no such module (${path})`);
+      Object.assign(error, { status: 404, code: 'MODULE_NOT_FOUND' });
+      throw error;
+    },
+  };
+  const panel = createAssistantPanel({ doc, mount, client, navigate: () => {}, notify: () => {}, win });
+  await panel.open('oggi');
+  const node = mount.querySelector('.bo-assistant');
+  assert.ok(node, 'the panel is mounted');
+  assert.equal(node.style.top, '64px', 'the panel starts at the live bar bottom');
+  // The bar wraps (phone) or a banner pushes it down while the panel is open.
+  barRect.top = 54;
+  barRect.bottom = 118;
+  barRect.height = 64;
+  win.fire('resize');
+  assert.equal(node.style.top, '118px', 'a resize with the panel open moves it below the bar again');
+  win.fire('orientationchange');
+  assert.equal(node.style.top, '118px', 'an orientation change keeps it below the bar');
+  panel.close();
+  assert.equal((listeners.get('resize') ?? []).length, 0, 'close removes the resize listener');
+  assert.equal((listeners.get('orientationchange') ?? []).length, 0, 'close removes the orientation listener');
+  assert.equal((listeners.get('keydown') ?? []).length, 1, 'close keeps the Esc shortcut for the next open');
 });
 
 test('backlog:a1f2db873cf3: without a measurable bar the CSS default stays and nothing throws', () => {
