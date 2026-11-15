@@ -1843,6 +1843,27 @@ export async function runAssistantAction(client, action, options = {}) {
 import { el } from './admin-ui.js'; // BO-F6-02: the single component library.
 
 /**
+ * backlog:a1f2db873cf3 (production 07/11): the open panel never covers the
+ * ⌘K bar — it starts below the sticky topbar instead of at the top of the
+ * viewport. The bar height is read live from the painted page (desktop and
+ * phone differ), never hardcoded; without a measurable bar the CSS default
+ * (`top: 0`) stays, so the panel keeps working on screens without a topbar.
+ * @param {any} doc
+ * @param {any} panel
+ */
+export function setPanelTopBelowBar(doc, panel) {
+  try {
+    const bar = doc?.querySelector?.('.bo-topbar') ?? null;
+    const height = bar?.getBoundingClientRect?.()?.height ?? 0;
+    if (typeof height === 'number' && Number.isFinite(height) && height > 0 && panel?.style) {
+      panel.style.top = `${Math.round(height)}px`;
+    }
+  } catch {
+    // The CSS default keeps the panel usable.
+  }
+}
+
+/**
  * The ⌘K side panel: suggestions for the current screen, answers with
  * clickable sources, linked actions with the confirmation gate, the
  * execution trace of every answer (BO-F4-04, kept in the session history),
@@ -2423,6 +2444,8 @@ export function createAssistantPanel({ doc, mount, client, navigate = () => {}, 
     if (!state.open) return;
     const panel = el(doc, 'aside', 'bo-assistant');
     panel.setAttribute('aria-label', 'Assistente');
+    // backlog:a1f2db873cf3: never over the ⌘K bar — start below the topbar.
+    setPanelTopBelowBar(doc, panel);
     const header = el(doc, 'div', 'bo-assistant-header');
     header.appendChild(el(doc, 'h2', 'bo-assistant-name', 'Assistente'));
     const live = state.status?.mode === 'live';

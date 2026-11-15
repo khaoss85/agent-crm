@@ -15,6 +15,7 @@ import {
   probeAssistantBackend,
   runAssistantAction,
   runSuggestion,
+  setPanelTopBelowBar,
   suggestionsFor,
 } from '../apps/admin/public/admin-assistant.js';
 import { requireSubmissionContext } from '../apps/admin/public/admin-submission.js';
@@ -1856,4 +1857,36 @@ test('a684ecf5: spazio non attivo dice spento e come si accende', () => {
   assert.ok(ASSISTANT_SPACE_DISABLED_NOTICE.includes('non attivo in questo spazio'));
   assert.ok(ASSISTANT_SPACE_DISABLED_NOTICE.includes('titolare'));
   assert.ok(!ASSISTANT_SPACE_DISABLED_NOTICE.includes('suggerisce'), ASSISTANT_SPACE_DISABLED_NOTICE);
+});
+
+test('backlog:a1f2db873cf3: the open panel starts below the topbar, never over the cmdk bar', () => {
+  const panelWith = (top) => ({ style: { top } });
+  const docWith = (height) => ({
+    querySelector: (selector) => (selector === '.bo-topbar'
+      ? { getBoundingClientRect: () => ({ height }) }
+      : null),
+  });
+  const desktop = panelWith('');
+  setPanelTopBelowBar(docWith(64), desktop);
+  assert.equal(desktop.style.top, '64px', 'the desktop bar height is read live');
+  const phone = panelWith('');
+  setPanelTopBelowBar(docWith(118), phone);
+  assert.equal(phone.style.top, '118px', 'the phone bar height is read live, never hardcoded');
+  const fractional = panelWith('');
+  setPanelTopBelowBar(docWith(63.6), fractional);
+  assert.equal(fractional.style.top, '64px', 'fractions round to whole pixels');
+});
+
+test('backlog:a1f2db873cf3: without a measurable bar the CSS default stays and nothing throws', () => {
+  const noBar = { style: {} };
+  setPanelTopBelowBar({ querySelector: () => null }, noBar);
+  assert.equal(noBar.style.top, undefined, 'no bar means no inline top');
+  const zeroBar = { style: {} };
+  setPanelTopBelowBar({ querySelector: () => ({ getBoundingClientRect: () => ({ height: 0 }) }) }, zeroBar);
+  assert.equal(zeroBar.style.top, undefined, 'a zero bar means no inline top');
+  assert.doesNotThrow(() => {
+    setPanelTopBelowBar({}, { style: {} });
+    setPanelTopBelowBar(null, null);
+    setPanelTopBelowBar({ querySelector: () => { throw new Error('boom'); } }, { style: {} });
+  }, 'a missing or hostile document never breaks the render');
 });
