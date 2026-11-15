@@ -1245,6 +1245,52 @@ test('cancelling a booking whose export lost its link cancels the Google event (
   assert.equal(again.status, 'noop', 'the retry writes nothing');
 });
 
+// backlog:6acf0a73bfc3 — the per-occurrence series convergence against the
+// fake provider: «solo questo» appends one EXDATE to the Google master (no
+// new event on a cancel), «questo e i successivi» closes the master with
+// UNTIL and opens the moved tail as its own series. No test dials Google.
+test('pushSeriesScope converges a Google series: single appends EXDATE, following closes with UNTIL (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  assert.equal(exported.status, 'exported');
+  const masterId = exported.eventId;
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  assert.deepEqual(master().recurrence, ['RRULE:FREQ=WEEKLY;COUNT=3']);
+  // «Solo questo» che annulla: una EXDATE sul master, nessun evento nuovo.
+  const single = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+  });
+  assert.equal(single.status, 'pushed');
+  assert.equal(single.change, 'series-single');
+  assert.ok(master().recurrence.some((line) => line === 'EXDATE:20261028T090000Z'), 'la EXDATE nomina l’istanza annullata');
+  assert.ok(!('movedEventId' in single), 'un annullo non apre eventi nuovi');
+  // «Questo e i successivi» che sposta: UNTIL sul master vecchio e coda nuova.
+  const following = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'following', scopeStartsAt: '2026-11-04T09:00:00.000Z',
+    movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
+    tailRuleLines: ['RRULE:FREQ=WEEKLY;COUNT=1'], tailSourceKey: 'gym:serie:engine:1:coda',
+  });
+  assert.equal(following.status, 'pushed');
+  assert.equal(following.change, 'series-following');
+  const rrule = master().recurrence.find((line) => line.startsWith('RRULE:'));
+  assert.ok(rrule.includes('UNTIL='), 'il master vecchio si chiude con UNTIL');
+  assert.ok(following.tailEventId, 'la coda nasce come evento suo');
+  const tail = ctx.provider.getEvent(CAL, following.tailEventId);
+  assert.deepEqual(tail.recurrence, ['RRULE:FREQ=WEEKLY;COUNT=1']);
+  assert.equal(tail.extendedProperties.accordoSourceKey, 'gym:serie:engine:1:coda');
+});
+
 test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());

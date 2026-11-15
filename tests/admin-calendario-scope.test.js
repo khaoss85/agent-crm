@@ -9,8 +9,9 @@
  * - Il trascinamento di un'occorrenza non muove da solo: apre il modulo con
  *   la casella del rilascio e chiede lo scope; il trascinamento di una riga
  *   singola muove diretto come prima.
- * - Su una serie collegata a Google il 409 si legge in italiano chiaro, sia
- *   per lo spostamento che per l'annullo.
+ * - Su una serie collegata a Google il rifiuto di sync (502) si legge in
+ *   italiano chiaro, sia per lo spostamento che per l'annullo; il vecchio
+ *   409 non esiste più e non ha frase.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -270,19 +271,20 @@ test('573a1e85942f: trascinare una riga singola muove diretto senza scope', asyn
   assert.ok(!('scope' in moves[0].body), 'la riga singola tiene il suo filo senza scope');
 });
 
-test('573a1e85942f: serie Google, il rifiuto 409 parla chiaro in spostamento e annullo', () => {
-  const move = calendarRefusalText({ code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' });
-  assert.ok(move.includes('Google'), 'lo spostamento rifiutato nomina Google');
-  assert.ok(move.includes('tutti'), 'lo spostamento rifiutato dice che solo «tutti» passa');
-  const cancel = cancelRefusalText({ code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' });
-  assert.ok(cancel.includes('Google'), 'l’annullo rifiutato nomina Google');
-  assert.ok(cancel.includes('tutti'), 'l’annullo rifiutato dice che solo «tutti» passa');
+test('6acf0a73bfc3: serie Google, il rifiuto di sync parla chiaro in spostamento e annullo', () => {
+  const serverMessage = 'Google ha rifiutato la modifica della serie (GOOGLE_FORBIDDEN): la griglia non è cambiata. Riprova.';
+  const move = calendarRefusalText({ code: 'APPOINTMENTS_SERIES_SYNC_FAILED', message: serverMessage });
+  assert.equal(move, serverMessage, 'lo spostamento rifiutato mostra il motivo del server');
+  const cancel = cancelRefusalText({ code: 'APPOINTMENTS_SERIES_SYNC_FAILED', message: serverMessage });
+  assert.equal(cancel, serverMessage, 'l’annullo rifiutato mostra il motivo del server');
+  assert.equal(calendarRefusalText({ code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' }), null, 'il vecchio 409 non ha più frase');
+  assert.equal(cancelRefusalText({ code: 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED' }), null, 'il vecchio 409 non ha più frase');
 });
 
-test('573a1e85942f: il 409 Google sull’annullo resta nella domanda in italiano', async () => {
-  const refused = new Error('Su una serie collegata a Google per ora puoi spostare o annullare solo tutta la serie');
-  refused.code = 'APPOINTMENTS_SERIES_SCOPE_NOT_SYNCED';
-  refused.status = 409;
+test('6acf0a73bfc3: il rifiuto Google sull’annullo resta nella domanda in italiano', async () => {
+  const refused = new Error('Google ha rifiutato la modifica della serie (GOOGLE_FORBIDDEN): la griglia non è cambiata. Riprova.');
+  refused.code = 'APPOINTMENTS_SERIES_SYNC_FAILED';
+  refused.status = 502;
   const { mount, client } = await openCalendar({ failCancelWith: refused });
   openEvent(mount, 's1');
   await settle();
@@ -299,4 +301,5 @@ test('573a1e85942f: il 409 Google sull’annullo resta nella domanda in italiano
     .find((node) => node.getAttribute('data-role') === 'cancel-note');
   assert.ok(note, 'il rifiuto resta nella domanda');
   assert.ok(note.textContent.includes('Google'), 'il messaggio nomina Google');
+  assert.ok(note.textContent.includes('griglia non è cambiata'), 'il messaggio dice che la griglia è ferma');
 });
