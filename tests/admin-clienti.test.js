@@ -1499,3 +1499,53 @@ test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw serve
   assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
   assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
 });
+
+test('backlog:2262771da550: system mailboxes never paint, the row calendar state reads', async () => {
+  // (a) «email di sistema escluse dall'elenco»: broker, provider and
+  // reserved mailboxes render «—», in the Email column and under the name.
+  // (b) «stato calendario e canali nelle righe»: the next live appointment
+  // reads «quando · stato», an exact none reads «—», a hole reads
+  // «non disponibile» — never an exact claim over a hole.
+  const columns = [...MENUS.columns, { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true }];
+  const items = [
+    {
+      ...ROW_MARCO, channelsComplete: true, calendarComplete: true,
+      nextAppointment: { startsAt: '2030-06-02T09:30:00.000Z', endsAt: '2030-06-02T10:00:00.000Z', status: 'confirmed' },
+    },
+    {
+      ...ROW_ANNA, email: 'broker+adopted-1@accordo.invalid', channels: [], channelsComplete: true,
+      calendarComplete: true, nextAppointment: null,
+    },
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c9', name: 'Bot Github', company: null, email: 'github|12345',
+      phone: null, channels: ['email'], channelsComplete: false,
+      calendarComplete: false, nextAppointment: null,
+    },
+  ];
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items, total: 3, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS, columns,
+  });
+  const { mount } = await render(client);
+  // The opt-in Email column on: the mailbox must stay out there too.
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  await flush();
+  const text = mount.textContent;
+  assert.ok(!text.includes('broker'), 'no broker mailbox paints');
+  assert.ok(!text.includes('accordo.invalid'), 'no reserved domain paints');
+  assert.ok(!text.includes('github|'), 'no provider subject paints');
+  assert.ok(text.includes('marco@palestra-esempio.it'), 'a real mailbox still reads');
+  const card = (id) => mount.findAll('article').find((node) => node.getAttribute('data-customer') === `contact:${id}`);
+  const fact = (id, column) => card(id).findAll('p').find((node) => node.getAttribute('data-column') === column);
+  assert.ok(fact('c1', 'calendario').textContent.includes('confermato'), 'the next live appointment reads with its state');
+  assert.ok(fact('c1', 'email').textContent.includes('marco@palestra-esempio.it'));
+  assert.ok(fact('c2', 'email').textContent.includes('—'), 'a system mailbox reads like a missing email');
+  assert.ok(fact('c2', 'calendario').textContent.includes('—'), 'an exact none reads «—»');
+  assert.ok(fact('c9', 'email').textContent.includes('—'), 'a provider subject reads like a missing email');
+  assert.ok(fact('c9', 'calendario').textContent.includes('non disponibile'), 'a hole never reads as an exact none');
+  const holeCell = fact('c9', 'calendario').findAll('span').find((node) => !String(node.getAttribute('class') ?? '').includes('bo-clienti-label'));
+  assert.equal(holeCell?.getAttribute('title'), 'Lo stato del calendario non si è letto: riprova più tardi.');
+  const tiles = fact('c9', 'canali').findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-clienti-tiles'));
+  assert.equal(tiles?.getAttribute('title'), 'Elenco parziale: alcuni messaggi non si sono letti.', 'a best-effort union says it is partial');
+});

@@ -587,7 +587,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, appointmentBySubject?: Map<string, any>, appointmentsComplete?: boolean, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
  *   customFields entries are shaped `{ key, label, type, options, value, updatedAt, updatedBy }`
  *   (backlog:434cc39a): every defined field reads on every row — the list
  *   columns — with a null value when never set.

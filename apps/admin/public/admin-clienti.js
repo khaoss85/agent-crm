@@ -48,6 +48,13 @@ const CHANNEL_LABELS = Object.freeze({
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
 
 /**
+ * backlog:2262771da550 — the Calendario cell names the live appointment
+ * state in plain Italian. Terminal states (svolto, non presentato,
+ * annullato) never reach the cell: the server ships only the next live one.
+ */
+const CALENDAR_STATUS_LABELS = Object.freeze({ booked: 'prenotato', confirmed: 'confermato' });
+
+/**
  * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
  * `status.reason` (technical English diagnostics naming packages, e.g.
  * «no signed business found in the composed packages (orders: not readable
@@ -935,13 +942,29 @@ export function createCustomerListView(deps) {
   function cellFor(row, columnId) {
     switch (columnId) {
       case 'canali': {
-        if (row.channels.length === 0) return el('span', 'bo-muted', '—');
+        // backlog:2262771da550 — the row's channel state: the held union
+        // the server ships, honest about holes. A partial or unreadable
+        // message/call scan never reads as an exact list: empty reads
+        // «non disponibile», a best-effort union carries the shortfall in
+        // its title instead of claiming to be exact.
+        const channels = Array.isArray(row.channels) ? row.channels : [];
+        if (channels.length === 0) {
+          if (row.channelsComplete === false) {
+            const none = el('span', 'bo-muted', 'non disponibile');
+            none.setAttribute('title', 'I canali non si sono letti tutti: riprova più tardi.');
+            return none;
+          }
+          return el('span', 'bo-muted', '—');
+        }
         const tiles = el('span', 'bo-clienti-tiles');
-        for (const system of row.channels) {
+        for (const system of channels) {
           const tile = el('span', `bo-clienti-tile bo-tile-${String(system).toLowerCase()}`, channelMark(system));
           tile.setAttribute('title', channelLabel(system));
           tile.setAttribute('aria-label', channelLabel(system));
           tiles.appendChild(tile);
+        }
+        if (row.channelsComplete === false) {
+          tiles.setAttribute('title', 'Elenco parziale: alcuni messaggi non si sono letti.');
         }
         return tiles;
       }
@@ -991,8 +1014,32 @@ export function createCustomerListView(deps) {
         const text = `✦ ${row.nextStep.title ?? 'attività'}${row.nextStep.dueAt ? ` · ${shortDay(row.nextStep.dueAt)}` : ''}${row.nextStep.overdue ? ' (in ritardo)' : ''}`;
         return el('span', undefined, text);
       }
-      case 'email':
-        return row.email ? el('span', undefined, row.email) : el('span', 'bo-muted', '—');
+      case 'calendario': {
+        // backlog:2262771da550 — the row's calendar state: the next live
+        // appointment as «quando · stato». An exact none reads «—»; a
+        // partial or unreadable appointment scan reads «non disponibile»,
+        // never an exact none over a hole.
+        if (row.calendarComplete === false) {
+          const none = el('span', 'bo-muted', 'non disponibile');
+          none.setAttribute('title', 'Lo stato del calendario non si è letto: riprova più tardi.');
+          return none;
+        }
+        const next = row.nextAppointment ?? null;
+        if (!next || typeof next.startsAt !== 'string' || next.startsAt === '') return el('span', 'bo-muted', '—');
+        const statusLabel = CALENDAR_STATUS_LABELS[String(next.status ?? '').toLowerCase()] ?? String(next.status ?? '');
+        const text = statusLabel !== '' ? `${contactWhen(next.startsAt)} · ${statusLabel}` : contactWhen(next.startsAt);
+        const node = el('span', undefined, text);
+        node.setAttribute('title', `Prossimo appuntamento: ${next.startsAt}${typeof next.endsAt === 'string' && next.endsAt !== '' ? `–${next.endsAt}` : ''}`);
+        return node;
+      }
+      case 'email': {
+        // backlog:2262771da550 — system mailboxes never paint: the one team
+        // filter (memberText in admin-labels.js) reads technical identities
+        // («broker+…@accordo.invalid», «google|…», «github|…») as null, so
+        // they render «—» like a missing email.
+        const shown = memberText(row.email);
+        return shown ? el('span', undefined, shown) : el('span', 'bo-muted', '—');
+      }
       case 'telefono':
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
@@ -1116,8 +1163,9 @@ export function createCustomerListView(deps) {
       }
       // The second line names the company; a contact with none (or with a
       // stored placeholder such as `Unknown (…)`, which the API reads as
-      // none) shows its email instead (production 10/11).
-      const sub = row.company?.name ? String(row.company.name) : (typeof row.email === 'string' ? row.email : '');
+      // none) shows its email instead (production 10/11) — unless the email
+      // is a system mailbox, which never paints (backlog:2262771da550).
+      const sub = row.company?.name ? String(row.company.name) : (memberText(row.email) ?? '');
       if (sub !== '') who.appendChild(el('span', 'bo-muted bo-clienti-sub', sub));
       head.appendChild(who);
       card.appendChild(head);
