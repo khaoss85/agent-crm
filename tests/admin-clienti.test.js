@@ -1258,7 +1258,7 @@ test('7cf5c4931cfc: the handoff still opens the view when the address names none
   assert.equal(view.getState().vista, 'da-rispondere', 'the fallback still lands on the view');
 });
 
-test('7cf5c4931cfc: back on the same address keeps the search', async () => {
+test('review #935 giro 1 P1: same-view Oggi entry clears the search (regression of #795)', async () => {
   const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
   const client = {
     calls: [],
@@ -1268,13 +1268,43 @@ test('7cf5c4931cfc: back on the same address keeps the search', async () => {
       return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
     },
   };
-  const { mount, view } = await render(client, { routeHash: '#/customer-data?vista=da-rispondere' });
+  let hash = '#/customer-data?vista=da-rispondere';
+  const { mount, view } = await render(client, { routeHash: () => hash });
   assert.equal(view.getState().vista, 'da-rispondere');
   const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
   search.value = 'rossi';
   mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault() {} });
   await flush();
   assert.equal(view.getState().q, 'rossi', 'the search is on');
+  // Oggi «Vedi tutte» for the already-open view: the hash names the view,
+  // so the entry resets to the view alone.
+  await view.render();
+  assert.equal(view.getState().q, '', 'same-view hash entry clears the search');
+  assert.equal(view.getState().vista, 'da-rispondere', 'and stays on the view');
+  const last = new URLSearchParams(client.calls[client.calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search reaches the server');
+});
+
+test('7cf5c4931cfc: back from a scheda (plain address) keeps the search', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  let hash = '#/customer-data?vista=da-rispondere';
+  const { mount, view } = await render(client, { routeHash: () => hash });
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(view.getState().q, 'rossi', 'the search is on');
+  // The scheda back link is plain `#/customer-data`: no view named, kept as it was.
+  hash = '#/customer-data';
   await view.render();
   assert.equal(view.getState().q, 'rossi', 'back from a scheda keeps the search');
   assert.equal(view.getState().vista, 'da-rispondere', 'and the view with it');

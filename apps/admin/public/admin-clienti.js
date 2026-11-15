@@ -305,15 +305,19 @@ export function createCustomerListView(deps) {
     // the view alone, never a search or filter left from an earlier visit
     // (review Muse #795). backlog:7cf5c4931cfc: the address names the view,
     // so a reload reopens it; the handoff is taken (cleared) either way and
-    // only applies when the address names none. An address naming the
-    // already-open view keeps the search and filters (backlog:2067a415405c:
-    // back from a scheda), it opens the view only when it differs.
+    // only applies when the address names none. Every hash-driven entry
+    // resets (review #935 giro 1 P1: same-view Oggi entry must clear too);
+    // only a hash naming no view keeps the search and filters
+    // (backlog:2067a415405c: back from a scheda).
     const pendingView = takePendingClientiView(store);
     const hashView = vistaOfHash(currentRouteHash());
-    const askedView = hashView ?? pendingView;
-    if (askedView !== null && (hashView === null || askedView !== state.vista)) {
+    if (hashView !== null) {
       Object.assign(state, {
-        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+        vista: hashView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    } else if (pendingView !== null && pendingView !== state.vista) {
+      Object.assign(state, {
+        vista: pendingView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
     }
     // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
