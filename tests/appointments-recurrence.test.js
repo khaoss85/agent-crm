@@ -899,7 +899,7 @@ test('serie mai esportata su Google: single e following cambiano solo la griglia
   assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
 });
 
-test('senza la spinta delle serie la modifica parziale è 500 prima di scrivere, mai 409 (backlog:6acf0a73bfc3)', async () => {
+test('senza la spinta delle serie la modifica parziale resta solo in griglia, mai 409 (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
   const pushes = [];
   const calendarSync = {
@@ -910,33 +910,24 @@ test('senza la spinta delle serie la modifica parziale è 500 prima di scrivere,
   };
   const context = { ...contextFor(service), calendarSync };
   const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
-  const before = service.rows.map((row) => row.startsAt);
-  await assert.rejects(
-    rescheduleAppointment(context, {
-      id: booked.occurrences[2].id,
-      startsAt: '2026-12-03T16:00:00.000Z',
-      endsAt: '2026-12-03T17:00:00.000Z',
-      scope: 'single',
-      calendar: { calendarId: 'cal-1' },
-      spaceId: 'spazio-1',
-    }),
-    (error) => {
-      assert.equal(error.code, 'APPOINTMENTS_CALENDAR_UNAVAILABLE');
-      assert.equal(error.status, 500);
-      return true;
-    },
-  );
-  assert.deepEqual(service.rows.map((row) => row.startsAt), before, 'il 500 arriva prima della prima scrittura');
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
-  await assert.rejects(
-    cancelAppointment(context, {
-      id: booked.occurrences[1].id, scope: 'single', reason: 'spostato',
-      calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
-    }),
-    (error) => error.code === 'APPOINTMENTS_CALENDAR_UNAVAILABLE' && error.status === 500,
-  );
-  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'booked', 'booked']);
-  assert.deepEqual(pushes, [], 'nessuna push su un rifiuto');
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.moved, true, 'la serie mai esportata si sposta in griglia');
+  assert.equal(service.rows[2].startsAt, '2026-12-03T16:00:00.000Z');
+  assert.equal(pushes.length, 1, 'solo la head-push post-commit della riga, nessuna converge di serie');
+  const cancelled = await cancelAppointment(context, {
+    id: booked.occurrences[1].id, scope: 'single', reason: 'spostato',
+    calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
+  });
+  assert.equal(cancelled.cancelled, true, 'la serie mai esportata si annulla in griglia');
+  assert.deepEqual(service.rows.map((row) => row.status), ['booked', 'cancelled', 'booked']);
+  assert.equal(pushes.length, 2, 'solo head-push post-commit, nessuna converge di serie');
 });
 
 test('la conferma di una serie con calendario esporta un solo evento ricorrente (backlog:6acf0a73bfc3)', async () => {

@@ -1266,8 +1266,11 @@ test('pushSeriesScope converges a Google series: single appends EXDATE, followin
   assert.equal(exported.status, 'exported');
   const masterId = exported.eventId;
   const master = () => ctx.provider.getEvent(CAL, masterId);
+  const headLink = () => ctx.linkRows().find((row) => row.appointmentSourceKey === appointment.sourceKey);
   assert.deepEqual(master().recurrence, ['RRULE:FREQ=WEEKLY;COUNT=3']);
+  assert.ok(headLink(), 'l’esportazione lega la testa');
   // «Solo questo» che annulla: una EXDATE sul master, nessun evento nuovo.
+  ctx.setNow(T0 + 1000);
   const single = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
     scope: 'single', occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
   });
@@ -1275,7 +1278,9 @@ test('pushSeriesScope converges a Google series: single appends EXDATE, followin
   assert.equal(single.change, 'series-single');
   assert.ok(master().recurrence.some((line) => line === 'EXDATE:20261028T090000Z'), 'la EXDATE nomina l’istanza annullata');
   assert.ok(!('movedEventId' in single), 'un annullo non apre eventi nuovi');
+  assert.equal(headLink().googleUpdated, master().updated, 'la converge aggiorna il timbro del link di testa');
   // «Questo e i successivi» che sposta: UNTIL sul master vecchio e coda nuova.
+  ctx.setNow(T0 + 61000);
   const following = await ctx.sync.pushSeriesScope(appointment.sourceKey, {
     scope: 'following', scopeStartsAt: '2026-11-04T09:00:00.000Z',
     movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
@@ -1289,6 +1294,10 @@ test('pushSeriesScope converges a Google series: single appends EXDATE, followin
   const tail = ctx.provider.getEvent(CAL, following.tailEventId);
   assert.deepEqual(tail.recurrence, ['RRULE:FREQ=WEEKLY;COUNT=1']);
   assert.equal(tail.extendedProperties.accordoSourceKey, 'gym:serie:engine:1:coda');
+  const tailLink = ctx.linkRows().find((row) => row.appointmentSourceKey === 'gym:serie:engine:1:coda');
+  assert.ok(tailLink, 'la coda nata su Google ha la sua riga di link');
+  assert.equal(tailLink.googleUpdated, tail.updated, 'il link della coda porta il timbro Google');
+  assert.equal(headLink().googleUpdated, master().updated, 'la testa resta al passo dopo UNTIL');
 });
 
 test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
