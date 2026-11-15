@@ -943,6 +943,36 @@ async function seriesHeadSourceKey(appointments, seriesKey, fallbackRow) {
     ?? fallbackRow?.sourceKey ?? null;
 }
 
+/**
+ * A weekly rule the grid shifts weekday-first (backlog:6acf0a73bfc3, giro 4):
+ * true when the rule repeats on several weekdays — `weekdays` (lun–ven) or
+ * a custom weekly rule with more than one day. A single-weekday `weekly`
+ * rule never qualifies: shifting it by whole weeks keeps its weekday.
+ */
+function seriesRuleHasManyWeekdays(row) {
+  let rule = null;
+  try {
+    rule = JSON.parse(String(row?.recurrenceRule ?? ''));
+  } catch {
+    return false;
+  }
+  let valid = null;
+  try {
+    valid = validateRecurrence(rule);
+  } catch {
+    return false;
+  }
+  if (valid === null) return false;
+  if (valid.kind === 'weekdays') return true;
+  return Array.isArray(valid.days) && valid.days.length > 1;
+}
+
+function weekdayOfIso(iso) {
+  const ms = Date.parse(String(iso ?? ''));
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).getUTCDay();
+}
+
 function tailRuleLinesFor(row, tailCount, newStartsAtIso) {
   let rule = null;
   try {
@@ -1981,6 +2011,22 @@ export async function rescheduleAppointment(context, request) {
     // through the post-commit head push, exactly as before. A zero delta
     // moves nothing, so Google is left alone too.
     if (scope === 'following' && googleScope !== null && startsAt.ms !== Date.parse(current.startsAt)) {
+      // Stacked BYDAY (backlog:6acf0a73bfc3, giro 4): a following move that
+      // changes the weekday on a multi-weekday rule would make the Google
+      // tail repeat different weekdays than the grid just wrote. Refuse 409
+      // BEFORE any Google call, grid unchanged — the full converge is
+      // follow-up work, not this PR.
+      if (seriesRuleHasManyWeekdays(current)) {
+        const fromDay = weekdayOfIso(current.startsAt);
+        const toDay = weekdayOfIso(startsAt.iso);
+        if (fromDay !== null && toDay !== null && fromDay !== toDay) {
+          throw new AppError(
+            '«Questo e i successivi» non può cambiare il giorno della settimana su una serie con più giorni: '
+            + 'la griglia non è cambiata. Sposta di settimane intere o usa «solo questo».',
+            { code: 'APPOINTMENTS_SERIES_BYDAY_GOOGLE', status: 409, details: { scope } },
+          );
+        }
+      }
       const tailRule = tailRuleLinesFor(current, targets.length, plans[0].nextStartsAt);
       if (tailRule === null) {
         throw new AppError(
@@ -1998,6 +2044,7 @@ export async function rescheduleAppointment(context, request) {
         movedEndsAt: plans[0].nextEndsAt,
         tailRuleLines: [tailRule],
         tailSourceKey: targets[0].sourceKey,
+        inScopeSourceKeys: targets.map((entry) => entry.sourceKey),
       });
       scopedConverged = true;
     }
@@ -2263,6 +2310,7 @@ export async function cancelAppointment(context, request) {
           scope: 'following',
           scopeStartsAt: scoped[0].startsAt,
           tailSourceKey: scoped[0].sourceKey,
+          inScopeSourceKeys: scoped.map((entry) => entry.sourceKey),
         };
       await convergeGoogleSeriesScope(googleScope, {
         ...plan,

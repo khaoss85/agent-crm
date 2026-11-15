@@ -1254,6 +1254,49 @@ test('«questo e i successivi» su una serie senza fine chiude la coda sulle rig
   );
 });
 
+test('«questo e i successivi» che cambia giorno su regola con più giorni viene rifiutato prima di Google (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(...args) {
+      pushes.push(args);
+      throw new Error('non deve spingere la testa: il rifiuto arriva prima di Google');
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({
+    sourceKey: 'gym:serie:due-giorni',
+    recurrence: { kind: 'custom', unit: 'week', days: [2, 4], count: 6 },
+  }));
+  assert.ok(booked.occurrences.length > 2, 'la regola con più giorni si espande');
+  const before = service.rows.map((row) => ({ ...row }));
+  // Martedì -> mercoledì: cambia il giorno della settimana sulla regola mar+gio.
+  await assert.rejects(
+    rescheduleAppointment(context, {
+      id: booked.occurrences[0].id,
+      startsAt: '2026-11-18T16:00:00.000Z',
+      endsAt: '2026-11-18T17:00:00.000Z',
+      scope: 'following',
+      calendar: { calendarId: 'cal-1' },
+      spaceId: 'spazio-1',
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_BYDAY_GOOGLE');
+      assert.equal(error.status, 409);
+      assert.match(String(error.message), /griglia non è cambiata/);
+      return true;
+    },
+  );
+  assert.deepEqual(service.rows.map((row) => ({ ...row })), before, 'il rifiuto arriva prima della prima scrittura');
+  assert.equal(scoped.length, 0, 'nessuna converge verso Google');
+  assert.equal(pushes.length, 0, 'nessuna spinta della testa');
+});
+
 test('la corsa di annullo con scope rilegge la riga bersaglio, non quella nominata (backlog:573a1e85942f)', async () => {
   const service = fakeAppointments();
   const context = contextFor(service);

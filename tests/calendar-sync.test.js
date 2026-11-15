@@ -1422,6 +1422,108 @@ test('pushSeriesScope following riusa la coda e la cancella la ritira (backlog:6
   assert.equal(ctx.provider.getEvent(CAL, first.tailEventId).status, 'cancelled', 'la coda non resta confermata');
 });
 
+// backlog:6acf0a73bfc3 giro 4 — «solo questo» su un'occorrenza che oggi vive
+// dentro una coda: la converge contro il master sbagliato lascerebbe la coda
+// orfana. Rifiuto 409 prima di ogni chiamata Google, griglia e link invariati.
+test('pushSeriesScope single dentro una coda viene rifiutato prima di Google (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const calls = { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 };
+  for (const fn of Object.keys(calls)) {
+    const real = ctx.provider[fn].bind(ctx.provider);
+    ctx.provider[fn] = async (...args) => { calls[fn] += 1; return real(...args); };
+  }
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:5',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const tailKey = 'gym:serie:engine:5:coda';
+  await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'following', scopeStartsAt: '2026-11-04T09:00:00.000Z',
+    movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
+    tailRuleLines: ['RRULE:FREQ=WEEKLY;COUNT=1'], tailSourceKey: tailKey,
+  });
+  const rowsBefore = ctx.appointmentRows().map((row) => row.sourceKey).sort();
+  const linksBefore = ctx.linkRows().map((row) => row.googleEventId).sort();
+  const masterBefore = JSON.stringify(ctx.provider.getEvent(CAL, masterId));
+  for (const fn of Object.keys(calls)) calls[fn] = 0;
+  await assert.rejects(
+    ctx.sync.pushSeriesScope(appointment.sourceKey, {
+      scope: 'single', occurrenceStartsAt: '2026-11-04T16:00:00.000Z',
+      movedSourceKey: tailKey,
+    }),
+    (error) => {
+      assert.equal(error.code, 'CALENDAR_SYNC_SERIES_SCOPE_AMBIGUOUS');
+      assert.equal(error.status, 409);
+      assert.match(String(error.message ?? error), /griglia non è cambiata/);
+      return true;
+    },
+  );
+  assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'nessuna chiamata a Google');
+  assert.deepEqual(ctx.appointmentRows().map((row) => row.sourceKey).sort(), rowsBefore, 'la griglia non cambia');
+  assert.deepEqual(ctx.linkRows().map((row) => row.googleEventId).sort(), linksBefore, 'nessun link nuovo');
+  assert.equal(JSON.stringify(ctx.provider.getEvent(CAL, masterId)), masterBefore, 'il master non cambia');
+});
+
+// backlog:6acf0a73bfc3 giro 4 — «questo e i successivi» quando un'altra riga
+// in ambito ha già un evento con ambito: ritirare solo la coda dell'ancora
+// lascerebbe l'altro evento orfano. Rifiuto 409 prima di ogni chiamata.
+test('pushSeriesScope following sopra un’altra riga con ambito viene rifiutato prima di Google (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const calls = { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 };
+  for (const fn of Object.keys(calls)) {
+    const real = ctx.provider[fn].bind(ctx.provider);
+    ctx.provider[fn] = async (...args) => { calls[fn] += 1; return real(...args); };
+  }
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:6',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const otherKey = 'gym:serie:engine:6:ex-riga';
+  await ctx.sync.pushSeriesScope(appointment.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-11-04T09:00:00.000Z',
+    movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
+    movedSourceKey: otherKey,
+  });
+  for (const fn of Object.keys(calls)) calls[fn] = 0;
+  const masterBefore = JSON.stringify(ctx.provider.getEvent(CAL, masterId));
+  for (const fn of Object.keys(calls)) calls[fn] = 0;
+  const linksBefore = ctx.linkRows().length;
+  await assert.rejects(
+    ctx.sync.pushSeriesScope(appointment.sourceKey, {
+      scope: 'following', scopeStartsAt: '2026-10-28T09:00:00.000Z',
+      tailSourceKey: 'gym:serie:engine:6:coda',
+      inScopeSourceKeys: ['gym:serie:engine:6:coda', otherKey],
+    }),
+    (error) => {
+      assert.equal(error.code, 'CALENDAR_SYNC_SERIES_SCOPE_STACKED');
+      assert.equal(error.status, 409);
+      assert.match(String(error.message ?? error), /griglia non è cambiata/);
+      return true;
+    },
+  );
+  assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'nessuna chiamata a Google');
+  assert.equal(JSON.stringify(ctx.provider.getEvent(CAL, masterId)), masterBefore, 'il master non cambia');
+  assert.equal(ctx.linkRows().length, linksBefore, 'nessun link nuovo');
+});
+
 test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());

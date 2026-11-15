@@ -1512,6 +1512,7 @@ export function createCalendarSyncOperations(options = {}) {
     async pushSeriesScope(headSourceKey, {
       spaceId, actor, scope, occurrenceStartsAt, movedStartsAt, movedEndsAt,
       scopeStartsAt, tailRuleLines, movedSourceKey, tailSourceKey,
+      inScopeSourceKeys,
     } = {}) {
       const who = actor ?? defaultActor;
       if (scope !== 'single' && scope !== 'following') {
@@ -1556,6 +1557,68 @@ export function createCalendarSyncOperations(options = {}) {
         }
       }
       const eventId = rowLinkEventId(link, calendarId);
+      // Stacked scopes (backlog:6acf0a73bfc3, giro 4): one scoped op on top
+      // of another is refused 409 BEFORE any Google call, grid unchanged.
+      // Link reads only: a scoped Google id carries its master
+      // (`<master>-ex-<instant>` / `<master>-serie-<instant>`), so a prior
+      // under the same master is provable without touching the provider.
+      const scopedPriorsOf = async (sourceKey) => {
+        if (typeof sourceKey !== 'string' || sourceKey === '') return [];
+        const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
+        const out = [];
+        for (const known of Array.isArray(rows) ? rows : []) {
+          if (!known) continue;
+          const priorId = rowLinkEventId(known, calendarId);
+          if (priorId === eventId) continue;
+          if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+            out.push({ link: known, eventId: priorId, sourceKey });
+          }
+        }
+        return out;
+      };
+      if (scope === 'single' && typeof movedSourceKey === 'string' && movedSourceKey !== '') {
+        const tailLives = (await scopedPriorsOf(movedSourceKey))
+          .filter((entry) => entry.eventId.startsWith(`${eventId}-serie-`));
+        if (tailLives.length > 0) {
+          throw syncError('CALENDAR_SYNC_SERIES_SCOPE_AMBIGUOUS', 409,
+            '«Solo questo» su un’occorrenza che vive in una coda già spostata su Google non è supportato: '
+            + 'la griglia non è cambiata. Annulla la coda o sposta con «questo e i successivi».');
+        }
+      }
+      if (scope === 'following') {
+        const listed = Array.isArray(inScopeSourceKeys)
+          ? inScopeSourceKeys.filter((key) => typeof key === 'string' && key !== '')
+          : null;
+        if (listed !== null && listed.length > 1) {
+          const anchorKey = typeof tailSourceKey === 'string' && tailSourceKey !== ''
+            ? tailSourceKey : listed[0];
+          const beyond = listed[0] === anchorKey ? listed.slice(1) : listed.filter((key) => key !== anchorKey);
+          for (const key of beyond) {
+            const priors = await scopedPriorsOf(key);
+            if (priors.length > 0) {
+              throw syncError('CALENDAR_SYNC_SERIES_SCOPE_STACKED', 409,
+                '«Questo e i successivi» tocca una riga che ha già un evento con ambito su Google: '
+                + 'la griglia non è cambiata. Chiudi prima l’operazione precedente, poi riprova.');
+            }
+          }
+        } else if (listed === null && typeof tailSourceKey === 'string' && tailSourceKey !== '') {
+          // Direct callers naming no row list: any other scoped event under
+          // this master is a stacked op this converge would orphan — refuse
+          // closed instead of leaving it behind.
+          const all = await linkService(context).listWhere({ calendarId });
+          for (const known of Array.isArray(all) ? all : []) {
+            if (!known) continue;
+            if (known.appointmentSourceKey === tailSourceKey) continue;
+            if (known.appointmentSourceKey === headSourceKey) continue;
+            const priorId = rowLinkEventId(known, calendarId);
+            if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+              throw syncError('CALENDAR_SYNC_SERIES_SCOPE_STACKED', 409,
+                '«Questo e i successivi» tocca una riga che ha già un evento con ambito su Google: '
+                + 'la griglia non è cambiata. Chiudi prima l’operazione precedente, poi riprova.');
+            }
+          }
+        }
+      }
       const live = await providerCall(calendarId, 'getEvent', { calendarId, eventId }, GRANT_PURPOSE_WRITE);
       if (!live || live.status === 'cancelled') {
         throw syncError('CALENDAR_SYNC_EVENT_UNKNOWN', 404,
