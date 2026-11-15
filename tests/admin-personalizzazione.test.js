@@ -19,6 +19,7 @@ import {
   PERSONALIZZAZIONE_TABS,
   activeByUnit,
   bannerFor,
+  connettoriCardState,
   createPersonalizzazioneView,
   filterUnits,
   isPersonalizzazioneTab,
@@ -1072,4 +1073,27 @@ test('#680: the Stripe card reads Non ancora disponibile and carries no action',
   const calendar = mount.findAll('article').find((node) => node.textContent.includes('Google Calendar'));
   assert.ok(calendar.findAll('button').some((node) => node.getAttribute('aria-label') === 'Collega Google Calendar'),
     'Google Calendar keeps its «+» towards Profilo');
+});
+
+// Backlog 6d0df351: the pilot shape — the schema serves only WhatsApp and
+// Telegram. Connettori offers Collega exactly there, like Stato sync; what
+// no adapter serves reads «non ancora disponibile». Unknown adapters (null)
+// keep the previous answer.
+test('6d0df351: with the pilot adapters Connettori offers Collega only where served', () => {
+  const onlyWa = [{ channel: 'whatsapp', name: 'whatsapp-adapter', version: 1 }];
+  assert.equal(connettoriCardState({ channel: 'whatsapp' }, [], null, onlyWa), 'da-collegare',
+    'WhatsApp served: Collega');
+  assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, onlyWa), 'non-disponibile',
+    'TikTok unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'voice' }, [], null, onlyWa), 'non-disponibile',
+    'Telefono unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'site-form' }, [], null, onlyWa), 'non-disponibile',
+    'Form sito unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'telegram' }, [], null, onlyWa), 'non-disponibile',
+    'Telegram unserved: no Collega');
+  const withTelegram = [...onlyWa, { channel: 'telegram', name: 'telegram-adapter', version: 1 }];
+  assert.equal(connettoriCardState({ channel: 'telegram' }, [], null, withTelegram), 'da-collegare',
+    'Telegram served: Collega, coherent with Stato sync');
+  assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
+    'unknown adapters: the previous answer stays');
 });

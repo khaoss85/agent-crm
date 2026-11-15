@@ -1669,7 +1669,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // and #/connettori: without the composed adapters a channel nothing
     // serves would still be invited.
     const channelsMeta = domains?.channels?.metadata ?? domains?.channels;
-    outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : [];
+    // No adapters metadata means unknown, not "nothing serves it": only a
+    // read adapters list filters the invite (backlog:803d127c4458 keeps its
+    // invite when the schema names no adapters).
+    outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : null;
   } catch (error) {
     noteReadFailure('schema', error);
     // The profile read started already: nothing waits on it.

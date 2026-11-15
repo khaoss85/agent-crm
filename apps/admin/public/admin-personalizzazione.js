@@ -606,7 +606,8 @@ export function createPersonalizzazioneView(deps) {
     try {
       const schema = await client.request('/api/schema');
       const meta = schema?.domains?.channels?.metadata ?? schema?.domains?.channels;
-      state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : [];
+      // No adapters metadata means unknown, not "nothing serves it" (like Oggi).
+      state.adapters = Array.isArray(meta?.adapters) ? meta.adapters : null;
     } catch {
       state.adapters = null;
     }
