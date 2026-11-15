@@ -419,36 +419,77 @@ export function spaceInitialsFor(name) {
 }
 
 /**
- * Badge hue for one space (backlog:ecb26347d12c): a deterministic hue
- * from the space id, so two spaces never share the badge color and the
- * same space reads the same everywhere. White text stays readable on it.
+ * Badge palette for spaces (backlog:c4127dcbb7f1): 16 distinct entries,
+ * each readable with white text (WCAG AA, ratios in styles.css next to
+ * the `.bo-space-badge--pN` rules). The palette fits in one screen of
+ * CSS instead of one rule per hue.
+ */
+const SPACE_BADGE_PALETTE = [
+  { h: 0, s: 60, l: 42 },
+  { h: 23, s: 60, l: 42 },
+  { h: 45, s: 60, l: 34 },
+  { h: 68, s: 60, l: 30 },
+  { h: 90, s: 60, l: 32 },
+  { h: 113, s: 60, l: 33 },
+  { h: 135, s: 60, l: 33 },
+  { h: 158, s: 60, l: 32 },
+  { h: 180, s: 60, l: 32 },
+  { h: 203, s: 60, l: 42 },
+  { h: 225, s: 60, l: 42 },
+  { h: 248, s: 60, l: 42 },
+  { h: 270, s: 60, l: 42 },
+  { h: 293, s: 60, l: 42 },
+  { h: 315, s: 60, l: 42 },
+  { h: 338, s: 60, l: 42 },
+];
+
+/**
+ * Palette slot for one space (backlog:c4127dcbb7f1): a deterministic
+ * FNV-1a hash of the space id, so the same space reads the same
+ * everywhere. Neighboring ids spread across the palette instead of
+ * landing on neighboring hues; with fewer spaces than palette entries
+ * each space normally reads its own color.
+ * @param {unknown} id
+ */
+export function spaceBadgeIndex(id) {
+  const text = typeof id === 'string' ? id : '';
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % SPACE_BADGE_PALETTE.length;
+}
+
+/**
+ * Badge hue for one space (backlog:c4127dcbb7f1): the hue of the
+ * palette entry the space maps to, so the hue and the color string
+ * never disagree.
  * @param {unknown} id
  */
 export function spaceBadgeHue(id) {
-  const text = typeof id === 'string' ? id : '';
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
-  return hash % 360;
+  return SPACE_BADGE_PALETTE[spaceBadgeIndex(id)].h;
 }
 
 /**
- * Badge color for one space (backlog:ecb26347d12c): same value as before,
- * derived from the hue so the class and the color string never disagree.
+ * Badge color for one space (backlog:c4127dcbb7f1): the palette entry
+ * as an `hsl()` string, identical to the matching stylesheet rule.
  * @param {unknown} id
  */
 export function spaceBadgeColor(id) {
-  return `hsl(${spaceBadgeHue(id)} 45% 42%)`;
+  const entry = SPACE_BADGE_PALETTE[spaceBadgeIndex(id)];
+  return `hsl(${entry.h} ${entry.s}% ${entry.l}%)`;
 }
 
 /**
- * Stylesheet class carrying one space's badge color (backlog:b545aca18b8f):
- * the color lives in styles.css (`.bo-space-badge--h<hue>`), never in an
+ * Stylesheet class carrying one space's badge color (backlog:c4127dcbb7f1):
+ * the color lives in styles.css (`.bo-space-badge--p<slot>`), never in an
  * inline `style` attribute or a CSSOM write, so a pilot CSP that refuses
- * inline styles cannot strip it. Same hue as spaceBadgeColor, no new shade.
+ * inline styles cannot strip it. Same slot as spaceBadgeColor, no new shade.
  * @param {unknown} id
  */
 export function spaceBadgeClass(id) {
-  return `bo-space-badge--h${spaceBadgeHue(id)}`;
+  return `bo-space-badge--p${spaceBadgeIndex(id)}`;
 }
 
 /**

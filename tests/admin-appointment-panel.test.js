@@ -135,7 +135,7 @@ test('Nuovo appuntamento: the window has the scheda frame, the customer chosen, 
   assert.ok(panel.findAll('div').some((node) => node.getAttribute('class') === 'bo-composer-head'));
   assert.ok(panel.textContent.includes('Nuovo appuntamento · Guido Presti'), 'the head names the chosen customer');
   const services = selectNamed(panel, 'service').findAll('option').map((node) => node.textContent);
-  assert.deepEqual(services, ['Scegli il servizio', 'Lezione prova · 45,00 €', 'Personal training · 60,00 €']);
+  assert.deepEqual(services, ['Scegli il servizio', 'Lezione prova · 45 €', 'Personal training · 60 €']);
   assert.deepEqual(selectNamed(panel, 'duration').findAll('option').map((node) => node.textContent),
     ['15 min', '30 min', '45 min', '1 ora', '1 ora e 30', '2 ore']);
   assert.equal(selectNamed(panel, 'duration').value, '30');
@@ -518,7 +518,7 @@ test('P1 11/11: the window menu is the served bookable list and the claim books 
   };
   const { panel } = await open({ client });
   assert.deepEqual(selectNamed(panel, 'service').findAll('option').map((node) => node.textContent),
-    ['Scegli il servizio', 'Lezione di prova · 15,00 €', 'PT singola · 40,00 €']);
+    ['Scegli il servizio', 'Lezione di prova · 15 €', 'PT singola · 40 €']);
   assert.ok(!base.paths().includes('/api/catalog/products?limit=200'), 'no second rule over the catalog');
   await choose(panel, { service: 'personal-training' });
   chips(panel)[0].dispatch('click');

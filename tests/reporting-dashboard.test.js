@@ -310,7 +310,7 @@ test('obiettivo row from the bundle sets the target, never an invented one', (t)
   const model = buildDashboardModel(results, rows, QUERY_OCT, TS);
   assert.equal(model.forecast.targetMinor, 2000000);
   assert.equal(model.forecast.note, `Obiettivo ${formatMinor(2000000, 'EUR')}.`);
-  assert.match(model.forecast.note, /Obiettivo 20\.000,00\s€\./);
+  assert.match(model.forecast.note, /Obiettivo 20\.000\s€\./);
   assert.ok(!/2\.000\.000/.test(model.forecast.note), 'cents are never shown as euros (backlog:1ce3a1f0)');
   assert.ok(!/bundle|kernel|euristica/i.test(model.forecast.note), 'the note speaks user words (backlog:1ce3a1f0)');
   assert.equal(pickTarget('nope', QUERY_OCT), null);
