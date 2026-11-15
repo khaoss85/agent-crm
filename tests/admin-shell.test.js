@@ -25,6 +25,7 @@ import {
   resolveSpaceShortcut,
   spaceInitialsFor,
   spaceBadgeColor,
+  paintSpaceBadge,
   spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
@@ -318,9 +319,33 @@ test('backlog:ecb26347d12c — the «Cambia spazio» button names only the short
   const rowBadges = badges.slice(1).map((badge) => badge.textContent);
   assert.notEqual(rowBadges[0], rowBadges[1]);
   assert.equal(badges[0].textContent, rowBadges[0]);
-  const styles = badges.map((badge) => badge.getAttribute('style'));
-  assert.ok(styles.every((style) => typeof style === 'string' && style.includes('background:')), 'every badge carries its space color');
-  assert.ok(new Set(styles).size > 1, 'the two spaces have different colors');
+  // backlog:b545aca18b8f: the pilot CSP rejects inline `style=""`, so the
+  // color travels via CSSOM (style.setProperty), never as a style attribute.
+  for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
+  const colors = badges.map((badge) => badge.style.getPropertyValue('background'));
+  assert.ok(colors.every((color) => typeof color === 'string' && color.includes('hsl(')), 'every badge carries its space color');
+  assert.ok(new Set(colors).size > 1, 'the two spaces have different colors');
+});
+
+test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color without inline style', () => {
+  for (const spaces of [[], null, undefined]) {
+    const { sidebar, topbar } = renderShell({ spaces });
+    const text = sidebar.textContent;
+    assert.ok(text.includes('Moduli nativi'), 'empty list still draws the native group');
+    assert.ok(text.includes('Spazio locale'), 'empty list falls back to the local space');
+    const badges = [...sidebar.findAll('span'), ...topbar.findAll('span')]
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+    assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
+    for (const badge of badges) {
+      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP rejects style="")');
+      assert.match(badge.style.getPropertyValue('background'), /hsl\(/, 'color travels via CSSOM');
+    }
+  }
+  const doc = createFakeDocument();
+  const mount = createMount();
+  paintSpaceBadge(mount, 'hsl(10 45% 42%)');
+  assert.equal(mount.getAttribute('style'), null, 'helper never writes a style attribute');
+  assert.equal(mount.style.getPropertyValue('background'), 'hsl(10 45% 42%)');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {

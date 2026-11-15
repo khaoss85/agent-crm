@@ -432,6 +432,26 @@ export function spaceBadgeColor(id) {
 }
 
 /**
+ * Paint a space badge without an inline `style` attribute
+ * (backlog:b545aca18b8f): the pilot CSP rejects `style=""`, while a CSSOM
+ * write (`style.setProperty`) is allowed. Same color as before, no new rule.
+ * @param {{ style?: { setProperty?: unknown } | null }} badge
+ * @param {string} color
+ */
+export function paintSpaceBadge(badge, color) {
+  const style = badge?.style ?? null;
+  if (style !== null && typeof style === 'object' && typeof style.setProperty === 'function') {
+    style.setProperty('background', color);
+    return;
+  }
+  if (style !== null && typeof style === 'object') {
+    style.background = color;
+    return;
+  }
+  badge.setAttribute('data-space-bg', color);
+}
+
+/**
  * The «Cambia spazio» button label (backlog:ecb26347d12c): it lists only
  * the shortcuts that exist — «Cambia spazio (⌘1/2)» with two spaces,
  * never the fixed «(⌘1/2/3)». Past nine spaces only ⌘1…⌘9 exist.
@@ -638,7 +658,10 @@ export function createShellView({
     state.activeSpaceId = state.spaces[0].id;
   }
 
-  const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
+  // backlog:b545aca18b8f: never undefined — with an empty list the shell
+  // still draws on the single local space instead of crashing on space.name.
+  const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId)
+    ?? state.spaces[0] ?? defaultSpaces()[0];
 
   function clearMount(mount) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -722,8 +745,13 @@ export function createShellView({
     // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
     // per-space colors, so two spaces never read the same; the button label
     // lists only the shortcuts that exist.
-    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
-    const space = items.find((entry) => entry.active) ?? items[0];
+    // backlog:b545aca18b8f: with an empty or missing list the sidebar still
+    // draws (native group present) on the active space, never undefined.
+    const rawItems = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const items = rawItems.length > 0 ? rawItems : spaceMenuItems(defaultSpaces(), state.activeSpaceId);
+    const space = items.find((entry) => entry.active) ?? items[0] ?? {
+      id: 'locale', name: 'Spazio locale', initials: 'SL', color: spaceBadgeColor('locale'), active: true,
+    };
     const switcherLabel = spaceSwitcherLabel(state.spaces);
 
     const spaceButton = el(doc, 'button', 'bo-space');
@@ -731,7 +759,7 @@ export function createShellView({
     spaceButton.setAttribute('title', switcherLabel);
     spaceButton.setAttribute('aria-label', switcherLabel);
     const badge = el(doc, 'span', 'bo-space-badge', space.initials);
-    badge.setAttribute('style', `background: ${space.color}`);
+    paintSpaceBadge(badge, space.color);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -755,7 +783,7 @@ export function createShellView({
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
       const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
-      ini.setAttribute('style', `background: ${entry.color}`);
+      paintSpaceBadge(ini, entry.color);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -957,10 +985,13 @@ export function createShellView({
     const phoneSpace = el(doc, 'div', 'bo-phonebar-space');
     // backlog:ecb26347d12c: the phone bar shows the same de-duplicated
     // initials and color as the sidebar switcher.
-    const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
-    const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
+    const rawPhoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const phoneItems = rawPhoneItems.length > 0 ? rawPhoneItems : spaceMenuItems(defaultSpaces(), state.activeSpaceId);
+    const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0] ?? {
+      id: 'locale', name: 'Spazio locale', initials: 'SL', color: spaceBadgeColor('locale'), active: true,
+    };
     const phoneBadge = el(doc, 'span', 'bo-space-badge', phoneSpaceEntry.initials);
-    phoneBadge.setAttribute('style', `background: ${phoneSpaceEntry.color}`);
+    paintSpaceBadge(phoneBadge, phoneSpaceEntry.color);
     phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
