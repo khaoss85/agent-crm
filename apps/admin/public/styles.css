@@ -1926,6 +1926,11 @@ select.bo-spazi-input { flex: none; }
 /* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
 .cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+/* backlog:667f1f1c: content reads from the top, never halfway down a long
+ * block; short blocks read on one dotted line; no line ever paints half-cut. */
+.cal-grid .cal-event { align-content: start; }
+.cal-grid .cal-event .cal-compact { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-grid .cal-event.is-medium strong { display: block; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; overflow-wrap: anywhere; }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }

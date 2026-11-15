@@ -2829,6 +2829,13 @@ export function createCalendarioView(deps) {
       drag.targetEnd = start + durationMin;
     }
     drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    if (drag.mode === 'resize') {
+      // backlog:667f1f1c: a stretch pulls the block itself, never a second
+      // block under the preview — the origin node takes the target range live.
+      const origin = paintedEvents.get(String(drag.row?.id ?? ''));
+      if (origin) origin.style.gridRow = rowsOf(drag.targetStart, drag.targetEnd);
+      return;
+    }
     detachNode(mount.querySelector('.cal-drag-ghost'));
     const ghost = el(doc, 'div', {
       className: 'cal-pick is-dragging cal-drag-ghost',
@@ -2838,9 +2845,8 @@ export function createCalendarioView(deps) {
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
-    // A resize ghost paints on the origin column (review #757); a move
-    // ghost paints on the hovered column.
-    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+    // A move ghost paints on the hovered column.
+    col.appendChild(ghost);
   }
 
   /**
@@ -3237,9 +3243,17 @@ export function createCalendarioView(deps) {
         'data-movable': movable ? '1' : '0',
       },
     });
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
+    if (durationMin < 45) classes.push('is-short');
+    else if (durationMin < 60) classes.push('is-medium');
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
-    item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-    item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    if (durationMin < 45) {
+      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    }
     const foot = el(doc, 'span', { className: 'cal-day-foot' });
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
@@ -3261,7 +3275,8 @@ export function createCalendarioView(deps) {
     if (cancelled) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
-    item.appendChild(foot);
+    // backlog:667f1f1c: the foot (avatar, badges) only fits whole on tall blocks — it never paints half-cut.
+    if (durationMin >= 90) item.appendChild(foot);
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes

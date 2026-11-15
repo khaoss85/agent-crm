@@ -557,7 +557,8 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   const stretch = probe.stretch;
   assert.ok(stretch && stretch.before, `the lesson paints before the stretch: ${JSON.stringify(stretch)}`);
   assert.ok(Math.abs(stretch.before.top - 60) <= 2 && Math.abs(stretch.before.bottom - 120) <= 2, `10:00–11:00 before: ${JSON.stringify(stretch)}`);
-  assert.ok(stretch.ghost && Math.abs(stretch.ghost.top - 60) <= 2 && Math.abs(stretch.ghost.bottom - 240) <= 2, `the stretch ghost covers 10:00–13:00: ${JSON.stringify(stretch)}`);
+  assert.equal(stretch.ghost, null, `no second block under the stretch preview: ${JSON.stringify(stretch)}`);
+  assert.ok(stretch.during && stretch.during.origBox && Math.abs(stretch.during.origBox.top - 60) <= 2 && Math.abs(stretch.during.origBox.bottom - 240) <= 2, `the block itself stretches live 10:00–13:00: ${JSON.stringify(stretch)}`);
   assert.deepEqual(stretch.writes, [{ id: 'a5', startsAt: '2026-10-20T08:00:00.000Z', endsAt: '2026-10-20T11:00:00.000Z' }], 'one write: same start, end at 13:00 Rome');
   for (const phase of ['saved', 'reloaded']) {
     const box = stretch[phase];
