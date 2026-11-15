@@ -723,10 +723,12 @@ test('the channel table aggregates one row per fixed channel', () => {
       }),
     ],
   }));
-  // Nine fixed rows plus the connected outsider, never in their place.
-  assert.equal(rows.length, 10);
+  // Nine fixed rows, the connected outsider, then the unlinked catalog
+  // outsider (Telegram) — never in the nine's place.
+  assert.equal(rows.length, 11);
   assert.deepEqual(rows.slice(0, 9).map((row) => row.channel), SYNC_CHANNELS.map((row) => row.id));
   assert.equal(rows[9].channel, 'sms');
+  assert.equal(rows[10].channel, 'telegram');
   const wa = rows[0];
   assert.equal(wa.label, 'WhatsApp');
   assert.equal(wa.mark, 'WA');
@@ -751,11 +753,12 @@ test('the channel table aggregates one row per fixed channel', () => {
   assert.equal(merged[0].received, 15);
   assert.equal(merged[0].lastAt, '2026-10-25T11:00:00.000Z');
   assert.deepEqual(merged[0].keys.sort(), ['wa-1', 'wa-2']);
-  // No connections: nine unconnected rows, zero invented.
+  // No connections: the nine unconnected rows plus the unlinked catalog
+  // outsiders (Telegram, SMS), zero invented.
   const empty = syncChannelTable(activityOf({ connections: [] }));
-  assert.equal(empty.length, 9);
+  assert.equal(empty.length, 11);
   assert.ok(empty.every((row) => row.connected === false && row.pill === null));
-  assert.deepEqual(syncChannelTable(null).length, 9);
+  assert.deepEqual(syncChannelTable(null).length, 11);
 });
 
 test('the channel pill names expiry and import before the calm Attivo', () => {
@@ -878,7 +881,7 @@ test('the table renders nine rows with the count, agg and pills', async () => {
   const text = mount.textContent;
   // The spec count: «di 9», like the nine rows (C16).
   assert.ok(text.includes('2 di 9 collegati'), 'the card counts the nine');
-  for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe']) {
+  for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe', 'Telegram']) {
     assert.ok(text.includes(name), `the table names ${name}`);
   }
   assert.ok(text.includes('↔ bidirezionale'));
@@ -887,14 +890,15 @@ test('the table renders nine rows with the count, agg and pills', async () => {
   assert.ok(text.includes('10 eventi ricevuti'));
   assert.ok(text.includes('Permesso in scadenza'));
   assert.ok(text.includes('Attivo'));
-  // Every unconnected catalogued channel offers the guided flow; the fixed
-  // rows no catalog can connect (Google Calendar, Stripe) read `Non
+  // Every unconnected catalogued channel offers the guided flow — the fixed
+  // nine and the catalog outsiders (Telegram, SMS) alike; the fixed rows
+  // no catalog can connect (Google Calendar, Stripe) read `Non
   // disponibile` instead of a `Collega` link to a dead end.
   const collega = mount.findAll('a').filter((node) => node.textContent === 'Collega');
-  assert.equal(collega.length, 5);
+  assert.equal(collega.length, 7);
   assert.deepEqual(collega.map((node) => node.getAttribute('href')).sort(), [
-    '#/connettori/email', '#/connettori/facebook',
-    '#/connettori/site-form', '#/connettori/tiktok', '#/connettori/voice',
+    '#/connettori/email', '#/connettori/facebook', '#/connettori/site-form',
+    '#/connettori/sms', '#/connettori/telegram', '#/connettori/tiktok', '#/connettori/voice',
   ]);
   assert.ok(!text.includes('Non disponibile'), 'C19: an unlinked row says non collegato');
   // No per-row pull: the table carries no sync-now buttons.
@@ -909,7 +913,7 @@ test('the empty space still lists nine connectable rows', async () => {
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('0 di 9 collegati'));
-  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 7);
+  assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 9);
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'non collegato').length, 2,
     'Google Calendar and Stripe, which nothing here connects without the profile, read non collegato');
 });
@@ -1113,9 +1117,10 @@ test('3a3e6eaf: nothing linked says so, offers Collega and never claims all sync
   assert.equal(connect?.textContent, 'Collega un canale');
   connect.dispatch('click', { preventDefault() {} });
   assert.deepEqual(navigated, ['#/connettori'], 'the call to action opens the connectors');
-  // C27: every one of the nine rows shows Collega or the honest fallback.
+  // C27: every row — the nine plus the catalog outsiders — shows Collega
+  // or the honest fallback.
   const rows = mount.findAll('tr').slice(1);
-  assert.equal(rows.length, 9);
+  assert.equal(rows.length, 11);
   for (const row of rows) {
     assert.equal(row.getAttribute('class'), 'bo-sync-row-off', 'an unlinked row reads dimmed');
     assert.ok(/Collega|non collegato/.test(row.textContent), row.textContent);

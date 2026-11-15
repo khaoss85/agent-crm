@@ -467,8 +467,9 @@ export function offerStateLabel(state) {
  * says it — the scheda, the Pipeline board and the offer detail. A placed
  * offer reads its pipeline stage's own label from `/api/schema` `pipelines`
  * (its named pipeline first, like the board); an offer outside any composed
- * pipeline reads its core stage from OFFER_STATE_LABELS. Null when neither
- * is known. A quote's approval state is not the offer's stage.
+ * pipeline — including a placed offer whose pipelines are not readable here —
+ * reads its core stage from OFFER_STATE_LABELS, never a prettified raw key.
+ * Null when neither is known. A quote's approval state is not the offer's stage.
  * @param {unknown} pipelines `/api/schema` pipelines
  * @param {{ pipelineKey?: unknown, pipelineStage?: unknown, stage?: unknown } | null | undefined} offer
  * @returns {string | null}
@@ -482,16 +483,10 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
-    // backlog:a060a4aa65b6: a placed offer whose pipelines are not readable
-    // here (the schema read failed or timed out) still reads its column,
-    // from the stage key — never the core stage, which the board does not
-    // show for it.
-    // Review Muse #887: only when no pipeline is readable here — with the
-    // pipelines read, a stage they do not define reads the core stage.
-    if (ordered.length === 0 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
-      const words = placed.replace(/-/g, ' ');
-      return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
-    }
+    // Review Muse #887 giro 2: a placed offer whose pipelines are not
+    // readable here (the schema read failed or timed out) never derives a
+    // label from the raw stage key — it reads its core stage in Italian
+    // (or null, which every screen paints as an em dash).
   }
   return offerStateLabel(offer.stage);
 }

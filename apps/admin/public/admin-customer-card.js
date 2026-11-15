@@ -1503,16 +1503,21 @@ export function createCustomerCardView(deps) {
     ]);
     // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
     // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
-    // nothing, and the offer the person came from is already known — both
-    // leave as soon as the first wave is done (or its budget ends), ahead of
-    // the profile and without waiting for it. Review Muse #887 (P1): never
-    // beside card and timeline, which keep the first wave to themselves.
-    // The profile's own paint reuses them (historyReads, rosterRead).
+    // nothing, so it leaves as soon as the first wave is done (or its
+    // budget ends), ahead of the profile and without waiting for it.
+    // Review Muse #887 (P1): never beside card and timeline, which keep
+    // the first wave to themselves. The profile's own paint reuses it
+    // (rosterRead).
+    // Voce 4970ba6a2e96 (review Muse giro 2 di #887, P3): the remembered
+    // source offer is only a guess — reading its history here and the
+    // shown offer's at the profile paint read the audit twice whenever
+    // they differed. The profile names the shown offer, so its history is
+    // read once at its paint (the cronologia and «Storia stati» paints
+    // share the same in-flight read); the remembered offer is never read
+    // ahead.
     if (typeof onPart === 'function') {
       void wave2gate.then(() => {
         void readRoster();
-        const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
-        if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
       // A client that throws at once fails the card on its own read; this
       // early start never adds a second, unhandled failure.
       }).catch(() => {});

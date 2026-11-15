@@ -678,6 +678,34 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       connectRoute: syncConnectRoute(channel, profile, adapters),
     });
   }
+  // The catalog channels outside the fixed nine (Telegram, SMS) read here
+  // too, with the same state Connettori shows: an unlinked Telegram no
+  // longer hides while Connettori invites it. Like the Stripe row, a
+  // channel nothing here can connect reads `non collegato` with no Collega;
+  // its Collega appears through the same shared state as every other row.
+  // These rows never widen the «<n> di 9 collegati» count (review #680
+  // P2-3): only a linked outsider does.
+  for (const entry of CONNECTOR_CATALOG) {
+    const channel = entry != null ? entry.channel : '';
+    if (typeof channel !== 'string' || channel === '') continue;
+    if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
+    if (byChannel.has(channel)) continue;
+    rows.push({
+      channel,
+      label: channelLabel(channel),
+      mark: syncMark(channel),
+      direction: directionLabel(null),
+      present: false,
+      connected: false,
+      received: 0,
+      lastAt: null,
+      pill: null,
+      keys: [],
+      catalogued: true,
+      detailRoute: `#/connettori/${channel}`,
+      connectRoute: syncConnectRoute(channel, profile, adapters),
+    });
+  }
   return rows;
 }
 
