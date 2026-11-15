@@ -7,6 +7,7 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_SPACE_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
@@ -22,6 +23,9 @@ import {
   readSpaces,
   readStoredSpaces,
   resolveSpaceShortcut,
+  spaceInitialsFor,
+  spaceBadgeColor,
+  spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
   createShellView,
@@ -190,6 +194,45 @@ test('space menu carries the ⌘N hint and marks the active space', () => {
   assert.equal(rows[0].initials, 'AL');
 });
 
+test('backlog:ecb26347d12c — space initials read from the name words', () => {
+  assert.equal(spaceInitialsFor('Presti Group'), 'PG');
+  assert.equal(spaceInitialsFor('Prova Validazione B1'), 'PV');
+  assert.equal(spaceInitialsFor('Spazio locale'), 'SL');
+  assert.equal(spaceInitialsFor('Alpha'), 'AL');
+  assert.equal(spaceInitialsFor('X'), 'X');
+});
+
+test('backlog:ecb26347d12c — colliding space initials read differently', () => {
+  const rows = spaceMenuItems(
+    [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    ],
+    'b1',
+  );
+  assert.equal(rows[0].initials, 'PR');
+  assert.equal(rows[1].initials, 'PG');
+  assert.notEqual(rows[0].color, rows[1].color);
+  assert.equal(rows[0].color, spaceBadgeColor('b1'));
+  // Two spaces with the very same name still read differently.
+  const twins = spaceMenuItems(
+    [{ id: 'p1', name: 'Presti' }, { id: 'p2', name: 'Presti' }],
+    'p1',
+  );
+  assert.notEqual(twins[0].initials, twins[1].initials);
+});
+
+test('backlog:ecb26347d12c — the switcher label lists only the shortcuts that exist', () => {
+  assert.equal(spaceSwitcherLabel([{ id: 'a' }]), 'Cambia spazio');
+  assert.equal(spaceSwitcherLabel([{ id: 'a' }, { id: 'b' }]), 'Cambia spazio (⌘1/2)');
+  assert.equal(
+    spaceSwitcherLabel([{ id: 'a' }, { id: 'b' }, { id: 'c' }]),
+    'Cambia spazio (⌘1/2/3)',
+  );
+  const ten = Array.from({ length: 10 }, (_, index) => ({ id: `s${index}` }));
+  assert.equal(spaceSwitcherLabel(ten), 'Cambia spazio (⌘1/2/3/4/5/6/7/8/9)');
+});
+
 test('readSpaces falls back to the single local space, never empty', () => {
   assert.deepEqual(defaultSpaces(), [{ id: 'locale', name: 'Spazio locale', initials: 'SL' }]);
   assert.deepEqual(readSpaces(null), defaultSpaces());
@@ -257,6 +300,27 @@ test('backlog:029409ff — the «Cambia spazio» menu lists every space, picking
   const other = picks.find((node) => !((node.className ?? '').includes('active')));
   other.dispatch('click', {});
   assert.deepEqual(seen.picked, ['presti']);
+});
+
+test('backlog:ecb26347d12c — the «Cambia spazio» button names only the shortcuts that exist', () => {
+  const { sidebar } = renderShell({
+    spaces: [
+      { id: 'b1', name: 'Prova Validazione B1', initials: 'PR' },
+      { id: 'presti-group', name: 'Presti Group', initials: 'PR' },
+    ],
+  });
+  const button = sidebar.findAll('button').find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space'));
+  assert.equal(button.getAttribute('title'), 'Cambia spazio (⌘1/2)');
+  assert.equal(button.getAttribute('aria-label'), 'Cambia spazio (⌘1/2)');
+  const badges = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+  // Switcher badge plus two menu rows; the menu rows read differently.
+  assert.equal(badges.length, 3);
+  const rowBadges = badges.slice(1).map((badge) => badge.textContent);
+  assert.notEqual(rowBadges[0], rowBadges[1]);
+  assert.equal(badges[0].textContent, rowBadges[0]);
+  const styles = badges.map((badge) => badge.getAttribute('style'));
+  assert.ok(styles.every((style) => typeof style === 'string' && style.includes('background:')), 'every badge carries its space color');
+  assert.ok(new Set(styles).size > 1, 'the two spaces have different colors');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
@@ -365,6 +429,44 @@ test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder('stato-sync'), 'Chiedi: «c’è qualcosa che non si è sincronizzato?»');
   assert.equal(aiPlaceholder('unknown-screen'), AI_ENTRY_FALLBACK);
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
+});
+
+// backlog 3136d15da7bd: with the space AI off the bar says so instead of
+// inviting a question the AI would not answer.
+test('AI entry placeholder names the off space AI on every screen', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('calendario', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('agenti', 'Mano', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /spenta/);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /Spazi e accessi/);
+});
+
+test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', () => {
+  const { view, topbar } = renderShell();
+  const input = () => topbar.findAll('input')[0];
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+  view.update({ aiSpaceOff: true });
+  assert.equal(input().getAttribute('placeholder'), AI_SPACE_OFF_PLACEHOLDER);
+  assert.ok(!/Chiedi: «cosa/.test(input().getAttribute('placeholder')), 'no inviting question while off');
+  view.update({ aiSpaceOff: false });
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+});
+
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
 });
 
 test('settings tabs list the four areas with the open one underlined', () => {

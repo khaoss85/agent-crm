@@ -2548,7 +2548,7 @@
     "examples/starters/b2b-lead-qualification/intelligence.js": "388522415c8a324b3cd2d62028af9a8af2f6e5863c0ceab2ecd3d57ae43f52f5",
     "examples/starters/b2b-lead-qualification/lead.module.json": "f57c7d561fdeeb327463eb174e98c10b156b48dfabc06fecc548118b1233a03d",
     "packages/app/src/create-app.js": "2b204d52a648d906d129353643f2811c76f627d4b2874e15a06dd28f416ab021",
-    "packages/core/src/action-runtime.js": "b8870679dfe76d2293912866085c83713aa1bdbe8509acaabaa81fe6a100c851",
+    "packages/core/src/action-runtime.js": "d4b31d619ff764d6d4f1a141854e11c22b10ca9415012cc941ab1ca8e37c2d58",
     "packages/core/src/definition-fingerprint.js": "a6a182c4c4dbc55c7f91f059cc0c65da19b4027aee48f68c6f117baf6142db87",
     "packages/core/src/definition-version-store.js": "5b52e6a48145a91dc90f202e5541dfa168d9ae5ffaa8ff8bdfeda98ab2347467",
     "packages/core/src/execution-run-store.js": "73c5f36371b21b02b7e476d93cc06a29cbae6c5ea9ef8539579a62c94e1545ac",

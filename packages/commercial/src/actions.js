@@ -1,6 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError } from '../../core/index.js';
+import { buildQuoteShareActions } from './quote-share.js';
 import { normalizePolicyResult } from './registry.js';
 import { requireSignedTerm } from './terms.js';
 import {
@@ -20,6 +21,8 @@ import {
  *   quote.submit                       (immutable version + discount policy)
  *   quote.approve / quote.reject       (human actor only, one decision)
  *   quote.revise                       (rejected → draft, next version n+1)
+ *   quote.share-link                   (approved → public token for the frozen version)
+ *   quote.accept-link / quote.link-info (token-only: accept idempotently, read the frozen offer)
  *
  * A quote line selects ONE Offer (rate plan) and a quantity. The offer's price
  * components — any mixture of one-time and recurring, flat_fee / per_unit /
@@ -40,7 +43,7 @@ import {
  *   versionTotalModule?: string, approvalModule?: string,
  *   priceBookModule?: string, offerModule?: string, componentModule?: string,
  *   tierModule?: string, productVersionModule?: string, productModule?: string,
- *   quoteTermModule?: string, versionTermModule?: string,
+ *   quoteTermModule?: string, versionTermModule?: string, shareModule?: string,
  * }} CommercialActionConfig */
 
 /** @param {CommercialActionConfig} [config] */
@@ -61,6 +64,7 @@ function resolved(config = {}) {
     productModule: config.productModule ?? 'product',
     quoteTermModule: config.quoteTermModule ?? 'quote-term',
     versionTermModule: config.versionTermModule ?? 'quote-version-term',
+    shareModule: config.shareModule ?? 'quote-share',
   };
 }
 
@@ -855,7 +859,7 @@ function quoteSummary(quote) {
 }
 
 /**
- * The eight quote actions the package contributes, in registration order.
+ * The eleven quote actions the package contributes, in registration order.
  * @param {CommercialActionConfig|undefined} config
  * @param {any} registries the package's CommercialRegistries instance
  */
@@ -866,6 +870,7 @@ export function buildCommercialActions(config, registries) {
     buildSubmitQuoteAction(config, registries),
     ...buildQuoteDecisionActions(config),
     buildReviseQuoteAction(config),
+    ...buildQuoteShareActions(config),
   ];
 }
 

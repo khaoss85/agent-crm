@@ -5,7 +5,7 @@ import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
 import { createShellSchemaClient } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
-import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading } from './admin-navigation.js';
+import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
 // The mount prefix the shell is served under: '' at the domain root, the
 // mount's subtree (e.g. '/bo') when embedded (backlog:ecdf7dc4). Every
@@ -546,12 +546,13 @@ import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createAgentiView } from './admin-agenti.js';
+import { readCommandAgents } from './admin-cmdk.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
 import { createSkillDetailView } from './admin-skill-detail.js';
 import { createUiCatalogView } from './admin-ui-catalog.js';
 import { createToastController } from './admin-ui.js';
-import { createSpaziAccessiView } from './admin-spazi-accessi.js';
+import { createSpaziAccessiView, masterEnabled } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
 import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
@@ -956,6 +957,9 @@ const spaziAccessiView = createSpaziAccessiView({
   onPickSpace: (id) => {
     pickSpace(id);
   },
+  // backlog 3136d15da7bd: a flipped switch may be the space AI master — the
+  // top bar re-reads it at once instead of keeping yesterday's words.
+  onSwitches: () => { void refreshSpaceAi(); },
   storage: shellStorage,
   toast,
 });
@@ -969,6 +973,15 @@ const profiloView = createProfiloView({
   // backlog:8618ad3f72db: the Impostazioni tab row above the profile.
   navigate: (hash) => { window.location.hash = hash; },
   fixCount: () => shellFixCount,
+  // backlog 3136d15da7bd: after Salva the sidebar footer wears the new name
+  // at once — the page title already does, the shell waited for a reload.
+  onMember: (person) => {
+    if (!person || typeof person !== 'object') return;
+    for (const key of ['name', 'email', 'role']) {
+      if (typeof person[key] === 'string' && person[key] !== '') shellUser[key] = person[key];
+    }
+    shellView?.update({ user: { ...shellUser } });
+  },
 });
 // BO-F6-03: the session profile the host injected (a real session under a
 // mount: space, role, name, email and the space logout URL), or null locally
@@ -1043,6 +1056,11 @@ function pickSpace(id) {
     // The switch still applies to this tab.
   }
   if (shellView) shellView.setSpaces(shellSpaces, id);
+  // backlog 3136d15da7bd: the bar keeps the last words until the new
+  // space's own master is read — no optimistic aiSpaceOff:false, which
+  // would flash an inviting question for a space whose AI is off (or
+  // unknown when the read fails). The sequenced refresh below paints.
+  void refreshSpaceAi();
   // The open card shows space-scoped calls (BO-F1-08): re-render it on
   // the new space instead of leaving the previous space's summaries.
   // The mounted home greets with the space name: re-render it too.
@@ -1128,17 +1146,15 @@ if (boSidebar && boTopbar) {
         const answer = await moduleClient.request('/api/opportunities?limit=100');
         return Array.isArray(answer?.items) ? answer.items : [];
       },
-      // backlog:1f7cb20d3c30: the «@» rows of the ⌘K bar read the space's
-      // agents from the same teammate-agent module read the Agenti screen
-      // makes — the hand-written agent suggests like the catalogue ones.
+      // backlog:1f7cb20d3c30 + backlog:fd1c564a21d9: the «@» rows of
+      // the ⌘K bar read the space's agents from the same teammate-agent
+      // module read the Agenti screen makes — never gated on the
+      // navigation voice, so the bar suggests an agent whenever the
+      // screen itself could list one. The hand-written agent suggests
+      // like the catalogue ones.
       async agents() {
-        if (!shellItems.some((item) => item.id === 'agenti' && item.available === true)) return null;
-        const params = new URLSearchParams({ limit: '201' });
         const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
-        if (typeof spaceId === 'string' && spaceId !== '') params.set('filter.spaceId', spaceId);
-        else return null;
-        const answer = await moduleClient.request(`/api/modules/teammate-agent/records?${params.toString()}`);
-        return Array.isArray(answer?.items) ? answer.items : [];
+        return readCommandAgents((path) => moduleClient.request(path), spaceId);
       },
     },
     onPickSpace: (id) => {
@@ -1208,6 +1224,38 @@ async function refreshShellCounts() {
 }
 
 /**
+ * Backlog 3136d15da7bd: the top AI bar names the space AI state. The shell
+ * never reads on its own, so app.js pushes it: a space whose master switch
+ * is off gets the off words instead of an inviting question. A read that
+ * fails leaves the bar as it was — an unknown state must never claim the
+ * AI is off, and a late answer for a space left behind never paints.
+ */
+let spaceAiSeq = 0;
+async function refreshSpaceAi() {
+  if (!shellView) return;
+  const spaceId = shellActiveSpace ?? shellSpaces[0]?.id ?? null;
+  if (typeof spaceId !== 'string' || spaceId === '') return;
+  const mine = ++spaceAiSeq;
+  try {
+    const answer = await moduleClient.request(
+      `/api/space-permissions/effective?spaceId=${encodeURIComponent(spaceId)}`,
+    );
+    if (mine !== spaceAiSeq) return;
+    const rows = Array.isArray(answer?.overrides) ? answer.overrides : [];
+    shellView.update({ aiSpaceOff: !masterEnabled(spaceId, rows) });
+  } catch (error) {
+    // Unknown keeps the last words; the Spazi e accessi panel says its own.
+    if (mine !== spaceAiSeq) return;
+    // backlog 3136d15da7bd: a failed master read never silences its cause —
+    // name and code with the space, never body, token or personal data.
+    const cause = error instanceof Error ? error.name : (/** @type {any} */ (error)?.code ?? 'unknown');
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+      console.warn('bo-ai space master unreadable:', cause, /** @type {any} */ (error)?.code ?? null, `spaceId=${spaceId}`);
+    }
+  }
+}
+
+/**
  * @param {{ repaintScreen?: boolean }} [options] review Muse #898: a schema
  * renewed in the background refreshes the navigation only, never the screen.
  */
@@ -1228,6 +1276,9 @@ async function populateNav({ repaintScreen = true } = {}) {
     // backlog:94eabbd4762f: the badges read after the screen opened at boot
     // has read what it shows — never in front of its reads.
     void afterScreen(bootScreen).then(() => refreshShellCounts()).catch(() => {});
+    // backlog 3136d15da7bd: the top AI bar reads the space master once the
+    // boot screen has read what it shows — never in front of its reads.
+    void afterScreen(bootScreen).then(() => refreshSpaceAi()).catch(() => {});
     // Mounted home (backlog:7eee63a5): the Oggi links follow the delivered
     // screens, which are known only after the schema arrives — re-render an
     // open home so it never shows the pre-schema voices.
@@ -1352,6 +1403,11 @@ async function route() {
   const previousView = lastRoutedView;
   lastRoutedView = targetForHash(hash).view;
   const keepClienti = CLIENTI_PAIR.has(lastRoutedView) && CLIENTI_PAIR.has(previousView ?? '');
+  // backlog:25cf0cd8c678: la nuova schermata parte da scrollY 0 con il
+  // titolo visibile — lo scroll della finestra non sopravvive al cambio.
+  // Solo la coppia lista/finestra «Nuovo cliente» resta com'era (backlog
+  // ff8bb60f417f: la lista sotto la finestra non si ricarica).
+  if (!keepClienti) resetScreenScroll({ win: window, doc: document });
   if (targetForHash(hash).view === 'settings') {
     // The panel paints synchronously on the real mount: no view handle
     // may paint over it.
@@ -1453,6 +1509,9 @@ async function route() {
         // backlog:bd5e84545021: «Fonti: Appuntamento …» hands the event to
         // the Calendario through the shared shell storage.
         storage: shellStorage,
+        // backlog:803d127c4458: the live space, so the connections read is
+        // scoped to it like every other space-scoped view.
+        spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
       });
     }
     await oggiView.render({

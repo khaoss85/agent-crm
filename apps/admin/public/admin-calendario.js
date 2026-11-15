@@ -2300,10 +2300,29 @@ export function createCalendarioView(deps) {
     return box;
   }
 
-  /** Group the loaded week rows by Rome day key, in work-week order (Mon..Fri). */
+  /**
+   * Group the loaded week rows by Rome day key, in week order: always the
+   * Mon..Fri work days, plus a weekend day when the loaded week holds a
+   * booking there (backlog:f9cf5e4616c2 — a Saturday appointment Oggi
+   * lists must read in the team week on the same day, never vanish with
+   * the weekend). Cancelled rows hold no day, like in the grid below.
+   */
   function weekColumns() {
+    /** Rome days holding a non-cancelled loaded booking. */
+    const held = new Set();
+    for (const group of state.week?.members ?? []) {
+      for (const row of group?.appointments ?? []) {
+        if (isCancelledRow(row)) continue;
+        const day = romeDayKey(row?.startsAt);
+        if (day !== null) held.add(day);
+      }
+    }
+    const painted = [...displayKeys(state.weekKeys)];
+    for (const key of state.weekKeys ?? []) {
+      if (!painted.includes(key) && held.has(key)) painted.push(key);
+    }
     /** @type {Map<string, Array<any>>} */
-    const byDay = new Map(displayKeys(state.weekKeys).map((key) => [key, []]));
+    const byDay = new Map(painted.map((key) => [key, []]));
     const hidden = new Set(state.hiddenMembers);
     for (const group of state.week?.members ?? []) {
       // C11: a deselected member's events stay loaded but paint nothing —

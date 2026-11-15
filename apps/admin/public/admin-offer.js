@@ -12,7 +12,7 @@
 
 import { elFor, uiBusy, uiSelect, uiSkeleton } from './admin-ui.js';
 import { formatAmount, humanReadError, humanWriteError, italianDay } from './admin-core.js';
-import { centsToField, euroToCents } from './admin-offer-panel.js';
+import { centsToField, euroToCents, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { isBoardPlacement, offerActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, italianDateTime, offerCustomer, priceBookLabel, offerStageLabel, personLabel, personOf, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { offerStageMenu } from './admin-customer-card.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
@@ -178,6 +178,9 @@ export function createOfferDetail(deps) {
   const knownNames = deps.knownNames && typeof deps.knownNames.remember === 'function' ? deps.knownNames : null;
   const { client, submissions } = bindAdminMutations(deps.client, deps);
   const toast = typeof deps.toast === 'function' ? deps.toast : () => {};
+  const spaceOrigin = typeof deps.origin === 'string' && deps.origin !== ''
+    ? deps.origin
+    : (typeof globalThis.location?.origin === 'string' ? globalThis.location.origin : '');
 
   const el = elFor(doc);
 
@@ -196,6 +199,10 @@ export function createOfferDetail(deps) {
     if (typeof knownNames.rememberOffer === 'function') knownNames.rememberOffer(parts[1], id, String(record?.id ?? ''));
   }
   let renderToken = 0;
+  /** backlog:7fa422415232: minted links by quote, so a second «Invia offerta» press reuses the same URL the server keeps. */
+  const shareLinks = new Map();
+  /** The offer name the share message uses; set when the record lands. */
+  let shareOfferName = '';
   /** Record id with the edit form open. */
   let editing = false;
 
@@ -327,12 +334,20 @@ export function createOfferDetail(deps) {
     sheet.appendChild(hero);
     const facts = el('div', 'offer-facts');
     /** @type {Record<string, string | null>} */
+    // backlog:bfc070243427: no close date, no row — never «Chiusura prevista —».
+    // The skeleton mirrors the real paint: once the offer is read and its
+    // close date is known to be missing, the row is skipped instead of a
+    // grey bar that would vanish on paint. With no record yet (first paint)
+    // the date is still unknown, so the row keeps its bar.
     const known = record === null ? {} : {
-      'Chiusura prevista': close ?? '—',
+      'Chiusura prevista': close,
       'Creata il': italianDay(record.createdAt) ?? '—',
       'Ultima modifica': italianDay(record.updatedAt) ?? '—',
     };
-    for (const label of ['Referente', 'Stato', 'Chiusura prevista', 'Creata da', 'Creata il', 'Ultima modifica']) {
+    const labels = ['Referente', 'Stato'];
+    if (record === null || close !== null) labels.push('Chiusura prevista');
+    labels.push('Creata da', 'Creata il', 'Ultima modifica');
+    for (const label of labels) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       if (typeof known[label] === 'string') cell.appendChild(el('span', 'offer-fact-value', known[label]));
@@ -433,6 +448,7 @@ export function createOfferDetail(deps) {
     if (entry !== undefined) origin = entry?.from ?? null;
     const token = ++renderToken;
     editing = false;
+    shareOfferName = '';
     clear();
     // backlog:d8175e1c3495: the page's own shape shows at once — the sheet,
     // the facts, the quotes and the history as grey bars — never a lone
@@ -480,6 +496,7 @@ export function createOfferDetail(deps) {
         mount.appendChild(offerSkeleton(record));
         onTitle(offerCrumb(record));
         rememberCustomer(record);
+        shareOfferName = typeof record.name === 'string' ? record.name : '';
       }
       schema = await schemaRead;
       const sameId = String(record?.id ?? '') === offerId;
@@ -556,14 +573,19 @@ export function createOfferDetail(deps) {
     // page may hide the creation, so it names nobody.
     const creator = auditTruncated ? null : offerCreatorLabel(auditItems, record, people, AUDIT_LIMIT);
     const facts = el('div', 'offer-facts');
-    for (const [label, value] of [
+    // backlog:bfc070243427: an unknown close date paints no row — never an
+    // empty «Chiusura prevista —» field.
+    const factRows = [
       ['Referente', personLabel(record.owner, people) ?? '—'],
       ['Stato', stageLabel(schema, record)],
-      ['Chiusura prevista', close ?? '—'],
+    ];
+    if (close !== null) factRows.push(['Chiusura prevista', close]);
+    factRows.push(
       ['Creata da', creator ?? '—'],
       ['Creata il', italianDay(record.createdAt) ?? '—'],
       ['Ultima modifica', italianDay(record.updatedAt) ?? '—'],
-    ]) {
+    );
+    for (const [label, value] of factRows) {
       const cell = el('p', 'offer-fact');
       cell.appendChild(el('span', 'offer-fact-label', label));
       cell.appendChild(el('span', 'offer-fact-value', value ?? '—'));
@@ -646,6 +668,10 @@ export function createOfferDetail(deps) {
       row.appendChild(el('span', 'history-what', line.what));
       historyPanel.appendChild(row);
     }
+    // backlog:7fa422415232, review Muse #905 (P1): the Cronologia paints
+    // only server audit — a minted link never lands here as «Offerta
+    // inviata». The link state stays in the share box below, where the
+    // operator pressed.
     page.appendChild(historyPanel);
     // The page is complete when every place has filled (the shell's badges
     // wait for this, backlog:94eabbd4762f).
@@ -1030,6 +1056,105 @@ export function createOfferDetail(deps) {
   }
 
   /**
+   * backlog:7fa422415232: «Invia offerta» on an approved quote — the /bo end
+   * of the offer link. One press mints the public acceptance link through the
+   * quote `share-link` action; the server reuses the live link of the same
+   * version, so a second press shows the same URL instead of a new one. The
+   * ready Italian message stays on screen for the operator to send from the
+   * scheda composer. Review Muse #905 (P1): a mint is never an «Offerta
+   * inviata» row in the server-audit Cronologia — this button never sends,
+   * so the link state stays here as an explicit local decoration outside
+   * the audit list. The send itself stays the operator's gesture.
+   * What it does not cover: a link minted before this page opened is not
+   * listed (the server keeps it, the page never read it), and the public page
+   * behind the URL is the pilot's own route (its own PR with a contract test).
+   */
+  function paintShareBox(panel, quote, token) {
+    const box = el('div', 'offer-share');
+    const button = el('button', 'secondary', 'Invia offerta');
+    button.setAttribute('type', 'button');
+    button.setAttribute('data-action', 'offer-share-link');
+    const line = el('p', 'bo-muted offer-share-line', '');
+    line.setAttribute('role', 'status');
+    const state = el('p', 'bo-muted offer-share-state', '');
+    /** @type {null | {key: string}} */
+    let pending = null;
+    let busy = false;
+    const showLink = (url, expiresAt, reused) => {
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
+      line.appendChild(el('span', 'bo-scheda-sep', ' '));
+      const open = el('a', 'offer-share-link-open', reused ? 'Apri il link già pronto' : 'Apri il link');
+      open.setAttribute('href', url);
+      open.setAttribute('data-action', 'offer-share-open');
+      line.appendChild(open);
+      // Review Muse #905 (P1): the mint state reads here, outside the
+      // server-audit Cronologia — a mint is «pronto, da inviare», never
+      // «inviata», and a reuse is a mint, never a send.
+      state.setAttribute('class', 'bo-muted offer-share-state');
+      state.textContent = reused ? 'Link già pronto, da inviare: è lo stesso di prima.' : 'Link pronto, da inviare.';
+    };
+    const send = async () => {
+      if (busy) return;
+      busy = true;
+      // One key per link being minted: a double press, a retry after an
+      // uncertain failure or Enter+click mints one link, never two — the
+      // same rule as «Crea preventivo» above.
+      if (pending === null) pending = { key: submissions.issueKey() };
+      button.setAttribute('disabled', 'disabled');
+      button.setAttribute('aria-busy', 'true');
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = 'Creo il link…';
+      try {
+        const answer = await client.request(
+          `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/share-link`,
+          { method: 'POST', idempotencyKey: pending.key, body: JSON.stringify({}) },
+        );
+        pending = null;
+        if (token !== renderToken) return;
+        const result = answer?.result ?? answer ?? {};
+        const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+        const share = result.share ?? null;
+        const expiresAt = typeof share?.expiresAt === 'string' ? share.expiresAt : null;
+        let url = null;
+        if (fresh !== null) {
+          url = offerShareUrl(spaceOrigin, fresh);
+          if (url !== null) shareLinks.set(quote.id, { url, expiresAt });
+        } else {
+          url = shareLinks.get(quote.id)?.url ?? null;
+        }
+        if (url === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = result.alreadyExisted === true
+            ? 'Il link esiste già ma non è più visibile qui: cercalo nella cronologia.'
+            : 'Link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        showLink(url, expiresAt, fresh === null);
+        toast(fresh === null ? 'Link già pronto: è lo stesso di prima.' : 'Link pronto: invialo dal composer della scheda.');
+      } catch (error) {
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
+        if (token !== renderToken) return;
+        line.setAttribute('class', 'field-error offer-share-line');
+        line.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        busy = false;
+        button.removeAttribute('disabled');
+        button.setAttribute('aria-busy', 'false');
+      }
+    };
+    button.addEventListener('click', () => { void send(); });
+    box.appendChild(button);
+    box.appendChild(line);
+    box.appendChild(state);
+    box.__share = send;
+    const known = shareLinks.get(quote.id);
+    if (known) showLink(known.url, known.expiresAt, true);
+    panel.appendChild(box);
+  }
+
+  /**
    * One linked quote: stato, totali per periodo, righe e versioni. Periods
    * are never combined: the one-time group paints only when it carries a
    * value, and each recurring group paints with its own period, mirroring
@@ -1046,6 +1171,11 @@ export function createOfferDetail(deps) {
     link.setAttribute('href', `#/quotes/${encodeURIComponent(quote.id)}`);
     head.appendChild(link);
     panel.appendChild(head);
+    // backlog:7fa422415232: only an approved quote has a version to share —
+    // the server refuses the action on any other state with 409.
+    if (quote.status === 'approved' && typeof quote.id === 'string' && quote.id !== '') {
+      paintShareBox(panel, quote, token);
+    }
 
     let lines = [];
     let versions = [];

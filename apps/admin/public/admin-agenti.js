@@ -313,6 +313,10 @@ export function buildAgentCards({ agents = [], assignments = [], runs = [], nowI
  * @param {any} assignment @param {Array<any>} runs
  */
 export function assignmentStatusLabel(assignment, runs) {
+  // backlog:fd1c564a21d9: a finished incarico with a proposal still waiting
+  // for a human is «Da approvare», never «Fatto» — the chip beside it says
+  // the same, so the row never contradicts itself.
+  if (assignment?.status === 'completed' && hasWaitingProposal(assignment, runs)) return 'Da approvare';
   if (assignment?.status !== 'active') return ASSIGNMENT_STATUS_LABEL[assignment?.status] ?? 'Stato sconosciuto';
   const key = String(assignment.sourceKey ?? '');
   const ran = key !== '' && (Array.isArray(runs) ? runs : []).some((run) => run && run.assignmentSourceKey === key);
@@ -369,6 +373,17 @@ function lastRunStamp(runs, assignmentSourceKey) {
  */
 export function isDaFareRun(run) {
   return Boolean(run && typeof run === 'object' && run.outcome === 'proposed' && text(run.sourceKey) !== null);
+}
+
+/**
+ * Backlog fd1c564a21d9: whether one assignment still has a proposal waiting
+ * for a human — a «Da fare» run filed under its key.
+ * @param {any} assignment @param {Array<any>} runs
+ */
+export function hasWaitingProposal(assignment, runs) {
+  const key = typeof assignment?.sourceKey === 'string' ? assignment.sourceKey : '';
+  if (key === '') return false;
+  return (Array.isArray(runs) ? runs : []).some((run) => isDaFareRun(run) && run.assignmentSourceKey === key);
 }
 
 /**
@@ -753,14 +768,21 @@ export function checkNewAgent(form, agents = []) {
   return { body: { name, role, instructions, spendingCapCents: cents } };
 }
 
-/** Italian text for a refused «Nuovo agente». @param {unknown} error */
+/**
+ * Italian text for a refused «Nuovo agente».
+ * backlog:fd1c564a21d9: a refused create while the list shows agents is a
+ * missing creation route, never «agents are not active» — the reads prove
+ * they are. The 404 names the true cause (creation is not on in this
+ * space) and what to do (retry later, the written text is kept).
+ * @param {unknown} error
+ */
 export function newAgentErrorText(error) {
   if (isNameTaken(error)) return AGENT_NAME_TAKEN_NOTE;
   const status = error && typeof error === 'object' ? /** @type {any} */ (error).status : null;
   if (status === 403) return 'Non hai il permesso di creare agenti in questo spazio: chiedilo a chi gestisce il team.';
   return humanWriteError(error, {
     failed: 'Non riesco a creare l’agente adesso: riprova tra poco. Quello che hai scritto resta qui.',
-    notComposed: 'Gli agenti non sono attivi in questo spazio.',
+    notComposed: 'Non riesco a creare l’agente in questo spazio: la creazione non è attiva qui. Riprova tra poco: quello che hai scritto resta qui.',
   });
 }
 
@@ -1702,8 +1724,17 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // backlog:f06d06f242d6: a name already in the team shows at once, while
     // typing — not after the other fields — and goes as soon as it changes.
     const checkName = () => {
-      // An empty name is said at Crea, not while typing.
-      if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') return;
+      // An empty name is said at Crea, not while typing — but a stale
+      // live line goes at once, so an empty Nome never keeps showing
+      // «already taken» while Crea has not spoken yet.
+      if (String(form.name ?? '').replace(/^\s*@*\s*/, '').trim() === '') {
+        if (form.nameError === '') return;
+        form.nameError = '';
+        const cleared = fieldErrorOf(form, 'name');
+        if (cleared !== '') showFieldError(nameRow, name, cleared);
+        else clearFieldError(nameRow, name);
+        return;
+      }
       const checked = checkNewAgent({ name: form.name, role: 'x', instructions: 'x' }, state.agents);
       // Review Muse #895 (P2): only the name's own errors move here — an
       // error of Crea on another field stays, in state and on screen.
@@ -1766,6 +1797,10 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
       if (checked.error) {
         form.error = checked.error;
         form.field = checked.field ?? null;
+        // This Crea just re-checked the name against the team: a live
+        // line older than it goes, so an empty Nome reads the
+        // missing-name error, never yesterday's «already taken».
+        form.nameError = '';
         paint();
         focusFieldError(null, form.field === null ? null : `agent-${form.field}`);
         return;

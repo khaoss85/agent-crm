@@ -18,7 +18,7 @@
 // honest line and the fields stay for writing by hand.
 
 import { elFor } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatAmount, humanReadError, isNetworkFailure, isNotComposedFailure, logWriteFailure } from './admin-core.js';
+import { formatAmount, humanReadError, isNetworkFailure, isNotComposedFailure, italianDay, logWriteFailure } from './admin-core.js';
 import { isPricedOffer, offerPriceText, selectedProductTotal } from './admin-modules.js';
 
 export const OFFER_PROMPT_MAX = 500;
@@ -45,6 +45,53 @@ export function euroToCents(raw) {
 export function centsToField(cents) {
   const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return `${whole},${String(cents % 100).padStart(2, '0')}`;
+}
+
+/**
+ * backlog:7fa422415232: the public path of an offer share link. The token is
+ * the only credential (quote-share keeps only its hash server-side), so the
+ * path carries the raw token and nothing else — never a quote id, never a
+ * price. The shared space serves this path without login (the pilot route
+ * follows in its own PR with a contract test); the /bo only mints and shows
+ * it, and the send stays the operator's gesture in the composer. Returns null
+ * for anything that is not a share token.
+ */
+export function offerSharePath(token) {
+  const shareToken = typeof token === 'string' ? token.trim() : '';
+  if (!/^[0-9a-f]{64}$/.test(shareToken)) return null;
+  return `/q/${shareToken}`;
+}
+
+/**
+ * backlog:7fa422415232: absolute public URL of a share token on this space's
+ * origin, or null when the token or the origin is not usable.
+ */
+export function offerShareUrl(origin, token) {
+  const path = offerSharePath(token);
+  // backlog:b545aca18b8f: no regex literal with `//` in this client file.
+  // The pilot serves the /bo client through a pass that cuts `//` as a
+  // comment, so `/^https?:\/\//` truncated the module («Invalid regular
+  // expression: missing /») and the whole shell lost its sidebar. Plain
+  // string checks keep the exact same accept/reject behavior, case included.
+  let base = typeof origin === 'string' ? origin.trim() : '';
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  if (path === null || base === '') return null;
+  if (!base.startsWith('http://') && !base.startsWith('https://')) return null;
+  return `${base}${path}`;
+}
+
+/**
+ * backlog:7fa422415232: the ready-to-send Italian message carrying an offer
+ * link. Names the offer, keeps the URL on its own so it stays tappable, and
+ * the expiry in the operator's day form — never a raw id, never a price.
+ * Returns null without a URL: there is nothing to send.
+ */
+export function offerShareMessage({ offerName, url, expiresAt } = {}) {
+  if (typeof url !== 'string' || url.trim() === '') return null;
+  const name = typeof offerName === 'string' && offerName.trim() !== '' ? `l’offerta «${offerName.trim()}»` : 'la tua offerta';
+  const day = italianDay(typeof expiresAt === 'string' ? expiresAt : null);
+  const expiry = day !== null ? ` Il link scade il ${day}.` : '';
+  return `Ciao, ecco ${name}: ${url.trim()}.${expiry} Aprilo senza account: vedi righe e totali, e puoi accettare o rifiutare.`;
 }
 
 /** The quantity of one chosen chip: its own field for a per-unit price, else 1. */

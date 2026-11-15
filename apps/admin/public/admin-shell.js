@@ -118,13 +118,23 @@ const AI_PLACEHOLDERS = Object.freeze({
 export const AI_ENTRY_FALLBACK = 'Chiedi o fai qualcosa… (⌘K)';
 
 /**
+ * Backlog 3136d15da7bd: with the space AI off the top bar must say so —
+ * inviting a question would promise an AI that stays silent. The bar keeps
+ * working (search never needed the AI), only its words change.
+ */
+export const AI_SPACE_OFF_PLACEHOLDER = 'AI dello spazio spenta: la riaccendi in Spazi e accessi';
+
+/**
  * Backlog 7d169a3b1dd2: on the Agenti screen the placeholder names an
  * agent of this team that can work (backlog:f06d06f242d6), so «@Nome»
  * always reaches somebody; otherwise a neutral line.
  * @param {string} screenId
  * @param {string} [agentName]
+ * @param {boolean} [spaceAiOff] backlog 3136d15da7bd: with the space AI off
+ *   the bar says so instead of inviting a question.
  */
-export function aiPlaceholder(screenId, agentName = '') {
+export function aiPlaceholder(screenId, agentName = '', spaceAiOff = false) {
+  if (spaceAiOff === true) return AI_SPACE_OFF_PLACEHOLDER;
   if (typeof screenId !== 'string') return AI_ENTRY_FALLBACK;
   if (screenId === 'agenti' && typeof agentName === 'string' && agentName.trim() !== '') {
     return agentMentionPlaceholder([{ name: agentName.trim() }]);
@@ -315,7 +325,7 @@ export function readStoredSpaces(storage) {
         name: entry.name,
         initials: typeof entry.initials === 'string' && entry.initials !== ''
           ? entry.initials.slice(0, 2).toUpperCase()
-          : entry.name.slice(0, 2).toUpperCase(),
+          : spaceInitialsFor(entry.name),
       }));
   } catch {
     return [];
@@ -360,7 +370,7 @@ export function mergeSpaces(primary, secondary) {
       const initials = typeof /** @type {any} */ (entry).initials === 'string'
         && /** @type {any} */ (entry).initials.trim() !== ''
         ? /** @type {any} */ (entry).initials.trim().slice(0, 2).toUpperCase()
-        : name.slice(0, 2).toUpperCase();
+        : spaceInitialsFor(name);
       out.push({ id, name, initials });
     }
     return out;
@@ -390,19 +400,92 @@ export function resolveSpaceShortcut(event, spaces) {
 }
 
 /**
+ * Space badge initials from the space name (backlog:ecb26347d12c): the
+ * first letter of the first two words («Presti Group» → «PG»), else the
+ * first two alphanumeric characters («Presti» → «PR»). The same word rule
+ * as `nameInitials` in admin-spazi-accessi.js — reused here, never a new
+ * rule — so «Spazio locale» reads «SL» like defaultSpaces().
+ * @param {unknown} name
+ */
+export function spaceInitialsFor(name) {
+  if (typeof name !== 'string') return '·';
+  const words = name.split(/\s+/)
+    .map((word) => word.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, ''))
+    .filter(Boolean);
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '');
+  if (clean === '') return '·';
+  return clean.slice(0, 2).toUpperCase();
+}
+
+/**
+ * Badge color for one space (backlog:ecb26347d12c): a deterministic hue
+ * from the space id, so two spaces never share the badge color and the
+ * same space reads the same everywhere. White text stays readable on it.
+ * @param {unknown} id
+ */
+export function spaceBadgeColor(id) {
+  const text = typeof id === 'string' ? id : '';
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360} 45% 42%)`;
+}
+
+/**
+ * The «Cambia spazio» button label (backlog:ecb26347d12c): it lists only
+ * the shortcuts that exist — «Cambia spazio (⌘1/2)» with two spaces,
+ * never the fixed «(⌘1/2/3)». Past nine spaces only ⌘1…⌘9 exist.
+ * @param {unknown} spaces
+ */
+export function spaceSwitcherLabel(spaces) {
+  const count = Array.isArray(spaces) ? spaces.length : 0;
+  const shown = Math.max(0, Math.min(count, 9));
+  if (shown < 2) return 'Cambia spazio';
+  const parts = [];
+  for (let n = 1; n <= shown; n++) parts.push(String(n));
+  return `Cambia spazio (⌘${parts.join('/')})`;
+}
+
+/**
  * Space-menu rows with the ⌘N hint, in order. Only the first nine spaces
- * get a hint; the rest render without one.
+ * get a hint; the rest render without one. Display initials never repeat
+ * (backlog:ecb26347d12c): the stored sigla wins while it is unique, then
+ * the word rule («Prova Validazione B1» → «PV»), then longer slices of
+ * the name — the first unused candidate, so «Presti Group» and «Prova
+ * Validazione B1» read differently even when both arrive as «PR».
  * @param {Array<{ id: string, name: string, initials?: string }>} spaces
  * @param {string} activeId
  */
 export function spaceMenuItems(spaces, activeId) {
-  return spaces.map((space, index) => ({
-    id: space.id,
-    name: space.name,
-    initials: space.initials ?? space.name.slice(0, 2).toUpperCase(),
-    keyHint: index < 9 ? `⌘${index + 1}` : '',
-    active: space.id === activeId,
-  }));
+  const list = Array.isArray(spaces) ? spaces : [];
+  const seen = new Set();
+  return list.map((space, index) => {
+    const name = typeof space?.name === 'string' ? space.name : '';
+    const stored = typeof space?.initials === 'string' && space.initials.trim() !== ''
+      ? space.initials.trim().toUpperCase()
+      : '';
+    const word = spaceInitialsFor(name);
+    const clean = name.replace(/[^0-9a-zA-ZÀ-Þà-ÿ]/g, '').toUpperCase();
+    const candidates = stored !== '' ? [stored, word] : [word];
+    if (clean.length >= 3) candidates.push(clean.slice(0, 3));
+    if (clean.length >= 3) candidates.push(`${clean[0]}${clean[clean.length - 1]}`);
+    let initials = candidates[0] ?? '·';
+    for (const candidate of candidates) {
+      if (candidate !== '' && !seen.has(candidate)) {
+        initials = candidate;
+        break;
+      }
+    }
+    seen.add(initials);
+    return {
+      id: space.id,
+      name: space.name,
+      initials,
+      color: spaceBadgeColor(space?.id),
+      keyHint: index < 9 ? `⌘${index + 1}` : '',
+      active: space.id === activeId,
+    };
+  });
 }
 
 /**
@@ -538,6 +621,9 @@ export function createShellView({
     // Backlog 7d169a3b1dd2: first named team agent, told by the Agenti
     // screen once its read lands — the bar placeholder names the team.
     aiAgentName: '',
+    // Backlog 3136d15da7bd: the space AI master, told by app.js (the shell
+    // does its own reads never). True paints the off words in the bar.
+    aiSpaceOff: false,
     screenLabel,
     fixCount: 0,
     clientCount: null,
@@ -633,12 +719,19 @@ export function createShellView({
 
   function renderSidebar() {
     clearMount(sidebar);
-    const space = activeSpace();
+    // backlog:ecb26347d12c: the menu rows carry de-duplicated initials and
+    // per-space colors, so two spaces never read the same; the button label
+    // lists only the shortcuts that exist.
+    const items = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const space = items.find((entry) => entry.active) ?? items[0];
+    const switcherLabel = spaceSwitcherLabel(state.spaces);
 
     const spaceButton = el(doc, 'button', 'bo-space');
     spaceButton.setAttribute('aria-haspopup', 'true');
-    spaceButton.setAttribute('title', 'Cambia spazio (⌘1/2/3)');
-    const badge = el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase());
+    spaceButton.setAttribute('title', switcherLabel);
+    spaceButton.setAttribute('aria-label', switcherLabel);
+    const badge = el(doc, 'span', 'bo-space-badge', space.initials);
+    badge.setAttribute('style', `background: ${space.color}`);
     // BO-F6-01: the switcher shows the space name with the member's role
     // under it, like the prototype ("Studio Aurora / Titolare").
     const spaceText = el(doc, 'span', 'bo-space-text');
@@ -658,10 +751,11 @@ export function createShellView({
     const menu = el(doc, 'div', 'bo-space-menu hidden');
     menu.setAttribute('role', 'menu');
     menu.setAttribute('aria-label', 'Spazi di lavoro');
-    for (const entry of spaceMenuItems(state.spaces, state.activeSpaceId)) {
+    for (const entry of items) {
       const pick = el(doc, 'button', entry.active ? 'bo-space-pick active' : 'bo-space-pick');
       pick.setAttribute('role', 'menuitem');
       const ini = el(doc, 'span', 'bo-space-badge', entry.initials);
+      ini.setAttribute('style', `background: ${entry.color}`);
       const label = el(doc, 'span', 'bo-space-pick-name', entry.name);
       pick.appendChild(ini);
       pick.appendChild(label);
@@ -861,7 +955,13 @@ export function createShellView({
     // opens the sidebar as a drawer. Both hidden above 560px by the
     // stylesheet, so desktop is unchanged.
     const phoneSpace = el(doc, 'div', 'bo-phonebar-space');
-    phoneSpace.appendChild(el(doc, 'span', 'bo-space-badge', space.initials ?? space.name.slice(0, 2).toUpperCase()));
+    // backlog:ecb26347d12c: the phone bar shows the same de-duplicated
+    // initials and color as the sidebar switcher.
+    const phoneItems = spaceMenuItems(state.spaces, state.activeSpaceId);
+    const phoneSpaceEntry = phoneItems.find((entry) => entry.active) ?? phoneItems[0];
+    const phoneBadge = el(doc, 'span', 'bo-space-badge', phoneSpaceEntry.initials);
+    phoneBadge.setAttribute('style', `background: ${phoneSpaceEntry.color}`);
+    phoneSpace.appendChild(phoneBadge);
     const phoneSpaceText = el(doc, 'span', 'bo-space-text');
     phoneSpaceText.appendChild(el(doc, 'span', 'bo-space-name', space.name));
     const phoneRole = sessionRoleLabel(state.user.role);
@@ -889,8 +989,14 @@ export function createShellView({
     aiInput.setAttribute('type', 'search');
     aiInput.setAttribute('class', 'bo-ai-input ui-field'); // BO-F6-02: system field class.
     aiInput.setAttribute('aria-label', 'Barra AI: chiedi o fai qualcosa');
-    aiInput.setAttribute('placeholder', aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName));
-    aiInput.setAttribute('title', 'Barra AI (⌘K): chiedi o fai qualcosa');
+    // backlog 3136d15da7bd: with the space AI off the placeholder says so
+    // instead of inviting a question the AI would not answer.
+    const aiOff = state.aiSpaceOff === true;
+    const aiWords = aiOff
+      ? AI_SPACE_OFF_PLACEHOLDER
+      : aiPlaceholder(state.aiScreenId ?? state.activeScreenId, state.aiAgentName);
+    aiInput.setAttribute('placeholder', aiWords);
+    aiInput.setAttribute('title', aiOff ? AI_SPACE_OFF_PLACEHOLDER : 'Barra AI (⌘K): chiedi o fai qualcosa');
     form.appendChild(aiInput);
     const hint = el(doc, 'kbd', 'bo-ai-key', '⌘K');
     form.appendChild(hint);
@@ -985,13 +1091,15 @@ export function createShellView({
   renderTopbar();
 
   return {
-    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, screenLabel: nextLabel, items, user: nextUser } = {}) {
+    update({ fixCount, clientCount, clientCountExact, activeScreenId, aiScreenId, aiAgentName, aiSpaceOff, screenLabel: nextLabel, items, user: nextUser } = {}) {
       if (fixCount !== undefined) state.fixCount = fixCount;
       if (clientCount !== undefined) state.clientCount = clientCount;
       if (clientCountExact !== undefined) state.clientCountExact = clientCountExact;
       if (typeof activeScreenId === 'string') state.activeScreenId = activeScreenId;
       if (aiScreenId === null || typeof aiScreenId === 'string') state.aiScreenId = aiScreenId;
       if (typeof aiAgentName === 'string') state.aiAgentName = aiAgentName;
+      // backlog 3136d15da7bd: the space AI master state, pushed by app.js.
+      if (typeof aiSpaceOff === 'boolean') state.aiSpaceOff = aiSpaceOff;
       if (typeof nextLabel === 'string' && nextLabel !== '') state.screenLabel = nextLabel;
       if (Array.isArray(items)) state.items = items;
       if (nextUser != null && typeof nextUser === 'object' && !Array.isArray(nextUser)) {
@@ -1239,7 +1347,9 @@ export function shellScreenFor(target) {
     case 'marketing-proposal': return { id: null, label: 'Proposta' };
     case 'quotes': return { id: null, label: 'Preventivi' };
     case 'catalog': return { id: 'impostazioni', label: 'Catalogo prodotti' };
-    case 'quote-detail': return { id: null, label: 'Preventivo' };
+    // backlog:bfc070243427: the quote lives on the offer's board — Pipeline
+    // stays highlighted on the preventivo, like on the offer.
+    case 'quote-detail': return { id: 'pipeline', label: 'Preventivo' };
     // backlog:96c7b56001ba: an offer opened from a scheda stays under Clienti.
     case 'offer-detail': return { id: target.from ? 'clienti' : 'pipeline', label: 'Offerta' };
     case 'connectors': return { id: 'impostazioni', label: 'Connettori' };
