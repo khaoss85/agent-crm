@@ -445,6 +445,31 @@ test('backlog:5c2f8bc67859: a contact row sums only its own offers, never its co
   assert.equal(bea.status.value, 'cliente');
 });
 
+test('backlog:0acf5809: a company row sums the contact offers and the company offers', async () => {
+  // The wide rule, mirror of 5c2f8bc67859: a company row (no contact of its
+  // own) counts every open opportunity filed on the company, whether the
+  // offer names a contact or the company alone. Closed stages stay out.
+  const companies = [{ id: 'co9', name: 'Azienda Nove', domain: 'nove.example' }];
+  const modules = fakeModules({
+    contacts: [],
+    companies,
+    opportunities: [
+      { id: 'op-sede', companyId: 'co9', contactId: null, valueCents: 35000, currency: 'EUR', stage: 'qualification' },
+      { id: 'op-ref', companyId: 'co9', contactId: 'cx', valueCents: 1500, currency: 'EUR', stage: 'proposal' },
+      { id: 'op-won', companyId: 'co9', contactId: null, valueCents: 99900, currency: 'EUR', stage: 'won' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  assert.equal(page.total, 1);
+  const azienda = page.items[0];
+  assert.equal(azienda.id, 'co9');
+  assert.equal(azienda.offerValueCents, 36500, 'company row sums contact and company offers, never the won one');
+  assert.equal(azienda.offerCurrency, 'EUR');
+});
+
 test('views, filters and search run on the same page the server returns', async () => {
   const { contacts, companies, identities } = SCENE();
   const modules = fakeModules({ contacts, companies, identities });
