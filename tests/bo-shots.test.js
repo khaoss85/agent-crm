@@ -389,11 +389,14 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
   // pass on a painted-but-empty grid. Every calendario expect must be a
   // string the static page can never contain: a painted event marker. Since
   // fetta 4 the customer link lives in the detail card (painted only after a
-  // block click), the painted proof is the Rome time range of a held event.
+  // block click), the painted proof is the blocks the week holds
+  // (backlog:667f1f1c): the short block on its compact line and the long
+  // block on its Rome range.
   const calendario = SCREENS.find((screen) => screen.name === 'calendario');
   assert.ok(calendario, 'the calendario screen exists');
   assert.ok(!calendario.expect.includes('Mostra settimana'), 'the static button is not an expect');
-  assert.ok(calendario.expect.includes('18:00–18:30'), 'a painted Rome time range is expected');
+  assert.ok(calendario.expect.includes('Taglio · Ada, 18:00'), 'a painted short-block line is expected');
+  assert.ok(calendario.expect.includes('09:00–10:30'), 'a painted long-block Rome time range is expected');
   assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
 });
 
