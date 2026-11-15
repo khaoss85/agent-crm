@@ -432,10 +432,11 @@ test('a060a4aa65b6: from an offer, the team leaves right after the first wave; t
   assert.ok(order.indexOf('/api/spine/memberships') > -1 && order.indexOf('/api/spine/memberships') < profileAt, 'the roster ahead of the profile');
   assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no history is guessed before the profile names the offer');
   client.gates.get('roster').release.resolve({ items: [] });
-  client.gates.get('audit').release.resolve({ items: [MOVE] });
   client.gates.get('card').release.resolve(CARD);
   await flush(3);
   client.gates.get('profile').release.resolve(OFFER_PROFILE);
+  await flush(3);
+  client.gates.get('audit').release.resolve({ items: [MOVE] });
   await shown;
   await flush();
   const done = timelineRows(mount);
