@@ -465,6 +465,20 @@ export function createQuoteView(deps) {
       // tutto, tenendo la testata come faceva main.
       const message = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
       const errorLine = mount.querySelector ? mount.querySelector('.field-error') : null;
+      if (keep && token === renderToken) {
+        // Arbitrato giro 2 (P1): una rilettura keep:true fallita deve
+        // segnalarlo al chiamante (withBusy) dopo aver disegnato l'errore,
+        // altrimenti i controlli restano disattivati e la pagina è mezza
+        // bloccata. Unica strada: disegna qui, rilancia sempre.
+        if (errorLine) {
+          errorLine.textContent = message;
+        } else {
+          clear();
+          mount.appendChild(el('h2', 'panel-title', 'Preventivo'));
+          mount.appendChild(el('p', 'muted', message));
+        }
+        throw error;
+      }
       if (errorLine) {
         errorLine.textContent = message;
       } else {
@@ -587,7 +601,9 @@ export function createQuoteView(deps) {
         await fn();
         await renderQuoteDetail(quoteId, { keep: true }); // re-render from server state
       } catch (error) {
-        errorLine.textContent = error?.message ?? 'Richiesta non riuscita';
+        // La rilettura keep:true fallita ha già scritto il messaggio onesto
+        // in riga prima di rilanciare: non coprirlo con il testo grezzo.
+        if (errorLine.textContent === '') errorLine.textContent = error?.message ?? 'Richiesta non riuscita';
         for (const control of busy) control.disabled = false;
       }
     };

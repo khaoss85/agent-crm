@@ -832,9 +832,41 @@ test('d56122ee2844 review giro 1 P1: a failed re-read keeps the painted page wit
   await view.renderQuoteDetail('q1');
   assert.ok(mount.textContent.includes('Enterprise Plan'), 'the detail painted');
   failReads = true;
-  await view.renderQuoteDetail('q1', { keep: true });
+  // Arbitrato giro 2: la rilettura keep:true fallita disegna l'errore E
+  // rilancia, così il chiamante (withBusy) riattiva i controlli.
+  await assert.rejects(view.renderQuoteDetail('q1', { keep: true }), 'the failed keep re-read reports to its caller');
   assert.ok(mount.textContent.includes('Enterprise Plan'), 'the old page stays');
   const errorLine = mount.querySelector('.field-error');
   assert.ok(errorLine, 'the painted page keeps its error line');
   assert.ok(errorLine.textContent.includes('Preventivo non leggibile'), 'the honest message lands on the existing page');
+});
+
+test('d56122ee2844 arbitrato giro 2 P1: a failed keep re-read re-enables every edit control', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let failReads = false;
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (failReads && (options.method ?? 'GET') === 'GET') {
+        throw Object.assign(new Error('boom'), { status: 500 });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the detail painted');
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  assert.ok(addPanel && typeof addPanel.__add === 'function', 'the add-line hook is exposed');
+  failReads = true;
+  await addPanel.__add();
+  const errorLine = mount.querySelector('.field-error');
+  assert.ok(errorLine && errorLine.textContent.includes('Preventivo non leggibile'), 'the honest message lands on the existing page');
+  const buttons = mount.findAll('button');
+  assert.ok(buttons.length > 0, 'edit controls exist');
+  for (const button of buttons) {
+    assert.equal(button.disabled, false, `control «${button.textContent}» is enabled again`);
+  }
 });
