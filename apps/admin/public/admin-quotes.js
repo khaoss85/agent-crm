@@ -409,12 +409,18 @@ export function createQuoteView(deps) {
     return page;
   }
 
-  async function renderQuoteDetail(quoteId) {
+  async function renderQuoteDetail(quoteId, options = {}) {
     const token = ++renderToken;
     // backlog:d56122ee2844: dopo una scrittura la pagina resta visibile —
-    // la vecchia pittura resta finché i nuovi dati non arrivano, e solo la
-    // prima pittura mostra lo scheletro. Mai più una pagina bianca.
-    const firstPaint = mount.childNodes.length === 0;
+    // la vecchia pittura resta finché i nuovi dati non arrivano. L'ingresso
+    // dal router mostra sempre lo scheletro: il router pre-dipinge la sua
+    // riga «Carico …» sul mount, quindi i figli del mount non dicono mai se
+    // è la prima pittura — solo le ri-letture dalla pagina (withBusy) tengono
+    // la vecchia pittura, con keep: true. Mai più una pagina bianca.
+    // Review muse giro 1 (P1): inferirlo da mount.childNodes.length teneva
+    // la riga generica del router per tutta la lettura, senza scheletro.
+    const keep = options !== null && typeof options === 'object' && options.keep === true;
+    const firstPaint = keep ? mount.childNodes.length === 0 : true;
     if (firstPaint) {
       clear();
       const heading = el('h2', 'panel-title', 'Preventivo');
@@ -451,13 +457,20 @@ export function createQuoteView(deps) {
       backLinkResolved = backLink;
     } catch (error) {
       if (token !== renderToken) return;
-      if (firstPaint) {
-        clear();
-        mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' })));
+      // Review muse giro 1 (P1): dopo una navigazione il mount tiene la riga
+      // «Carico …» del router, senza .field-error — restare in silenzio la
+      // lasciava appesa per sempre. humanReadError registra già la causa con
+      // stato/codice; qui la frase onesta si vede sempre: sulla riga del
+      // dettaglio quando c'è una pittura riuscita, altrimenti al posto di
+      // tutto, tenendo la testata come faceva main.
+      const message = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+      const errorLine = mount.querySelector ? mount.querySelector('.field-error') : null;
+      if (errorLine) {
+        errorLine.textContent = message;
       } else {
-        // La pittura vecchia resta: l'errore va sulla riga esistente.
-        const errorLine = mount.querySelector ? mount.querySelector('.field-error') : null;
-        if (errorLine) errorLine.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+        clear();
+        mount.appendChild(el('h2', 'panel-title', 'Preventivo'));
+        mount.appendChild(el('p', 'muted', message));
       }
       return;
     }
@@ -572,7 +585,7 @@ export function createQuoteView(deps) {
       errorLine.textContent = '';
       try {
         await fn();
-        await renderQuoteDetail(quoteId); // re-render from server state
+        await renderQuoteDetail(quoteId, { keep: true }); // re-render from server state
       } catch (error) {
         errorLine.textContent = error?.message ?? 'Richiesta non riuscita';
         for (const control of busy) control.disabled = false;

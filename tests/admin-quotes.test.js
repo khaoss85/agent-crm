@@ -771,3 +771,70 @@ test('d56122ee2844: after adding a line the old page stays while the rewrite rea
   assert.ok(mount.textContent.includes('Enterprise Plan'), 'the new paint lands');
   assert.ok(client.calls.some((call) => call.method === 'POST'), 'the write went out');
 });
+
+test('d56122ee2844 review giro 1 P1: router entry on a pre-painted mount still paints the skeleton', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // The router pre-paints its generic loading line before the view runs
+  // (paintScreenLoading): the mount is never empty on a real navigation.
+  const loading = doc.createElement('p');
+  loading.setAttribute('class', 'muted');
+  loading.textContent = 'Carico …';
+  mount.appendChild(loading);
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      return new Promise((resolve, reject) => setTimeout(() => {
+        inner.request(path, options).then(resolve, reject);
+      }, 20));
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  const pending = view.renderQuoteDetail('q1');
+  const bars = mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true');
+  assert.ok(bars.length > 0, 'the skeleton replaces the router loading line at once');
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced once to assistive tech');
+  await pending;
+  assert.ok(mount.textContent.includes('Cosa include'), 'lines paint');
+});
+
+test('d56122ee2844 review giro 1 P1: a failed read after navigation paints the honest error, never a hanging line', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const loading = doc.createElement('p');
+  loading.setAttribute('class', 'muted');
+  loading.textContent = 'Carico …';
+  mount.appendChild(loading);
+  const client = {
+    async request() { throw Object.assign(new Error('Service Unavailable'), { status: 500 }); },
+  };
+  await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Preventivo non leggibile'), 'the honest error replaces the loading line');
+  assert.ok(!mount.textContent.includes('Carico …'), 'no loading line hangs forever');
+});
+
+test('d56122ee2844 review giro 1 P1: a failed re-read keeps the painted page with the honest message', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let failReads = false;
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      if (failReads && (options.method ?? 'GET') === 'GET') {
+        throw Object.assign(new Error('boom'), { status: 500 });
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the detail painted');
+  failReads = true;
+  await view.renderQuoteDetail('q1', { keep: true });
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the old page stays');
+  const errorLine = mount.querySelector('.field-error');
+  assert.ok(errorLine, 'the painted page keeps its error line');
+  assert.ok(errorLine.textContent.includes('Preventivo non leggibile'), 'the honest message lands on the existing page');
+});
