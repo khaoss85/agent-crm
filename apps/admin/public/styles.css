@@ -1200,6 +1200,15 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
 .bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+/* Voce 5036bc435465: the post-call voice note reads like the note form. */
+.bo-scheda-voice-note { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 0 20px 20px; }
+.bo-scheda-voice-note > button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-panel { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-panel:empty { display: none; }
+.bo-scheda-voice-panel textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; }
+.bo-scheda-voice-panel button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-draft { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-draft:empty { display: none; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }

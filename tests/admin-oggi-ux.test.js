@@ -912,3 +912,86 @@ test('review #821 P2: a slow «Da rispondere» view never holds the agenda names
   assert.equal(rendered, true);
   assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('3 in attesa'));
 });
+
+// ---------------------------------------------------------------------------
+// backlog:5cf918c2246e (verifica browser 13/11: Clienti «4 da leggere» mentre
+// Oggi diceva «Nessun messaggio aspetta una risposta», Da rispondere 0) —
+// «da leggere» e «da rispondere» restano due numeri diversi sullo stesso
+// insieme di dati (la stessa risposta della vista server), ma Oggi non
+// dichiara mai vuoto mentre ci sono messaggi da leggere.
+// ---------------------------------------------------------------------------
+
+test('5cf918c2246e: the recap names the unread when nothing else waits', () => {
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
+    'Solo 4 messaggi da leggere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 1 }),
+    'Solo 1 messaggio da leggere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
+    'Ti restano 4 messaggi da leggere e 1 appuntamento.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 0, unread: 2 }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Restano 2 messaggi da leggere.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0 }),
+    'Niente in sospeso e nessun appuntamento per oggi.', 'unchanged when nothing is unread');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 2, unread: 4 }),
+    'Ti aspettano 2 messaggi da rispondere e nessun appuntamento per oggi.', 'waiting still leads over unread');
+});
+
+test('5cf918c2246e: empty «Da rispondere» with unread paints the unread, never «done»', () => {
+  const paintWith = (unread) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const seen = [];
+    renderOggi({
+      doc, mount, spaceName: 'Spazio', now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections: [],
+        availability: { work: true, appointments: true, channels: true },
+        inbox: { available: true, total: 0, rows: [], unread, totalIsExact: true, notifications: { total: 0, rows: [] } },
+        events: { openClientiView: (view) => { seen.push(view); } },
+      },
+    });
+    return { mount, seen };
+  };
+  const four = paintWith(4);
+  const fourText = four.mount.textContent;
+  assert.ok(!fourText.includes('Hai finito per oggi'), fourText);
+  assert.ok(!fourText.includes('Niente in sospeso'), fourText);
+  assert.ok(!fourText.includes('Nessun messaggio aspetta una risposta.'), fourText);
+  assert.ok(fourText.includes('Hai risposto a tutto. Restano 4 messaggi da leggere, qui sotto.'), fourText);
+  const section = four.mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('Nessun messaggio aspetta una risposta, ma 4 da leggere in Clienti →'), section.textContent);
+  const links = section.findAll('a').filter((node) => node.getAttribute('data-action') === 'inbox-unread');
+  assert.equal(links.length, 1, 'the unread link fires once, not twice');
+  links[0].dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(four.seen, ['da-leggere']);
+  const oneText = paintWith(1).mount.textContent;
+  assert.ok(oneText.includes('Resta 1 messaggio da leggere, qui sotto.'), oneText);
+  assert.ok(oneText.includes('ma 1 da leggere in Clienti →'), oneText);
+  const noneText = paintWith(0).mount.textContent;
+  assert.ok(noneText.includes('✓ Hai finito per oggi.'), 'still said when nothing waits at all');
+  assert.ok(noneText.includes('Nessun messaggio aspetta una risposta.'), noneText);
+});
+
+test('5cf918c2246e: the 13/11 case on one server answer — Da rispondere 0, da leggere 4', async () => {
+  const client = serverClient(repliesAnswer(0, { unread: 4 }));
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const text = mount.textContent;
+  assert.ok(!text.includes('Hai finito per oggi'), text);
+  assert.ok(!text.includes('Niente in sospeso'), text);
+  assert.ok(!text.includes('Nessun messaggio aspetta una risposta.'), text);
+  assert.ok(text.includes('Solo 4 messaggi da leggere e nessun appuntamento per oggi.'), text);
+  assert.ok(text.includes('Hai risposto a tutto. Restano 4 messaggi da leggere, qui sotto.'), text);
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('0 in attesa'), 'the head is the view total');
+  assert.ok(section.textContent.includes('Nessun messaggio aspetta una risposta, ma 4 da leggere in Clienti →'), section.textContent);
+  const links = section.findAll('a').filter((node) => node.getAttribute('data-action') === 'inbox-unread');
+  assert.equal(links.length, 1, 'one unread link on the same answer Clienti counts from');
+  let prevented = false;
+  links[0].dispatch('click', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(takePendingClientiView(storage), 'da-leggere', 'Clienti opens on Da leggere');
+});
