@@ -435,7 +435,7 @@ test('the channel card renders title, period total, week totals and legend (C6, 
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/, 'C6: card title');
   // backlog:48993bed7294: the total says what it counts and over which weeks.
-  assert.match(text, /28 primi contatti da un canale nelle 4 settimane dal 28 set al 25 ott · un cliente con più canali conta una volta per canale/, 'C6: what the total counts');
+  assert.match(text, /28 primi contatti da un canale nelle 4 settimane dal 28 set al 25 ott · ogni cliente conta una volta, nel canale del primo contatto/, 'C6: what the total counts');
   assert.match(text, /Instagram 18/, 'C7: legend <nome canale> <n>');
   assert.match(text, /WhatsApp 10/, 'C7: legend <nome canale> <n>');
   for (const label of ['28 set', '5 ott', '12 ott', '19 ott']) {
@@ -782,7 +782,7 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
   }, []);
   assert.deepEqual(named.team.map((entry) => entry.owner).slice(1), ['Senza referente']);
   assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
-    '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · un cliente con più canali conta una volta per canale');
+    '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
 // 35c3c897d696: a malformed first or last week reads the count only, never throws.
