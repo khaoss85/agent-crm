@@ -145,11 +145,11 @@ test('harness pages photograph the full /bo shell with a hidden probe', () => {
   }
 });
 
-test('the clienti harness names counted pills and a 0 fallback', () => {
+test('the clienti harness names counted pills and a bare label for the uncounted view', () => {
   // backlog:22d4dd0f, C10: the next render paints counted pills for the
-  // views the demo server knows, and a 0 for rinnovi, whose dependency
-  // reads as unavailable — both states the P2 asks to see
-  // (backlog:5af848afdb63: every view carries a number, even 0).
+  // views the demo server knows, and a bare label for rinnovi, whose
+  // dependency reads as unavailable — honest absence, never a false 0
+  // (backlog:5af848afdb63: a missing count shows no number).
   const page = harnessHtml('clienti', publicDir);
   for (const view of [
     "{ id: 'tutti', label: 'Tutti', count: 3 }",
@@ -471,7 +471,7 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
   assert.doesNotThrow(() => assertProbe('clienti', {
     rows: 3,
-    pills: ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni 0'],
+    pills: ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni'],
   }));
   assert.throws(() => assertProbe('clienti', { rows: 3, pills: ['Tutti'] }), /pills/);
   assert.throws(() => assertProbe('clienti', { rows: 3 }), /pills/);
