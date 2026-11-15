@@ -696,9 +696,12 @@ export async function executeAdvisorAction(client, action, run) {
  * The conversations waiting in «Da rispondere» count too (production
  * 11/11: «Niente in sospeso» over «Da rispondere: 32 in attesa»): the line
  * names them, and «Niente in sospeso» is said only when nothing waits.
- * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
+ * «Da leggere» is its own wait (backlog:5cf918c2246e, production 13/11:
+ * Clienti read «4 da leggere» while Oggi read «nothing waits»): «Niente in
+ * sospeso» never covers messages still to be read, so the recap names them.
+ * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0 } = {}) {
   // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
   // a past slot stays in the agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
@@ -713,6 +716,7 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
   // the verb agrees with the count, and zero reads as a person says it.
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
+  const unreadN = Number.isSafeInteger(unread) && unread > 0 ? unread : 0;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
   const floor = waitingExact === false || waiting === null;
@@ -732,14 +736,21 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
       return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
-    if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
-    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
+    if (today.length === 0) {
+      return unreadN === 0
+        ? 'Niente in sospeso e nessun appuntamento per oggi.'
+        : `Solo ${plural(unreadN, 'messaggio da leggere', 'messaggi da leggere')} e nessun appuntamento per oggi.`;
+    }
+    return unreadN === 0
+      ? `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`
+      : `Ti restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere e ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
   const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
   const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
-  return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
+  if (unanswered > 0 || floor) return `${recap} ${waitingLine(true)}.`;
+  return unreadN === 0 ? recap : `${recap} Restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere.`;
 }
 
 /**
@@ -2084,6 +2095,13 @@ export function renderOggi({
   // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
   // day is done only when nothing waits in «Da rispondere» either.
   const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
+  // backlog:5cf918c2246e: «da leggere» is not «da rispondere» — a customer
+  // with unread messages nobody has to answer (a teammate already replied,
+  // a notification, a closed thread) still waits to be read. The day is done
+  // only when nothing waits to be read either.
+  const unreadWaiting = home.inbox != null && home.inbox.available !== false && Number.isSafeInteger(home.inbox.unread) && home.inbox.unread > 0
+    ? home.inbox.unread
+    : 0;
   // review Muse #795: a floor from a truncated scan never reads «finito».
   // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
   const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
@@ -2093,8 +2111,12 @@ export function renderOggi({
   done.setAttribute('data-oggi-done', 'true');
   if (!allDone || home.inbox?.pending === true) {
     // Nothing to say yet: the count of the messages waiting is still reading.
-  } else if (waitingReplies === 0 && !waitingFloor) {
+  } else if (waitingReplies === 0 && !waitingFloor && unreadWaiting === 0) {
     done.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  } else if (waitingReplies === 0 && !waitingFloor) {
+    done.appendChild(el(doc, 'p', 'bo-muted', unreadWaiting === 1
+      ? 'Hai risposto a tutto. Resta 1 messaggio da leggere, qui sotto.'
+      : `Hai risposto a tutto. Restano ${unreadWaiting} messaggi da leggere, qui sotto.`));
   } else if (waitingFloor) {
     done.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
   } else {
@@ -2158,6 +2180,7 @@ export function renderOggi({
       }
       return row;
     };
+    let unreadLinked = false;
     if (home.inbox.pending === true) {
       // backlog:bab63e32acdb: the server view is reading — no word that
       // could pass for «nobody waits». backlog:ee1244a145c9: the count is
@@ -2187,6 +2210,27 @@ export function renderOggi({
         note.appendChild(all);
       }
       inbox.appendChild(note);
+    } else if (inboxRows.length === 0 && unreadWaiting > 0) {
+      // backlog:5cf918c2246e: an empty «Da rispondere» with unread messages
+      // never reads «nobody waits» alone — the unread count names itself here
+      // (with its Clienti link when it can open it), and the trailing
+      // «da leggere» line stays silent.
+      const note = el(doc, 'p', 'bo-muted');
+      note.appendChild(el(doc, 'span', null, 'Nessun messaggio aspetta una risposta, ma '));
+      if (typeof events.openClientiView === 'function') {
+        const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadWaiting} da leggere in Clienti →`);
+        unreadLink.setAttribute('href', '#/customer-data');
+        unreadLink.setAttribute('data-action', 'inbox-unread');
+        unreadLink.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView(UNREAD_VIEW);
+        });
+        note.appendChild(unreadLink);
+        unreadLinked = true;
+      } else {
+        note.appendChild(el(doc, 'span', null, `${unreadWaiting} da leggere.`));
+      }
+      inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
       inbox.appendChild(el(doc, 'p', 'bo-muted', 'Nessun messaggio aspetta una risposta.'));
     } else {
@@ -2212,8 +2256,9 @@ export function renderOggi({
       }
     }
     // backlog:c2bf6b206d96: «Da leggere» stays its own count, named apart.
+    // backlog:5cf918c2246e: folded into the empty note above when it fired.
     const unread = home.inbox.available === false ? null : home.inbox.unread;
-    if (Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
+    if (!unreadLinked && Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
       const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
       line.setAttribute('href', '#/customer-data');
       line.setAttribute('data-action', 'inbox-unread');
@@ -2697,7 +2742,7 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       home: {
         recapPending: inbox?.pending === true,
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0 }),
         actions,
         triage,
         capped,
