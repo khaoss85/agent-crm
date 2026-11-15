@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomerCardView } from '../apps/admin/public/admin-customer-card.js';
+import { createCustomerCardView, defaultDeviceDictate } from '../apps/admin/public/admin-customer-card.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -70,7 +70,8 @@ function fakeClient({ voiceDraft = DRAFT, voiceRefusal = null } = {}) {
         const body = options.body ? JSON.parse(String(options.body)) : null;
         writes.push({ path, method, body });
         if (path === '/api/call-intelligence/voice-note') {
-          if (voiceRefusal !== null) throw voiceRefusal;
+          const refusal = typeof voiceRefusal === 'function' ? voiceRefusal({ path, method, body }) : voiceRefusal;
+          if (refusal !== null && refusal !== undefined) throw refusal;
           return { ...voiceDraft };
         }
         if (path === '/api/customer-hub/notes') {
@@ -215,4 +216,66 @@ test('5036bc435465: an empty dictation orders and saves nothing', async () => {
   await flush();
   assert.equal(client.writes.length, 0, 'nothing leaves the phone without said words');
   assert.ok(mount.textContent.includes('Detta o scrivi prima com’è andata la chiamata.'));
+});
+
+test('5036bc435465: a draft structured from older words never saves as the new dictation', async () => {
+  let voiceCalls = 0;
+  const { mount, client } = await open({
+    dictate: stubDictate([]),
+    voiceRefusal: () => {
+      voiceCalls += 1;
+      return voiceCalls > 1 ? Object.assign(new Error('ai down'), { status: 502 }) : null;
+    },
+  });
+  await openPanel(mount);
+  field(mount, 'voiceNoteText').value = 'il cliente vuole provare prima di Natale';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.equal(field(mount, 'voiceRiassunto').value, DRAFT.riassunto, 'the first reorder fills the draft');
+  field(mount, 'voiceNoteText').value = 'il cliente vuole provare prima di Natale e chiede lo sconto';
+  byAction(mount, 'structure-voice-note').listeners.click[0]();
+  await flush();
+  assert.ok(
+    mount.textContent.includes('L’AI non ha risposto'),
+    'the failed reorder says the AI did not answer, keeping the old draft on screen',
+  );
+  byAction(mount, 'save-voice-note').listeners.click[0]();
+  await flush();
+  assert.equal(
+    client.writes.filter((write) => write.path === '/api/customer-hub/notes').length,
+    0,
+    'no stale draft lands in the cronologia as the new dictation',
+  );
+  assert.ok(
+    mount.textContent.includes('La bozza è di un dettato diverso'),
+    'the refused save names the stale draft and the reorder that fixes it',
+  );
+});
+
+test('5036bc435465: device dictation reads array-like results without Symbol.iterator', () => {
+  const said = [];
+  const ended = [];
+  let captured = null;
+  class FakeRecognition {
+    constructor() { captured = this; }
+    start() {}
+    stop() {}
+  }
+  const docNode = { defaultView: { SpeechRecognition: FakeRecognition, webkitSpeechRecognition: null } };
+  const handle = defaultDeviceDictate(docNode, {
+    onText: (text) => said.push(text),
+    onEnd: () => ended.push(true),
+  });
+  assert.ok(handle && typeof handle.stop === 'function', 'recognition starts where the browser offers it');
+  const interim = { isFinal: false, 0: { transcript: 'parziale' }, length: 1 };
+  const fin = { isFinal: true, 0: { transcript: 'il cliente richiama lunedì' }, length: 1 };
+  // Array-like on purpose: indexed with length, no Symbol.iterator — the
+  // shape for...of cannot walk on some implementations (webkit).
+  const results = { 0: interim, 1: fin, length: 2 };
+  assert.equal(typeof results[Symbol.iterator], 'undefined', 'the fixture really is not iterable');
+  captured.onresult({ results });
+  assert.deepEqual(said, ['il cliente richiama lunedì'], 'only the final transcript reaches the field');
+  captured.onend();
+  handle.stop();
+  assert.deepEqual(ended, [true], 'the end still closes the dictation');
 });

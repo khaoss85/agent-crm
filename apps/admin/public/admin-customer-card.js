@@ -922,8 +922,14 @@ export function defaultDeviceDictate(docNode, hooks = {}) {
   instance.interimResults = false;
   instance.maxAlternatives = 1;
   instance.onresult = (event) => {
+    // Indexed walk (voce 5036bc435465): SpeechRecognitionResultList is an
+    // indexed array-like but not iterable on every implementation
+    // (historically webkit), so for...of would throw and no chunk would
+    // ever reach the transcript.
     const results = event?.results ?? [];
-    for (const result of results) {
+    const count = typeof results?.length === 'number' ? results.length : 0;
+    for (let index = 0; index < count; index += 1) {
+      const result = results[index];
       if (result?.isFinal !== true) continue;
       const said = String(result?.[0]?.transcript ?? '').trim();
       if (said !== '') hooks?.onText?.(said);
@@ -4452,6 +4458,11 @@ export function createCustomerCardView(deps) {
       const voicePanel = el('div', 'bo-scheda-voice-panel');
       let voiceOpen = false;
       let voiceDictation = null;
+      // The dictated text the AI draft was structured from (voce
+      // 5036bc435465). Saving refuses a draft whose dictation changed
+      // since, so a stale draft never lands in the cronologia as the new
+      // dictation. Null until the first successful «Ordina».
+      let structuredFor = null;
       const stopDictation = () => {
         try {
           voiceDictation?.stop?.();
@@ -4580,6 +4591,7 @@ export function createCustomerCardView(deps) {
             riassuntoField.value = String(draft?.riassunto ?? '');
             decisioniField.value = String(draft?.decisioni ?? '');
             passiField.value = String(draft?.prossimiPassi ?? '');
+            structuredFor = text;
             voiceError.textContent = '';
           } catch (error) {
             const code = typeof error?.code === 'string' ? error.code : '';
@@ -4609,6 +4621,14 @@ export function createCustomerCardView(deps) {
             voiceError.textContent = NOTE_TOO_LONG;
             return;
           }
+          // A draft structured from older words never saves as the current
+          // dictation (voce 5036bc435465): reordering after the dictation
+          // changed — or clearing the draft to save the words as-is — comes
+          // first. Untouched manual drafts (never structured) still save.
+          if (body !== dictated && structuredFor !== null && dictated !== structuredFor) {
+            voiceError.textContent = 'La bozza è di un dettato diverso: premi di nuovo «Ordina con l’AI» prima di salvare.';
+            return;
+          }
           noteSaving = true;
           voiceError.textContent = '';
           try {
@@ -4620,6 +4640,7 @@ export function createCustomerCardView(deps) {
             riassuntoField.value = '';
             decisioniField.value = '';
             passiField.value = '';
+            structuredFor = null;
             const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
               (loaded) => withNote(loaded, saved, body));
             toast('Nota aggiunta in cima alla cronologia');
