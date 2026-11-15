@@ -697,11 +697,12 @@ export function createCustomerListView(deps) {
     const viewsRow = frame.viewsRow;
     while (viewsRow.firstChild) viewsRow.removeChild(viewsRow.firstChild);
     for (const view of views) {
-      // backlog:5af848afdb63: every view carries its number, even 0 — a view
-      // without a count the server could name (scan truncated, derived view
-      // unreadable here) reads 0, never a bare label.
-      const count = Number(view.count);
-      const label = view.label + (Number.isFinite(count) ? ` ${count}` : ' 0');
+      // backlog:5af848afdb63: every view carries its number when the server
+      // named it — even 0. A view whose count was never read (the answer is
+      // not in yet, or the server refused that derived view) shows its bare
+      // label: a missing count is «unknown», never a false 0.
+      const count = typeof view.count === 'number' && Number.isFinite(view.count) ? view.count : null;
+      const label = count === null ? view.label : `${view.label} ${count}`;
       const button = el('button', 'bo-clienti-view' + (state.vista === view.id ? ' active' : ''), label);
       button.setAttribute('role', 'tab');
       button.setAttribute('data-view', view.id);

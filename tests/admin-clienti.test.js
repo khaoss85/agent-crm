@@ -129,7 +129,7 @@ test('the five quick views render as tabs, with Tutti active first', async () =>
   const { mount } = await render(stubClient());
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
+    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
   const active = tabs.find((node) => node.getAttribute('data-view') === 'tutti');
   assert.equal(active.getAttribute('aria-selected'), 'true');
   assert.ok(mount.textContent.includes('Marco Rossi'));
@@ -661,10 +661,10 @@ test('the fallback views keep the prototype order before the server answers', as
   const { mount } = await render(bare);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
   assert.deepEqual(tabs.map((node) => node.textContent),
-    ['Tutti 0', 'Da ricontattare oggi 0', 'Nuovi lead 0', 'Clienti attivi 0', 'Rinnovi entro 30 giorni 0']);
+    ['Tutti', 'Da ricontattare oggi', 'Nuovi lead', 'Clienti attivi', 'Rinnovi entro 30 giorni']);
 });
 
-test('5af848afdb63: a view without a server count still reads a number, 0', async () => {
+test('5af848afdb63: a view without a server count shows no number, never a false 0', async () => {
   const uncounted = {
     calls: [],
     async request(path = '', options = {}) {
@@ -678,8 +678,28 @@ test('5af848afdb63: a view without a server count still reads a number, 0', asyn
   };
   const { mount } = await render(uncounted);
   const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
-  assert.ok(tabs.some((node) => node.textContent === 'Da leggere 0'), 'the uncounted view reads 0');
-  for (const tab of tabs) assert.match(tab.textContent, /\d+$/, 'every view carries a number');
+  const unread = tabs.find((node) => node.getAttribute('data-view') === 'da-leggere');
+  assert.ok(unread, 'the uncounted view still renders its tab');
+  assert.equal(unread.textContent, 'Da leggere', 'no number when the server named none');
+  assert.ok(!/[0-9]/.test(unread.textContent), 'no false 0 in the tab text');
+});
+
+test('5af848afdb63: a view the server counted at zero reads 0', async () => {
+  const zeroed = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      return {
+        customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1,
+        totalIsExact: true, ...MENUS,
+        views: MENUS.views.map((view) => ({ ...view, count: view.id === 'rinnovi-30-giorni' ? 0 : 2 })),
+      };
+    },
+  };
+  const { mount } = await render(zeroed);
+  const tabs = buttons(mount).filter((node) => node.getAttribute('role') === 'tab');
+  assert.ok(tabs.some((node) => node.textContent === 'Rinnovi entro 30 giorni 0'),
+    `the server-counted zero reads 0: ${JSON.stringify(tabs.map((node) => node.textContent))}`);
 });
 
 test('changing the view or the page size returns to page 1', async () => {
