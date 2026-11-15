@@ -142,6 +142,12 @@ export function validateRecurrence(rule) {
   if ((kind === 'weekly' || kind === 'weekdays') && days !== null) {
     throw new ValidationError(`recurrence days are only read on a custom weekly rule, never on "${kind}"`, { field: 'recurrence' });
   }
+  // Series follow-up (backlog:573a1e85942f): days on daily/monthly/yearly
+  // (and custom non-weekly) were validated, stored — and silently ignored by
+  // the expansion. Fail closed, never a guessed rule.
+  if (days !== null && !(kind === 'custom' && (input.unit === 'week' || input.unit === undefined))) {
+    throw new ValidationError(`recurrence days are only read on a custom weekly rule, never on "${kind}"`, { field: 'recurrence' });
+  }
   if (kind === 'weekdays' && interval !== 1) {
     throw new ValidationError('a weekdays rule repeats every week: interval must be 1, the expansion reads no other step', { field: 'recurrence' });
   }
