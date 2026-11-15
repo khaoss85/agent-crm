@@ -3880,7 +3880,8 @@ export function createCustomerCardView(deps) {
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
-    // there, one chip per writer («da dan», «dal team»).
+    // there, one chip per named writer («da dan»); a bucket nobody can
+    // name gets no chip (backlog:3f3c143b).
     const notes = entries.filter((item) => item?.entry === 'note');
     // backlog:82235e46e3e9: a provider id the roster names is a writer too.
     const noteAuthor = (item) => {
@@ -3931,10 +3932,11 @@ export function createCustomerCardView(deps) {
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
-      // backlog:6c40dcfaeb3f: no «dal team» chip that splits into names a
-      // moment later. Review Muse #894 (P2): the chips that can already be named show at
+      // backlog:6c40dcfaeb3f: no chip that splits into names a moment
+      // later. Review Muse #894 (P2): the chips that can already be named show at
       // once (a human handle, an API-named writer); a provider id the
-      // roster alone can name, and the «dal team» bucket, wait for it.
+      // roster alone can name waits for it. A bucket nobody can name never
+      // gets a chip (backlog:3f3c143b).
       const chipAuthors = rosterSettled ? authors : authors.filter((author) => {
         if (author === '') return false;
         const first = notes.find((note) => noteAuthor(note) === author) ?? null;
@@ -3945,19 +3947,21 @@ export function createCustomerCardView(deps) {
         for (const author of chipAuthors) {
           // backlog:2883ef12f233: like the signature, a chip prefers the
           // API-named author of one of its notes over the roster lookup.
+          // backlog:3f3c143b: a bucket nobody can name gets no chip — never
+          // «dal team» or «un membro del team»; its notes stay under «Note».
           const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
-          const named = first === null ? null : noteWriterName(first);
-          const label = author === '' ? 'dal team' : `da ${named ?? writerName(author) ?? 'un membro del team'}`;
-          const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
+          const label = first === null ? null : noteWriterName(first);
+          if (label === null) continue;
+          const node = chip(`da ${label}`, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
             drawChips();
             drawList();
           });
-          node.setAttribute('data-author', author === '' ? 'team' : author);
+          node.setAttribute('data-author', author);
           byAuthor.appendChild(node);
         }
-        chips.appendChild(byAuthor);
+        if (byAuthor.firstChild) chips.appendChild(byAuthor);
       }
     };
     const list = el('div', 'bo-scheda-timeline');
@@ -4181,7 +4185,9 @@ export function createCustomerCardView(deps) {
           // roster, which an admin-gated read may withhold.
           const writer = noteWriterName(item);
           const waits = signatureWaits(item?.teamAuthorId, item?.teamAuthor);
-          const author = writer !== null && !waits ? `da ${writer}` : 'dal team';
+          // backlog:3f3c143b: a writer nobody names stays unnamed — the head
+          // reads «Nota · 10:00», never «dal team».
+          const author = writer !== null && !waits ? `da ${writer}` : null;
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -4199,7 +4205,10 @@ export function createCustomerCardView(deps) {
             noteHead.appendChild(signaturePlaceholder());
             noteHead.appendChild(el('span', undefined, `${when ? ` · ${when}` : ''}${revised}`));
           } else {
-            noteHead.textContent = `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`;
+            const headBits = ['Nota'];
+            if (author !== null) headBits.push(author);
+            if (when) headBits.push(when);
+            noteHead.textContent = `${headBits.join(' · ')}${revised}`;
           }
           paper.appendChild(noteHead);
           const mine = myActorId();
@@ -6301,7 +6310,8 @@ export function createCustomerCardView(deps) {
         if (people.length > 0) rosterPeople = people;
         // Names arrive after the first paint: paint once more, no read. The
         // first answer repaints even without names: the waiting signatures
-        // then read «dal team» for a writer the team really does not name.
+        // then stay unnamed for a writer the team really does not name
+        // (backlog:3f3c143b: «Nota · 10:00», never «dal team»).
         if ((firstNames || firstAnswer) && lastShown !== null && lastShown.key === shownKey) {
           paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
         }
