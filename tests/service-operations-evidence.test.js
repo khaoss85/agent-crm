@@ -34,7 +34,22 @@ function composedRoot() {
 
 async function covered(t, file) {
   const root = composedRoot();
-  const context = await boot(root, join(root, 'data', file));
+  // Scratch-database durability (backlog:4635beb9). The scheduled verify runs
+  // on ci-server-accordo, where one fsync-bound commit costs ~18 ms against
+  // ~0.09 ms with `synchronous = NORMAL` (probe: /tmp/fsync-probe.mjs, 200
+  // commits: 3595 ms FULL vs 18 ms NORMAL) — every business action commits its
+  // write plus its trace span, so the 520-case loop below did thousands of
+  // ~18 ms fsyncs and passed the 600 s per-file ceiling (run 43146172999:
+  // test 1 took 128 s, test 2 took 31 s, the bulk loop never finished). The
+  // same relaxation already applies to the throwaway PostgreSQL in CI
+  // (fsync=off, "the suite never needs the data after the run"). It changes
+  // no SQL, no transaction, no lock and no rollback: the fault-injection
+  // tests abort inside the transaction and the race test relies on the busy
+  // timeout, both untouched by the synchronous setting. Production boots
+  // without the option and keeps FULL, byte for byte.
+  const context = await boot(root, join(root, 'data', file), { synchronous: 'NORMAL' });
+  assert.equal(context.app.database.raw.prepare('PRAGMA synchronous;').get().synchronous, 1,
+    'the scratch database really runs at NORMAL durability');
   t.after(() => context.close());
   const { contract } = await activatedContract(root, context.app, { name: 'Evidence', offers: OFFERS });
   const activated = await context.client.module('commercial-contract').action(contract.id, 'activate-service', {
@@ -144,6 +159,9 @@ test('two connections racing every decision produce exactly one winner', async (
   // and the outcome is identical at 5000ms and 250ms — a typed 409 either way.
   const second = createAccordoApp({
     dbPath: app.database.path, busyTimeoutMs: 250, clock: () => '2026-09-15T10:00:00.000Z',
+    // The second connection writes to the same scratch file: same relaxation,
+    // same reason as in covered() above.
+    synchronous: 'NORMAL',
   });
   t.after(() => second.close());
 

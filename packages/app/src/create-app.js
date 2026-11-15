@@ -61,7 +61,7 @@ function countAdminMetrics(storage) {
 }
 
 /**
- * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number, bundles?: Array<{name?: string, createModule: (deps: any) => any, migrations?: Array<{name: string, sql: string}>, migration?: {name: string, sql: string}}>}} [options]
+ * @param {{dbPath?: string, approvalThresholdCents?: number, busyTimeoutMs?: number, synchronous?: 'FULL'|'NORMAL'|'OFF', bundles?: Array<{name?: string, createModule: (deps: any) => any, migrations?: Array<{name: string, sql: string}>, migration?: {name: string, sql: string}}>}} [options]
  */
 export function createAccordoApp(options = {}) {
   // Optional custom bundles (BO-F5-01, docs/BUNDLES.md): versioned module
@@ -135,6 +135,10 @@ export function createAccordoApp(options = {}) {
   const database = createDatabase({
     path: binding ? binding.storage.dataPlanePath : options.dbPath,
     busyTimeoutMs: options.busyTimeoutMs,
+    // Test-only scratch durability (backlog:4635beb9): absent means FULL, the
+    // production behaviour, byte for byte. A test harness passes NORMAL so its
+    // throwaway commits do not each pay a slow-disk fsync.
+    synchronous: options.synchronous,
     // A newly created bound tenant database receives the CRM plane only. It has no
     // `spine_memberships` table at all, so a coding error that tried to read
     // one from tenant-reachable storage fails loudly instead of finding rows.

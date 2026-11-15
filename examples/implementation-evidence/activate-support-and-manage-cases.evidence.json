@@ -117,7 +117,7 @@
         {
           "kind": "source.artifact",
           "path": "tests/service-operations-evidence.test.js",
-          "sha256": "790571c2244bf25a781f836560c6739f14048e282da7a3d93a73cba979e23c06"
+          "sha256": "631237a7035e15cc6dd9f425b93717dce1aa50c219d589ee6c68c53310d6c0dc"
         }
       ]
     },
