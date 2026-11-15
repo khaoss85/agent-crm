@@ -496,6 +496,53 @@ test('57e3d1685e58: past appointments leave «Ti resta» and offer no «Prepara�
   assert.equal(agenda[0].past, true);
 });
 
+test('5e703a7bb397: «Ti resta» counts only appointments ending after now, fixed clock', () => {
+  // 12/11 19:05 in Rome, like the production check: the 10:00 and 12:00
+  // calls are over, so nothing remains and no prep is offered for them.
+  const evening = new Date('2026-11-12T18:05:00.000Z'); // 19:05 in Rome
+  const morning = {
+    ...APPT_TODAY,
+    id: 'appt-10',
+    startsAt: '2026-11-12T09:00:00.000Z', // 10:00 in Rome
+    endsAt: '2026-11-12T10:00:00.000Z', // 11:00 in Rome
+  };
+  const noon = {
+    ...APPT_TODAY,
+    id: 'appt-12',
+    startsAt: '2026-11-12T11:00:00.000Z', // 12:00 in Rome
+    endsAt: '2026-11-12T12:00:00.000Z', // 13:00 in Rome
+  };
+  assert.equal(
+    buildTodayRecap({ appointments: [morning, noon], openTasks: [], now: evening }),
+    'Niente in sospeso e nessun appuntamento per oggi.',
+  );
+  assert.deepEqual(
+    buildAdvisorActions({ tasks: [], appointments: [morning, noon], now: evening }).actions,
+    [],
+    'no prep for calls already over',
+  );
+  assert.equal(nextAppointment([morning, noon], evening), null);
+  assert.equal(upcomingAppointment([morning, noon], evening), null);
+  const agenda = buildTodayAgenda([morning, noon], evening);
+  assert.equal(agenda.length, 2, 'ended slots stay listed, grey');
+  assert.ok(agenda.every((row) => row.past === true));
+  // A call in progress still counts and still offers its prep.
+  const live = {
+    ...APPT_TODAY,
+    id: 'appt-live',
+    startsAt: '2026-11-12T17:30:00.000Z', // 18:30 in Rome
+    endsAt: '2026-11-12T18:30:00.000Z', // 19:30 in Rome
+  };
+  assert.equal(
+    buildTodayRecap({ appointments: [morning, live], openTasks: [], now: evening }),
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [morning, live], now: evening }).actions;
+  assert.equal(prep?.record.id, 'appt-live', 'the prep reads the call in progress');
+  assert.equal(nextAppointment([morning, live], evening)?.id, 'appt-live');
+  assert.equal(buildTodayAgenda([live], evening)[0].past, false, 'a call in progress stays lit');
+});
+
 test('57e3d1685e58: the chi line shows the contact address, never the user one', () => {
   const userMail = 'operatore@esempio.it';
   const contactMail = 'ospite@esempio.it';
