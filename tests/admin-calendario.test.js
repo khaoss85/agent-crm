@@ -4044,8 +4044,8 @@ test('the manual form offers the catalog menu with the default and price prefill
   assert.ok(labels.some((text) => text.includes('Taglio')), 'the catalog names paint');
   assert.ok(labels.some((text) => text.includes('Lezione prova')), 'every single paints');
   // backlog:c2f21b5debdd: the prices read as Italian money, never «45.00 €».
-  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
-  assert.ok(labels.includes('Lezione prova · 15,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45 €'), labels.join(' | '));
+  assert.ok(labels.includes('Lezione prova · 15 €'), labels.join(' | '));
   assert.ok(!labels.some((text) => /\d\.\d{2} €/.test(text)), 'no dotted decimals in the menu');
   // backlog:6e6750ff8163: with two services nothing is preselected — the
   // first catalog entry was a test product on a real listino.
@@ -5135,13 +5135,13 @@ test('a block with a server-attached customer label reads service · customer wi
   assert.ok(!mount.textContent.includes('c9'), 'a customer id is never a name');
 });
 
-test('c2f21b5d: a service option reads its price as Italian money', () => {
-  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1,00 €');
-  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080,00 €');
+test('c2f21b5d: a service option reads its price as Italian money (single shape, backlog:93e26f3d2cdc)', () => {
+  assert.equal(serviceOptionLabel({ name: 'Prova', priceCents: 100 }), 'Prova · 1 €');
+  assert.equal(serviceOptionLabel({ name: 'PT', priceCents: 108000, currency: 'EUR' }), 'PT · 1.080 €');
   assert.equal(serviceOptionLabel({ name: 'Pacchetto', priceCents: 123456789 }), 'Pacchetto · 1.234.567,89 €');
   assert.equal(serviceOptionLabel({ name: 'Dollari', priceCents: 100, currency: 'USD' }), 'Dollari', 'never a currency the menu does not book');
   assert.equal(serviceOptionLabel({ name: 'Strano', priceCents: 100, currency: 'XYZ!' }), 'Strano', 'an unknown code never throws');
-  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0,00 €');
+  assert.equal(serviceOptionLabel({ name: 'Gratis', priceCents: 0 }), 'Gratis · 0 €');
   assert.equal(serviceOptionLabel({ name: 'Senza prezzo', priceCents: 1.5 }), 'Senza prezzo');
 });
 
@@ -5156,8 +5156,8 @@ test('c2f21b5d (review #813): the menu reads a four-digit price with the Italian
   await view.render();
   for (let round = 0; round < 9; round += 1) await new Promise((resolve) => setImmediate(resolve));
   const labels = mount.querySelector('select[name="serviceKey"]').findAll('option').map((node) => node.textContent);
-  assert.ok(labels.includes('Pacchetto annuale · 1.080,00 €'), labels.join(' | '));
-  assert.ok(labels.includes('Taglio · 45,00 €'), labels.join(' | '));
+  assert.ok(labels.includes('Pacchetto annuale · 1.080 €'), labels.join(' | '));
+  assert.ok(labels.includes('Taglio · 45 €'), labels.join(' | '));
 });
 
 // Verifica 12/11: «È disponibile una nuova versione · Ricarica» answered

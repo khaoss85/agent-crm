@@ -223,21 +223,26 @@ function plural(count, one, many) {
 
 /** @param {number} minor @param {string} currency */
 export function formatMinor(minor, currency) {
-  // Explicit support check: Intl.NumberFormat formats unknown 3-letter codes
-  // without throwing on lenient runtimes, so an unsupported code must be
-  // refused here as a 400 instead of leaking into the model.
+  // Explicit support check: an unsupported code must be refused here as a
+  // 400 instead of leaking into the model.
   if (typeof currency !== 'string' || !isSupportedCurrency(currency)) {
     throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
   }
-  try {
-    // Thousands always grouped («1.080,00 €», never «1080,00 €»): it-IT's
-    // default minimum-grouping leaves four-digit amounts bare, which is how
-    // the Reporting cards read (backlog:9236684c96a7, review #761).
-    return new Intl.NumberFormat('it-IT', { style: 'currency', currency, useGrouping: 'always' }).format(minor / 100);
-  } catch {
-    // A runtime that cannot format an enumerated code still refuses as a 400.
-    throw new ValidationError('dashboard: unsupported currency', { field: 'currency' });
+  if (!Number.isSafeInteger(minor)) {
+    throw new ValidationError('dashboard: unsupported amount', { field: 'minor' });
   }
+  // One display shape with the /bo client (backlog:93e26f3d2cdc): the
+  // formatAmount rule — thousands grouped with dots, cents only when
+  // non-zero («26.000 €», «9.333,33 €») — hand-rolled and pinned, never
+  // browser-locale, so every runtime serves the same cards. EUR rides as
+  // €, every other supported currency as its code.
+  const sign = minor < 0 ? '-' : '';
+  const abs = Math.abs(minor);
+  const whole = String(Math.floor(abs / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const cents = abs % 100;
+  const number = cents === 0 ? whole : `${whole},${String(cents).padStart(2, '0')}`;
+  const unit = currency === 'EUR' ? '€' : currency;
+  return `${sign}${number} ${unit}`;
 }
 
 /**
