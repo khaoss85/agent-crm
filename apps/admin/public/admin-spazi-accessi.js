@@ -540,6 +540,10 @@ export function createSpaziAccessiView(deps) {
     /** @type {Map<string, string>} card statistic by space id; a space with
      * an unknown count simply has no entry, never an invented row */
     stats: new Map(),
+    // backlog:2de01913d276: the statistic (connectors, customers, profile)
+    // lands after the data — while it is out the tiles wait instead of
+    // failing, and the page paints without it.
+    statsPending: false,
     /**
      * backlog:67e14a50efb6: the raw connector entries behind each space's
      * statistic, so every team row paints this space's calendar state and
@@ -752,8 +756,13 @@ export function createSpaziAccessiView(deps) {
     }
   }
 
-  async function load() {
-    const space = readActiveSpace().trim();
+  /**
+   * Reset the reads for one load. Entry and space changes drop the previous
+   * statistic; every read restarts, so a refresh after a write rereads.
+   * Returns false without an open space: nothing starts then.
+   * @param {string} space
+   */
+  function resetLoadState(space) {
     state.myRole = null;
     state.contextPending = true;
     state.roles = null;
@@ -763,6 +772,10 @@ export function createSpaziAccessiView(deps) {
     state.switchesUnavailable = null;
     state.stats = new Map();
     state.spaceConns = new Map();
+    // backlog:2de01913d276: the statistic follows the data, never the other
+    // way round — a slow /api/profile (verifica 13/11: 7,6 s) waits its
+    // turn instead of holding the whole page.
+    state.statsPending = true;
     state.confirmRemove = null;
     state.removeRetry = null;
     state.confirmFlip = null;
@@ -773,11 +786,21 @@ export function createSpaziAccessiView(deps) {
     state.newSpaceNote = null;
     if (space === '') {
       state.contextPending = false;
-      return;
+      state.statsPending = false;
+      return false;
     }
-    // backlog:1a96094db71d: every read starts at once. They used to run one
-    // after the other (context, team, agents, permissions, profile, then
-    // the space cards): eight round trips of 2,5–4 s each in production.
+    return true;
+  }
+
+  /**
+   * Every read the page needs, started at once (backlog:1a96094db71d: they
+   * used to run one after the other — context, team, agents, permissions,
+   * profile, then the space cards — eight round trips of 2,5–4 s each in
+   * production). The data reads paint first; the statistic reads resolve in
+   * the second phase.
+   * @param {string} space
+   */
+  function beginReads(space) {
     const settle = (promise) => promise.then(
       (value) => ({ ok: true, value, error: null }),
       (error) => ({ ok: false, value: null, error }),
@@ -810,7 +833,16 @@ export function createSpaziAccessiView(deps) {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
       if (stat !== null) state.stats.set(id, stat);
     }));
-    const context = await contextRead;
+    return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+  }
+
+  /**
+   * The data the page paints: role, team, agents and switches. The statistic
+   * is not awaited here — it fills in with {@link loadStats}.
+   * @param {{ contextRead: Promise<any>, membersRead: Promise<any>, agentsRead: Promise<any>, switchesRead: Promise<any> }} reads
+   */
+  async function loadCore(reads) {
+    const context = await reads.contextRead;
     state.contextPending = false;
     state.selfSubject = selfSubjectOf(context);
     if (context.ok) {
@@ -822,7 +854,7 @@ export function createSpaziAccessiView(deps) {
       state.myRole = null;
       state.roles = null;
     }
-    const members = await membersRead;
+    const members = await reads.membersRead;
     if (members.ok) {
       state.members = Array.isArray(members.value?.items) ? members.value.items : [];
     } else {
@@ -836,8 +868,8 @@ export function createSpaziAccessiView(deps) {
     }
     // backlog:33782ba68747: agents sit beside people; a failed or absent
     // read leaves the Team exactly as it was.
-    state.agents = await agentsRead;
-    const switches = await switchesRead;
+    state.agents = await reads.agentsRead;
+    const switches = await reads.switchesRead;
     if (switches.ok) {
       state.overrides = Array.isArray(switches.value?.overrides) ? switches.value.overrides : [];
     } else {
@@ -848,7 +880,31 @@ export function createSpaziAccessiView(deps) {
         notComposed: 'I permessi AI non sono attivi in questo spazio: la schermata li mostra quando saranno attivi.',
       });
     }
-    await statsRead;
+  }
+
+  /**
+   * The statistic after the data: connectors, customers and the profile
+   * merge that formats the channel count. Never throws — {@link loadSpaceStat}
+   * keeps a failed count as a missing enhancement, never a page error.
+   * @param {{ statsRead: Promise<any> }} reads
+   */
+  async function loadStats(reads) {
+    await reads.statsRead;
+  }
+
+  /**
+   * Reread everything after a refused write without painting: the caller
+   * reopens its confirmation on the fresh state and paints once. This is
+   * the pre-two-phase `load()` the refusal paths called: same reset, same
+   * reads, no render.
+   */
+  async function reload() {
+    const space = readActiveSpace().trim();
+    if (!resetLoadState(space)) return;
+    const reads = beginReads(space);
+    await loadCore(reads);
+    await loadStats(reads);
+    state.statsPending = false;
   }
 
   async function mutate(path, body) {
@@ -1014,7 +1070,7 @@ export function createSpaziAccessiView(deps) {
    * says why on the row instead of staying silently bare.
    * @param {{entries: Array<any>|null, unreadable: 'not-composed'|'failed'|null}} conns
    */
-  function renderTeamConns(conns) {
+  function renderTeamConns(conns, statsOut) {
     const line = el(doc, 'div', { cls: 'bo-spazi-conns' });
     if (conns.entries !== null) {
       line.appendChild(el(doc, 'span', { text: teamCalendarState(conns.entries), cls: 'bo-spazi-calendar' }));
@@ -1027,10 +1083,14 @@ export function createSpaziAccessiView(deps) {
       }
       return line;
     }
+    // backlog:2de01913d276: a count that never started failing is not a
+    // failure — while the statistic reads are out the tiles wait for them.
     line.appendChild(el(doc, 'span', {
-      text: conns.unreadable === 'not-composed'
-        ? 'Canali e calendario non sono attivi in questo spazio.'
-        : 'Canali e calendario non leggibili al momento.',
+      text: statsOut === true
+        ? 'Leggo canali e calendario…'
+        : conns.unreadable === 'not-composed'
+          ? 'Canali e calendario non sono attivi in questo spazio.'
+          : 'Canali e calendario non leggibili al momento.',
       cls: 'bo-spazi-calendar',
     }));
     return line;
@@ -1116,6 +1176,7 @@ export function createSpaziAccessiView(deps) {
     // while the channels live per space, so the line repeats on each row and
     // the titles say whose it is.
     const conns = state.spaceConns.get(readActiveSpace()) ?? { entries: null, unreadable: 'failed' };
+    const connsOut = state.statsPending && conns.entries === null;
     const list = el(doc, 'div', { cls: 'bo-spazi-team' });
     if (state.selfSubject === null && rows.length > 0) {
       list.appendChild(el(doc, 'p', {
@@ -1144,7 +1205,7 @@ export function createSpaziAccessiView(deps) {
         const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
         names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
       }
-      names.appendChild(renderTeamConns(conns));
+      names.appendChild(renderTeamConns(conns, connsOut));
       identity.appendChild(names);
       item.appendChild(identity);
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
@@ -1214,8 +1275,8 @@ export function createSpaziAccessiView(deps) {
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
           // One message, inside the row that failed; a toast only if it cannot show.
-          await load();
-          // load() closes every confirmation: reopen this one on a subject
+          await reload();
+          // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
           state.removeRetry = { subject: refused[0].subject, reason: motive, note };
@@ -1283,7 +1344,7 @@ export function createSpaziAccessiView(deps) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
         // One message, inside the form that failed; a toast only if it cannot show.
-        await load();
+        await reload();
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
@@ -1399,7 +1460,7 @@ export function createSpaziAccessiView(deps) {
             // no answer came at all (humanWriteError draws that line).
             const message = humanWriteError(failure, { failed: writeFailedText(failure, 'La modifica non \u00E8 riuscita. Riprova pi\u00F9 tardi.') });
             // One message, under the switch that failed; a toast only if it cannot show.
-            await load();
+            await reload();
             state.confirmFlip = null;
             state.switchRefusal = { key: pending.key, message };
             render();
@@ -1524,7 +1585,17 @@ export function createSpaziAccessiView(deps) {
     // space move mid-read keeps the unknown state instead of painting
     // another space's late count.
     const countRead = space !== '' ? loadFixCount(client, { spaceId: space }) : Promise.resolve(null);
-    const loading = load();
+    const hasSpace = resetLoadState(space);
+    const reads = hasSpace ? beginReads(space) : null;
+    // A statistic that already landed paints as data, never as pending:
+    // the flag flips in the settlement turn, before the data paint below.
+    let statsDone = false;
+    if (reads !== null) {
+      reads.statsRead.then(
+        () => { statsDone = true; },
+        () => { statsDone = true; },
+      );
+    }
     // backlog:1a96094db71d: on entry the page paints at once — tabs,
     // header, space cards and a skeleton where team and AI switches will
     // be — instead of «Carico…» for the whole of the reads. A refresh after
@@ -1534,11 +1605,15 @@ export function createSpaziAccessiView(deps) {
       render();
     }
     const before = childrenOf();
-    await loading;
+    // backlog:2de01913d276: the data paints as soon as its reads land; the
+    // statistic (connectors, customers, profile) follows when the slowest
+    // one lands instead of holding the page (verifica 13/11: 7,6 s).
+    if (reads !== null) await loadCore(reads);
     const count = await countRead;
     // Only the newest refresh decides the loading state: an older one
     // landing late never lifts a newer one's skeleton.
     if (mine !== generation) return;
+    if (statsDone) state.statsPending = false;
     state.loading = false;
     if (space !== '' && readActiveSpace().trim() === space) state.fixCount = count;
     // Paint only while the mount still holds this screen: what it held
@@ -1546,6 +1621,26 @@ export function createSpaziAccessiView(deps) {
     // opened meanwhile). Anything else is another screen: stay out.
     const now = childrenOf();
     if (!sameNodes(now, before) && !sameNodes(now, lastPaint)) return;
+    render();
+    if (reads === null) return;
+    // The statistic fills its tiles and the card line late. A space move
+    // meanwhile belongs to the newer refresh; a repaint with nothing new
+    // to show would only steal focus.
+    // backlog:2de01913d276: whether the paint above still waited for the
+    // statistic. The stat data can land between that paint and the snapshot
+    // below (set into state while the data paint is on screen): the rows
+    // then still read «Leggo canali…» and skipping the second paint would
+    // freeze that waiting line. Skip only when the first paint already
+    // showed the final state.
+    const paintedPending = state.statsPending;
+    const statBefore = state.stats.get(space);
+    const connsBefore = state.spaceConns.get(space);
+    await loadStats(reads);
+    state.statsPending = false;
+    if (mine !== generation) return;
+    if (space === '' || readActiveSpace().trim() !== space) return;
+    if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
+    if (!sameNodes(childrenOf(), lastPaint)) return;
     render();
   }
 
