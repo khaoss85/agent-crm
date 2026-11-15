@@ -218,6 +218,8 @@ const DEMO_CLIENTS = [
     lastContactText: 'Ciao, posso passare giovedi per una prova?',
     offerValueCents: 120000, offerCurrency: 'EUR',
     nextStep: { title: 'Prova gratuita', dueAt: '2026-10-22', overdue: false },
+    calendarComplete: true,
+    nextAppointment: { startsAt: '2026-10-23T09:30:00.000Z', endsAt: '2026-10-23T10:00:00.000Z', status: 'confirmed' },
     budget: { available: true, value: '200/mese', source: { resource: 'contact', id: 'c1' }, reason: null },
   },
   {
@@ -226,6 +228,7 @@ const DEMO_CLIENTS = [
     status: { value: 'contatto', reason: 'no signed business on record' },
     lastContactAt: null, lastContactChannel: null,
     offerValueCents: null, offerCurrency: null, nextStep: null,
+    calendarComplete: false, nextAppointment: null,
     budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
   },
   {
@@ -236,6 +239,7 @@ const DEMO_CLIENTS = [
     lastContactAt: '2026-10-19T16:30:00.000Z', lastContactChannel: 'phone',
     offerValueCents: 9900, offerCurrency: 'EUR',
     nextStep: { title: 'Inviare il preventivo', dueAt: '2026-10-24', overdue: false },
+    calendarComplete: true, nextAppointment: null,
     budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
   },
 ];
@@ -988,6 +992,7 @@ const MENUS = {
     { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
     { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
     { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+    { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
     { id: 'email', label: 'Email', always: false, ai: false, def: false },
     { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
     { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
