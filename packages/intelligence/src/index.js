@@ -204,6 +204,21 @@ export function createIntelligenceDomain(options = {}) {
       },
       {
         operationContract: 1,
+        name: 'structure-voice-note',
+        label: 'Structure voice note',
+        appMethod: 'structureVoiceNote',
+        description: 'Structure a dictated post-call voice note into riassunto, decisioni and prossimi passi (voce 5036bc435465). Stateless: stores nothing, the audio never reaches the server; without a composed language model it refuses 409 VOICE_NOTE_UNAVAILABLE.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug — always explicit, never inferred.' },
+          { name: 'text', type: 'string', required: true, hint: 'The dictated text, transcribed on the device. Plain text, 1-2000 characters.' },
+        ],
+        create(runtime) {
+          const ops = callOperations(runtime);
+          return (params) => ops.structureVoiceNote(params);
+        },
+      },
+      {
+        operationContract: 1,
         name: 'purge-expired-transcripts',
         label: 'Purge expired transcripts',
         appMethod: 'purgeExpiredTranscripts',

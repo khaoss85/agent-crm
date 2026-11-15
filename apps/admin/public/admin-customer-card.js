@@ -900,6 +900,54 @@ const NOTE_MAX = 1000;
 const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri.`;
 
 /**
+ * Device dictation for the post-call voice note (voce 5036bc435465): the
+ * browser's own speech recognition transcribes on the device, so no audio
+ * ever leaves the phone. Answers null (like the probe) where the browser
+ * has no recognition; otherwise a `{ stop }` handle delivering said text
+ * to `hooks.onText` and the end to `hooks.onEnd`.
+ * @param {any} docNode @param {{ onText?: (text: string) => void, onEnd?: () => void, probe?: boolean }} [hooks]
+ */
+export function defaultDeviceDictate(docNode, hooks = {}) {
+  const view = docNode?.defaultView ?? null;
+  const Recognition = view?.SpeechRecognition ?? view?.webkitSpeechRecognition ?? null;
+  if (typeof Recognition !== 'function') return null;
+  if (hooks?.probe === true) return { stop() {} };
+  let instance = null;
+  try {
+    instance = new Recognition();
+  } catch {
+    return null;
+  }
+  instance.lang = 'it-IT';
+  instance.interimResults = false;
+  instance.maxAlternatives = 1;
+  instance.onresult = (event) => {
+    const results = event?.results ?? [];
+    for (const result of results) {
+      if (result?.isFinal !== true) continue;
+      const said = String(result?.[0]?.transcript ?? '').trim();
+      if (said !== '') hooks?.onText?.(said);
+    }
+  };
+  instance.onend = () => hooks?.onEnd?.();
+  instance.onerror = () => hooks?.onEnd?.();
+  try {
+    instance.start();
+  } catch {
+    return null;
+  }
+  return {
+    stop() {
+      try {
+        instance.stop();
+      } catch {
+        // Already stopped: the onend already fired.
+      }
+    },
+  };
+}
+
+/**
  * What a refused note says (backlog:82235e46e3e9 seguito, production
  * 12/11): a validation refusal names what to correct, never «Riprova più
  * tardi» — retrying the same text would be refused again. Anything else
@@ -4383,6 +4431,214 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
       box.appendChild(noteForm);
+      // Voce 5036bc435465: «Detta nota vocale» — after a call from any
+      // phone (CRM-logged or tel: fallback) the operator dictates how it
+      // went. The browser transcribes on the device (the `dictate` seam,
+      // so tests dictate without a microphone); where the browser cannot
+      // dictate the same field is typed. «Ordina con l'AI» structures the
+      // text into riassunto, decisioni and prossimi passi through POST
+      // /api/call-intelligence/voice-note: the three fields stay editable
+      // and «Salva in cronologia» writes them through the existing
+      // subject-note write, signed like every note. No audio ever leaves
+      // the device, so retention has nothing to erase; the spend lands
+      // through the workspace LLM caps. With the AI off the option says so
+      // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
+      // still be saved as-is.
+      const voiceWrap = el('div', 'bo-scheda-voice-note');
+      const voiceToggle = el('button', undefined, 'Detta nota vocale');
+      voiceToggle.setAttribute('type', 'button');
+      voiceToggle.setAttribute('data-action', 'dictate-note');
+      voiceWrap.appendChild(voiceToggle);
+      const voicePanel = el('div', 'bo-scheda-voice-panel');
+      let voiceOpen = false;
+      let voiceDictation = null;
+      const stopDictation = () => {
+        try {
+          voiceDictation?.stop?.();
+        } catch {
+          // A stopped-twice device handle is already silent: nothing to say.
+        }
+        voiceDictation = null;
+      };
+      voiceToggle.addEventListener('click', () => {
+        voiceOpen = !voiceOpen;
+        voiceToggle.textContent = voiceOpen ? 'Chiudi dettato' : 'Detta nota vocale';
+        while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
+        if (!voiceOpen) {
+          stopDictation();
+          return;
+        }
+        voicePanel.appendChild(el('p', 'bo-muted',
+          'Dopo la chiamata detta com’è andata: la trascrizione resta su questo telefono finché non la salvi. L’audio non lascia mai il telefono.'));
+        const dictateRow = el('div', 'bo-scheda-form-actions');
+        const dictateButton = el('button', undefined, 'Detta');
+        dictateButton.setAttribute('type', 'button');
+        dictateButton.setAttribute('data-action', 'dictate-start');
+        const dictateState = el('p', 'bo-muted', '');
+        const voiceInput = el('textarea', 'bo-scheda-note-input');
+        voiceInput.setAttribute('name', 'voiceNoteText');
+        voiceInput.setAttribute('rows', '3');
+        voiceInput.setAttribute('aria-label', 'Dettato della chiamata');
+        voiceInput.setAttribute('placeholder', 'Detta qui com’è andata la chiamata, oppure scrivilo…');
+        // The device dictation seam: `dictate(doc, hooks)` returns null when
+        // the browser cannot dictate (then the probe below answers null
+        // too), else a `{ stop }` handle delivering text to `hooks.onText`
+        // and `hooks.onEnd`. With `{ probe: true }` it only answers whether
+        // dictation is available, starting nothing.
+        const startDictate = typeof deps.dictate === 'function' ? deps.dictate : defaultDeviceDictate;
+        const canDictate = (() => {
+          try {
+            return startDictate(doc, { probe: true }) !== null;
+          } catch {
+            return false;
+          }
+        })();
+        if (!canDictate) {
+          dictateButton.setAttribute('disabled', '');
+          dictateState.textContent = 'Questo browser non detta: scrivi qui sotto.';
+        }
+        dictateButton.addEventListener('click', () => {
+          if (voiceDictation !== null) {
+            stopDictation();
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+            return;
+          }
+          dictateState.textContent = 'Detto… premi Stop quando hai finito.';
+          dictateButton.textContent = 'Stop';
+          try {
+            voiceDictation = startDictate(doc, {
+              onText: (chunk) => {
+                const said = typeof chunk === 'string' ? chunk : '';
+                if (said === '') return;
+                voiceInput.value = String(voiceInput.value ?? '') === ''
+                  ? said : `${String(voiceInput.value).replace(/\s+$/, '')} ${said}`;
+              },
+              onEnd: () => {
+                voiceDictation = null;
+                dictateButton.textContent = 'Detta';
+                if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
+                  dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+                }
+              },
+            });
+          } catch {
+            voiceDictation = null;
+          }
+          if (voiceDictation === null || typeof voiceDictation?.stop !== 'function') {
+            voiceDictation = null;
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Il dettato non è partito: scrivi qui sotto.';
+          }
+        });
+        dictateRow.appendChild(dictateButton);
+        voicePanel.appendChild(dictateRow);
+        voicePanel.appendChild(dictateState);
+        voicePanel.appendChild(voiceInput);
+        const voiceError = el('small', 'field-error', '');
+        const structureButton = el('button', undefined, 'Ordina con l’AI');
+        structureButton.setAttribute('type', 'button');
+        structureButton.setAttribute('data-action', 'structure-voice-note');
+        const draftWrap = el('div', 'bo-scheda-voice-draft');
+        const draftField = (name, label, rows) => {
+          const wrap = el('div');
+          const title = el('label', 'bo-scheda-field-label', label);
+          title.setAttribute('for', name);
+          const field = el('textarea', 'bo-scheda-note-input');
+          field.setAttribute('name', name);
+          field.setAttribute('id', name);
+          field.setAttribute('rows', String(rows));
+          field.setAttribute('aria-label', label);
+          wrap.appendChild(title);
+          wrap.appendChild(field);
+          draftWrap.appendChild(wrap);
+          return field;
+        };
+        const riassuntoField = draftField('voiceRiassunto', 'Riassunto', 3);
+        const decisioniField = draftField('voiceDecisioni', 'Decisioni', 2);
+        const passiField = draftField('voiceProssimiPassi', 'Prossimi passi', 2);
+        const saveButton = el('button', undefined, 'Salva in cronologia');
+        saveButton.setAttribute('type', 'button');
+        saveButton.setAttribute('data-action', 'save-voice-note');
+        structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
+          const spaceId = activeSpaceId();
+          if (spaceId === null) {
+            voiceError.textContent = 'Scegli uno spazio per ordinare la nota con l’AI.';
+            return;
+          }
+          const text = String(voiceInput.value ?? '').trim();
+          if (text === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          voiceError.textContent = '';
+          try {
+            const draft = await client.request('/api/call-intelligence/voice-note', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, text }),
+            });
+            riassuntoField.value = String(draft?.riassunto ?? '');
+            decisioniField.value = String(draft?.decisioni ?? '');
+            passiField.value = String(draft?.prossimiPassi ?? '');
+            voiceError.textContent = '';
+          } catch (error) {
+            const code = typeof error?.code === 'string' ? error.code : '';
+            if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
+              voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
+            } else {
+              voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
+            }
+          }
+        }));
+        saveButton.addEventListener('click', () => uiBusy(saveButton, 'Salvo…', async () => {
+          if (noteSaving) return;
+          const riassunto = String(riassuntoField.value ?? '').trim();
+          const decisioni = String(decisioniField.value ?? '').trim();
+          const passi = String(passiField.value ?? '').trim();
+          const dictated = String(voiceInput.value ?? '').trim();
+          // Without an AI draft the dictated text itself is the note, so the
+          // AI-off path still saves — the option said why, it never blocks.
+          const body = riassunto !== '' || decisioni !== '' || passi !== ''
+            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
+            : dictated;
+          if (body === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          if (body.length > NOTE_MAX) {
+            voiceError.textContent = NOTE_TOO_LONG;
+            return;
+          }
+          noteSaving = true;
+          voiceError.textContent = '';
+          try {
+            const saved = await client.request('/api/customer-hub/notes', {
+              method: 'POST',
+              body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body }),
+            });
+            voiceInput.value = '';
+            riassuntoField.value = '';
+            decisioniField.value = '';
+            passiField.value = '';
+            const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+              (loaded) => withNote(loaded, saved, body));
+            toast('Nota aggiunta in cima alla cronologia');
+            await refreshed;
+          } catch (error) {
+            const said = noteRefusalText(error);
+            voiceError.textContent = said;
+            toast(said, true);
+          } finally {
+            noteSaving = false;
+          }
+        }));
+        voicePanel.appendChild(structureButton);
+        voicePanel.appendChild(voiceError);
+        voicePanel.appendChild(draftWrap);
+        voicePanel.appendChild(saveButton);
+      });
+      voiceWrap.appendChild(voicePanel);
+      box.appendChild(voiceWrap);
     }
   }
 

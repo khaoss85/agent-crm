@@ -348,7 +348,7 @@ test('the domain hands the composed llm-complete capability to the summarize ope
   const byName = Object.fromEntries(domain.operations.map((entry) => [entry.name, entry]));
   assert.deepEqual(
     Object.keys(byName).sort(),
-    ['purge-expired-transcripts', 'read-customer-calls', 'record-call-notice', 'save-call-transcript', 'summarize-call'],
+    ['purge-expired-transcripts', 'read-customer-calls', 'record-call-notice', 'save-call-transcript', 'structure-voice-note', 'summarize-call'],
   );
   await byName['record-call-notice'].create(runtime)({ ...NOTICE });
   await byName['save-call-transcript'].create(runtime)({
