@@ -646,10 +646,12 @@ const SERVICE_ACTORS = new Set(['admin-ui']);
 
 /**
  * Backlog c1649d1d: display name of an audit actor, shared by the offerta
- * detail and the scheda «Storia stati». The system reads `sistema`, UUIDs
- * and known service handles read `utente`, and any other id paints only when
- * a record corroborates it as a human display value (the referente, the
- * contact or the company the deal stores). Empty actors stay an em dash.
+ * detail and the scheda «Storia stati». The system reads `sistema`, and an
+ * empty actor stays an em dash. A team member reads their profile name —
+ * else their mailbox (backlog:3f3c143b); any other id paints only when a
+ * record corroborates it as a human display value (the referente, the
+ * contact or the company the deal stores). Anything else reads as itself
+ * only when it is a real mailbox, else the dash: never «utente».
  * @param {any} entry one `/api/audit` item
  * @param {Array<unknown>} known human display values the record corroborates
  * @returns {string}
@@ -658,18 +660,22 @@ export function auditActorLabel(entry, known = [], roster = []) {
   if (entry?.actorType === 'system') return 'sistema';
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (id === '') return '—';
-  // A team member (by subject or person key) reads their profile name
-  // (backlog:ddf7f416ad22: «Creata da: utente»).
+  // A team member (by subject or person key) reads their profile name —
+  // else their mailbox, like personLabel does (backlog:3f3c143b).
   const person = personOf(id, roster);
-  if (person !== null && person.name !== null) return person.label;
-  if (isTechnicalMemberText(id)) return 'utente';
-  if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
+  if (person !== null && person.known) return person.label;
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   // A corroborated slug still paints as words, never the raw stored id
   // («coach-guido» reads «Coach Guido», a digit slug names nobody and
-  // stays «utente»); any other corroborated value paints verbatim, like
+  // reads as unknown); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
-  return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
+  if (names.includes(id)) return SLUG_SHAPE.test(id) ? (subjectText(id) ?? '—') : id;
+  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
+  // A real mailbox is self-describing and reads as itself even when no
+  // roster names it; any other uncorroborated id (a slug, a bare handle,
+  // a digit id) stays hidden behind the dash.
+  const text = subjectText(id);
+  return text !== null && id.includes('@') ? text : '—';
 }
 
 /**

@@ -136,7 +136,7 @@ test('82235e46e3e9: a note is signed with the name of who wrote it, never «dal 
   assert.ok(!mount.textContent.includes('dal team'));
 });
 
-test('82235e46e3e9: without a roster a provider id still never shows, and the note reads «dal team»', async () => {
+test('3f3c143b: without a roster a provider id still never shows, and the note stays unnamed', async () => {
   const note = { entry: 'note', id: 'n0', body: 'Richiamare', teamAuthorId: 'google|118', occurredAt: '2026-11-10T10:00:00.000Z' };
   const failing = fakeClient({ timeline: entries([note]) });
   const base = failing.request.bind(failing);
@@ -145,8 +145,10 @@ test('82235e46e3e9: without a roster a provider id still never shows, and the no
     return base(path, options);
   };
   const { mount } = await open(failing);
-  assert.ok(mount.textContent.includes('Nota · dal team'));
-  assert.ok(!mount.textContent.includes('google|118'));
+  const text = mount.textContent;
+  assert.ok(!text.includes('dal team'), 'never «dal team»');
+  assert.ok(!text.includes('google|118'), 'the provider id never shows');
+  assert.ok(/Nota · \d{1,2}:\d{2}/.test(text), 'the head reads «Nota · <hour>» with no author slot');
 });
 
 test('2883ef12f233: a note naming its author reads that name even when the roster is unreadable', async () => {
@@ -209,6 +211,27 @@ test('82235e46e3e9: «Tutti i contatti» shows the offer created and its stage m
   const filtered = mount.findAll('section').find((node) => String(node.getAttribute('class')).includes('bo-scheda-card-timeline')).textContent;
   assert.ok(!filtered.includes('Offerta creata'), 'a channel filter leaves the offer out');
   assert.ok(filtered.includes('Ciao'), 'and keeps the channel passages');
+});
+
+test('3f3c143b: «Storia stati» with an unnameable actor reads «da —», never «da utente»', async () => {
+  const profile = {
+    ...PROFILE,
+    opportunities: {
+      available: true, count: 1, countIsComplete: true, truncated: false,
+      items: [{ id: 'o1', name: 'Pacchetto 10 ingressi', stage: 'proposal', status: 'proposal', createdAt: '2026-11-09T08:00:00.000Z' }],
+    },
+  };
+  const audit = [{
+    id: 'a1', action: 'opportunity.stage_changed', actorType: 'user', actorId: '123e4567-e89b-12d3-a456-426614174000',
+    data: { from: 'qualification', to: 'proposal' }, createdAt: '2026-11-10T15:00:00.000Z',
+  }];
+  const { mount } = await open(fakeClient({ profile, audit }));
+  const list = mount.findAll('section').find((node) => String(node.getAttribute('class')).includes('bo-scheda-card-timeline'));
+  const text = list.textContent;
+  assert.ok(!text.includes('da utente'), 'never «da utente»');
+  assert.ok(!text.includes('dal team'), 'never «dal team»');
+  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID on screen');
+  assert.ok(/Cambio di stato · da —/.test(text), 'the move reads «da —» for an actor nobody names');
 });
 
 test('82235e46e3e9: in Dettagli Invio saves and Esc cancels', async () => {
