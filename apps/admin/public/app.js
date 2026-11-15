@@ -1307,7 +1307,7 @@ async function populateNav({ repaintScreen = true } = {}) {
       const link = document.createElement('a');
       link.setAttribute('href', '#/quotes');
       link.setAttribute('data-nav', 'quotes');
-      link.textContent = 'Quotes';
+      link.textContent = 'Preventivi'; // backlog:cf270ae1f808: la voce si raggiunge dal menu, in italiano.
       generatedNav.appendChild(link);
     }
     // Product catalog (BO-F2-05): one nav link when the commercial product

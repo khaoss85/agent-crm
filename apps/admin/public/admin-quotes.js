@@ -141,7 +141,9 @@ export function createQuoteView(deps) {
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
-  const money = (cents, currency) => formatAmount(cents, currency);
+  // backlog:cf270ae1f808: lo spazio tra numero e simbolo resta con il numero:
+  // il primo spazio di formatAmount diventa non separabile, solo qui.
+  const money = (cents, currency) => formatAmount(cents, currency).replace(' ', ' ');
   /** A discount field in percent (backlog:a2ea75f705fd). @param {string} value */
   const percentInput = (value) => {
     const input = el('input');
@@ -288,19 +290,27 @@ export function createQuoteView(deps) {
     let quotes;
     /** Best-effort offer names for the «offerta collegata» line, like readOffer's list fallback. */
     let offerNames = null;
+    /** backlog:cf270ae1f808: the same payload also names the customer, so the
+     * list shows cliente without another read. */
+    let offerCustomers = null;
     try {
       schema = await client.request('/api/schema');
       quotes = await fetchRows('quote');
       try {
         const offers = await client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
         offerNames = new Map();
+        offerCustomers = new Map();
         for (const offer of offers?.items ?? []) {
           if (offer !== null && typeof offer === 'object' && typeof offer.id === 'string' && offer.id !== '') {
             offerNames.set(offer.id, typeof offer.name === 'string' && offer.name.trim() !== '' ? offer.name : null);
+            const who = typeof offer.contactName === 'string' && offer.contactName.trim() !== '' ? offer.contactName.trim()
+              : (typeof offer.companyName === 'string' && offer.companyName.trim() !== '' ? offer.companyName.trim() : null);
+            offerCustomers.set(offer.id, who);
           }
         }
       } catch {
         offerNames = null;
+        offerCustomers = null;
       }
     } catch (error) {
       if (token !== renderToken) return;
@@ -337,7 +347,16 @@ export function createQuoteView(deps) {
         quoteTotalSummary(parseTotals(quote.totalsJson), quote.currency)));
       head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}`, 'Apri il preventivo', 'offer-quote-open'));
       row.appendChild(head);
+      // backlog:cf270ae1f808: ogni riga dice cliente e data, oltre a stato
+      // e importo — il cliente arriva dal carico delle offerte, la data dal
+      // record; niente letture in più, niente date inventate.
       const opportunityId = typeof quote.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
+      const facts = [];
+      const customer = opportunityId !== null && offerCustomers !== null ? offerCustomers.get(opportunityId) ?? null : null;
+      if (typeof customer === 'string' && customer !== '') facts.push(`Cliente: ${customer}`);
+      const when = italianDay(quote.createdAt);
+      if (when !== null) facts.push(when);
+      if (facts.length > 0) row.appendChild(el('p', 'bo-muted', facts.join(' · ')));
       if (opportunityId !== null && offerNames !== null) {
         const line = el('p', 'bo-muted');
         line.appendChild(el('span', undefined, 'Offerta: '));
@@ -390,7 +409,10 @@ export function createQuoteView(deps) {
     // and the test double, never a copy).
     const { back, offer = null, opportunityName, customerName } = await resolveCardBackLink(quote);
     if (token !== renderToken) return;
-    if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
+    // backlog:cf270ae1f808: il titolo porta il cliente quando si conosce,
+    // altrimenti l'offerta, mai un «Preventivo» senza nome.
+    const titleName = customerName ?? opportunityName;
+    if (titleName !== null) heading.textContent = `Preventivo · ${titleName}`;
     if (back !== null || offer !== null) {
       mount.removeChild(heading);
       mount.removeChild(status);
@@ -416,7 +438,7 @@ export function createQuoteView(deps) {
     heroWords.appendChild(el('p', 'bo-quote-kicker', issuer !== '' ? `Preventivo · ${issuer}` : 'Preventivo'));
     mount.removeChild(heading);
     heading.setAttribute('class', 'bo-quote-title');
-    heading.textContent = opportunityName ?? 'Preventivo';
+    heading.textContent = titleName !== null ? `Preventivo · ${titleName}` : 'Preventivo';
     heroWords.appendChild(heading);
     const meta = el('p', 'bo-quote-meta');
     if (customerName !== null) meta.appendChild(el('span', 'bo-quote-for', `Per ${customerName}`));
