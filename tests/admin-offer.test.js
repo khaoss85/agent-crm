@@ -1382,15 +1382,17 @@ test('a060a4aa65b6: one history row per state move, with the hour', async () => 
   assert.equal(isBoardPlacement({ action: 'opportunity.created', data: { boardPosition: 1 } }), false);
 });
 
-// backlog:a060a4aa65b6: the scheda read «qualificazione» for an offer in a
-// Pipeline column — the core stage, when the pipelines were not readable.
-test('a060a4aa65b6: a placed offer reads its column even when the pipelines are not readable', async () => {
+// Review Muse #887 giro 2: with unreadable pipelines a placed offer never
+// derives a label from the raw stage key — it reads its Italian core stage
+// (or null, which screens paint as an em dash).
+test('a060a4aa65b6: a placed offer with unreadable pipelines reads its core stage, never the raw key', async () => {
   const { offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
   const placed = { pipelineKey: 'accordo-sales', pipelineStage: 'richiesta-info', stage: 'qualification' };
-  assert.equal(offerStageLabel([], placed), 'Richiesta info', 'the column, never «qualificazione»');
-  assert.equal(offerStageLabel(null, { ...placed, pipelineStage: 'prova' }), 'Prova');
+  assert.equal(offerStageLabel([], placed), 'qualificazione', 'the Italian core stage, never «Richiesta info» from the raw key');
+  assert.equal(offerStageLabel(null, { ...placed, pipelineStage: 'prova' }), 'qualificazione');
   assert.equal(offerStageLabel([], { stage: 'qualification' }), 'qualificazione', 'an offer outside any board keeps its core stage');
   assert.equal(offerStageLabel([], { pipelineStage: 'Strano Valore!', stage: 'qualification' }), 'qualificazione', 'never a raw odd key');
+  assert.equal(offerStageLabel([], { ...placed, stage: 'unknown-state' }), null, 'unknown core stage stays neutral, never prettified');
 });
 
 // Review Muse #887 giro 1: the «column from the key» fallback is for
@@ -1400,11 +1402,46 @@ test('a060a4aa65b6: with the pipelines read, a stage they do not define reads th
   const { offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
   const offer = { pipelineKey: 'b2b-sales', pipelineStage: 'fase-sparita', stage: 'qualification' };
   assert.equal(offerStageLabel(SCHEMA.pipelines, offer), 'qualificazione');
-  assert.equal(offerStageLabel([], offer), 'Fase sparita', 'only without readable pipelines');
+  assert.equal(offerStageLabel([], offer), 'qualificazione', 'unreadable pipelines read the core stage too, never the raw key');
 });
 
 // Review Muse #887 giro 1: placements are filtered after the server's cap;
 // a full page of placements must say it is cut, never «nessun evento».
+// Review Muse #887 giro 2 (P3): a rejected `/api/schema` never fails the
+// offer page — it opens degraded, with unnamed (neutral) columns.
+test('8da2a289b940: con /api/schema rifiutata la pagina offerta si apre comunque', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => { logged.push(args); };
+  try {
+    const base = stubClient({ quotes: [], audit: [] });
+    const client = {
+      calls: base.calls,
+      async request(path, options = {}) {
+        if (path === '/api/schema') throw Object.assign(new Error('schema down'), { status: 500, code: 'SCHEMA_READ_FAILED' });
+        return base.request(path, options);
+      },
+    };
+    const view = createOfferDetail({ doc, mount, client });
+    await view.renderOfferDetail('off1');
+  } finally {
+    console.error = originalError;
+  }
+  const text = mount.textContent;
+  assert.ok(text.includes('Cucina per Giulia'), 'the offer paints without its schema');
+  assert.ok(!text.includes('Offerta non trovata'), 'never the not-found line for a readable offer');
+  const fact = (label) => {
+    const cell = mount.findAll('p').find((node) => (node.getAttribute('class') ?? '') === 'offer-fact'
+      && node.childNodes[0]?.textContent === label);
+    return cell ? cell.childNodes[1].textContent : null;
+  };
+  assert.ok(['—', 'qualificazione', 'Qualificazione'].includes(fact('Stato')) || (typeof fact('Stato') === 'string' && !/discovery|fase-sparita|richiesta/i.test(fact('Stato'))),
+    `the Stato stays neutral or Italian, never the raw key (got ${JSON.stringify(fact('Stato'))})`);
+  assert.ok(logged.length > 0, 'the schema failure is logged for diagnosis');
+});
+
 test('a060a4aa65b6: a full audit page of board placements says it is cut, never empty', async () => {
   const audit = Array.from({ length: 100 }, (_, index) => ({
     action: 'opportunity.updated', actorType: 'user', actorId: 'maria',
