@@ -1135,7 +1135,7 @@ test('ee1244a145c9: an empty «Da rispondere» view without search reads as the 
   assert.ok(mount.textContent.includes('Nessun cliente ancora.'), '«Tutti» without search reads as the view');
   byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
   await flush();
-  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the empty view names itself');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the empty awaiting view reads as itself');
   assert.ok(!mount.textContent.includes('Nessun cliente corrisponde'), 'no search hint without a search');
 });
 
@@ -1166,13 +1166,169 @@ test('5af848afdb63: an empty view with a filter names both', async () => {
   const { mount } = await render(client);
   byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
   await flush();
-  assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere».'), 'the view alone names itself');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the view alone reads as itself');
   toolToggle(mount, 'Filtri').dispatch('click');
   await flush();
   byAttr(mount, 'button', 'data-filter', 'canale:whatsapp').dispatch('click');
   await flush();
   assert.ok(mount.textContent.includes('Nessun cliente in «Da rispondere» con canale WhatsApp.'),
     'the empty page names the view and the excluding filter');
+});
+
+test('7cf5c4931cfc: the address opens the view, so a reload reopens it', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  // No handoff: the address alone carries the view (copy-link, reload).
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data?vista=da-rispondere',
+  });
+  await view.render();
+  const last = new URLSearchParams(client.calls[client.calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search');
+  assert.equal(view.getState().vista, 'da-rispondere');
+  assert.ok(mount.textContent.includes('Nessuno aspetta una risposta.'), 'the empty view reads as itself, not as a search');
+});
+
+test('7cf5c4931cfc: an address without a view changes nothing, a forged one is ignored', async () => {
+  const client = stubClient();
+  const plain = await render(client, { routeHash: '#/customer-data' });
+  assert.equal(plain.view.getState().vista, 'tutti', 'plain address: the list as it was');
+  const forged = await render(client, { routeHash: '#/customer-data?vista=../x' });
+  assert.equal(forged.view.getState().vista, 'tutti', 'a forged view never resolves');
+  assert.ok(!client.calls.some((path) => path.includes('vista=../x')), 'never sent to the server');
+});
+
+test('7cf5c4931cfc: the address wins over the handoff and clears it', async () => {
+  const { writePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  const views = [...MENUS.views, { id: 'da-leggere', label: 'Da leggere' }, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  writePendingClientiView(store, 'da-rispondere');
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data?vista=da-leggere',
+  });
+  await view.render();
+  assert.equal(view.getState().vista, 'da-leggere', 'the explicit address wins');
+  const { takePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  assert.equal(takePendingClientiView(store), null, 'the handoff clears either way, never stale');
+});
+
+test('7cf5c4931cfc: the handoff still opens the view when the address names none', async () => {
+  const { writePendingClientiView } = await import('../apps/admin/public/admin-prefill.js');
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); }, removeItem(k) { this.map.delete(k); } };
+  writePendingClientiView(store, 'da-rispondere');
+  const view = createCustomerListView({
+    doc, mount, client, storage: store, notify: () => {},
+    routeHash: '#/customer-data',
+  });
+  await view.render();
+  assert.equal(view.getState().vista, 'da-rispondere', 'the fallback still lands on the view');
+});
+
+test('review #935 giro 1 P1: same-view Oggi entry clears the search (regression of #795)', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  let hash = '#/customer-data?vista=da-rispondere';
+  const { mount, view } = await render(client, { routeHash: () => hash });
+  assert.equal(view.getState().vista, 'da-rispondere');
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(view.getState().q, 'rossi', 'the search is on');
+  // Oggi «Vedi tutte» for the already-open view: the hash names the view,
+  // so the entry resets to the view alone.
+  await view.render();
+  assert.equal(view.getState().q, '', 'same-view hash entry clears the search');
+  assert.equal(view.getState().vista, 'da-rispondere', 'and stays on the view');
+  const last = new URLSearchParams(client.calls[client.calls.length - 1].split('?')[1]);
+  assert.equal(last.get('vista'), 'da-rispondere');
+  assert.equal(last.get('q'), null, 'no leftover search reaches the server');
+});
+
+test('7cf5c4931cfc: back from a scheda (plain address) keeps the search', async () => {
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  let hash = '#/customer-data?vista=da-rispondere';
+  const { mount, view } = await render(client, { routeHash: () => hash });
+  const search = mount.findAll('input').find((node) => node.getAttribute('type') === 'search' || node.getAttribute('name') === 'q');
+  search.value = 'rossi';
+  mount.findAll('form').find((node) => node.contains(search)).dispatch('submit', { preventDefault() {} });
+  await flush();
+  assert.equal(view.getState().q, 'rossi', 'the search is on');
+  // The scheda back link is plain `#/customer-data`: no view named, kept as it was.
+  hash = '#/customer-data';
+  await view.render();
+  assert.equal(view.getState().q, 'rossi', 'back from a scheda keeps the search');
+  assert.equal(view.getState().vista, 'da-rispondere', 'and the view with it');
+});
+
+test('7cf5c4931cfc: a view tap writes the address, without re-routing', async () => {
+  const replaced = [];
+  const views = [...MENUS.views, { id: 'da-rispondere', label: 'Da rispondere' }];
+  const client = {
+    calls: [],
+    async request(path = '', options = {}) {
+      enforceAdminWriteGate(path, options);
+      this.calls.push(path);
+      return { customerListContract: 1, items: [], total: 0, page: 1, pageSize: 10, pages: 1, totalIsExact: true, ...MENUS, views };
+    },
+  };
+  const { mount, view } = await render(client, {
+    routeHash: '#/customer-data',
+    replaceHash: (next) => replaced.push(next),
+  });
+  byAttr(mount, 'button', 'data-view', 'da-rispondere').dispatch('click');
+  await flush();
+  assert.equal(view.getState().vista, 'da-rispondere', 'the list is on the tapped view');
+  assert.deepEqual(replaced, ['#/customer-data?vista=da-rispondere'], 'the address follows silently');
 });
 
 test('754918ad8da7 review giro 1: a keystroke read pending when the operator leaves never fires', async () => {
@@ -1268,6 +1424,30 @@ test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200
   assert.ok(marco.textContent.endsWith('1.200 €'), `got «${marco.textContent}»`);
   assert.ok(!mount.textContent.includes('EUR'), 'the euro reads as €, never as its code');
   assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
+});
+
+test('backlog:1adf95307b31: valute miste «1.000 € + 500 USD», solo vinte «—»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const mixed = {
+    ...ROW_MARCO, id: 'c3', name: 'Leo Verdi',
+    offerValueCents: 150000, offerCurrency: null,
+    offerParts: [
+      { valueCents: 100000, currency: 'EUR' },
+      { valueCents: 50000, currency: 'USD' },
+    ],
+  };
+  const wonOnly = { ...ROW_ANNA, id: 'c4', name: 'Ada Rossi' };
+  const client = stubClient({
+    pages: [{
+      customerListContract: 1, items: [mixed, wonOnly],
+      total: 2, page: 1, pageSize: 10, pages: 1, totalIsExact: true,
+    }],
+  });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [leo, ada] = facts(mount);
+  assert.ok(leo.textContent.includes('1.000 € + 500 USD'), `got «${leo.textContent}»`);
+  assert.ok(ada.textContent.endsWith('—'), 'solo vinte: dash');
 });
 
 /* ------------------------------------------------ backlog:4968615de0a4 */
@@ -1474,4 +1654,95 @@ test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw serve
   assert.equal(statoTooltip('contatto'), 'È un contatto perché non ha ancora acquisti confermati.');
   assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
   assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
+});
+
+test('backlog:2262771da550: system mailboxes never paint, the row calendar state reads', async () => {
+  // (a) «email di sistema escluse dall'elenco»: broker, provider and
+  // reserved mailboxes render «—», in the Email column and under the name.
+  // (b) «stato calendario e canali nelle righe»: the next live appointment
+  // reads «quando · stato», an exact none reads «—», a hole reads
+  // «non disponibile» — never an exact claim over a hole.
+  const columns = [...MENUS.columns, { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true }];
+  const items = [
+    {
+      ...ROW_MARCO, channelsComplete: true, calendarComplete: true,
+      nextAppointment: { startsAt: '2030-06-02T09:30:00.000Z', endsAt: '2030-06-02T10:00:00.000Z', status: 'confirmed' },
+    },
+    {
+      ...ROW_ANNA, email: 'broker+adopted-1@accordo.invalid', channels: [], channelsComplete: true,
+      calendarComplete: true, nextAppointment: null,
+    },
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c9', name: 'Bot Github', company: null, email: 'github|12345',
+      phone: null, channels: ['email'], channelsComplete: false,
+      calendarComplete: false, nextAppointment: null,
+    },
+  ];
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items, total: 3, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS, columns,
+  });
+  const { mount } = await render(client);
+  // The opt-in Email column on: the mailbox must stay out there too.
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  await flush();
+  const text = mount.textContent;
+  assert.ok(!text.includes('broker'), 'no broker mailbox paints');
+  assert.ok(!text.includes('accordo.invalid'), 'no reserved domain paints');
+  assert.ok(!text.includes('github|'), 'no provider subject paints');
+  assert.ok(text.includes('marco@palestra-esempio.it'), 'a real mailbox still reads');
+  const card = (id) => mount.findAll('article').find((node) => node.getAttribute('data-customer') === `contact:${id}`);
+  const fact = (id, column) => card(id).findAll('p').find((node) => node.getAttribute('data-column') === column);
+  assert.ok(fact('c1', 'calendario').textContent.includes('confermato'), 'the next live appointment reads with its state');
+  assert.ok(fact('c1', 'email').textContent.includes('marco@palestra-esempio.it'));
+  assert.ok(fact('c2', 'email').textContent.includes('—'), 'a system mailbox reads like a missing email');
+  assert.ok(fact('c2', 'calendario').textContent.includes('—'), 'an exact none reads «—»');
+  assert.ok(fact('c9', 'email').textContent.includes('—'), 'a provider subject reads like a missing email');
+  assert.ok(fact('c9', 'calendario').textContent.includes('non disponibile'), 'a hole never reads as an exact none');
+  const holeCell = fact('c9', 'calendario').findAll('span').find((node) => !String(node.getAttribute('class') ?? '').includes('bo-clienti-label'));
+  assert.equal(holeCell?.getAttribute('title'), 'Lo stato del calendario non si è letto: riprova più tardi.');
+  const tiles = fact('c9', 'canali').findAll('span').find((node) => String(node.getAttribute('class') ?? '').includes('bo-clienti-tiles'));
+  assert.equal(tiles?.getAttribute('title'), 'Elenco parziale: alcuni messaggi non si sono letti.', 'a best-effort union says it is partial');
+});
+
+test('backlog:2262771da550 repro review rev-agent-crm-938-1443ea09: real plus-addressed mailboxes paint, unknown calendar states stay date-only', async () => {
+  // P1: the list filter hid every string starting with `broker+` (any
+  // domain) or containing `|` as technical. A deliverable customer mailbox
+  // such as `broker+tag@gmail.com` — or one containing `|` — must read, in
+  // the Email column and under the name; only `…@accordo.invalid` and
+  // address-less provider subjects (`github|…`) hide.
+  // P2: the Calendario cell fell back to the raw server status string for
+  // unknown states: it must read date-only instead.
+  const columns = [...MENUS.columns, { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true }];
+  const items = [
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c3', name: 'Paolo Neri', company: null,
+      email: 'broker+tag@gmail.com', channels: ['email'], channelsComplete: true,
+      calendarComplete: true,
+      nextAppointment: { startsAt: '2030-06-02T09:30:00.000Z', endsAt: '2030-06-02T10:00:00.000Z', status: 'pending' },
+    },
+    {
+      ...ROW_ANNA, resource: 'contact', id: 'c4', name: 'Sara Blu', company: null,
+      email: 'sara|blu@example.com', channels: ['email'], channelsComplete: true,
+      calendarComplete: true, nextAppointment: null,
+    },
+  ];
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items, total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS, columns,
+  });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-column', 'email').dispatch('click');
+  await flush();
+  const card = (id) => mount.findAll('article').find((node) => node.getAttribute('data-customer') === `contact:${id}`);
+  const fact = (id, column) => card(id).findAll('p').find((node) => node.getAttribute('data-column') === column);
+  assert.ok(fact('c3', 'email').textContent.includes('broker+tag@gmail.com'), 'a real plus-addressed mailbox reads');
+  assert.ok(card('c3').textContent.includes('broker+tag@gmail.com'), 'it also reads under the name when there is no company');
+  assert.ok(fact('c4', 'email').textContent.includes('sara|blu@example.com'), 'a real mailbox containing | reads');
+  const cal = fact('c3', 'calendario').textContent;
+  assert.ok(!cal.includes('pending'), 'no raw server status key paints');
+  assert.ok(!cal.includes('·'), 'an unknown state reads date-only, with no state suffix');
+  assert.ok(cal.includes('giu'), 'an unknown state still names the date');
 });

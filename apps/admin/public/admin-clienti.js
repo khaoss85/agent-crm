@@ -1,6 +1,6 @@
 // @ts-check
 
-import { takePendingClientiView } from './admin-prefill.js';
+import { hashWithVista, takePendingClientiView, vistaOfHash } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -25,6 +25,39 @@ import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de
 import { customerInitials, formatAmount, humanReadError } from './admin-core.js';
 
 /**
+ * backlog:2262771da550 — which customer mailboxes never paint. Only real
+ * system identities hide: the broker's reserved domain (`…@accordo.invalid`)
+ * and provider subjects that carry no address shape (`google|…`, `github|…`
+ * with no `@`). A deliverable customer mailbox always reads — even a
+ * plus-addressed one (`broker+tag@gmail.com`: `broker+` is a local part, not
+ * the broker) or one containing `|` — so the team filter in admin-labels.js
+ * (which hides any `broker+…` or `|` string for team screens) never applies
+ * here.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isSystemCustomerEmail(value) {
+  if (typeof value !== 'string') return true;
+  const text = value.trim();
+  if (text === '') return true;
+  if (text.toLowerCase().endsWith('@accordo.invalid')) return true;
+  if (!text.includes('@') && text.includes('|')) return true;
+  return false;
+}
+
+/**
+ * backlog:2262771da550 — a customer mailbox worth showing, trimmed, or null
+ * when it is empty or a system identity (see isSystemCustomerEmail).
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function customerEmailText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text !== '' && !isSystemCustomerEmail(text) ? text : null;
+}
+
+/**
  * Where the governed file import lives since the Clienti screen stopped
  * embedding it (backlog:80b25fb0, restyle backlog:5b164ab5): the list never
  * writes. Manual entry opens the customer form (backlog:273de560,
@@ -44,6 +77,13 @@ const CHANNEL_LABELS = Object.freeze({
 });
 
 const STATO_LABELS = Object.freeze({ cliente: 'Cliente', contatto: 'Contatto' });
+
+/**
+ * backlog:2262771da550 — the Calendario cell names the live appointment
+ * state in plain Italian. Terminal states (svolto, non presentato,
+ * annullato) never reach the cell: the server ships only the next live one.
+ */
+const CALENDAR_STATUS_LABELS = Object.freeze({ booked: 'prenotato', confirmed: 'confermato' });
 
 /**
  * backlog:7471d0bd718f — the Stato pill never surfaces the server's raw
@@ -85,6 +125,7 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
   { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
   { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+  { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
   { id: 'email', label: 'Email', always: false, ai: false, def: false },
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
@@ -108,6 +149,7 @@ const COLUMN_TRACKS = Object.freeze({
   stato: [88, '.6fr'],
   ultimo: [200, '2.4fr'],
   prossimo: [110, '1fr'],
+  calendario: [110, '1fr'],
 });
 const OTHER_TRACK = [120, '1fr'];
 const CLIENT_TRACK = [170, '1.4fr'];
@@ -161,6 +203,8 @@ export function pageNumbers(pages, page) {
  *   onAskAi?: ((question: string) => void) | null,
  *   onManualAdd?: (() => void) | null, storage?: any, schedule?: any,
  *   searchDelayMs?: number, searchSchedule?: (fn: () => void, ms: number) => any,
+ *   routeHash?: string | (() => (string | null | undefined)) | null,
+ *   replaceHash?: ((hash: string) => void) | null,
  *   onTotal?: ((total: {count: number, exact: boolean}) => void) | null}} deps
  */
 export function createCustomerListView(deps) {
@@ -174,6 +218,25 @@ export function createCustomerListView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const store = deps.storage ?? null;
+  // backlog:7cf5c4931cfc: the view lives in the address
+  // (`#/customer-data?vista=...`), so a reload reopens it. Read late: the
+  // hash at route entry wins over the one-time handoff, which stays as the
+  // fallback when the query is lost. Never the window directly — injected
+  // for tests.
+  const currentRouteHash = () => {
+    const raw = typeof deps.routeHash === 'function' ? deps.routeHash() : deps.routeHash;
+    return typeof raw === 'string' && raw !== '' ? raw : null;
+  };
+  const replaceRouteHash = typeof deps.replaceHash === 'function' ? deps.replaceHash : null;
+  /** Keep the address on the open view after a view tap, without re-routing. */
+  function syncViewAddress() {
+    if (replaceRouteHash === null) return;
+    try {
+      replaceRouteHash(hashWithVista(currentRouteHash() ?? '#/customer-data', state.vista));
+    } catch {
+      // The list already shows the view; the address stays as it was.
+    }
+  }
 
   const el = elFor(doc); // BO-F6-02: shared element builder.
   const link = (href, text, action) => {
@@ -282,11 +345,21 @@ export function createCustomerListView(deps) {
     searchSeq += 1;
     // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
     // the view alone, never a search or filter left from an earlier visit
-    // (review Muse #795).
-    const askedView = takePendingClientiView(store);
-    if (askedView !== null) {
+    // (review Muse #795). backlog:7cf5c4931cfc: the address names the view,
+    // so a reload reopens it; the handoff is taken (cleared) either way and
+    // only applies when the address names none. Every hash-driven entry
+    // resets (review #935 giro 1 P1: same-view Oggi entry must clear too);
+    // only a hash naming no view keeps the search and filters
+    // (backlog:2067a415405c: back from a scheda).
+    const pendingView = takePendingClientiView(store);
+    const hashView = vistaOfHash(currentRouteHash());
+    if (hashView !== null) {
       Object.assign(state, {
-        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+        vista: hashView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    } else if (pendingView !== null && pendingView !== state.vista) {
+      Object.assign(state, {
+        vista: pendingView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
     }
     // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
@@ -711,6 +784,7 @@ export function createCustomerListView(deps) {
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
         state.vista = view.id;
+        syncViewAddress();
         reload();
       });
       viewsRow.appendChild(button);
@@ -931,13 +1005,29 @@ export function createCustomerListView(deps) {
   function cellFor(row, columnId) {
     switch (columnId) {
       case 'canali': {
-        if (row.channels.length === 0) return el('span', 'bo-muted', '—');
+        // backlog:2262771da550 — the row's channel state: the held union
+        // the server ships, honest about holes. A partial or unreadable
+        // message/call scan never reads as an exact list: empty reads
+        // «non disponibile», a best-effort union carries the shortfall in
+        // its title instead of claiming to be exact.
+        const channels = Array.isArray(row.channels) ? row.channels : [];
+        if (channels.length === 0) {
+          if (row.channelsComplete === false) {
+            const none = el('span', 'bo-muted', 'non disponibile');
+            none.setAttribute('title', 'I canali non si sono letti tutti: riprova più tardi.');
+            return none;
+          }
+          return el('span', 'bo-muted', '—');
+        }
         const tiles = el('span', 'bo-clienti-tiles');
-        for (const system of row.channels) {
+        for (const system of channels) {
           const tile = el('span', `bo-clienti-tile bo-tile-${String(system).toLowerCase()}`, channelMark(system));
           tile.setAttribute('title', channelLabel(system));
           tile.setAttribute('aria-label', channelLabel(system));
           tiles.appendChild(tile);
+        }
+        if (row.channelsComplete === false) {
+          tiles.setAttribute('title', 'Elenco parziale: alcuni messaggi non si sono letti.');
         }
         return tiles;
       }
@@ -987,11 +1077,45 @@ export function createCustomerListView(deps) {
         const text = `✦ ${row.nextStep.title ?? 'attività'}${row.nextStep.dueAt ? ` · ${shortDay(row.nextStep.dueAt)}` : ''}${row.nextStep.overdue ? ' (in ritardo)' : ''}`;
         return el('span', undefined, text);
       }
-      case 'email':
-        return row.email ? el('span', undefined, row.email) : el('span', 'bo-muted', '—');
+      case 'calendario': {
+        // backlog:2262771da550 — the row's calendar state: the next live
+        // appointment as «quando · stato». An exact none reads «—»; a
+        // partial or unreadable appointment scan reads «non disponibile»,
+        // never an exact none over a hole.
+        if (row.calendarComplete === false) {
+          const none = el('span', 'bo-muted', 'non disponibile');
+          none.setAttribute('title', 'Lo stato del calendario non si è letto: riprova più tardi.');
+          return none;
+        }
+        const next = row.nextAppointment ?? null;
+        if (!next || typeof next.startsAt !== 'string' || next.startsAt === '') return el('span', 'bo-muted', '—');
+        // Unknown states never paint the raw server key (backlog:7471d0bd718f
+        // bans raw English on screen): date-only, like a state with no label.
+        const statusLabel = CALENDAR_STATUS_LABELS[String(next.status ?? '').toLowerCase()] ?? '';
+        const text = statusLabel !== '' ? `${contactWhen(next.startsAt)} · ${statusLabel}` : contactWhen(next.startsAt);
+        const node = el('span', undefined, text);
+        node.setAttribute('title', `Prossimo appuntamento: ${next.startsAt}${typeof next.endsAt === 'string' && next.endsAt !== '' ? `–${next.endsAt}` : ''}`);
+        return node;
+      }
+      case 'email': {
+        // backlog:2262771da550 — system mailboxes never paint: the customer
+        // predicate (customerEmailText, here) reads reserved identities
+        // («…@accordo.invalid», «google|…», «github|…» with no address) as
+        // null, so they render «—» like a missing email — while a real
+        // plus-addressed mailbox always reads.
+        const shown = customerEmailText(row.email);
+        return shown ? el('span', undefined, shown) : el('span', 'bo-muted', '—');
+      }
       case 'telefono':
         return row.phone?.value ? el('span', undefined, `${row.phone.value} (${channelLabel(row.phone.system)})`) : el('span', 'bo-muted', '—');
       case 'offerta': {
+        // backlog:1adf95307b31: valute miste — ogni subtotale con la sua
+        // valuta («1.000 € + 500 USD»), mai un numero nudo.
+        if (Array.isArray(row.offerParts) && row.offerParts.length > 1) {
+          return el('span', undefined, row.offerParts
+            .map((part) => formatAmount(Number(part?.valueCents), part?.currency ?? ''))
+            .join(' + '));
+        }
         if (row.offerValueCents === null || row.offerValueCents === undefined) return el('span', 'bo-muted', '—');
         // backlog:5c2f8bc67859: «1.080 €» like the Pipeline, never «1080,00 EUR».
         return el('span', undefined, formatAmount(Number(row.offerValueCents), row.offerCurrency ?? ''));
@@ -1048,7 +1172,8 @@ export function createCustomerListView(deps) {
       }
       statusLine.textContent = total === 0
         ? (excluding.length === 0
-          ? (inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
+          ? (state.vista === AWAITING_VIEW ? 'Nessuno aspetta una risposta.'
+            : inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
           : (`Nessun cliente${inView} con ${excluding.join(', ')}.`
             + (state.q !== '' ? ' Prova con un nome, una città o un canale.' : '')))
         : '';
@@ -1105,8 +1230,9 @@ export function createCustomerListView(deps) {
       }
       // The second line names the company; a contact with none (or with a
       // stored placeholder such as `Unknown (…)`, which the API reads as
-      // none) shows its email instead (production 10/11).
-      const sub = row.company?.name ? String(row.company.name) : (typeof row.email === 'string' ? row.email : '');
+      // none) shows its email instead (production 10/11) — unless the email
+      // is a system mailbox, which never paints (backlog:2262771da550).
+      const sub = row.company?.name ? String(row.company.name) : (customerEmailText(row.email) ?? '');
       if (sub !== '') who.appendChild(el('span', 'bo-muted bo-clienti-sub', sub));
       head.appendChild(who);
       card.appendChild(head);

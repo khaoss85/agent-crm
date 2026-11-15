@@ -2772,8 +2772,7 @@ export function createCalendarioView(deps) {
     });
     col.addEventListener('pointercancel', () => {
       if (eventDrag) {
-        eventDrag = null;
-        detachNode(mount.querySelector('.cal-drag-ghost'));
+        abortEventDrag();
         return;
       }
       drag?.node?.remove?.(); drag = null;
@@ -2822,14 +2821,24 @@ export function createCalendarioView(deps) {
    * once per view; the fake test document has no listeners and is skipped.
    */
   let docDragHooked = false;
+  /**
+   * An interrupted drag (backlog:667f1f1c review P1): a resize stretches
+   * the origin block live, so aborting must repaint — otherwise the mutated
+   * inline grid-row stays painted on rows the booking no longer covers.
+   */
+  function abortEventDrag() {
+    const aborted = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (aborted?.mode === 'resize' && aborted.moved === true && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
   function hookDocDragEnd() {
     if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
     docDragHooked = true;
     doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
     doc.addEventListener('pointercancel', () => {
       if (!eventDrag) return;
-      eventDrag = null;
-      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+      abortEventDrag();
     });
   }
 
@@ -2872,6 +2881,24 @@ export function createCalendarioView(deps) {
       drag.targetEnd = start + durationMin;
     }
     drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    if (drag.mode === 'resize') {
+      // backlog:667f1f1c: a stretch pulls the block itself, never a second
+      // block under the preview — the origin node takes the target range
+      // live, time label included (review P2), so the operator never aims
+      // blind. Compact blocks (<45 min) rewrite their single line with the
+      // live interval, which only they render (giro 3 P1).
+      const origin = paintedEvents.get(String(drag.row?.id ?? ''));
+      if (origin && typeof origin.setAttribute === 'function') {
+        const current = String(origin.getAttribute?.('style') ?? '');
+        const column = current.match(/grid-column:[^;]+;?/);
+        origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
+        const timeLabel = origin.querySelector?.('.cal-time') ?? null;
+        if (timeLabel) timeLabel.textContent = `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+        const compactLabel = origin.querySelector?.('.cal-compact') ?? null;
+        if (compactLabel) compactLabel.textContent = `${titleOf(drag.row)}, ${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+      }
+      return;
+    }
     detachNode(mount.querySelector('.cal-drag-ghost'));
     const ghost = el(doc, 'div', {
       className: 'cal-pick is-dragging cal-drag-ghost',
@@ -2881,9 +2908,8 @@ export function createCalendarioView(deps) {
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
-    // A resize ghost paints on the origin column (review #757); a move
-    // ghost paints on the hovered column.
-    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+    // A move ghost paints on the hovered column.
+    col.appendChild(ghost);
   }
 
   /**
@@ -2989,6 +3015,12 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:667f1f1c: a stretch keeps its start and changes its end —
+    // compared by value (review P2): the same instant in a different ISO
+    // spelling is still the same start. Computed before the write so the
+    // queued outcome names it too.
+    const sameStart = Date.parse(before.startsAt) === Date.parse(startsAt);
+    const isStretch = sameStart && Date.parse(before.endsAt) !== Date.parse(endsAt);
     state.moveBusy = true;
     row.startsAt = startsAt;
     row.endsAt = endsAt;
@@ -3024,15 +3056,22 @@ export function createCalendarioView(deps) {
       state.pendingDragMove = null;
       // backlog:7587307d5215: the day and the date, like a person says it —
       // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      // backlog:667f1f1c: a stretch keeps its start and changes its end —
+      // the toast names it, «Allungato a …», never «Spostato».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
-      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      outcome = isStretch
+        ? { text: `Allungato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false }
+        : { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
         // Still queued on the worker: the drop stands where the operator
-        // put it until the week read says otherwise.
+        // put it until the week read says otherwise. A stretch says so
+        // (review P2), never «Spostamento».
         queued = true;
-        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+        outcome = isStretch
+          ? { text: 'Allungamento in coda: lo confermo appena è registrato.', error: false }
+          : { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
       } else {
         row.startsAt = before.startsAt;
         row.endsAt = before.endsAt;
@@ -3295,6 +3334,9 @@ export function createCalendarioView(deps) {
     if (cancelled) classes.push('cal-cancelled');
     const movable = isMovableAppointment(row);
     if (movable) classes.push('is-movable');
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
+    if (durationMin < 45) classes.push('is-short');
+    else if (durationMin < 60) classes.push('is-medium');
     const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
@@ -3307,8 +3349,23 @@ export function createCalendarioView(deps) {
       },
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
-    item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-    item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    const origin = originOf(row);
+    if (durationMin < 45) {
+      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      // The origin badge stays readable on the single line when the foot
+      // below stays hidden (15-min blocks), so nothing paints half-cut.
+      // At 30+ min the foot carries avatar and badges.
+      if (durationMin < 30) {
+        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
+        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+      }
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    }
     const foot = el(doc, 'span', { className: 'cal-day-foot' });
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
@@ -3317,7 +3374,6 @@ export function createCalendarioView(deps) {
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    const origin = originOf(row);
     if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     } else if (origin === 'google') {
@@ -3330,7 +3386,10 @@ export function createCalendarioView(deps) {
     if (cancelled) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
-    item.appendChild(foot);
+    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
+    // block has room — 15-min blocks already carry origin and status on
+    // their single line, so the foot never paints half-cut.
+    if (durationMin >= 30) item.appendChild(foot);
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes

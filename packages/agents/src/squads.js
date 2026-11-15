@@ -595,7 +595,7 @@ export function buildSquadOverview({ squad, agents, assignments, runs, now }) {
       spentCents,
       capCents,
       overCap: capCents !== null && spentCents > capCents,
-      capNote: 'Il tetto si conta qui; fermare i giri oltre il tetto arriva con il motore.',
+      capNote: "Il tetto si conta qui e l'approvazione rifiuta oltre il tetto; fermare i giri oltre il tetto arriva con il motore.",
     },
   };
 }

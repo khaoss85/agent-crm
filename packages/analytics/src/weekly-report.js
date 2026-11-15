@@ -94,6 +94,16 @@ function requireAppointments(appointments) {
 }
 
 /**
+ * A count with its Italian noun: only exactly one takes the singular
+ * («1 chiusura», «0 chiusure», «2 chiusure»), same rule as plural() in
+ * `./dashboard.js` (kept local so this module stays dependency-light).
+ * @param {number} count @param {string} one @param {string} many
+ */
+function plural(count, one, many) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/**
  * @param {unknown} previous
  */
 function requirePreviousVersion(previous) {
@@ -186,7 +196,7 @@ export function buildWeeklyReport({ dashboard, appointments, previous = null, no
     weekKey,
     weekLabel: weekLabelOf(weekKey),
     numbers,
-    summary: `Nel periodo ${numbers.periodLabel}: ${wonCount} chiusure per ${formatMinor(wonMinor, dashboard.currency)}, pipeline aperto ${formatMinor(openMinor, dashboard.currency)} su ${openCount} preventivi.`,
+    summary: `Nel periodo ${numbers.periodLabel}: ${plural(wonCount, 'chiusura', 'chiusure')} per ${formatMinor(wonMinor, dashboard.currency)}, pipeline aperto ${formatMinor(openMinor, dashboard.currency)} su ${plural(openCount, 'preventivo', 'preventivi')}.`,
     observations,
     updatedAt: at,
     previousVersion: version > 1 ? version - 1 : null,
@@ -205,14 +215,14 @@ function pickObservations({ numbers, valueByStage, currency }) {
   if (numbers.sales.count === 0 && numbers.pipeline.count > 0) {
     candidates.push({
       id: 'no-wins',
-      text: `Nessuna chiusura nel periodo con ${numbers.pipeline.count} preventivi aperti (${formatMinor(numbers.pipeline.minor, currency)}): la pipeline non converte.`,
+      text: `Nessuna chiusura nel periodo con ${plural(numbers.pipeline.count, 'preventivo aperto', 'preventivi aperti')} (${formatMinor(numbers.pipeline.minor, currency)}): la pipeline non converte.`,
       action: 'Rileggi i preventivi aperti più vecchi e fissa la prossima mossa su ciascuno.',
     });
   }
   if (closedTotal > 0 && numbers.lost.count / closedTotal >= 0.3) {
     candidates.push({
       id: 'lost-rate',
-      text: `${numbers.lost.count} preventivi persi su ${closedTotal} chiusi (${Math.round((numbers.lost.count / closedTotal) * 100)}%): il tasso di perdita è sopra la soglia.`,
+      text: `${plural(numbers.lost.count, 'preventivo perso', 'preventivi persi')} su ${plural(closedTotal, 'chiuso', 'chiusi')} (${Math.round((numbers.lost.count / closedTotal) * 100)}%): il tasso di perdita è sopra la soglia.`,
       action: 'Rileggi i motivi di perdita prima di spingere le trattative aperte.',
     });
   }
@@ -231,7 +241,7 @@ function pickObservations({ numbers, valueByStage, currency }) {
   if (top !== undefined && numbers.channels.total > 0 && top.total / numbers.channels.total >= 0.7) {
     candidates.push({
       id: 'channel-focus',
-      text: `Il canale «${top.channel}» porta ${top.total} contatti su ${numbers.channels.total} (${Math.round((top.total / numbers.channels.total) * 100)}%): quasi tutto dipende da una sola fonte.`,
+      text: `Il canale «${top.channel}» porta ${plural(top.total, 'contatto', 'contatti')} su ${numbers.channels.total} (${Math.round((top.total / numbers.channels.total) * 100)}%): quasi tutto dipende da una sola fonte.`,
       action: 'Apri una seconda fonte di contatti per non dipendere da un solo canale.',
     });
   }
@@ -239,14 +249,14 @@ function pickObservations({ numbers, valueByStage, currency }) {
   if (held > 0 && appointments.noShow / held >= 0.3) {
     candidates.push({
       id: 'no-show-rate',
-      text: `${appointments.noShow} appuntamenti saltati su ${held} fissati (${Math.round((appointments.noShow / held) * 100)}%): i buchi in agenda costano chiusure.`,
+      text: `${plural(appointments.noShow, 'appuntamento saltato', 'appuntamenti saltati')} su ${plural(held, 'fissato', 'fissati')} (${Math.round((appointments.noShow / held) * 100)}%): i buchi in agenda costano chiusure.`,
       action: 'Aggiungi un promemoria il giorno prima per gli appuntamenti a rischio.',
     });
   }
   if (numbers.winRate !== null && numbers.winRate >= 0.5 && closedTotal > 0) {
     candidates.push({
       id: 'win-rate-high',
-      text: `Tasso di chiusura al ${numbers.winRateDisplay} su ${closedTotal} decisioni: la squadra converte bene.`,
+      text: `Tasso di chiusura al ${numbers.winRateDisplay} su ${plural(closedTotal, 'decisione', 'decisioni')}: la squadra converte bene.`,
       action: 'Proteggi il ritmo: priorità ai preventivi in chiusura nel periodo.',
     });
   }

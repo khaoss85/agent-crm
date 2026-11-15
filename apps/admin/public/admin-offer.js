@@ -498,7 +498,15 @@ export function createOfferDetail(deps) {
         rememberCustomer(record);
         shareOfferName = typeof record.name === 'string' ? record.name : '';
       }
-      schema = await schemaRead;
+      // Review Muse #887 giro 2: the schema is decoration — a rejected
+      // `/api/schema` read leaves the page unnamed (neutral columns, no
+      // price-book action) instead of failing the whole detail.
+      try {
+        schema = await schemaRead;
+      } catch (error) {
+        logReadFailure('schema', error);
+        schema = null;
+      }
       const sameId = String(record?.id ?? '') === offerId;
       // Review Muse #871 (P1): the page paints with the offer, its quotes
       // list, the history and the team; the price books and each quote's

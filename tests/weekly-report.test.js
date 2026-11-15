@@ -114,7 +114,8 @@ test('weekly run publishes version 1 with the Reporting numbers', (t) => {
   assert.deepEqual(report.numbers.appointments, { ...APPOINTMENTS });
   assert.equal(report.numbers.channels.total, 6);
   assert.equal(report.numbers.truncated, false);
-  assert.ok(report.summary.includes('1 chiusure'));
+  assert.ok(report.summary.includes('1 chiusura per'));
+  assert.ok(!report.summary.includes('1 chiusure'));
   assert.ok(Object.isFrozen(report));
   assert.ok(Object.isFrozen(report.numbers));
   assert.ok(Object.isFrozen(report.observations));
@@ -160,6 +161,86 @@ test('empty Reporting still publishes two honest observations', (t) => {
   assert.deepEqual(report.numbers.sales, { count: 0, minor: 0 });
   assert.equal(report.observations.length, 2);
   assert.equal(report.observations[0].id, 'no-data');
+});
+
+/** @param {{ won?: number, lost?: number, open?: number }} counts */
+function bareDashboard({ won = 0, lost = 0, open = 0 } = {}) {
+  return {
+    period: '2026-10',
+    periodLabel: 'ottobre 2026',
+    currency: 'EUR',
+    // minor stays 0 on purpose: a single open stage holding half the value
+    // would fire funnel-stuck and crowd the asserted observations out.
+    valueByStage: open === 0 ? [] : [{ stage: 'qualification', count: open, minor: 0 }],
+    team: (won === 0 && lost === 0)
+      ? []
+      : [{ count: won + lost, wonCount: won, wonMinor: won * 9000, lostCount: lost }],
+    channels: null,
+    forecast: null,
+  };
+}
+
+const ZERO_APPOINTMENTS = Object.freeze({ upcoming: 0, done: 0, noShow: 0, cancelled: 0 });
+
+test('summary uses the singular only for exactly one', () => {
+  const none = buildWeeklyReport({ dashboard: bareDashboard(), appointments: ZERO_APPOINTMENTS, nowIso: MONDAY });
+  assert.ok(none.summary.includes('0 chiusure'));
+  assert.ok(none.summary.includes('su 0 preventivi'));
+
+  const one = buildWeeklyReport({
+    dashboard: bareDashboard({ won: 1, open: 1 }),
+    appointments: ZERO_APPOINTMENTS,
+    nowIso: MONDAY,
+  });
+  assert.ok(one.summary.includes('1 chiusura per'));
+  assert.ok(one.summary.includes('su 1 preventivo.'));
+  assert.ok(!one.summary.includes('1 chiusure'));
+  assert.ok(!one.summary.includes('1 preventivi'));
+
+  const many = buildWeeklyReport({
+    dashboard: bareDashboard({ won: 2, open: 3 }),
+    appointments: ZERO_APPOINTMENTS,
+    nowIso: MONDAY,
+  });
+  assert.ok(many.summary.includes('2 chiusure per'));
+  assert.ok(many.summary.includes('su 3 preventivi.'));
+});
+
+test('observations use the singular only for exactly one', () => {
+  const one = buildWeeklyReport({
+    dashboard: bareDashboard({ lost: 1, open: 1 }),
+    appointments: { upcoming: 0, done: 0, noShow: 1, cancelled: 0 },
+    nowIso: MONDAY,
+  });
+  const oneTexts = one.observations.map((entry) => entry.text).join('\n');
+  assert.ok(oneTexts.includes('1 preventivo perso su 1 chiuso'));
+  assert.ok(oneTexts.includes('1 appuntamento saltato su 1 fissato'));
+  assert.ok(oneTexts.includes('con 1 preventivo aperto'));
+
+  const oneChannel = buildWeeklyReport({
+    dashboard: {
+      ...bareDashboard({ won: 1 }),
+      channels: { total: 1, undated: 0, channels: [{ channel: 'whatsapp', total: 1 }] },
+    },
+    appointments: ZERO_APPOINTMENTS,
+    nowIso: MONDAY,
+  });
+  const oneChannelTexts = oneChannel.observations.map((entry) => entry.text).join('\n');
+  assert.ok(oneChannelTexts.includes('porta 1 contatto su 1'));
+  assert.ok(oneChannelTexts.includes('su 1 decisione'));
+
+  const many = buildWeeklyReport({
+    dashboard: {
+      ...bareDashboard({ won: 1, lost: 2, open: 4 }),
+      channels: { total: 5, undated: 0, channels: [{ channel: 'whatsapp', total: 4 }] },
+    },
+    appointments: { upcoming: 0, done: 3, noShow: 2, cancelled: 0 },
+    nowIso: MONDAY,
+  });
+  const manyTexts = many.observations.map((entry) => entry.text).join('\n');
+  assert.ok(manyTexts.includes('2 preventivi persi su 3 chiusi'));
+  assert.ok(manyTexts.includes('2 appuntamenti saltati su 5 fissati'));
+  assert.ok(manyTexts.includes('porta 4 contatti su 5'));
 });
 
 test('missing appointments fails closed instead of a report without them', (t) => {
