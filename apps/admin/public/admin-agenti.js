@@ -2382,7 +2382,7 @@ export function createAgentiView({ doc = null, mount, client, submissions, stora
     // The old Sequenze stay reachable for whoever still uses them.
     const legacy = el(documentNode, 'p', 'bo-muted bo-agenti-legacy');
     legacy.appendChild(el(documentNode, 'span', null, 'Cerchi le sequenze automatiche? '));
-    const link = el(documentNode, 'a', null, 'Apri Sequenze');
+    const link = el(documentNode, 'a', 'bo-oggi-more', 'Apri Sequenze');
     link.setAttribute('href', '#/sequenze');
     link.addEventListener('click', (event) => {
       if (event && typeof event.preventDefault === 'function') event.preventDefault();
