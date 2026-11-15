@@ -1052,6 +1052,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
   // closed state and label; an unreadable conversation module reads none.
   const conversations = await batched('conversation');
+  // backlog:2262771da550 — the Calendario column: the same batched exact
+  // read over the appointment records, keyed by customer subject. Without
+  // the module composed the rows carry no calendar state, never an
+  // invented «nessuno».
+  const appointments = await batched('appointment');
+  const appointmentsComplete = appointments.readable === true && appointments.complete !== false;
   // The space's own mailboxes (review Muse #821): the accounts of its email
   // connections, read straight at the record module like the reads above.
   // Mail from them is the team's own, never a customer waiting.
@@ -1264,6 +1270,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   const taskIndex = indexRowsByCustomer(tasks.rows);
   const messageIndex = indexRowsByCustomer(messages.rows);
   const callIndex = indexRowsByCustomer(calls.rows);
+  const appointmentIndex = indexRowsByCustomer(appointments.rows);
   const conversationIndex = indexRowsByCustomer(conversations.rows);
   const signalIndex = indexRowsByCustomer(signals.rows);
 
@@ -1350,6 +1357,32 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     myTasks.sort((a, b) => (taskRank(a) - taskRank(b))
       || String(a?.dueAt ?? '').localeCompare(String(b?.dueAt ?? '')));
     const next = myTasks[0] ?? null;
+    // backlog:2262771da550 — the row's calendar state: the soonest live
+    // appointment at or after now. Only live states (booked, confirmed, the
+    // complement of APPOINTMENT_TERMINAL in packages/appointments) name the
+    // next slot: an allowlist, so a malformed or future unknown state never
+    // reads as live. A partial or unreadable appointment scan shapes
+    // no «next»: the row says so in calendarComplete instead.
+    const myAppointments = appointmentsComplete
+      ? selectSubjectRows(appointmentIndex, subjectKeys, mine)
+      : [];
+    let nextAppointment = null;
+    if (appointmentsComplete) {
+      const nowMs = Date.parse(new Date().toISOString());
+      for (const row of myAppointments) {
+        const status = String(row?.status ?? '');
+        if (status !== 'booked' && status !== 'confirmed') continue;
+        const startMs = Date.parse(String(row?.startsAt ?? ''));
+        if (!Number.isFinite(startMs) || startMs < nowMs) continue;
+        if (nextAppointment === null || startMs < Date.parse(String(nextAppointment.startsAt))) {
+          nextAppointment = Object.freeze({
+            startsAt: row.startsAt,
+            endsAt: typeof row?.endsAt === 'string' ? row.endsAt : null,
+            status,
+          });
+        }
+      }
+    }
     const myMessageRows = selectSubjectRows(messageIndex, subjectKeys, mine);
     const myMessages = [...myMessageRows, ...selectSubjectRows(callIndex, subjectKeys, mine)];
     // The row's unread badge, from the message rows already in hand — no new
@@ -1418,6 +1451,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         overdue: typeof next.dueAt === 'string' && next.dueAt !== '' && next.dueAt.slice(0, 10) < today,
       }]]),
       renewalBySubject: new Map([[key, renewalWithinDays]]),
+      appointmentBySubject: new Map(nextAppointment === null ? [] : [[key, nextAppointment]]),
+      appointmentsComplete,
       budgetBySubject: new Map(budgetSignal === null ? [] : [[key, {
         available: true,
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
