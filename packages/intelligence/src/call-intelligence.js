@@ -421,9 +421,14 @@ export function createCallIntelligence(options = {}) {
         code: 'CALL_SUMMARY_UNAVAILABLE', status: 409,
       });
     }
+    // Voce 5c9e006a: the caller's organization, threaded by the route from
+    // the verified identity (never the body), so spend on another
+    // organization's space refuses inside `complete` before any provider is
+    // touched. Absent keeps the historic behavior.
     const completion = await llm.complete({
       actor,
       spaceId,
+      ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
       purpose: 'call-summary',
       messages: [
         {

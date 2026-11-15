@@ -196,6 +196,7 @@ export function createIntelligenceDomain(options = {}) {
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug — always explicit, never inferred.' },
           { name: 'callRef', type: 'string', required: true, hint: 'The interaction-call source key to summarize.' },
+          { name: 'organizationId', type: 'string', required: false, hint: 'Voce 5c9e006a: the caller organization, threaded by the route — never the body.' },
         ],
         create(runtime) {
           const ops = callOperations(runtime);
