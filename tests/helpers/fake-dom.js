@@ -14,19 +14,6 @@ class FakeNode {
     this.value = '';
     this.checked = false;
     this.disabled = false;
-    // backlog:b545aca18b8f: minimal CSSOM stand-in so tests can assert
-    // badge colors set via style.setProperty without an inline style attr.
-    const props = new Map();
-    this.style = {
-      setProperty: (name, value) => { props.set(String(name), String(value)); },
-      getPropertyValue: (name) => props.get(String(name)) ?? '',
-      removeProperty: (name) => { props.delete(String(name)); },
-    };
-    Object.defineProperty(this.style, 'background', {
-      get: () => props.get('background') ?? '',
-      set: (value) => { props.set('background', String(value)); },
-      enumerable: true,
-    });
     this.classList = {
       _set: new Set(),
       add: (c) => this.classList._set.add(c),

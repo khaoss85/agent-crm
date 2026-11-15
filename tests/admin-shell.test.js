@@ -25,7 +25,8 @@ import {
   resolveSpaceShortcut,
   spaceInitialsFor,
   spaceBadgeColor,
-  paintSpaceBadge,
+  spaceBadgeClass,
+  spaceBadgeHue,
   spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
@@ -319,15 +320,31 @@ test('backlog:ecb26347d12c — the «Cambia spazio» button names only the short
   const rowBadges = badges.slice(1).map((badge) => badge.textContent);
   assert.notEqual(rowBadges[0], rowBadges[1]);
   assert.equal(badges[0].textContent, rowBadges[0]);
-  // backlog:b545aca18b8f: the pilot CSP rejects inline `style=""`, so the
-  // color travels via CSSOM (style.setProperty), never as a style attribute.
+  // backlog:b545aca18b8f: the color lives in the stylesheet class, never
+  // in an inline style, so a pilot CSP refusing inline styles cannot
+  // strip it. Each badge names its hue class AND the stylesheet maps that
+  // class to the same hsl the helper computes.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
-  const colors = badges.map((badge) => badge.style.getPropertyValue('background'));
-  assert.ok(colors.every((color) => typeof color === 'string' && color.includes('hsl(')), 'every badge carries its space color');
-  assert.ok(new Set(colors).size > 1, 'the two spaces have different colors');
+  const hues = badges.map((badge) => {
+    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
+    assert.ok(cls, 'badge carries its hue class');
+    return Number(cls.slice('bo-space-badge--h'.length));
+  });
+  assert.ok(new Set(hues).size > 1, 'the two spaces have different colors');
+  for (const hue of hues) {
+    assert.ok(
+      css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
+      `stylesheet maps hue ${hue} to the helper color`,
+    );
+  }
 });
 
 test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color without inline style', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // Empty or missing lists never reach the renderers: the constructor
+  // normalizes to the single local space, and setSpaces ignores empties —
+  // those are the load-bearing invariants, so the test pins them.
   for (const spaces of [[], null, undefined]) {
     const { sidebar, topbar } = renderShell({ spaces });
     const text = sidebar.textContent;
@@ -337,15 +354,34 @@ test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color w
       .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
     assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
     for (const badge of badges) {
-      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP rejects style="")');
-      assert.match(badge.style.getPropertyValue('background'), /hsl\(/, 'color travels via CSSOM');
+      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP refuses inline styles)');
+      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--h'));
+      assert.ok(cls, 'fallback badge carries its hue class');
+      const hue = Number(cls.slice('bo-space-badge--h'.length));
+      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space hue');
+      assert.ok(
+        css.includes(`.bo-space-badge--h${hue} { background-color: hsl(${hue} 45% 42%); }`),
+        'stylesheet maps the fallback hue to the helper color',
+      );
     }
   }
-  const doc = createFakeDocument();
-  const mount = createMount();
-  paintSpaceBadge(mount, 'hsl(10 45% 42%)');
-  assert.equal(mount.getAttribute('style'), null, 'helper never writes a style attribute');
-  assert.equal(mount.style.getPropertyValue('background'), 'hsl(10 45% 42%)');
+  // The class and the color string always agree on the hue.
+  for (const id of ['locale', 'aurora', 'presti-group', '']) {
+    assert.equal(spaceBadgeClass(id), `bo-space-badge--h${spaceBadgeHue(id)}`);
+    assert.equal(spaceBadgeColor(id), `hsl(${spaceBadgeHue(id)} 45% 42%)`);
+  }
+});
+
+test('backlog:b545aca18b8f — setSpaces ignores an empty list and keeps the open space', () => {
+  const { sidebar, view } = renderShell();
+  assert.ok(sidebar.textContent.includes('Studio Aurora'));
+  view.setSpaces([], 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'empty setSpaces keeps the previous spaces');
+  view.setSpaces(null, 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'null setSpaces keeps the previous spaces');
+  view.setSpaces([{ id: 'verde', name: 'Casa Verde', initials: 'CV' }], 'verde');
+  assert.ok(sidebar.textContent.includes('Casa Verde'), 'a real list still replaces the spaces');
+  assert.ok(!sidebar.textContent.includes('Studio Aurora'), 'the old space leaves the switcher');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
