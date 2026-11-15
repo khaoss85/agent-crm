@@ -628,8 +628,9 @@ test('c2bf6b206d96: Oggi reads «Da rispondere» from the Clienti server view �
   let prevented = false;
   all.dispatch('click', { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
-  assert.deepEqual(seen, ['#/customer-data']);
-  assert.equal(takePendingClientiView(storage), 'da-rispondere', 'Clienti opens on Da rispondere, once');
+  assert.equal(all.getAttribute('href'), '#/customer-data?vista=da-rispondere', 'the link saves and shares the view');
+  assert.deepEqual(seen, ['#/customer-data?vista=da-rispondere'], 'Clienti opens on Da rispondere, on the address');
+  assert.equal(takePendingClientiView(storage), 'da-rispondere', 'the handoff stays as the fallback');
   assert.equal(takePendingClientiView(storage), null);
   // «Da leggere» stays its own number, named apart, one click from Clienti.
   const unread = section.querySelector('a[data-action="inbox-unread"]');

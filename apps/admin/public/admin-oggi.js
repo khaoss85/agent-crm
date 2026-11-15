@@ -37,7 +37,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
 import { messagePreview } from './admin-message-preview.js';
-import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
+import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -2274,7 +2274,7 @@ export function renderOggi({
       const note = el(doc, 'p', 'bo-muted', 'Non riesco a contare tutti i messaggi da rispondere qui. ');
       if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
         const all = el(doc, 'a', 'bo-oggi-more', 'Guardali in Clienti →');
-        all.setAttribute('href', '#/customer-data');
+        all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
         all.setAttribute('data-action', 'inbox-all');
         all.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2292,7 +2292,7 @@ export function renderOggi({
       note.appendChild(el(doc, 'span', null, 'Nessun messaggio aspetta una risposta, ma '));
       if (typeof events.openClientiView === 'function') {
         const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadWaiting} da leggere in Clienti →`);
-        unreadLink.setAttribute('href', '#/customer-data');
+        unreadLink.setAttribute('href', clientiViewHash(UNREAD_VIEW));
         unreadLink.setAttribute('data-action', 'inbox-unread');
         unreadLink.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2317,7 +2317,7 @@ export function renderOggi({
         const more = el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} più recenti su ${home.inbox.totalIsExact === false ? 'almeno ' : ''}${waitingCount}. `);
         if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
           const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutte →');
-          all.setAttribute('href', '#/customer-data');
+          all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
           all.setAttribute('data-action', 'inbox-all');
           all.addEventListener('click', (event) => {
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2333,7 +2333,7 @@ export function renderOggi({
     const unread = home.inbox.available === false ? null : home.inbox.unread;
     if (!unreadLinked && Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
       const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
-      line.setAttribute('href', '#/customer-data');
+      line.setAttribute('href', clientiViewHash(UNREAD_VIEW));
       line.setAttribute('data-action', 'inbox-unread');
       line.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2735,12 +2735,14 @@ export function createOggiView(deps) {
   let notificationsOpen = false;
   /**
    * backlog:c2bf6b206d96: «Vedi tutte» and «N da leggere» open Clienti on
-   * that view, through the same one-time handoff as the calendar event.
+   * that view. backlog:7cf5c4931cfc: the view travels in the address
+   * (`#/customer-data?vista=...`), so the link saves and reopens it; the
+   * one-time handoff stays as the fallback when the query is lost.
    * @param {string} view
    */
   function openClientiView(view) {
     writePendingClientiView(deps.storage ?? null, view);
-    navigate('#/customer-data');
+    navigate(clientiViewHash(view));
   }
   /**
    * backlog:bd5e84545021: an appointment with no scheda opens in the

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { takePendingClientiView } from './admin-prefill.js';
+import { hashWithVista, takePendingClientiView, vistaOfHash } from './admin-prefill.js';
 import { elFor, uiAddOption, uiIcon } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { CLIENTI_NUOVO_ROUTE } from './admin-cliente-nuovo.js'; // backlog:273de560: manual entry opens the form.
 
@@ -161,6 +161,8 @@ export function pageNumbers(pages, page) {
  *   onAskAi?: ((question: string) => void) | null,
  *   onManualAdd?: (() => void) | null, storage?: any, schedule?: any,
  *   searchDelayMs?: number, searchSchedule?: (fn: () => void, ms: number) => any,
+ *   routeHash?: string | (() => (string | null | undefined)) | null,
+ *   replaceHash?: ((hash: string) => void) | null,
  *   onTotal?: ((total: {count: number, exact: boolean}) => void) | null}} deps
  */
 export function createCustomerListView(deps) {
@@ -174,6 +176,25 @@ export function createCustomerListView(deps) {
     return typeof raw === 'string' && raw !== '' ? raw : null;
   };
   const store = deps.storage ?? null;
+  // backlog:7cf5c4931cfc: the view lives in the address
+  // (`#/customer-data?vista=...`), so a reload reopens it. Read late: the
+  // hash at route entry wins over the one-time handoff, which stays as the
+  // fallback when the query is lost. Never the window directly — injected
+  // for tests.
+  const currentRouteHash = () => {
+    const raw = typeof deps.routeHash === 'function' ? deps.routeHash() : deps.routeHash;
+    return typeof raw === 'string' && raw !== '' ? raw : null;
+  };
+  const replaceRouteHash = typeof deps.replaceHash === 'function' ? deps.replaceHash : null;
+  /** Keep the address on the open view after a view tap, without re-routing. */
+  function syncViewAddress() {
+    if (replaceRouteHash === null) return;
+    try {
+      replaceRouteHash(hashWithVista(currentRouteHash() ?? '#/customer-data', state.vista));
+    } catch {
+      // The list already shows the view; the address stays as it was.
+    }
+  }
 
   const el = elFor(doc); // BO-F6-02: shared element builder.
   const link = (href, text, action) => {
@@ -282,11 +303,21 @@ export function createCustomerListView(deps) {
     searchSeq += 1;
     // backlog:c2bf6b206d96: Oggi's «Vedi tutte» opens the list on a view —
     // the view alone, never a search or filter left from an earlier visit
-    // (review Muse #795).
-    const askedView = takePendingClientiView(store);
-    if (askedView !== null) {
+    // (review Muse #795). backlog:7cf5c4931cfc: the address names the view,
+    // so a reload reopens it; the handoff is taken (cleared) either way and
+    // only applies when the address names none. Every hash-driven entry
+    // resets (review #935 giro 1 P1: same-view Oggi entry must clear too);
+    // only a hash naming no view keeps the search and filters
+    // (backlog:2067a415405c: back from a scheda).
+    const pendingView = takePendingClientiView(store);
+    const hashView = vistaOfHash(currentRouteHash());
+    if (hashView !== null) {
       Object.assign(state, {
-        vista: askedView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+        vista: hashView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
+      });
+    } else if (pendingView !== null && pendingView !== state.vista) {
+      Object.assign(state, {
+        vista: pendingView, q: '', canale: 'all', stato: 'all', campo: '', valore: '', sort: 'recent', page: 1,
       });
     }
     // backlog:2067a415405c: coming back to Clienti (e.g. Indietro from a
@@ -711,6 +742,7 @@ export function createCustomerListView(deps) {
       button.addEventListener('click', () => {
         if (state.vista === view.id) return;
         state.vista = view.id;
+        syncViewAddress();
         reload();
       });
       viewsRow.appendChild(button);
@@ -1055,7 +1087,8 @@ export function createCustomerListView(deps) {
       }
       statusLine.textContent = total === 0
         ? (excluding.length === 0
-          ? (inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
+          ? (state.vista === AWAITING_VIEW ? 'Nessuno aspetta una risposta.'
+            : inView === '' ? 'Nessun cliente ancora.' : `Nessun cliente${inView}.`)
           : (`Nessun cliente${inView} con ${excluding.join(', ')}.`
             + (state.q !== '' ? ' Prova con un nome, una città o un canale.' : '')))
         : '';
