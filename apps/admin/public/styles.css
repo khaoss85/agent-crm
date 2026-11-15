@@ -466,7 +466,7 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-status-pending_approval { background: var(--pending-soft); color: var(--pending-ink); }
 .quote-status-rejected { background: var(--human-soft); color: var(--human-ink); }
 .bo-quote-hero-total { display: flex; flex-direction: column; align-items: flex-end; text-align: right; flex: none; }
-.bo-quote-amount { font-size: 40px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-quote-amount { font-size: 40px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bo-quote-amount-note { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 .bo-quote .quote-lines { margin-top: 18px; }
 .bo-quote .quote-lines h3, .bo-quote .quote-versions h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); width: auto; }
@@ -474,7 +474,7 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-quote .quote-line-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name amount" "meta amount"; column-gap: 16px; align-items: center; }
 .bo-quote .quote-line-name { grid-area: name; font-size: 15.5px; font-weight: 700; color: var(--ink); }
 .bo-quote .quote-line-meta { grid-area: meta; font-size: 12.5px; color: var(--muted); }
-.bo-quote .quote-line-amount { grid-area: amount; font-size: 16px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-quote .quote-line-amount { grid-area: amount; font-size: 16px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bo-quote .quote-components { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--line-soft); }
 .bo-quote .quote-components[hidden] { display: none; }
 .bo-quote .quote-component, .bo-quote .quote-tier { margin: 2px 0; font-size: 12.5px; color: var(--muted); }
@@ -484,7 +484,7 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-quote .quote-total-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 6px 0; font-size: 14px; }
 .bo-quote .quote-total-label { color: var(--ink); font-weight: 600; }
 .bo-quote .quote-total-value { text-align: right; font-variant-numeric: tabular-nums; }
-.bo-quote .quote-total-value strong { font-size: 18px; }
+.bo-quote .quote-total-value strong { font-size: 18px; white-space: nowrap; }
 .bo-quote .quote-total-detail { display: block; font-size: 12px; color: var(--muted); }
 .bo-quote .quote-totals-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--dim); }
 .bo-quote-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }

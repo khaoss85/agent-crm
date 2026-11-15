@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -141,7 +141,9 @@ export function createQuoteView(deps) {
   const clear = () => {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   };
-  const money = (cents, currency) => formatAmount(cents, currency);
+  // backlog:cf270ae1f808: lo spazio tra numero e simbolo resta con il numero:
+  // il primo spazio di formatAmount diventa non separabile, solo qui.
+  const money = (cents, currency) => formatAmount(cents, currency).replace(' ', ' ');
   /** A discount field in percent (backlog:a2ea75f705fd). @param {string} value */
   const percentInput = (value) => {
     const input = el('input');
@@ -288,19 +290,35 @@ export function createQuoteView(deps) {
     let quotes;
     /** Best-effort offer names for the «offerta collegata» line, like readOffer's list fallback. */
     let offerNames = null;
+    /** backlog:cf270ae1f808: the same payload also names the customer, so the
+     * list shows cliente without another read. */
+    let offerCustomers = null;
     try {
-      schema = await client.request('/api/schema');
-      quotes = await fetchRows('quote');
+      // backlog:d56122ee2844: le tre letture partono insieme, come nella
+      // pagina offerta — lo schema decide solo se usarne la risposta.
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      const quotesRead = fetchRows('quote');
+      quotesRead.catch(() => {});
+      const offersRead = client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
+      offersRead.catch(() => {});
+      schema = await schemaRead;
+      quotes = await quotesRead;
       try {
-        const offers = await client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
+        const offers = await offersRead;
         offerNames = new Map();
+        offerCustomers = new Map();
         for (const offer of offers?.items ?? []) {
           if (offer !== null && typeof offer === 'object' && typeof offer.id === 'string' && offer.id !== '') {
             offerNames.set(offer.id, typeof offer.name === 'string' && offer.name.trim() !== '' ? offer.name : null);
+            const who = typeof offer.contactName === 'string' && offer.contactName.trim() !== '' ? offer.contactName.trim()
+              : (typeof offer.companyName === 'string' && offer.companyName.trim() !== '' ? offer.companyName.trim() : null);
+            offerCustomers.set(offer.id, who);
           }
         }
       } catch {
         offerNames = null;
+        offerCustomers = null;
       }
     } catch (error) {
       if (token !== renderToken) return;
@@ -337,7 +355,16 @@ export function createQuoteView(deps) {
         quoteTotalSummary(parseTotals(quote.totalsJson), quote.currency)));
       head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}`, 'Apri il preventivo', 'offer-quote-open'));
       row.appendChild(head);
+      // backlog:cf270ae1f808: ogni riga dice cliente e data, oltre a stato
+      // e importo — il cliente arriva dal carico delle offerte, la data dal
+      // record; niente letture in più, niente date inventate.
       const opportunityId = typeof quote.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
+      const facts = [];
+      const customer = opportunityId !== null && offerCustomers !== null ? offerCustomers.get(opportunityId) ?? null : null;
+      if (typeof customer === 'string' && customer !== '') facts.push(`Cliente: ${customer}`);
+      const when = italianDay(quote.createdAt);
+      if (when !== null) facts.push(when);
+      if (facts.length > 0) row.appendChild(el('p', 'bo-muted', facts.join(' · ')));
       if (opportunityId !== null && offerNames !== null) {
         const line = el('p', 'bo-muted');
         line.appendChild(el('span', undefined, 'Offerta: '));
@@ -356,41 +383,121 @@ export function createQuoteView(deps) {
     mount.appendChild(page);
   }
 
+  /**
+   * backlog:d56122ee2844 (cura d8175e1c3495 della pagina offerta, riusata):
+   * la pagina mostra subito la sua struttura — testata, voci, totale,
+   * colonna con aggiunta riga e storico — a barre grigie, occupata per le
+   * tecnologie assistive con una sola frase; il contenuto vero la
+   * sostituisce tutta, un errore la sostituisce con la frase onesta.
+   */
+  function quoteSkeleton() {
+    const page = el('div', 'bo-quote bo-quote-skeleton');
+    page.setAttribute('aria-busy', 'true');
+    page.setAttribute('data-quote-skeleton', 'true');
+    const spoken = el('p', 'sr-only', 'Carico il preventivo…');
+    spoken.setAttribute('role', 'status');
+    page.appendChild(spoken);
+    const sheet = el('article', 'bo-quote-sheet');
+    const hero = el('header', 'bo-quote-hero');
+    const words = el('div', 'bo-quote-hero-words');
+    words.appendChild(el('p', 'bo-quote-kicker', 'Preventivo'));
+    words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+    words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    hero.appendChild(words);
+    const total = el('div', 'bo-quote-hero-total');
+    total.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    hero.appendChild(total);
+    sheet.appendChild(hero);
+    const linesCard = el('div', 'quote-lines');
+    linesCard.appendChild(el('h3', undefined, 'Cosa include'));
+    for (const width of ['72%', '54%']) linesCard.appendChild(uiSkeleton(doc, { width, block: true }));
+    sheet.appendChild(linesCard);
+    const totalsCard = el('div', 'quote-totals');
+    totalsCard.appendChild(el('h3', undefined, 'Totale'));
+    totalsCard.appendChild(uiSkeleton(doc, { width: '64%', block: true }));
+    sheet.appendChild(totalsCard);
+    page.appendChild(sheet);
+    const side = el('aside', 'bo-quote-side');
+    for (const [cls, title] of [['quote-add-line', 'Aggiungi riga'], ['quote-versions', 'Storico']]) {
+      const card = el('div', cls);
+      card.appendChild(el('h3', undefined, title));
+      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
+      side.appendChild(card);
+    }
+    page.appendChild(side);
+    return page;
+  }
+
   async function renderQuoteDetail(quoteId) {
     const token = ++renderToken;
-    clear();
-    const heading = el('h2', 'panel-title', 'Preventivo');
-    mount.appendChild(heading);
-    const status = el('p', 'muted', 'Caricamento…');
-    mount.appendChild(status);
+    // backlog:d56122ee2844: dopo una scrittura la pagina resta visibile —
+    // la vecchia pittura resta finché i nuovi dati non arrivano, e solo la
+    // prima pittura mostra lo scheletro. Mai più una pagina bianca.
+    const firstPaint = mount.childNodes.length === 0;
+    if (firstPaint) {
+      clear();
+      const heading = el('h2', 'panel-title', 'Preventivo');
+      mount.appendChild(heading);
+      mount.appendChild(quoteSkeleton());
+    }
     let schema;
     let quote;
     let lines;
     let entries;
     let versions;
+    let backLinkResolved;
     try {
-      schema = await client.request('/api/schema');
-      quote = await client.request(`/api/modules/quote/records/${encodeURIComponent(quoteId)}`);
-      lines = (await fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false)).rows
-        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      entries = (await fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true)).rows;
-      versions = (await fetchRows('quote-version', (version) => version.quoteId === quote.id)).rows
-        .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      // backlog:d56122ee2844 (come la pagina offerta d8175e1c3495): ogni
+      // lettura parte insieme — schema e preventivo prima, poi righe,
+      // pacchetti, versioni e rimando alla scheda insieme.
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      const quoteRead = client.request(`/api/modules/quote/records/${encodeURIComponent(quoteId)}`);
+      quoteRead.catch(() => {});
+      schema = await schemaRead;
+      quote = await quoteRead;
+      const restRead = Promise.all([
+        fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false),
+        fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true),
+        fetchRows('quote-version', (version) => version.quoteId === quote.id),
+        resolveCardBackLink(quote),
+      ]);
+      restRead.catch(() => {});
+      const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
+      lines = lineAnswer.rows.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      entries = entryAnswer.rows;
+      versions = versionAnswer.rows.sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      backLinkResolved = backLink;
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+      if (firstPaint) {
+        clear();
+        mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' })));
+      } else {
+        // La pittura vecchia resta: l'errore va sulla riga esistente.
+        const errorLine = mount.querySelector ? mount.querySelector('.field-error') : null;
+        if (errorLine) errorLine.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+      }
       return;
     }
     if (token !== renderToken) return;
-    status.textContent = '';
+    clear();
+    const heading = el('h2', 'panel-title', 'Preventivo');
+    mount.appendChild(heading);
+    const status = el('p', 'muted', '');
+    mount.appendChild(status);
 
     // Voce cf340b571e98: the way back to the scheda paints above the heading.
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
-    // and the test double, never a copy).
-    const { back, offer = null, opportunityName, customerName } = await resolveCardBackLink(quote);
+    // and the test double, never a copy). Il rimando è già arrivato con le
+    // altre letture (backlog:d56122ee2844): qui si usa, non si rilegge.
+    const { back, offer = null, opportunityName, customerName } = backLinkResolved;
     if (token !== renderToken) return;
-    if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
+    // backlog:cf270ae1f808: il titolo porta il cliente quando si conosce,
+    // altrimenti l'offerta, mai un «Preventivo» senza nome.
+    const titleName = customerName ?? opportunityName;
+    if (titleName !== null) heading.textContent = `Preventivo · ${titleName}`;
     if (back !== null || offer !== null) {
       mount.removeChild(heading);
       mount.removeChild(status);
@@ -416,7 +523,7 @@ export function createQuoteView(deps) {
     heroWords.appendChild(el('p', 'bo-quote-kicker', issuer !== '' ? `Preventivo · ${issuer}` : 'Preventivo'));
     mount.removeChild(heading);
     heading.setAttribute('class', 'bo-quote-title');
-    heading.textContent = opportunityName ?? 'Preventivo';
+    heading.textContent = titleName !== null ? `Preventivo · ${titleName}` : 'Preventivo';
     heroWords.appendChild(heading);
     const meta = el('p', 'bo-quote-meta');
     if (customerName !== null) meta.appendChild(el('span', 'bo-quote-for', `Per ${customerName}`));
@@ -511,14 +618,19 @@ export function createQuoteView(deps) {
       const lineDiscount = (line.discountBps ?? 0) > 0
         ? ` · sconto ${((line.discountBps ?? 0) / 100).toFixed(2).replace('.', ',')}%${Number.isSafeInteger(line.discountAmountCents) && line.discountAmountCents > 0 ? ` (−${money(line.discountAmountCents, quote.currency)})` : ''}`
         : '';
-      const head = el('span', 'quote-line-head');
-      head.appendChild(el('span', 'quote-line-name', line.offerName));
-      head.appendChild(el('span', 'quote-line-meta', `Quantità ${line.quantity}${lineDiscount}`));
-      head.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
-      row.appendChild(head);
       // The price components only for a composite offer or a tiered one: a
       // single fixed price repeated the line above word for word.
       const breakdown = parseBreakdown(line.breakdownJson);
+      // backlog:b9b7912320f8: una riga di sole quote fisse non ha una
+      // quantità che cambia il prezzo (ADR-016: la quota fissa si addebita
+      // una volta per riga) — si legge «Quota fissa», mai «Quantità 2».
+      const flatOnly = breakdown.length > 0 && breakdown.every((component) =>
+        component?.pricingModel === 'flat_fee' && (component.tierBreakdown ?? []).length === 0);
+      const head = el('span', 'quote-line-head');
+      head.appendChild(el('span', 'quote-line-name', line.offerName));
+      head.appendChild(el('span', 'quote-line-meta', flatOnly ? `Quota fissa${lineDiscount}` : `Quantità ${line.quantity}${lineDiscount}`));
+      head.appendChild(el('span', 'quote-line-amount', money(line.netAmountCents, quote.currency)));
+      row.appendChild(head);
       const componentList = el('div', 'quote-components');
       if (breakdown.length <= 1 && !(breakdown[0]?.tierBreakdown ?? []).length) componentList.setAttribute('hidden', '');
       for (const component of breakdown) {
@@ -542,6 +654,12 @@ export function createQuoteView(deps) {
         const quantityInput = el('input');
         quantityInput.setAttribute('type', 'number');
         quantityInput.value = String(line.quantity);
+        // backlog:b9b7912320f8: la quantità di una quota fissa non si tocca:
+        // il campo resta visibile ma bloccato, con la spiegazione.
+        if (flatOnly) {
+          quantityInput.disabled = true;
+          quantityInput.setAttribute('title', 'Quota fissa: la quantità non cambia il prezzo');
+        }
         const discountInput = percentInput(bpsToPercentText(line.discountBps ?? 0));
         const updateButton = el('button', undefined, 'Aggiorna');
         const removeButton = el('button', undefined, 'Rimuovi');
@@ -558,6 +676,7 @@ export function createQuoteView(deps) {
         }))));
         const edit = el('div', 'quote-line-edit');
         edit.appendChild(labelled('Quantità', quantityInput));
+        if (flatOnly) edit.appendChild(el('small', 'muted', 'Quota fissa: la quantità non cambia il prezzo.'));
         edit.appendChild(labelled('Sconto (%)', discountInput));
         edit.appendChild(updateButton);
         edit.appendChild(removeButton);
