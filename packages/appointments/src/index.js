@@ -252,7 +252,10 @@ export function createAppointmentsPackage(options = {}) {
     // series key and its index), every occurrence conflict-checked before
     // the first write. Additive: server seam only for holds (no caller input
     // carries blocks) and singles book exactly as before.
-    version: 5,
+    // 6 (backlog:0f2ae629e09b): series guards — empty series refused (400),
+    // public link books singles only (normalized rule), count+until refused.
+    // Additive: booking contract and reads untouched.
+    version: 6,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
