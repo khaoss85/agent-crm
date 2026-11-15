@@ -405,13 +405,15 @@ test('a762c28a646c: without a known name the header stays grey until the card la
 });
 
 // backlog:a060a4aa65b6 (verifica 14/11: «Carico offerte e cambi di stato…»
-// for 3,0-4,1 s from «Per <cliente>»): the roster needs nothing and the
-// offer the person came from is known — both leave behind card and
-// timeline, before the profile.
+// for 3,0-4,1 s from «Per <cliente>»): the roster needs nothing, so it
+// leaves behind card and timeline, before the profile.
 // Review Muse #887 giro 2 (P1): card and timeline keep the first wave to
-// themselves; the roster and the known offer's history leave the moment it
-// ends — ahead of the profile, never waiting for it.
-test('a060a4aa65b6: from an offer, the team and that offer’s history leave right after the first wave, before the profile ends', async () => {
+// themselves; the roster leaves the moment it ends — ahead of the
+// profile, never waiting for it.
+// Voce 4970ba6a2e96 (review Muse giro 2 di #887, P3): the remembered
+// offer is never read ahead — the profile names the shown offer and its
+// history is read once at its paint.
+test('a060a4aa65b6: from an offer, the team leaves right after the first wave; the shown offer’s history is read once the profile lands', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = deferredClient();
@@ -428,8 +430,7 @@ test('a060a4aa65b6: from an offer, the team and that offer’s history leave rig
   const profileAt = order.findIndex((path) => path.startsWith('/api/customer-data/profile/'));
   assert.ok(profileAt > 0, 'the profile is asked');
   assert.ok(order.indexOf('/api/spine/memberships') > -1 && order.indexOf('/api/spine/memberships') < profileAt, 'the roster ahead of the profile');
-  const auditAt = client.reads.findIndex((path) => path.startsWith('/api/audit') && path.includes('entityId=o1'));
-  assert.ok(auditAt > -1 && auditAt < profileAt, 'the offer history ahead of the profile, while the profile still reads');
+  assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no history is guessed before the profile names the offer');
   client.gates.get('roster').release.resolve({ items: [] });
   client.gates.get('audit').release.resolve({ items: [MOVE] });
   client.gates.get('card').release.resolve(CARD);
@@ -453,4 +454,33 @@ test('a060a4aa65b6: without a known offer no history is guessed; the roster stil
   await flush(3);
   assert.ok(!client.reads.some((path) => path.startsWith('/api/audit')), 'no guess at which offer');
   assert.ok(client.reads.includes('/api/spine/memberships'));
+});
+
+// Voce 4970ba6a2e96 (review Muse giro 2 di #887, P3): the scheda fired an
+// early audit read for the remembered source offer and then read the
+// history again for the offer the profile names — two audit reads when the
+// remembered offer is not the shown one. One shown offer, one audit read.
+test('4970ba6a2e96: a remembered offer that differs from the profile offer reads the audit once, for the shown offer', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = deferredClient();
+  const names = createKnownNames({ space: () => null });
+  names.rememberOffer('contact', 'c-ada', 'o-old');
+  const view = createCustomerCardView({ doc, mount, client, knownNames: names });
+  const shown = view.renderCard('contact', 'c-ada');
+  await flush(3);
+  client.gates.get('card').release.resolve(CARD);
+  client.gates.get('timeline').release.resolve(TIMELINE);
+  await flush(3);
+  // The profile names another offer than the remembered one.
+  client.gates.get('profile').release.resolve(OFFER_PROFILE);
+  await flush(3);
+  client.gates.get('roster').release.resolve({ items: [] });
+  client.gates.get('audit').release.resolve({ items: [MOVE] });
+  await shown;
+  await flush();
+  const audits = client.reads.filter((path) => path.startsWith('/api/audit'));
+  assert.equal(audits.length, 1, `one audit read, not one per offer (got ${audits.length}: ${audits.join(', ')})`);
+  assert.ok(audits[0].includes('entityId=o1'), 'the single read is for the shown offer');
+  assert.ok(!audits.some((path) => path.includes('entityId=o-old')), 'never for the remembered one');
 });
