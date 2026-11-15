@@ -3717,7 +3717,11 @@ export function createCalendarioView(deps) {
       scope = row?.seriesKey ? (state.cancelScope ?? 'single') : null;
       if (scope !== null) body.scope = scope;
       // backlog:6acf0a73bfc3 — the space gates the Google scoped converge.
-      body.spaceId = readSpace();
+      // It rides only when the view names one (like the search switch): an
+      // empty space keeps the historic body, and the server asks for the
+      // space only on a calendar-linked cancel.
+      const cancelSpace = readSpace();
+      if (cancelSpace) body.spaceId = cancelSpace;
       await client.request('/api/appointments/cancel', { method: 'POST', body });
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
