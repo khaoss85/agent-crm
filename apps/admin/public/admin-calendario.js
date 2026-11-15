@@ -2842,8 +2842,8 @@ export function createCalendarioView(deps) {
       // backlog:667f1f1c: a stretch pulls the block itself, never a second
       // block under the preview — the origin node takes the target range
       // live, time label included (review P2), so the operator never aims
-      // blind. Compact blocks (<45 min) keep their start-only line, which a
-      // resize never changes.
+      // blind. Compact blocks (<45 min) rewrite their single line with the
+      // live interval, which only they render (giro 3 P1).
       const origin = paintedEvents.get(String(drag.row?.id ?? ''));
       if (origin && typeof origin.setAttribute === 'function') {
         const current = String(origin.getAttribute?.('style') ?? '');
@@ -2851,6 +2851,8 @@ export function createCalendarioView(deps) {
         origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
         const timeLabel = origin.querySelector?.('.cal-time') ?? null;
         if (timeLabel) timeLabel.textContent = `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+        const compactLabel = origin.querySelector?.('.cal-compact') ?? null;
+        if (compactLabel) compactLabel.textContent = `${titleOf(drag.row)}, ${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
       }
       return;
     }

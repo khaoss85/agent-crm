@@ -540,6 +540,29 @@ test('backlog:667f1f1c (review P2): the stretch preview names the target end bef
   await settle(15);
 });
 
+test('backlog:667f1f1c (giro 3 P1): a short-block stretch rewrites the compact line live', async () => {
+  // A 30-min block (<45 min) renders no .cal-time, only the compact single
+  // line «Titolo, 14:00»: the live preview must still name the target end.
+  const { mount, col } = await openPointerWeek({ endsAt: '2026-10-22T12:30:00.000Z' });
+  const { handle } = resizeHandleOf(mount);
+  const compactOf = () => eventButton(mount, 'a9').findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-compact'));
+  const before = compactOf();
+  assert.ok(before, 'the short block renders its compact line');
+  assert.equal(before.textContent, 'Taglio · Bea, 14:00', 'the compact line starts start-only');
+  assert.equal(
+    eventButton(mount, 'a9').findAll('span')
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-time')).length,
+    0,
+    'a short block renders no .cal-time to update',
+  );
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  assert.equal(compactOf().textContent, 'Taglio · Bea, 14:00–15:45', 'the preview names the live end on the compact line');
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
 test('backlog:667f1f1c (review P1): cancelling a live stretch repaints the origin block', async () => {
   const { mount, client, col } = await openPointerWeek();
   const { handle } = resizeHandleOf(mount);
