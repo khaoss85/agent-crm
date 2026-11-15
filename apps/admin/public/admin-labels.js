@@ -713,79 +713,15 @@ export function offerCreatorLabel(items, record, people = [], limit = OFFER_AUDI
 }
 
 // ---------------------------------------------------------------------------
-// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
-// screen names in Italian, from one place. Every view that writes money, a
-// count or a module name reads it here, so a fix lands on every screen.
-// Dates: italianDateTime above («7 nov, 14:30»), italianDay in admin-core
-// («20 nov 2026») and romeDayPhrase in admin-oggi («di domani», «del 12
-// novembre», agent-crm#746) — never a raw ISO stamp on screen.
+// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): counts and screen names
+// in Italian, from one place. Money is NOT here: every view that writes
+// money reads the single display helper formatAmount in admin-core.js
+// («1.080 €», cents only when non-zero — backlog:93e26f3d2cdc), so a fix
+// lands on every screen. Dates: italianDateTime above («7 nov, 14:30»),
+// italianDay in admin-core («20 nov 2026») and romeDayPhrase in admin-oggi
+// («di domani», «del 12 novembre», agent-crm#746) — never a raw ISO stamp
+// on screen.
 // ---------------------------------------------------------------------------
-
-/** One formatter per currency code, built once. */
-const MONEY_FORMATS = new Map();
-
-/**
- * Money for the Italian screens, minor units (cents) in: «1.080,00 €»,
- * «26.000,00 €», «0,00 USD». `useGrouping: 'always'` is the point: it-IT
- * leaves four-digit numbers ungrouped by default, so Reporting read
- * «1080,00 €» (backlog:9236684c96a7). Null when the amount is not a whole
- * number of cents — never a guessed figure.
- * @param {unknown} minor amount in 1/100 units
- * @param {unknown} [currency] ISO 4217 code, EUR when missing
- * @returns {string | null}
- */
-export function euro(minor, currency = 'EUR') {
-  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
-  // null/undefined/'' are a missing code; any other non-string is malformed.
-  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : (currency == null ? '' : '?');
-  // Missing currency reads as EUR; a code that is malformed, unknown to
-  // this runtime or not formattable fails closed (review #761 P1): the
-  // grouped amount with no symbol, never a thrown error nor a presumed €.
-  const code = raw === '' ? 'EUR' : raw;
-  if (!isKnownCurrency(code)) return plainAmount(minor);
-  let format = MONEY_FORMATS.get(code);
-  if (format === undefined) {
-    try {
-      format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
-    } catch {
-      return plainAmount(minor);
-    }
-    MONEY_FORMATS.set(code, format);
-  }
-  return format.format(minor / 100);
-}
-
-/**
- * Whether a currency code is a well-formed ISO code this runtime lists
- * (Intl.supportedValuesOf when present; the shape alone on older ones).
- * @param {string} code
- */
-let KNOWN_CURRENCIES;
-function isKnownCurrency(code) {
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  if (KNOWN_CURRENCIES === undefined) {
-    try {
-      KNOWN_CURRENCIES = typeof Intl.supportedValuesOf === 'function' ? new Set(Intl.supportedValuesOf('currency')) : null;
-    } catch {
-      KNOWN_CURRENCIES = null;
-    }
-  }
-  return KNOWN_CURRENCIES === null || KNOWN_CURRENCIES.has(code);
-}
-
-/** Grouped amount with no currency symbol, built once. */
-const PLAIN_AMOUNT = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
-
-/**
- * An amount whose currency is not known, minor units in: «1.200,00», no
- * symbol — never a presumed € (review #761). Null when not whole cents.
- * @param {unknown} minor amount in 1/100 units
- * @returns {string | null}
- */
-export function plainAmount(minor) {
-  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
-  return PLAIN_AMOUNT.format(minor / 100);
-}
 
 /**
  * A count with its noun: «1 appuntamento», «3 appuntamenti», «0 righe».

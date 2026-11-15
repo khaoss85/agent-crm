@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -790,10 +790,12 @@ export function catalogBookingServices(payload) {
 
 /**
  * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
- * the name and the price as Italian money («Lezione di prova · 1,00 €»,
- * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
- * typing. A price that is not whole cents, or not in euros, reads as the
- * name alone.
+ * the name and the price as Italian money («Lezione di prova · 1 €»,
+ * «PT · 1.080 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. The single shared display helper (formatAmount in admin-core.js,
+ * backlog:93e26f3d2cdc): same «1.080» grouping as Clienti, Reporting,
+ * Pipeline and the scheda. A price that is not whole cents, or not in
+ * euros, reads as the name alone.
  * @param {{name: string, priceCents: number, currency?: string}} entry
  */
 export function serviceOptionLabel(entry) {
@@ -802,18 +804,7 @@ export function serviceOptionLabel(entry) {
   // The menu books euros only (catalogBookingServices keeps EUR singles):
   // any other or unknown currency reads as the name alone, never a throw.
   if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
-  return `${entry.name} · ${italianEuros(cents)}`;
-}
-
-/**
- * Italian money with the grouping pinned (review #813): «1.080,00 €», the
- * same thousands dot as the rest of the /bo, never left to the runtime's
- * locale data.
- * @param {number} cents
- */
-function italianEuros(cents) {
-  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
+  return `${entry.name} · ${formatAmount(cents, 'EUR')}`;
 }
 
 /**

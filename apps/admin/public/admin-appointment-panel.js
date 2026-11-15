@@ -12,7 +12,7 @@
 // involved: the window works the same with the AI switched off.
 
 import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
   BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
   formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
@@ -177,7 +177,7 @@ export function openAppointmentPanel(deps) {
     service.appendChild(first);
     for (const entry of services) {
       const price = formatPriceCents(entry.priceCents);
-      const option = el('option', undefined, price === null ? entry.name : `${entry.name} · ${price.replace('.', ',')} €`);
+      const option = el('option', undefined, price === null ? entry.name : `${entry.name} · ${formatAmount(entry.priceCents, 'EUR')}`);
       option.setAttribute('value', entry.key);
       service.appendChild(option);
     }
