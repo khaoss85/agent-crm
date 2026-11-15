@@ -254,6 +254,100 @@ test('the squad cap is counted in the overview', async () => {
   assert.equal(overview.metrics.overCap, true);
 });
 
+test('approval refuses when the squad already spent over its cap', async () => {
+  const { modules, ops } = compose();
+  await ops.createSquad({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'sq-cap-2',
+    spendingCapCents: 100,
+    plan: {
+      name: 'Squadra cara',
+      objective: 'Spende oltre il tetto.',
+      metric: { name: 'Cose', target: 1, unit: 'cose' },
+      members: [{ key: 'uno', name: 'Uno', role: 'Fa', instructions: 'Fa cose senza farle da solo.' }],
+      routines: [{ memberKey: 'uno', phrase: 'ogni giorno fai', plan: { cadence: 'daily', timeOfDay: '08:00' } }],
+      phases: [{ name: 'Solo', approval: 'none' }],
+    },
+  });
+  // The member is uncapped, so the sweep runs and the true cost lands on
+  // the ledger: spent 120c of 100c, overCap true.
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({ kind: 'artifact', costCents: 120, artifact: { done: true } }),
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: '2026-11-03T08:01:00.000Z',
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 5,
+      proposals: [{ action: 'draft-first-message', payload: { to: 'lead-2' } }],
+    }),
+  });
+  const overview = await ops.readSquadOverview({ spaceId: SPACE, squadSourceKey: 'sq-cap-2' });
+  assert.equal(overview.metrics.overCap, true);
+  assert.equal(overview.backlogB.length, 1);
+  let applied = 0;
+  await assert.rejects(
+    () => ops.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: overview.backlogB[0].runSourceKey,
+      applyAction: async () => { applied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_SQUAD_OVER_CAP',
+  );
+  assert.equal(applied, 0, 'nothing is applied over the squad cap');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: overview.backlogB[0].runSourceKey });
+  assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: raise the cap and retry');
+});
+
+test('the engine seams carry no secret, key or ssh material', async () => {
+  const { ops } = compose();
+  await ops.createSquad({
+    actor: USER, spaceId: SPACE, sourceKey: 'sq-seam-1', templateSlug: 'lead-generation',
+  });
+  const forbidden = /(secret|ssh|token|password|api[-_]?key|private[-_]?key|credential)/i;
+  const clean = (value) => {
+    const encoded = JSON.stringify(value) ?? '';
+    assert.ok(!forbidden.test(encoded), `a seam payload must not carry secrets: ${encoded.slice(0, 200)}`);
+  };
+  let executed = 0;
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async (input) => {
+      assert.deepEqual(Object.keys(input).sort(), ['agent', 'assignment']);
+      clean(input);
+      executed += 1;
+      return {
+        kind: 'proposals',
+        costCents: 4,
+        proposals: [{ action: 'draft-first-message', payload: { to: 'lead-9' } }],
+      };
+    },
+  });
+  assert.equal(executed, 1);
+  const overview = await ops.readSquadOverview({ spaceId: SPACE, squadSourceKey: 'sq-seam-1' });
+  assert.equal(overview.backlogB.length, 1);
+  let applied = 0;
+  await ops.approveRun({
+    actor: USER,
+    spaceId: SPACE,
+    runSourceKey: overview.backlogB[0].runSourceKey,
+    applyAction: async (input) => {
+      assert.deepEqual(Object.keys(input).sort(), ['actor', 'idempotencyKey', 'proposal', 'runSourceKey', 'spaceId']);
+      clean(input);
+      applied += 1;
+      return { ok: true };
+    },
+  });
+  assert.equal(applied, 1);
+});
+
 test('an unknown squad refuses with SQUAD_UNKNOWN', async () => {
   const { ops } = compose();
   await assert.rejects(

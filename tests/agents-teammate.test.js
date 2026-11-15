@@ -284,6 +284,44 @@ test('the spending cap stops executions over the threshold and says so', async (
   assert.match(capped.note, /cap/i);
 });
 
+test('approval refuses when the agent already spent over its cap', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'custom-agent:tight', spendingCapCents: 1000 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-tight',
+    agentSourceKey: 'custom-agent:tight',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+    costPerRunCents: 10,
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals', costCents: 12, proposals: [{ action: 'draft-report', payload: { title: 'Report' } }],
+    }),
+  });
+  // The owner tightens the cap after the proposal: approving now would
+  // bless overspend (spent 12c of 10c).
+  await ops.updateAgent({ actor: USER, spaceId: SPACE, agentSourceKey: 'custom-agent:tight', spendingCapCents: 10 });
+  let applied = 0;
+  await assert.rejects(
+    () => ops.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: 'run:as-tight:2026-11-02T08:00:00.000Z',
+      applyAction: async () => { applied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+  );
+  assert.equal(applied, 0, 'nothing is applied over the cap');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: 'run:as-tight:2026-11-02T08:00:00.000Z' });
+  assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: raise the cap and retry');
+});
+
 test('every execution is recorded with agent, assignment, cost and outcome', async () => {
   const { ops, modules } = compose();
   await makeAgent(ops, { sourceKey: 'ag-log', spendingCapCents: 1000 });
