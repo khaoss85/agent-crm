@@ -684,6 +684,14 @@ export function shapeCustomerRow(subject, reads = {}) {
     awaitingText: awaiting === null ? null : previewLastContactText(awaiting.text, awaiting.subject),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
+    // backlog:1adf95307b31: valute miste — i subtotali per valuta, ognuno con
+    // il suo codice; null quando la riga ha una sola valuta (o nessuna).
+    offerParts: Array.isArray(offer?.parts)
+      ? Object.freeze(offer.parts.map((part) => Object.freeze({
+        valueCents: Number.isSafeInteger(part?.valueCents) ? part.valueCents : null,
+        currency: typeof part?.currency === 'string' ? part.currency : null,
+      })))
+      : null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,
     renewalWithinDays: reads.renewalBySubject?.get(key) === true,
     budget: Object.freeze({

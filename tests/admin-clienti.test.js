@@ -1270,6 +1270,30 @@ test('backlog:5c2f8bc67859: «Valore offerta» reads «1.200 €», never «1200
   assert.ok(anna.textContent.endsWith('—'), 'a customer without offers reads a dash');
 });
 
+test('backlog:1adf95307b31: valute miste «1.000 € + 500 USD», solo vinte «—»', async () => {
+  const facts = (mount) => mount.findAll('p').filter((node) => node.getAttribute('data-column') === 'offerta');
+  const mixed = {
+    ...ROW_MARCO, id: 'c3', name: 'Leo Verdi',
+    offerValueCents: 150000, offerCurrency: null,
+    offerParts: [
+      { valueCents: 100000, currency: 'EUR' },
+      { valueCents: 50000, currency: 'USD' },
+    ],
+  };
+  const wonOnly = { ...ROW_ANNA, id: 'c4', name: 'Ada Rossi' };
+  const client = stubClient({
+    pages: [{
+      customerListContract: 1, items: [mixed, wonOnly],
+      total: 2, page: 1, pageSize: 10, pages: 1, totalIsExact: true,
+    }],
+  });
+  const { mount } = await render(client);
+  byAttr(mount, 'button', 'data-column', 'offerta').dispatch('click');
+  const [leo, ada] = facts(mount);
+  assert.ok(leo.textContent.includes('1.000 € + 500 USD'), `got «${leo.textContent}»`);
+  assert.ok(ada.textContent.endsWith('—'), 'solo vinte: dash');
+});
+
 /* ------------------------------------------------ backlog:4968615de0a4 */
 
 test('4968615de0a4: one way to clear the search — the field’s Azzera; no browser ×, no search chip', async () => {

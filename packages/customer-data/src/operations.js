@@ -1317,10 +1317,25 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     const myOffers = resource === 'contact'
       ? myOpportunities.filter((row) => row?.contactId != null && row.contactId !== '' && row.contactId === id)
       : myOpportunities;
-    const openValue = myOffers
-      .filter((row) => row?.stage !== 'won' && row?.stage !== 'lost')
+    // backlog:1adf95307b31: «Valore offerta» counts only open offers — won and
+    // lost never count. A customer with only won offers (or no open offer at
+    // all) reads «—», never «0 €». Mixed currencies never sum into one naked
+    // number: each currency keeps its own subtotal with its own code.
+    const openOffers = myOffers.filter((row) => row?.stage !== 'won' && row?.stage !== 'lost');
+    const openValue = openOffers
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
-    const currencies = [...new Set(myOffers.map((row) => row?.currency).filter((currency) => typeof currency === 'string' && currency !== ''))];
+    const totalsByCurrency = new Map();
+    for (const row of openOffers) {
+      const code = typeof row?.currency === 'string' ? row.currency : '';
+      totalsByCurrency.set(code, (totalsByCurrency.get(code) ?? 0) + (Number(row?.valueCents ?? 0) || 0));
+    }
+    const currencyKeys = [...totalsByCurrency.keys()].filter((code) => code !== '');
+    const singleCurrency = currencyKeys.length === 1 && !totalsByCurrency.has('')
+      ? currencyKeys[0]
+      : null;
+    const currencyParts = singleCurrency === null && openOffers.length > 0
+      ? [...totalsByCurrency.entries()].map(([code, valueCents]) => ({ valueCents, currency: code === '' ? null : code }))
+      : null;
     const myTasks = selectSubjectRows(taskIndex, subjectKeys, mine).filter((row) => row?.status === 'open');
     // The callback view filters on this one value, so it must be the most
     // actionable open task — overdue first, then due today — never the
@@ -1394,8 +1409,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       awaitingBySubject: new Map(myAwaiting === null ? [] : [[key, myAwaiting]]),
       statusBySubject,
       activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject }]]),
-      offerBySubject: new Map(myOffers.length === 0 ? [] : [[key, {
-        valueCents: openValue, currency: currencies.length === 1 ? currencies[0] : null,
+      offerBySubject: new Map(openOffers.length === 0 ? [] : [[key, {
+        valueCents: openValue, currency: singleCurrency, parts: currencyParts,
       }]]),
       taskBySubject: new Map(next === null ? [] : [[key, {
         title: next.title ?? null,
