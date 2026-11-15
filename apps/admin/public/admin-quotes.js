@@ -1,6 +1,6 @@
 // @ts-check
 
-import { elFor, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
+import { elFor, uiBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { formatAmount, humanReadError, italianDay } from './admin-core.js';
 import { renderActivation } from './admin-contracts.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -289,10 +289,18 @@ export function createQuoteView(deps) {
     /** Best-effort offer names for the «offerta collegata» line, like readOffer's list fallback. */
     let offerNames = null;
     try {
-      schema = await client.request('/api/schema');
-      quotes = await fetchRows('quote');
+      // backlog:d56122ee2844: le tre letture partono insieme, come nella
+      // pagina offerta — lo schema decide solo se usarne la risposta.
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      const quotesRead = fetchRows('quote');
+      quotesRead.catch(() => {});
+      const offersRead = client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
+      offersRead.catch(() => {});
+      schema = await schemaRead;
+      quotes = await quotesRead;
       try {
-        const offers = await client.request(`/api/opportunities?limit=${LIST_LIMIT}`);
+        const offers = await offersRead;
         offerNames = new Map();
         for (const offer of offers?.items ?? []) {
           if (offer !== null && typeof offer === 'object' && typeof offer.id === 'string' && offer.id !== '') {
@@ -356,39 +364,116 @@ export function createQuoteView(deps) {
     mount.appendChild(page);
   }
 
+  /**
+   * backlog:d56122ee2844 (cura d8175e1c3495 della pagina offerta, riusata):
+   * la pagina mostra subito la sua struttura — testata, voci, totale,
+   * colonna con aggiunta riga e storico — a barre grigie, occupata per le
+   * tecnologie assistive con una sola frase; il contenuto vero la
+   * sostituisce tutta, un errore la sostituisce con la frase onesta.
+   */
+  function quoteSkeleton() {
+    const page = el('div', 'bo-quote bo-quote-skeleton');
+    page.setAttribute('aria-busy', 'true');
+    page.setAttribute('data-quote-skeleton', 'true');
+    const spoken = el('p', 'sr-only', 'Carico il preventivo…');
+    spoken.setAttribute('role', 'status');
+    page.appendChild(spoken);
+    const sheet = el('article', 'bo-quote-sheet');
+    const hero = el('header', 'bo-quote-hero');
+    const words = el('div', 'bo-quote-hero-words');
+    words.appendChild(el('p', 'bo-quote-kicker', 'Preventivo'));
+    words.appendChild(uiSkeleton(doc, { width: '55%', block: true }));
+    words.appendChild(uiSkeleton(doc, { width: '30%', block: true }));
+    hero.appendChild(words);
+    const total = el('div', 'bo-quote-hero-total');
+    total.appendChild(uiSkeleton(doc, { width: '8em', block: true }));
+    hero.appendChild(total);
+    sheet.appendChild(hero);
+    const linesCard = el('div', 'quote-lines');
+    linesCard.appendChild(el('h3', undefined, 'Cosa include'));
+    for (const width of ['72%', '54%']) linesCard.appendChild(uiSkeleton(doc, { width, block: true }));
+    sheet.appendChild(linesCard);
+    const totalsCard = el('div', 'quote-totals');
+    totalsCard.appendChild(el('h3', undefined, 'Totale'));
+    totalsCard.appendChild(uiSkeleton(doc, { width: '64%', block: true }));
+    sheet.appendChild(totalsCard);
+    page.appendChild(sheet);
+    const side = el('aside', 'bo-quote-side');
+    for (const [cls, title] of [['quote-add-line', 'Aggiungi riga'], ['quote-versions', 'Storico']]) {
+      const card = el('div', cls);
+      card.appendChild(el('h3', undefined, title));
+      for (const width of ['72%', '54%']) card.appendChild(uiSkeleton(doc, { width, block: true }));
+      side.appendChild(card);
+    }
+    page.appendChild(side);
+    return page;
+  }
+
   async function renderQuoteDetail(quoteId) {
     const token = ++renderToken;
-    clear();
-    const heading = el('h2', 'panel-title', 'Preventivo');
-    mount.appendChild(heading);
-    const status = el('p', 'muted', 'Caricamento…');
-    mount.appendChild(status);
+    // backlog:d56122ee2844: dopo una scrittura la pagina resta visibile —
+    // la vecchia pittura resta finché i nuovi dati non arrivano, e solo la
+    // prima pittura mostra lo scheletro. Mai più una pagina bianca.
+    const firstPaint = mount.childNodes.length === 0;
+    if (firstPaint) {
+      clear();
+      const heading = el('h2', 'panel-title', 'Preventivo');
+      mount.appendChild(heading);
+      mount.appendChild(quoteSkeleton());
+    }
     let schema;
     let quote;
     let lines;
     let entries;
     let versions;
+    let backLinkResolved;
     try {
-      schema = await client.request('/api/schema');
-      quote = await client.request(`/api/modules/quote/records/${encodeURIComponent(quoteId)}`);
-      lines = (await fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false)).rows
-        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      entries = (await fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true)).rows;
-      versions = (await fetchRows('quote-version', (version) => version.quoteId === quote.id)).rows
-        .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      // backlog:d56122ee2844 (come la pagina offerta d8175e1c3495): ogni
+      // lettura parte insieme — schema e preventivo prima, poi righe,
+      // pacchetti, versioni e rimando alla scheda insieme.
+      const schemaRead = client.request('/api/schema');
+      schemaRead.catch(() => {});
+      const quoteRead = client.request(`/api/modules/quote/records/${encodeURIComponent(quoteId)}`);
+      quoteRead.catch(() => {});
+      schema = await schemaRead;
+      quote = await quoteRead;
+      const restRead = Promise.all([
+        fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false),
+        fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true),
+        fetchRows('quote-version', (version) => version.quoteId === quote.id),
+        resolveCardBackLink(quote),
+      ]);
+      restRead.catch(() => {});
+      const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
+      lines = lineAnswer.rows.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      entries = entryAnswer.rows;
+      versions = versionAnswer.rows.sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      backLinkResolved = backLink;
     } catch (error) {
       if (token !== renderToken) return;
-      status.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+      if (firstPaint) {
+        clear();
+        mount.appendChild(el('p', 'muted', humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' })));
+      } else {
+        // La pittura vecchia resta: l'errore va sulla riga esistente.
+        const errorLine = mount.querySelector ? mount.querySelector('.field-error') : null;
+        if (errorLine) errorLine.textContent = humanReadError(error, { failed: 'Preventivo non leggibile. Riprova più tardi.' });
+      }
       return;
     }
     if (token !== renderToken) return;
-    status.textContent = '';
+    clear();
+    const heading = el('h2', 'panel-title', 'Preventivo');
+    mount.appendChild(heading);
+    const status = el('p', 'muted', '');
+    mount.appendChild(status);
 
     // Voce cf340b571e98: the way back to the scheda paints above the heading.
     // Heading and status already paint as the loading indicator, so they move
     // below the link with remove-then-append (a move in both the real DOM
-    // and the test double, never a copy).
-    const { back, offer = null, opportunityName, customerName } = await resolveCardBackLink(quote);
+    // and the test double, never a copy). Il rimando è già arrivato con le
+    // altre letture (backlog:d56122ee2844): qui si usa, non si rilegge.
+    const { back, offer = null, opportunityName, customerName } = backLinkResolved;
     if (token !== renderToken) return;
     if (opportunityName !== null) heading.textContent = `Preventivo · ${opportunityName}`;
     if (back !== null || offer !== null) {

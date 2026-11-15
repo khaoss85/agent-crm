@@ -713,3 +713,61 @@ test('47b89e19: the detail links stay in the router too (offer, scheda, version)
   assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
     'every link goes through navigate(), setting only the hash');
 });
+
+test('d56122ee2844: the detail paints a skeleton at once and reads in parallel', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let active = 0;
+  let peak = 0;
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const client = {
+    calls: inner.calls,
+    async request(path, options = {}) {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return await inner.request(path, options);
+      } finally {
+        active--;
+      }
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  const pending = view.renderQuoteDetail('q1');
+  const bars = mount.findAll('span').filter((node) => node.getAttribute('data-skeleton') === 'true');
+  assert.ok(bars.length > 0, 'skeleton bars paint before any read lands');
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced once to assistive tech');
+  await pending;
+  assert.ok(peak >= 2, `reads overlap instead of queuing (peak ${peak})`);
+  assert.ok(!mount.textContent.includes('Carico il preventivo'), 'the skeleton is replaced by the content');
+  assert.ok(mount.textContent.includes('Cosa include'), 'lines paint');
+  assert.ok(mount.textContent.includes('Totale'), 'totals paint');
+});
+
+test('d56122ee2844: after adding a line the old page stays while the rewrite reads', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  let slow = false;
+  const client = {
+    calls: inner.calls,
+    request(path, options = {}) {
+      if (slow && (options.method ?? 'GET') === 'GET') {
+        return new Promise((resolve) => setTimeout(() => resolve(inner.request(path, options)), 30));
+      }
+      return inner.request(path, options);
+    },
+  };
+  const view = createQuoteView({ doc, mount, client });
+  await view.renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the line is on the page');
+  slow = true;
+  const addPanel = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'quote-add-line');
+  const reload = addPanel.__add();
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the old page stays visible while the rewrite reads');
+  await reload;
+  assert.ok(mount.textContent.includes('Enterprise Plan'), 'the new paint lands');
+  assert.ok(client.calls.some((call) => call.method === 'POST'), 'the write went out');
+});
