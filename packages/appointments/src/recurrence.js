@@ -387,6 +387,21 @@ export function recurrenceToRRule(rule, startsAtIso = null) {
   return parts.join(';');
 }
 
+/**
+ * One `EXDATE:` line for an instance start instant (backlog:6acf0a73bfc3):
+ * the Google per-occurrence exception «solo questo» appends to the series
+ * event instead of rewriting the rule. Fails closed on anything that is
+ * not a real instant — a guessed exclusion would hide the wrong instance.
+ * @param {unknown} iso the instance start as stored on the row
+ */
+export function exdateLineForInstant(iso) {
+  const ms = Date.parse(String(iso ?? ''));
+  if (!Number.isFinite(ms)) {
+    throw new ValidationError('exdate needs a real instance instant', { field: 'recurrence' });
+  }
+  return `EXDATE:${new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}`;
+}
+
 /** Short Italian weekday names for the custom-days checkboxes, Monday first. */
 export const RECURRENCE_ISO_DAYS = Object.freeze([
   Object.freeze({ value: 1, label: 'lun' }),

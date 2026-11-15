@@ -35,7 +35,12 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * `patchEvent` is optional at composition and required only to push a
  * local slot move onto the linked event: a move pushed without it fails
  * closed (CALENDAR_SYNC_CONTEXT_INVALID) while every other path keeps
- * syncing.
+ * syncing. `getEvent` is optional at composition and required only for
+ * the per-occurrence series convergence (`pushSeriesScope` reads the
+ * live rule set before appending an `EXDATE:` or swapping the `RRULE:`):
+ * without it a scoped series change fails closed the same way.
+ * A series travels as Google `recurrence` lines on inserts and patches —
+ * 1 to 8 `RRULE:`/`EXDATE:`/`RDATE:` lines, validated on both providers.
  * The reschedule push needs no provider read: it decides against the
  * link's stored fingerprint and patches through the stored event identity.
  * Every provider call takes one object param (`{ calendarId, … }`) plus
@@ -128,6 +133,23 @@ function canonicalCalendarId(value) {
 function canonicalSpaceIdOrAbsent(value) {
   if (value === undefined || value === null) return value;
   return assertGrantText(value, 'spaceId', 128);
+}
+
+/**
+ * Google recurrence lines (backlog:6acf0a73bfc3): 1 to 8 `RRULE:` /
+ * `EXDATE:` / `RDATE:` lines, or null when absent. Malformed lines are a
+ * programmer fault and refuse 500 — a guessed rule would diverge Google
+ * from the grid with no signal.
+ */
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE):[^\s]{1,400}$/;
+function checkRecurrenceOpt(value, what) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8
+    || value.some((line) => typeof line !== 'string' || !RECURRENCE_LINE_RE.test(line))) {
+    throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+      `calendar-sync ${what} recurrence must be 1 to 8 RRULE:/EXDATE:/RDATE: lines`);
+  }
+  return Object.freeze([...value]);
 }
 
 /** Binding a grant and revoking one are human decisions, like connecting a channel. */
@@ -1314,10 +1336,15 @@ export function createCalendarSyncOperations(options = {}) {
      * push with nothing changed is a no-op — the second of two syncs in a
      * row writes nothing anywhere.
      */
-    async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
+    async pushAppointment(calendarId, sourceKey, { spaceId, actor, recurrence } = {}) {
       const who = actor ?? defaultActor;
       calendarId = canonicalCalendarId(calendarId);
       spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      // A series head carries its rule set (backlog:6acf0a73bfc3): the
+      // RRULE lines ride the link-absent export only, so a series arrives
+      // on Google as one recurring event. Anything else refuses here —
+      // a malformed rule is a programmer fault, never a silent single.
+      const ruleLines = checkRecurrenceOpt(recurrence, 'pushAppointment');
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const row = await handle.appointmentBySourceKey(sourceKey);
@@ -1382,6 +1409,7 @@ export function createCalendarSyncOperations(options = {}) {
           start: { dateTime: row.startsAt },
           end: { dateTime: row.endsAt },
           extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
+          ...(ruleLines === null ? {} : { recurrence: ruleLines }),
         }, GRANT_PURPOSE_WRITE);
         await storeLink({
           linkKey: linkKeyFor(calendarId, created.id),

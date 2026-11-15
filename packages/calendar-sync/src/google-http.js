@@ -3,9 +3,11 @@
 /**
  * Real Google Calendar provider over HTTP (backlog:d1da1ed51e9c).
  *
- * The same four provider functions the sync engine needs
- * (`listEvents`, `findByAccordoSourceKey`, `insertEvent`, `cancelEvent` —
- * the contract `createCalendarSyncOperations` checks), spoken against the
+ * The provider functions the sync engine needs (`listEvents`,
+ * `findByAccordoSourceKey`, `insertEvent`, `cancelEvent` — the contract
+ * `createCalendarSyncOperations` checks — plus `getEvent` and
+ * `patchEvent`, the per-occurrence series reads and writes the engine
+ * fails closed on when a provider lacks them), spoken against the
  * Google Calendar v3 REST API instead of the in-memory fake. The transport
  * is injected (`fetchImpl`), so tests prove the mapping against a fake
  * HTTP layer and production passes the platform's authenticated fetch:
@@ -27,6 +29,18 @@
 export const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 
 const EVENT_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE):[^\s]{1,400}$/;
+
+/** 1 to 8 Google recurrence lines, or null when absent — the same shape the fake keeps. */
+function checkRecurrenceLines(value, what) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8
+    || value.some((line) => typeof line !== 'string' || !RECURRENCE_LINE_RE.test(line))) {
+    throw httpError('GOOGLE_CALL_MALFORMED', 422,
+      `google ${what} needs 1 to 8 recurrence lines (RRULE:, EXDATE: or RDATE:)`);
+  }
+  return [...value];
+}
 
 function httpError(code, status, message) {
   const error = new Error(message);
@@ -127,9 +141,17 @@ export function toEngineEvent(wire) {
   const recurring = typeof wire.recurringEventId === 'string' && EVENT_ID_RE.test(wire.recurringEventId)
     ? { recurringEventId: wire.recurringEventId }
     : {};
+  // A series master carries its rule set (backlog:6acf0a73bfc3): the
+  // RRULE/EXDATE lines the sync patches per occurrence, the way the
+  // fake stores them — anything else stays out, never a guessed rule.
+  const wireLines = Array.isArray(wire.recurrence) ? wire.recurrence : [];
+  const recurrence = wireLines.length > 0
+    && wireLines.every((line) => typeof line === 'string' && RECURRENCE_LINE_RE.test(line))
+    ? { recurrence: Object.freeze([...wireLines]) } : {};
   return Object.freeze({
     id,
     ...recurring,
+    ...recurrence,
     summary: typeof wire.summary === 'string' ? wire.summary : '',
     description: typeof wire.description === 'string' ? wire.description : '',
     start: wire.start ?? null,
@@ -342,16 +364,51 @@ export function createHttpGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    async insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, recurrence } = {}) {
       assertSecret(secret, 'insertEvent');
       const cal = assertCalendarId(calendarId);
+      const lines = checkRecurrenceLines(recurrence, 'insertEvent');
       const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events`, secret, 'insertEvent', {
         ...(typeof summary === 'string' ? { summary } : {}),
         ...(typeof description === 'string' && description !== '' ? { description } : {}),
         ...(start === undefined || start === null ? {} : { start }),
         ...(end === undefined || end === null ? {} : { end }),
+        ...(lines === null ? {} : { recurrence: lines }),
         extendedProperties: { private: { ...extendedProperties } },
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
+      });
+      return toEngineEvent(body);
+    },
+
+    /** Provider-side direct read of one event (what the sync holds right now). */
+    async getEvent({ calendarId, eventId, secret } = {}) {
+      assertSecret(secret, 'getEvent');
+      const cal = assertCalendarId(calendarId);
+      if (typeof eventId !== 'string' || !EVENT_ID_RE.test(eventId)) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google getEvent needs a bounded eventId');
+      }
+      const body = await get(`/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`, '', secret, 'getEvent');
+      return toEngineEvent(body);
+    },
+
+    /** Provider-side partial update (a series exception lands here). */
+    async patchEvent({ calendarId, eventId, patch, secret } = {}) {
+      assertSecret(secret, 'patchEvent');
+      const cal = assertCalendarId(calendarId);
+      if (typeof eventId !== 'string' || !EVENT_ID_RE.test(eventId)) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google patchEvent needs a bounded eventId');
+      }
+      if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google patchEvent needs a patch object');
+      }
+      const { start, end, summary, description, recurrence } = patch;
+      const lines = checkRecurrenceLines(recurrence, 'patchEvent');
+      const body = await write('PATCH', `/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(eventId)}`, secret, 'patchEvent', {
+        ...(start === undefined || start === null ? {} : { start }),
+        ...(end === undefined || end === null ? {} : { end }),
+        ...(typeof summary !== 'string' ? {} : { summary }),
+        ...(typeof description !== 'string' ? {} : { description: description === '' ? '' : description }),
+        ...(lines === null ? {} : { recurrence: lines }),
       });
       return toEngineEvent(body);
     },
