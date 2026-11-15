@@ -2729,8 +2729,7 @@ export function createCalendarioView(deps) {
     });
     col.addEventListener('pointercancel', () => {
       if (eventDrag) {
-        eventDrag = null;
-        detachNode(mount.querySelector('.cal-drag-ghost'));
+        abortEventDrag();
         return;
       }
       drag?.node?.remove?.(); drag = null;
@@ -2779,14 +2778,24 @@ export function createCalendarioView(deps) {
    * once per view; the fake test document has no listeners and is skipped.
    */
   let docDragHooked = false;
+  /**
+   * An interrupted drag (backlog:667f1f1c review P1): a resize stretches
+   * the origin block live, so aborting must repaint — otherwise the mutated
+   * inline grid-row stays painted on rows the booking no longer covers.
+   */
+  function abortEventDrag() {
+    const aborted = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (aborted?.mode === 'resize' && aborted.moved === true && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
   function hookDocDragEnd() {
     if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
     docDragHooked = true;
     doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
     doc.addEventListener('pointercancel', () => {
       if (!eventDrag) return;
-      eventDrag = null;
-      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+      abortEventDrag();
     });
   }
 
@@ -2831,12 +2840,17 @@ export function createCalendarioView(deps) {
     drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
     if (drag.mode === 'resize') {
       // backlog:667f1f1c: a stretch pulls the block itself, never a second
-      // block under the preview — the origin node takes the target range live.
+      // block under the preview — the origin node takes the target range
+      // live, time label included (review P2), so the operator never aims
+      // blind. Compact blocks (<45 min) keep their start-only line, which a
+      // resize never changes.
       const origin = paintedEvents.get(String(drag.row?.id ?? ''));
       if (origin && typeof origin.setAttribute === 'function') {
         const current = String(origin.getAttribute?.('style') ?? '');
         const column = current.match(/grid-column:[^;]+;?/);
         origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
+        const timeLabel = origin.querySelector?.('.cal-time') ?? null;
+        if (timeLabel) timeLabel.textContent = `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
       }
       return;
     }
@@ -2942,6 +2956,12 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:667f1f1c: a stretch keeps its start and changes its end —
+    // compared by value (review P2): the same instant in a different ISO
+    // spelling is still the same start. Computed before the write so the
+    // queued outcome names it too.
+    const sameStart = Date.parse(before.startsAt) === Date.parse(startsAt);
+    const isStretch = sameStart && Date.parse(before.endsAt) !== Date.parse(endsAt);
     state.moveBusy = true;
     row.startsAt = startsAt;
     row.endsAt = endsAt;
@@ -2968,7 +2988,6 @@ export function createCalendarioView(deps) {
       // backlog:667f1f1c: a stretch keeps its start and changes its end —
       // the toast names it, «Allungato a …», never «Spostato».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
-      const isStretch = before.startsAt === startsAt && before.endsAt !== endsAt;
       outcome = isStretch
         ? { text: `Allungato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false }
         : { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
@@ -2976,9 +2995,12 @@ export function createCalendarioView(deps) {
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
         // Still queued on the worker: the drop stands where the operator
-        // put it until the week read says otherwise.
+        // put it until the week read says otherwise. A stretch says so
+        // (review P2), never «Spostamento».
         queued = true;
-        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+        outcome = isStretch
+          ? { text: 'Allungamento in coda: lo confermo appena è registrato.', error: false }
+          : { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
       } else {
         row.startsAt = before.startsAt;
         row.endsAt = before.endsAt;

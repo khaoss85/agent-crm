@@ -526,6 +526,62 @@ test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P
   assert.ok(toasts.some((toast) => toast.message.startsWith('Allungato a') && !toast.error), `the stretch confirms in Italian: ${JSON.stringify(toasts)}`);
 });
 
+test('backlog:667f1f1c (review P2): the stretch preview names the target end before release', async () => {
+  const { mount, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  // The a9 block is 14:00–15:00 Rome; pull the edge to 15:30 and hold it.
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  const timeLabel = eventButton(mount, 'a9').findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-time'));
+  assert.ok(timeLabel, 'the stretched block keeps its time span during the preview');
+  assert.equal(timeLabel.textContent, '14:00–15:45', 'the preview announces the target end before pointerup');
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
+test('backlog:667f1f1c (review P1): cancelling a live stretch repaints the origin block', async () => {
+  const { mount, client, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  const styleBefore = String(eventButton(mount, 'a9').getAttribute?.('style') ?? '');
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  assert.notEqual(String(eventButton(mount, 'a9').getAttribute?.('style') ?? ''), styleBefore, 'the preview stretches the block');
+  col.dispatch('pointercancel', {});
+  await settle(15);
+  assert.equal(String(eventButton(mount, 'a9').getAttribute?.('style') ?? ''), styleBefore, 'the aborted stretch leaves no stretched paint behind');
+  assert.ok(!client.calls.some((call) => call.path === '/api/appointments/reschedule'), 'an aborted stretch sends nothing');
+});
+
+test('backlog:667f1f1c (review P2): a queued stretch says Allungamento, never Spostamento', async () => {
+  const queued = Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'req-2', claimId: 'c-2' });
+  let release = () => {};
+  const wait = () => new Promise((resolve) => { release = resolve; });
+  const { mount, col, toasts } = await openPointerWeek({ failRescheduleWith: queued, wait });
+  const { handle } = resizeHandleOf(mount);
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungamento in coda') && !toast.error), `the queued stretch says so: ${JSON.stringify(toasts)}`);
+  release();
+  await settle(10);
+});
+
+test('backlog:667f1f1c (review P2): the same start instant in another ISO spelling is still a stretch', async () => {
+  const { mount, week, col, toasts } = await openPointerWeek();
+  // The server may spell the same instant without millis; the drag commit
+  // always spells it with .000Z. Same instant, different string.
+  week.members[0].appointments[0].startsAt = '2026-10-22T12:00:00Z';
+  const { handle } = resizeHandleOf(mount);
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungato a') && !toast.error), `the same-instant stretch says Allungato: ${JSON.stringify(toasts)}`);
+  assert.ok(!toasts.some((toast) => toast.message.startsWith('Spostato a')), 'never Spostato for a pure end change');
+});
+
 test('3d0fbe7d: bad move fields fail closed in Italian before any request', async () => {
   const { mount, client } = await openWeek();
   await selectEvent(mount, 'a1');
