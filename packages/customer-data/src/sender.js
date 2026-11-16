@@ -376,9 +376,12 @@ export function leadNamesForEmail(email) {
     // (readableName only drops such a word at the end).
     .filter((token) => !/^(?:reply|replies)$/i.test(token))
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
+  // No fallback to the domain label here (backlog:088b639d96a2): an empty
+  // local part (`+tag@…`, `---@…`) names nobody and refuses, with no writes
+  // (rev-agent-crm-606, arbitration 06/11). A technical mailbox already took
+  // the domain-label path above; `reply` only drops as a surname token, so a
+  // reply-only local part still refuses, as before.
   if (tokens.length === 0) {
-    const label = labelFromEmail(text);
-    if (label !== null && label !== '') return { firstName: label.slice(0, 64), lastName: '—' };
     throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
   }
   const firstName = tokens[0] ?? local.slice(0, 64);
