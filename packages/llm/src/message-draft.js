@@ -38,15 +38,31 @@ export const MESSAGE_DRAFT_PURPOSE = 'assistant';
 export const MESSAGE_DRAFT_KINDS = Object.freeze(['corta', 'lunga', 'diretta']);
 
 export const MESSAGE_DRAFT_MAX_INTENT_CHARS = 500;
-export const MESSAGE_DRAFT_MAX_HISTORY = 20;
+/**
+ * At most ten history entries: with the longest allowed texts (2000
+ * characters each) the user message stays near 23k characters, under the
+ * 32000 per-message fence the llm adapter enforces (backlog:a1c597a4).
+ * Twenty entries reached past 42k and every full history refused at the
+ * provider edge instead of drafting.
+ */
+export const MESSAGE_DRAFT_MAX_HISTORY = 10;
 export const MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_VARIANT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_SUBJECT_CHARS = 200;
 export const MESSAGE_DRAFT_MAX_NAME_CHARS = 100;
 export const MESSAGE_DRAFT_MAX_CHANNELS = 11;
 
-/** Control characters no draft, subject or intent may carry. */
-const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x9f]/;
+/**
+ * Control characters no draft, subject or intent may carry: the line feed
+ * aside, the same fence as the interaction log's safeMessageBody
+ * (packages/interactions/src/interactions.js) and the composer timeline
+ * row (packages/channels/src/composer-text.js), mirrored here so a draft
+ * accepted here is never refused downstream at send time (backlog:a1c597a4).
+ * In particular the tab, the carriage return and U+2028/U+2029 refuse here
+ * exactly as they refuse there; only `\n` may pass, and only in the three
+ * variants.
+ */
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 const CHANNEL_SHAPE = /^[a-z][a-z0-9-]{0,63}$/;
 
@@ -58,11 +74,11 @@ function boundedText(value, field, max, allowNewlines) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new ValidationError(`message draft ${field} must be non-empty text`, { field });
   }
-  const text = value.trim();
+  const text = value.replace(/\r\n/g, '\n').trim();
   if (text.length > max) {
     throw new ValidationError(`message draft ${field} is at most ${max} characters`, { field });
   }
-  const probe = allowNewlines ? text.replace(/\n|\t/g, '') : text;
+  const probe = allowNewlines ? text.replace(/\n/g, '') : text;
   if (CONTROL_RE.test(probe)) {
     throw new ValidationError(`message draft ${field} carries no control characters`, { field });
   }
@@ -236,6 +252,27 @@ export async function draftCustomerMessage({
     // on another organization's space. Absent keeps historic behavior.
     ...(organizationId === undefined ? {} : { organizationId }),
   });
+  // Voce a1c597a4: the no-key dry run answers the fixture's literal
+  // 'fixture answer', which is not the labeled JSON the model owes —
+  // parsing it failed every dry run. A dry run still answers a draft
+  // without error: it echoes the already-validated operator intent
+  // instead of parsing fixture text. Every field respects the composer
+  // fence (the intent carries no control characters, the subject keeps
+  // its bound), and dryRun stays true so the pilot never mistakes the
+  // echo for model wording.
+  // DECISION (to be confirmed): the echo carries the intent verbatim in
+  // all three variants, the subject truncated to its bound.
+  if (result?.dryRun === true) {
+    const [first] = [...checked.connectedChannels];
+    return Object.freeze({
+      corta: checked.intent,
+      lunga: checked.intent,
+      diretta: checked.intent,
+      oggetto: checked.intent.slice(0, MESSAGE_DRAFT_MAX_SUBJECT_CHARS),
+      canale: first,
+      dryRun: true,
+    });
+  }
   const parsed = parseMessageDraftResponse(result?.text, [...checked.connectedChannels]);
   return Object.freeze({ ...parsed, dryRun: result?.dryRun === true });
 }
