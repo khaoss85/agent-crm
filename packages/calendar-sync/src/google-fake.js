@@ -49,6 +49,24 @@ function snapshot(event) {
   return Object.freeze({ ...event, extendedProperties: Object.freeze({ ...(event.extendedProperties ?? {}) }) });
 }
 
+// Recurrence lines ride inserts and patches as one Google `recurrence`
+// array (backlog:6acf0a73bfc3): 1 to 8 `RRULE:`/`EXDATE:`/`RDATE:` lines,
+// never an empty line, never a guessed shape. Absent reads as null —
+// an event without recurrence stays single, exactly like Google.
+// Real Google lines carry RFC 5545 parameters (`EXDATE;TZID=...:...`,
+// `RDATE;VALUE=DATE:...`): the optional `;PARAM=value` groups ride before
+// the colon, each bounded, so the fake proves what production accepts.
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE)(;[A-Za-z0-9-]+=[^:;\s]{1,80})*:[^\s]{1,400}$/;
+function checkRecurrenceLines(value, what) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8
+    || value.some((line) => typeof line !== 'string' || !RECURRENCE_LINE_RE.test(line))) {
+    throw fakeError('GOOGLE_CALL_MALFORMED', 422,
+      `google ${what} needs 1 to 8 recurrence lines (RRULE:, EXDATE: or RDATE:)`);
+  }
+  return [...value];
+}
+
 /**
  * Expand one seeded endless weekly series into its single occurrences
  * inside the read window (backlog:3a3a41b2) — the fake half of Google's
@@ -296,9 +314,20 @@ export function createFakeGoogleCalendar(options = {}) {
       return snapshot(stored);
     },
 
-    /** Direct read of the live event (what the provider holds right now). */
-    getEvent(calendarId, eventId) {
-      const found = liveEvent(calendar(calendarId), checkEventId(eventId));
+    /**
+     * Direct read of the live event (what the provider holds right now).
+     * The sync engine calls the object form (`{ calendarId, eventId,
+     * secret }`, grant-checked like every other provider call); the
+     * positional form stays for the tests that read the fake directly.
+     */
+    getEvent(calendarIdOrParams, eventId = undefined) {
+      if (calendarIdOrParams !== null && typeof calendarIdOrParams === 'object') {
+        const params = calendarIdOrParams;
+        requireGrant({ secret: params.secret }, 'getEvent');
+        const found = liveEvent(calendar(params.calendarId), checkEventId(params.eventId));
+        return found ? snapshot(found) : null;
+      }
+      const found = liveEvent(calendar(calendarIdOrParams), checkEventId(eventId));
       return found ? snapshot(found) : null;
     },
 
@@ -406,13 +435,17 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side insert (the push direction lands here). */
-    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret } = {}) {
+    insertEvent({ calendarId, summary, description = '', start, end, extendedProperties = {}, id, secret, recurrence } = {}) {
       requireGrant({ secret }, 'insertEvent');
       const cal = calendar(calendarId);
       const eventId = id === undefined ? `fake-${cal.seq + 1}-${Math.floor(nowMs() % 100000)}` : checkEventId(id);
       if (liveEvent(cal, eventId)) {
         throw fakeError('GOOGLE_EVENT_CONFLICT', 409, `event "${eventId}" already exists`);
       }
+      // A series arrives as one recurring event (backlog:6acf0a73bfc3):
+      // the RRULE/EXDATE lines ride the insert, the way Google stores
+      // them — anything else refuses, never a silently single series.
+      const lines = checkRecurrenceLines(recurrence, 'insertEvent');
       const stored = {
         id: eventId,
         summary: typeof summary === 'string' ? summary : '',
@@ -422,6 +455,7 @@ export function createFakeGoogleCalendar(options = {}) {
         status: 'confirmed',
         updated: nowIso(),
         extendedProperties: { ...extendedProperties },
+        ...(lines === null ? {} : { recurrence: Object.freeze(lines) }),
       };
       cal.events.set(eventId, stored);
       touch(cal, eventId);
@@ -429,11 +463,18 @@ export function createFakeGoogleCalendar(options = {}) {
     },
 
     /** Provider-side partial update (schedule or summary moved elsewhere). */
-    patchEvent({ calendarId, eventId, patch }) {
+    patchEvent({ calendarId, eventId, patch, secret }) {
+      requireGrant({ secret }, 'patchEvent');
       const cal = calendar(calendarId);
       const live = liveEvent(cal, checkEventId(eventId));
       if (!live || live.status === 'cancelled') {
         throw fakeError('GOOGLE_EVENT_UNKNOWN', 404, `event "${eventId}" does not exist`);
+      }
+      // A recurrence patch replaces the whole line set (backlog:6acf0a73bfc3),
+      // the way Google's events.patch does — malformed lines refuse here,
+      // never as a half-written series.
+      if (patch !== null && typeof patch === 'object' && patch.recurrence !== undefined) {
+        checkRecurrenceLines(patch.recurrence, 'patchEvent');
       }
       const next = { ...live, ...(patch ?? {}) };
       delete next.id;

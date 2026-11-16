@@ -13,7 +13,7 @@ import {
 } from '../packages/core/src/record-module-runtime.js';
 import { createAppointmentBookCapability } from '../packages/appointments/src/appointments.js';
 import { createCalendarSyncOperations } from '../packages/calendar-sync/src/sync.js';
-import { createHttpGoogleCalendar } from '../packages/calendar-sync/src/google-http.js';
+import { createHttpGoogleCalendar, toEngineEvent } from '../packages/calendar-sync/src/google-http.js';
 
 /**
  * Real-provider integration (backlog:d1da1ed51e9c): the same sync engine
@@ -471,4 +471,62 @@ test('the factory refuses without a transport, and the grant never travels in te
   );
   assert.equal(failure.code, 'CALENDAR_PROVIDER_UNAVAILABLE');
   assert.ok(!String(failure.message).includes(GRANT), 'fixed message, never provider text');
+});
+
+test('insertEvent refuses an overlong deterministic series id before writing (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  // A linked master with a ~110-char Google id grows a scoped id past the
+  // 128-char bound: the fake throws, so the HTTP provider must refuse too
+  // instead of dropping the id and letting Google assign a random one.
+  const overlong = `${'m'.repeat(110)}-ex-20261117T160000Z`;
+  assert.ok(overlong.length > 128, 'the deterministic series id breaks the bound');
+  const failure = await ctx.provider.insertEvent({
+    calendarId: CAL, secret: GRANT, id: overlong, summary: 'Coda',
+    start: { dateTime: '2026-11-17T16:00:00.000Z' }, end: { dateTime: '2026-11-17T17:00:00.000Z' },
+  }).then(
+    () => { throw new Error('insert should have refused'); },
+    (error) => error,
+  );
+  assert.equal(failure.code, 'GOOGLE_CALL_MALFORMED');
+  assert.equal(failure.status, 422);
+  assert.equal(ctx.double.requests.length, 0, 'refused before the first write: no POST left the machine');
+  // An unnamed insert still rides without an id: Google assigns it.
+  const assigned = await ctx.provider.insertEvent({
+    calendarId: CAL, secret: GRANT, summary: 'Singolo',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' }, end: { dateTime: '2026-10-21T10:00:00.000Z' },
+  });
+  assert.ok(typeof assigned.id === 'string' && assigned.id !== '', 'Google assigns the unnamed event');
+  assert.equal(ctx.double.requests.length, 1, 'only the unnamed insert wrote');
+});
+
+test('toEngineEvent keeps RFC parametrised recurrence lines (backlog:6acf0a73bfc3)', () => {
+  // Real Google masters carry EXDATE;TZID=...:... lines: dropping the whole
+  // set here blocked every scoped op on a real series downstream.
+  const event = toEngineEvent({
+    id: 'evt-tz-master', status: 'confirmed', updated: '2026-11-04T09:00:00.000Z',
+    summary: 'Serie', description: '',
+    start: { dateTime: '2026-10-21T09:00:00.000Z' }, end: { dateTime: '2026-10-21T10:00:00.000Z' },
+    recurrence: [
+      'RRULE:FREQ=WEEKLY;BYDAY=TU',
+      'EXDATE;TZID=Europe/Rome:20261028T090000',
+      'RDATE;VALUE=DATE:20261111',
+    ],
+    extendedProperties: { private: { accordoSourceKey: 'gym:serie:tz' } },
+  });
+  assert.deepEqual(event.recurrence, [
+    'RRULE:FREQ=WEEKLY;BYDAY=TU',
+    'EXDATE;TZID=Europe/Rome:20261028T090000',
+    'RDATE;VALUE=DATE:20261111',
+  ]);
+  // A line with whitespace or without a colon still drops the whole set,
+  // exactly as before: parametrised is not a free pass for malformed.
+  const dropped = toEngineEvent({
+    id: 'evt-bad', status: 'confirmed', updated: '2026-11-04T09:00:00.000Z',
+    summary: '', description: '',
+    start: null, end: null,
+    recurrence: ['RRULE:FREQ=WEEKLY', 'EXDATE;TZID=Europe/Rome: has space'],
+    extendedProperties: {},
+  });
+  assert.ok(!('recurrence' in dropped), 'a malformed line still drops the set');
 });

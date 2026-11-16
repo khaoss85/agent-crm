@@ -35,7 +35,12 @@ import { AppError, ConflictError, NotFoundError, ValidationError } from '../../c
  * `patchEvent` is optional at composition and required only to push a
  * local slot move onto the linked event: a move pushed without it fails
  * closed (CALENDAR_SYNC_CONTEXT_INVALID) while every other path keeps
- * syncing.
+ * syncing. `getEvent` is optional at composition and required only for
+ * the per-occurrence series convergence (`pushSeriesScope` reads the
+ * live rule set before appending an `EXDATE:` or swapping the `RRULE:`):
+ * without it a scoped series change fails closed the same way.
+ * A series travels as Google `recurrence` lines on inserts and patches —
+ * 1 to 8 `RRULE:`/`EXDATE:`/`RDATE:` lines, validated on both providers.
  * The reschedule push needs no provider read: it decides against the
  * link's stored fingerprint and patches through the stored event identity.
  * Every provider call takes one object param (`{ calendarId, … }`) plus
@@ -128,6 +133,32 @@ function canonicalCalendarId(value) {
 function canonicalSpaceIdOrAbsent(value) {
   if (value === undefined || value === null) return value;
   return assertGrantText(value, 'spaceId', 128);
+}
+
+/**
+ * Google recurrence lines (backlog:6acf0a73bfc3): 1 to 8 `RRULE:` /
+ * `EXDATE:` / `RDATE:` lines, or null when absent. Malformed lines are a
+ * programmer fault and refuse 500 — a guessed rule would diverge Google
+ * from the grid with no signal.
+ */
+// Real Google masters carry RFC 5545 parameters (`EXDATE;TZID=...:...`):
+// the optional `;PARAM=value` groups ride before the colon, each bounded,
+// so a parametrised master converges instead of refusing 500 here while
+// the HTTP read already keeps it (backlog:6acf0a73bfc3).
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE)(;[A-Za-z0-9-]+=[^:;\s]{1,80})*:[^\s]{1,400}$/;
+function checkRecurrenceOpt(value, what) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 8
+    || value.some((line) => typeof line !== 'string' || !RECURRENCE_LINE_RE.test(line))) {
+    throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+      `calendar-sync ${what} recurrence must be 1 to 8 RRULE:/EXDATE:/RDATE: lines`);
+  }
+  return Object.freeze([...value]);
+}
+
+/** One Google instant compact (`20261118T160000Z`), the EXDATE/UNTIL shape. */
+function toGoogleInstant(ms) {
+  return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
 /** Binding a grant and revoking one are human decisions, like connecting a channel. */
@@ -466,6 +497,29 @@ export function createCalendarSyncOperations(options = {}) {
   async function findLinkBySource(sourceKey) {
     const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
     return rows[0] ?? null;
+  }
+
+  /**
+   * Calendars the caller may converge a series on (backlog:6acf0a73bfc3):
+   * null while no grant is bound anywhere — unwired deployments resolve
+   * links exactly as on main. Otherwise the caller's own calendars (even
+   * revoked ones, so the revoke refusal downstream stays precise) plus
+   * the unbound ones, which stay global the way every other operation
+   * treats them. A link outside this set reads as no link at all, so the
+   * answer never depends on the named key.
+   */
+  async function scopeVisibleCalendars(spaceId) {
+    const rows = await stateService(context).listWhere({});
+    const all = Array.isArray(rows) ? rows : [];
+    if (!all.some((row) => row && row.spaceId !== null && row.spaceId !== undefined)) return null;
+    const visible = new Set();
+    for (const row of all) {
+      if (!row || typeof row.calendarId !== 'string' || row.calendarId === '') continue;
+      if (row.spaceId === null || row.spaceId === undefined || row.spaceId === spaceId) {
+        visible.add(row.calendarId);
+      }
+    }
+    return visible;
   }
 
   /** Read through the capability, never around it — the module name in force is the capability's own. */
@@ -1314,10 +1368,15 @@ export function createCalendarSyncOperations(options = {}) {
      * push with nothing changed is a no-op — the second of two syncs in a
      * row writes nothing anywhere.
      */
-    async pushAppointment(calendarId, sourceKey, { spaceId, actor } = {}) {
+    async pushAppointment(calendarId, sourceKey, { spaceId, actor, recurrence } = {}) {
       const who = actor ?? defaultActor;
       calendarId = canonicalCalendarId(calendarId);
       spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      // A series head carries its rule set (backlog:6acf0a73bfc3): the
+      // RRULE lines ride the link-absent export only, so a series arrives
+      // on Google as one recurring event. Anything else refuses here —
+      // a malformed rule is a programmer fault, never a silent single.
+      const ruleLines = checkRecurrenceOpt(recurrence, 'pushAppointment');
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const row = await handle.appointmentBySourceKey(sourceKey);
@@ -1382,6 +1441,7 @@ export function createCalendarSyncOperations(options = {}) {
           start: { dateTime: row.startsAt },
           end: { dateTime: row.endsAt },
           extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
+          ...(ruleLines === null ? {} : { recurrence: ruleLines }),
         }, GRANT_PURPOSE_WRITE);
         await storeLink({
           linkKey: linkKeyFor(calendarId, created.id),
@@ -1457,6 +1517,427 @@ export function createCalendarSyncOperations(options = {}) {
       }
       await linkService(context).applyManaged(link.id, { localFingerprint: fingerprint }, { actor: who });
       return { status: 'acknowledged', sourceKey, reason: 'lifecycle is Accordo-owned: confirmed/done/no-show stay local' };
+    },
+
+    /**
+     * Per-occurrence Google convergence of a series (backlog:6acf0a73bfc3):
+     * «solo questo» appends one `EXDATE:` to the series master (plus a
+     * standalone event when the occurrence moved to a new slot), «questo e
+     * i successivi» swaps the `RRULE:` for the same rule closed with
+     * `UNTIL:` just before the scope (plus a new series event when the tail
+     * moved). The caller (appointments) runs this BEFORE its first local
+     * write: a Google refusal throws and the grid never changes, so Google
+     * and the grid cannot diverge. A head with no link was never exported
+     * and answers `local-only`: there is no Google event to converge. After
+     * a successful converge the head link carries the new Google stamp (and
+     * a link is stored for every created moved/tail event), so the next pull
+     * reads the converge as settled instead of as a newer remote change.
+     * Inserts ride deterministic ids (`<master>-ex-<instant>` /
+     * `<master>-serie-<instant>`), so a retry after a lost answer replays
+     * into the same event instead of duplicating the series.
+     */
+    async seriesScopeLink(headSourceKey, { spaceId } = {}) {
+      // Space-scoped link probe (backlog:6acf0a73bfc3): answers whether the
+      // caller may treat this series as Google-linked, BEFORE any write and
+      // without touching the provider. The head-link lookup is bound to the
+      // caller's calendars, so a foreign key reads exactly like a
+      // never-exported one (linked:false, never an oracle). A link found in
+      // the caller's calendars is then ownership-checked: a foreign space
+      // reads as unknown (404) and a revoked grant refuses (409) — the same
+      // codes every other Google-touching operation answers.
+      const key = typeof headSourceKey === 'string' ? headSourceKey : '';
+      if (key === '') return Object.freeze({ linked: false, sourceKey: key });
+      const scopeCalendars = await scopeVisibleCalendars(spaceId);
+      const candidates = await linkService(context).listWhere({ appointmentSourceKey: key });
+      const rows = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+      const link = scopeCalendars === null
+        ? (rows[0] ?? null)
+        : (rows.find((row) => scopeCalendars.has(row.calendarId)) ?? null);
+      if (!link) return Object.freeze({ linked: false, sourceKey: key });
+      await requireLiveGrant(link.calendarId, spaceId);
+      return Object.freeze({ linked: true, sourceKey: key, calendarId: canonicalCalendarId(link.calendarId) });
+    },
+    async pushSeriesScope(headSourceKey, {
+      spaceId, actor, scope, occurrenceStartsAt, movedStartsAt, movedEndsAt,
+      scopeStartsAt, tailRuleLines, movedSourceKey, tailSourceKey,
+      inScopeSourceKeys,
+    } = {}) {
+      const who = actor ?? defaultActor;
+      if (scope !== 'single' && scope !== 'following') {
+        throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+          'calendar-sync pushSeriesScope needs scope "single" or "following"');
+      }
+      const anchorIso = scope === 'single' ? occurrenceStartsAt : scopeStartsAt;
+      const anchorMs = Date.parse(String(anchorIso ?? ''));
+      if (!Number.isFinite(anchorMs)) {
+        throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+          'calendar-sync pushSeriesScope needs the scope anchor instant (occurrenceStartsAt for single, scopeStartsAt for following)');
+      }
+      let moved = null;
+      if (movedStartsAt !== undefined || movedEndsAt !== undefined) {
+        const startMs = Date.parse(String(movedStartsAt ?? ''));
+        const endMs = Date.parse(String(movedEndsAt ?? ''));
+        if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs a real moved slot (movedStartsAt before movedEndsAt)');
+        }
+        moved = { startsAt: new Date(startMs).toISOString(), endsAt: new Date(endMs).toISOString() };
+      }
+      let tailLines = null;
+      if (scope === 'following' && moved !== null) {
+        tailLines = checkRecurrenceOpt(tailRuleLines, 'pushSeriesScope tail');
+        if (tailLines === null) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs tailRuleLines when a following scope moves');
+        }
+      }
+      spaceId = canonicalSpaceIdOrAbsent(spaceId);
+      // Space isolation (backlog:6acf0a73bfc3): the head-link lookup is
+      // bound to the caller's calendars BEFORE any answer, so a foreign
+      // space reads a linked-elsewhere key exactly like a never-exported
+      // one (local-only) — never an oracle for whether the key was ever
+      // exported, and never a write to another space's calendar.
+      // Deployments without any bound grant stay unwired, exactly as on
+      // main: the lookup below is the legacy global one.
+      const scopeCalendars = await scopeVisibleCalendars(spaceId);
+      let link = null;
+      {
+        const candidates = await linkService(context).listWhere({ appointmentSourceKey: headSourceKey });
+        const rows = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+        link = scopeCalendars === null
+          ? (rows[0] ?? null)
+          : (rows.find((row) => scopeCalendars.has(row.calendarId)) ?? null);
+      }
+      if (!link) {
+        return { status: 'local-only', sourceKey: headSourceKey, reason: 'la serie non è su Google: cambia solo la griglia' };
+      }
+      const calendarId = canonicalCalendarId(link.calendarId);
+      await requireLiveGrant(calendarId, spaceId);
+      for (const fn of ['getEvent', 'patchEvent', 'insertEvent', 'cancelEvent']) {
+        if (typeof provider?.[fn] !== 'function') {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            `il calendario "${calendarId}" è collegato ma il provider non sa cambiare le serie (manca ${fn}): aggiorna il provider prima di toccare una serie collegata`);
+        }
+      }
+      const eventId = rowLinkEventId(link, calendarId);
+      // Stacked scopes (backlog:6acf0a73bfc3, giro 4): one scoped op on top
+      // of another is refused 409 BEFORE any Google call, grid unchanged.
+      // Link reads only: a scoped Google id carries its master
+      // (`<master>-ex-<instant>` / `<master>-serie-<instant>`), so a prior
+      // under the same master is provable without touching the provider.
+      const scopedPriorsOf = async (sourceKey) => {
+        if (typeof sourceKey !== 'string' || sourceKey === '') return [];
+        const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
+        const out = [];
+        for (const known of Array.isArray(rows) ? rows : []) {
+          if (!known) continue;
+          const priorId = rowLinkEventId(known, calendarId);
+          if (priorId === eventId) continue;
+          if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+            out.push({ link: known, eventId: priorId, sourceKey });
+          }
+        }
+        return out;
+      };
+      if (scope === 'single' && typeof movedSourceKey === 'string' && movedSourceKey !== '') {
+        const tailLives = (await scopedPriorsOf(movedSourceKey))
+          .filter((entry) => entry.eventId.startsWith(`${eventId}-serie-`));
+        if (tailLives.length > 0) {
+          throw syncError('CALENDAR_SYNC_SERIES_SCOPE_AMBIGUOUS', 409,
+            '«Solo questo» su un’occorrenza che vive in una coda già spostata su Google non è supportato: '
+            + 'la griglia non è cambiata. Annulla la coda o sposta con «questo e i successivi».');
+        }
+      }
+      if (scope === 'following') {
+        const listed = Array.isArray(inScopeSourceKeys)
+          ? inScopeSourceKeys.filter((key) => typeof key === 'string' && key !== '')
+          : null;
+        if (listed !== null && listed.length > 1) {
+          const anchorKey = typeof tailSourceKey === 'string' && tailSourceKey !== ''
+            ? tailSourceKey : listed[0];
+          const beyond = listed[0] === anchorKey ? listed.slice(1) : listed.filter((key) => key !== anchorKey);
+          for (const key of beyond) {
+            const priors = await scopedPriorsOf(key);
+            if (priors.length > 0) {
+              throw syncError('CALENDAR_SYNC_SERIES_SCOPE_STACKED', 409,
+                '«Questo e i successivi» tocca una riga che ha già un evento con ambito su Google: '
+                + 'la griglia non è cambiata. Chiudi prima l’operazione precedente, poi riprova.');
+            }
+          }
+        } else if (listed === null && typeof tailSourceKey === 'string' && tailSourceKey !== '') {
+          // Direct callers naming no row list: any other scoped event under
+          // this master is a stacked op this converge would orphan — refuse
+          // closed instead of leaving it behind.
+          const all = await linkService(context).listWhere({ calendarId });
+          for (const known of Array.isArray(all) ? all : []) {
+            if (!known) continue;
+            if (known.appointmentSourceKey === tailSourceKey) continue;
+            if (known.appointmentSourceKey === headSourceKey) continue;
+            const priorId = rowLinkEventId(known, calendarId);
+            if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+              throw syncError('CALENDAR_SYNC_SERIES_SCOPE_STACKED', 409,
+                '«Questo e i successivi» tocca una riga che ha già un evento con ambito su Google: '
+                + 'la griglia non è cambiata. Chiudi prima l’operazione precedente, poi riprova.');
+            }
+          }
+        }
+      }
+      const live = await providerCall(calendarId, 'getEvent', { calendarId, eventId }, GRANT_PURPOSE_WRITE);
+      if (!live || live.status === 'cancelled') {
+        throw syncError('CALENDAR_SYNC_EVENT_UNKNOWN', 404,
+          `l'evento Google della serie non c'è più: ricrealo su Google prima di toccare la serie`);
+      }
+      const lines = checkRecurrenceOpt(
+        Array.isArray(live.recurrence) && live.recurrence.length > 0 ? live.recurrence : null,
+        'pushSeriesScope master',
+      );
+      if (lines === null) {
+        throw syncError('CALENDAR_SYNC_SERIES_NOT_RECURRING', 422,
+          `l'evento Google non è una serie ricorrente: la griglia non è cambiata`);
+      }
+      const subjectOf = async (sourceKey) => {
+        if (typeof sourceKey !== 'string' || sourceKey === '') return null;
+        try {
+          const row = await bookHandle(who).appointmentBySourceKey(sourceKey);
+          if (!row) return null;
+          return `${row.subjectResource ?? ''}:${row.subjectId ?? ''}`;
+        } catch (error) {
+          if (error instanceof NotFoundError) return null;
+          throw error;
+        }
+      };
+      // The moved/tail event a previous scoped op created for this same
+      // occurrence (backlog:6acf0a73bfc3): its Google id carries the
+      // ORIGINAL master instance (`<master>-ex-<instant>` /
+      // `<master>-serie-<instant>`), so a row the grid already moved once
+      // still anchors on the master instance, never on the moved slot — and
+      // the next op replays into the same event instead of orphaning it.
+      // Null when this occurrence never converged one (first scoped op) or
+      // when the stored link names another master.
+      const GOOGLE_INSTANT_RE = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+      const instantToMs = (stamp) => {
+        const match = GOOGLE_INSTANT_RE.exec(String(stamp ?? ''));
+        if (!match) return null;
+        const ms = Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`);
+        return Number.isFinite(ms) ? ms : null;
+      };
+      const scopedPriorFor = async (sourceKey, kind) => {
+        if (typeof sourceKey !== 'string' || sourceKey === '') return null;
+        const prefix = `${rowLinkEventId(link, calendarId)}-${kind}-`;
+        const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
+        for (const known of Array.isArray(rows) ? rows : []) {
+          if (!known) continue;
+          const priorId = rowLinkEventId(known, calendarId);
+          if (!priorId.startsWith(prefix)) continue;
+          const anchorMs = instantToMs(priorId.slice(prefix.length));
+          if (anchorMs === null) continue;
+          return { link: known, eventId: priorId, anchorMs };
+        }
+        return null;
+      };
+      // A moved/tail event the grid no longer needs (backlog:6acf0a73bfc3):
+      // cancel-after-move retires the standalone event, a narrower following
+      // cancel retires the tail. An event someone already deleted on Google
+      // reads as retired, never as a failure.
+      const retireScopedEvent = async (prior) => {
+        if (!prior) return null;
+        const current = await providerCall(calendarId, 'getEvent', { calendarId, eventId: prior.eventId }, GRANT_PURPOSE_WRITE);
+        if (!current || current.status === 'cancelled') return prior.eventId;
+        await providerCall(calendarId, 'cancelEvent', { calendarId, eventId: prior.eventId }, GRANT_PURPOSE_WRITE);
+        return prior.eventId;
+      };
+      const insertOnce = async ({ id, start, end, recurrence, sourceKey }) => {
+        const subject = await subjectOf(sourceKey);
+        const patch = {
+          start: { dateTime: start },
+          end: { dateTime: end },
+          ...(recurrence === null ? {} : { recurrence }),
+        };
+        try {
+          const inserted = await providerCall(calendarId, 'insertEvent', {
+            calendarId,
+            id,
+            summary: typeof live.summary === 'string' ? live.summary : '',
+            description: typeof live.description === 'string' ? live.description : '',
+            ...patch,
+            extendedProperties: {
+              accordoSourceKey: sourceKey,
+              ...(subject === null ? {} : { accordoSubject: subject }),
+            },
+          }, GRANT_PURPOSE_WRITE);
+          return { id, duplicate: false, updated: inserted?.updated ?? null };
+        } catch (error) {
+          // The deterministic id turns a retry into a replay: the event the
+          // lost answer already created reads as converged, never as a second
+          // series. A second scoped move of the same occurrence lands on the
+          // same id with a new slot: the stored event is patched there, so
+          // no orphan stays behind on the old slot. Anything else is still
+          // the provider's refusal.
+          if (providerErrorCode(error) === 'GOOGLE_EVENT_CONFLICT') {
+            const again = await providerCall(calendarId, 'getEvent', { calendarId, eventId: id }, GRANT_PURPOSE_WRITE);
+            if (!again || again.status === 'cancelled') throw error;
+            // A retry after a lost answer replays the same slot: the patch is
+            // a noop and the stored link converges on the fresh stamp instead
+            // of dangling on a null update.
+            const patched = await providerCall(calendarId, 'patchEvent', {
+              calendarId, eventId: id, patch,
+            }, GRANT_PURPOSE_WRITE);
+            return { id, duplicate: true, updated: patched?.updated ?? again?.updated ?? null };
+          }
+          throw error;
+        }
+      };
+      // The converge runs BEFORE the grid writes (the caller writes after):
+      // the link rows below name the Google identities the converge created
+      // or patched, so the next pull reads them as converged instead of as
+      // newer remote changes, and a later scoped op reuses a fresh identity.
+      // Fingerprints cover the rows as read now; the post-commit pushes
+      // re-read the written rows and heal the rest.
+      const ensureConvergedLink = async ({ eventId, updated, sourceKey }) => {
+        const known = await findLinkByEvent(calendarId, eventId);
+        if (known) {
+          if (updated !== null && updated !== known.googleUpdated) {
+            await linkService(context).applyManaged(known.id, { googleUpdated: updated }, { actor: who });
+          }
+          return known;
+        }
+        if (updated === null) {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope converged on Google but the event stamp is unreadable: the grid is unchanged, retry the scope');
+        }
+        let row = null;
+        try {
+          row = await bookHandle(who).appointmentBySourceKey(sourceKey);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+        return storeLink({
+          linkKey: linkKeyFor(calendarId, eventId),
+          calendarId,
+          googleEventId: linkKeyFor(calendarId, eventId),
+          appointmentSourceKey: sourceKey,
+          appointmentId: row?.id ?? '',
+          googleUpdated: updated,
+          localFingerprint: row ? appointmentFingerprint(row) : link.localFingerprint,
+          revision: 0,
+          conflictNote: null,
+          pendingRemote: null,
+        }, who);
+      };
+      const refreshHeadLink = async (masterUpdated) => {
+        let headRow = null;
+        try {
+          headRow = await bookHandle(who).appointmentBySourceKey(headSourceKey);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+        await linkService(context).applyManaged(link.id, {
+          googleUpdated: masterUpdated,
+          localFingerprint: headRow ? appointmentFingerprint(headRow) : link.localFingerprint,
+          conflictNote: null,
+        }, { actor: who });
+      };
+      if (scope === 'single') {
+        // A row the grid already moved once still anchors on the ORIGINAL
+        // master instance (backlog:6acf0a73bfc3): the stored moved event id
+        // carries it. A cancel retires that event; a move replays into it.
+        // The fallible insert lands BEFORE the master mutation: when the
+        // insert refuses, the master is still intact and a retry replays
+        // into the same deterministic id — never a changed master with no
+        // moved event.
+        const prior = await scopedPriorFor(movedSourceKey, 'ex');
+        const effectiveAnchorMs = prior?.anchorMs ?? anchorMs;
+        const exdate = `EXDATE:${toGoogleInstant(effectiveAnchorMs)}`;
+        let masterUpdated = live.updated ?? null;
+        let movedEventId = null;
+        let retiredEventId = null;
+        if (moved !== null) {
+          if (typeof movedSourceKey !== 'string' || movedSourceKey === '') {
+            throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+              'calendar-sync pushSeriesScope needs movedSourceKey when a single occurrence moves');
+          }
+          const created = await insertOnce({
+            id: prior?.eventId ?? `${eventId}-ex-${toGoogleInstant(effectiveAnchorMs)}`,
+            start: moved.startsAt,
+            end: moved.endsAt,
+            recurrence: null,
+            sourceKey: movedSourceKey,
+          });
+          movedEventId = created.id;
+          await ensureConvergedLink({ eventId: created.id, updated: created.updated, sourceKey: movedSourceKey });
+        }
+        if (!lines.includes(exdate)) {
+          const patched = await providerCall(calendarId, 'patchEvent', {
+            calendarId, eventId, patch: { recurrence: [...lines, exdate] },
+          }, GRANT_PURPOSE_WRITE);
+          masterUpdated = patched?.updated ?? masterUpdated;
+        }
+        if (moved === null) {
+          retiredEventId = await retireScopedEvent(prior);
+        }
+        await refreshHeadLink(masterUpdated);
+        return Object.freeze({
+          status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-single',
+          ...(movedEventId === null ? {} : { movedEventId }),
+          ...(retiredEventId === null ? {} : { retiredEventId }),
+        });
+      }
+      // `following`: the old master keeps every instance before the scope —
+      // UNTIL just under the first in-scope start — and the tail becomes its
+      // own series only when it moved (a cancelled tail simply ends there).
+      // A scope the grid already moved once still closes on the ORIGINAL
+      // scope start (backlog:6acf0a73bfc3): the stored tail id carries it, a
+      // second move replays into the same tail, and a cancel retires it.
+      const tailPrior = await scopedPriorFor(tailSourceKey, 'serie');
+      const effectiveScopeMs = tailPrior?.anchorMs ?? anchorMs;
+      const until = toGoogleInstant(effectiveScopeMs - 1000);
+      const rruleIndex = lines.findIndex((line) => line.startsWith('RRULE:'));
+      const closed = rruleIndex === -1
+        ? null
+        : `${lines[rruleIndex].replace(/;UNTIL=[^;]*/g, '')};UNTIL=${until}`;
+      if (closed === null) {
+        throw syncError('CALENDAR_SYNC_SERIES_NOT_RECURRING', 422,
+          `l'evento Google non è una serie ricorrente: la griglia non è cambiata`);
+      }
+      let masterUpdated = live.updated ?? null;
+      let tailEventId = null;
+      let retiredEventId = null;
+      // The fallible tail insert lands BEFORE the master UNTIL close
+      // (backlog:6acf0a73bfc3): when the insert refuses, the master still
+      // spans the scope and a retry replays into the same deterministic
+      // id — never a closed master with no tail.
+      if (moved !== null) {
+        if (typeof tailSourceKey !== 'string' || tailSourceKey === '') {
+          throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+            'calendar-sync pushSeriesScope needs tailSourceKey when a following scope moves');
+        }
+        const created = await insertOnce({
+          id: tailPrior?.eventId ?? `${eventId}-serie-${toGoogleInstant(effectiveScopeMs)}`,
+          start: moved.startsAt,
+          end: moved.endsAt,
+          recurrence: tailLines,
+          sourceKey: tailSourceKey,
+        });
+        tailEventId = created.id;
+        await ensureConvergedLink({ eventId: created.id, updated: created.updated, sourceKey: tailSourceKey });
+      }
+      if (lines[rruleIndex] !== closed) {
+        const next = [...lines];
+        next[rruleIndex] = closed;
+        const patched = await providerCall(calendarId, 'patchEvent', {
+          calendarId, eventId, patch: { recurrence: next },
+        }, GRANT_PURPOSE_WRITE);
+        masterUpdated = patched?.updated ?? masterUpdated;
+      }
+      if (moved === null) {
+        retiredEventId = await retireScopedEvent(tailPrior);
+      }
+      await refreshHeadLink(masterUpdated);
+      return Object.freeze({
+        status: 'pushed', sourceKey: headSourceKey, eventId, change: 'series-following',
+        ...(tailEventId === null ? {} : { tailEventId }),
+        ...(retiredEventId === null ? {} : { retiredEventId }),
+      });
     },
 
     /**
