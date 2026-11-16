@@ -16,6 +16,12 @@ const SPACE = 'space-presti';
 const OPPORTUNITY = 'opp-1';
 const AI = { type: 'agent', id: 'reply-reader' };
 const PERSON = { type: 'user', id: 'coach-guido' };
+// The route evaluates the AI gate itself from stored override rows: master
+// ai-enabled AND the move-offers switch must both be on to auto-apply.
+// These rows switch move-offers off, so the default test route proposes.
+const SWITCH_OFF_ROWS = [{ spaceId: SPACE, permission: 'move-offers', enabled: false }];
+const MASTER_OFF_ROWS = [{ spaceId: SPACE, permission: 'ai-enabled', enabled: false }];
+const SWITCH_ON_ROWS = [];
 
 /**
  * Fake AI: a deterministic stand-in for the reply reader. It suggests a
@@ -48,6 +54,7 @@ function route(body, fromStage, overrides = {}) {
     toStage: suggestion.toStage,
     quote: suggestion.quote,
     suggestedBy: AI,
+    overrideRows: SWITCH_OFF_ROWS,
     ...overrides,
   });
 }
@@ -72,7 +79,7 @@ test('the step moves only after a person confirms, or straight away with move-of
   const body = 'Grazie, vorrei iniziare con il pacchetto da dieci ingressi.';
 
   // Switch off: the proposal moves nothing by itself.
-  const routed = route(body, 'prova', { messageId: 'wa:msg:2', moveOffersEnabled: false });
+  const routed = route(body, 'prova', { messageId: 'wa:msg:2' });
   assert.equal(routed.decision, 'proposal');
   assert.equal(routed.proposal.status, 'proposed');
 
@@ -87,13 +94,19 @@ test('the step moves only after a person confirms, or straight away with move-of
   const { proposal, move } = confirmOfferMoveProposal(routed.proposal, { actor: PERSON, decision: 'accept' });
   assert.equal(proposal.status, 'confirmed');
   assert.deepEqual(proposal.decidedBy, PERSON);
-  assert.deepEqual(move, { opportunityId: OPPORTUNITY, fromStage: 'prova', toStage: 'proposta' });
+  assert.deepEqual(move, { opportunityId: OPPORTUNITY, spaceId: SPACE, fromStage: 'prova', toStage: 'proposta' });
 
   // Switch on for the space: the reply moves the offer with no confirmation.
-  const direct = route(body, 'prova', { messageId: 'wa:msg:3', moveOffersEnabled: true });
+  const direct = route(body, 'prova', { messageId: 'wa:msg:3', overrideRows: SWITCH_ON_ROWS });
   assert.equal(direct.decision, 'apply');
   assert.equal(direct.fromStage, 'prova');
   assert.equal(direct.toStage, 'proposta');
+  assert.deepEqual(direct.move, { opportunityId: OPPORTUNITY, spaceId: SPACE, fromStage: 'prova', toStage: 'proposta' });
+
+  // Master AI switch off: even with the move-offers default on, the reply
+  // stays a proposal — the master kill-switch is never bypassed.
+  const masterOff = route(body, 'prova', { messageId: 'wa:msg:33', overrideRows: MASTER_OFF_ROWS });
+  assert.equal(masterOff.decision, 'proposal');
 });
 
 // Acceptance: the refused proposal never comes back for the same message.
@@ -162,5 +175,74 @@ test('guards: no move to the same step, quotes from the reply, reasons for refus
   assert.throws(
     () => confirmOfferMoveProposal({ ...routed.proposal, status: 'confirmed' }, { actor: PERSON, decision: 'accept' }),
     (error) => error.code === 'PROPOSAL_ALREADY_DECIDED',
+  );
+});
+
+// P1: a confirmed move to the lost stage carries the close reason move-stage requires.
+test('accepting a move to perso carries spaceId and the close reason move-stage requires', () => {
+  const body = 'Grazie ma non mi interessa più, cancellate pure tutto.';
+  const routed = route(body, 'proposta', { messageId: 'wa:msg:11' });
+
+  // No close reason yet: the person must name one when accepting.
+  assert.throws(
+    () => confirmOfferMoveProposal(routed.proposal, { actor: PERSON, decision: 'accept' }),
+    /accepting a move to the lost stage requires a reason/,
+  );
+
+  const { move } = confirmOfferMoveProposal(routed.proposal, {
+    actor: PERSON, decision: 'accept', reason: 'il cliente ha disdetto',
+  });
+  assert.deepEqual(move, {
+    opportunityId: OPPORTUNITY,
+    spaceId: SPACE,
+    fromStage: 'proposta',
+    toStage: 'perso',
+    reason: 'il cliente ha disdetto',
+  });
+
+  // A reason suggested with the proposal also satisfies move-stage.
+  const suggested = route(body, 'proposta', { messageId: 'wa:msg:12', reason: 'il cliente ha disdetto' });
+  const confirmed = confirmOfferMoveProposal(suggested.proposal, { actor: PERSON, decision: 'accept' });
+  assert.equal(confirmed.move.reason, 'il cliente ha disdetto');
+
+  // Auto-apply to perso without a close reason is refused at route time.
+  assert.throws(
+    () => route(body, 'proposta', { messageId: 'wa:msg:13', overrideRows: SWITCH_ON_ROWS }),
+    /reason is required when moving to the lost stage/,
+  );
+  const applied = route(body, 'proposta', {
+    messageId: 'wa:msg:14', overrideRows: SWITCH_ON_ROWS, reason: 'il cliente ha disdetto',
+  });
+  assert.equal(applied.decision, 'apply');
+  assert.equal(applied.move.reason, 'il cliente ha disdetto');
+});
+
+// P1: fromStage/toStage are accordo-sales stage keys; terminal stages never reopen.
+test('unknown stages and moves out of terminal stages are refused at route time', () => {
+  const body = 'Quanto è il prezzo del pacchetto?';
+  const base = {
+    spaceId: SPACE,
+    opportunityId: OPPORTUNITY,
+    messageId: 'wa:msg:20',
+    messageBody: body,
+    quote: 'Quanto è il prezzo del pacchetto?',
+    suggestedBy: AI,
+    overrideRows: SWITCH_OFF_ROWS,
+  };
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, fromStage: 'richiesta-info', toStage: 'ghost' }),
+    /toStage must be one of the accordo-sales pipeline stages/,
+  );
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, fromStage: 'ghost', toStage: 'proposta' }),
+    /fromStage must be one of the accordo-sales pipeline stages/,
+  );
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, fromStage: 'pagato', toStage: 'proposta' }),
+    (error) => error.code === 'TERMINAL_STAGE',
+  );
+  assert.throws(
+    () => routeOfferMoveFromReply({ ...base, fromStage: 'perso', toStage: 'proposta' }),
+    (error) => error.code === 'TERMINAL_STAGE',
   );
 });

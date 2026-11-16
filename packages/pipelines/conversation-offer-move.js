@@ -9,9 +9,9 @@
  * `routeOfferMoveFromReply` returns a `proposal` decision carrying a frozen
  * `offer-move-proposal`, and only `confirmOfferMoveProposal` — called by a
  * human actor — turns it into a confirmed move the caller applies (e.g. via
- * the `move-stage` action). The one exception is a space with the
- * `move-offers` AI switch on: then the route returns an `apply` decision and
- * the caller moves the offer straight away.
+ * the `move-stage` action). The one exception is a space where the agent may
+ * move offers alone: then the route returns an `apply` decision and the
+ * caller moves the offer straight away.
  *
  * A rejected proposal never comes back for the same message: the caller
  * passes the message ids it already refused (`rejectedMessageIds`, persisted
@@ -19,13 +19,22 @@
  * refuses with `OFFER_MOVE_ALREADY_REJECTED` instead of a new proposal.
  *
  * Everything here is pure and storage-agnostic: callers persist proposals
- * and decisions, resolve the `move-offers` switch (`space-permissions`
- * `effectivePermission`) and move the offer. No CRM table is touched.
+ * and decisions, pass their stored `space-permission-override` rows as
+ * `overrideRows`, and move the offer. The auto-apply gate lives inside this
+ * module and always honors the master `ai-enabled` switch together with the
+ * `move-offers` switch (`space-permissions` `isAiActionAllowed`): callers
+ * must NOT pre-resolve with `effectivePermission`, which ignores the master
+ * kill-switch. Moves that reach `move-stage` carry `spaceId` and, for the
+ * lost stage, the non-blank close `reason` it requires. No CRM table is
+ * touched.
  */
 
 import { randomUUID } from 'node:crypto';
 import { AppError, ForbiddenError, ValidationError } from '../core/src/errors.js';
+import { findStage } from '../core/src/pipeline-registry.js';
 import { nowIso } from '../core/src/time.js';
+import { isAiActionAllowed } from '../space-permissions/src/permissions.js';
+import { accordoSalesPipeline } from './accordo-sales.js';
 
 const SPACE_ID_MAX = 128;
 const ID_MAX = 256;
@@ -68,7 +77,8 @@ function requireSuggestedBy(value) {
  *   toStage: unknown,
  *   quote: unknown,
  *   suggestedBy: unknown,
- *   moveOffersEnabled?: unknown,
+ *   reason?: unknown,
+ *   overrideRows?: unknown,
  *   rejectedMessageIds?: unknown,
  * }} args
  */
@@ -82,12 +92,36 @@ export function routeOfferMoveFromReply(args = {}) {
   const messageBody = requireText(args.messageBody, 'messageBody', BODY_MAX);
   const fromStage = requireText(args.fromStage, 'fromStage', ID_MAX);
   const toStage = requireText(args.toStage, 'toStage', ID_MAX);
+  const currentStage = findStage(accordoSalesPipeline, fromStage);
+  if (!currentStage) {
+    throw new ValidationError('fromStage must be one of the accordo-sales pipeline stages', {
+      field: 'fromStage',
+      allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
+    });
+  }
+  if (currentStage.type !== 'open' && currentStage.type !== 'renewal') {
+    throw new AppError(
+      `Cannot move out of terminal stage "${currentStage.key}" (${currentStage.type}); reopening is not supported`,
+      { code: 'TERMINAL_STAGE', status: 409, details: { stage: currentStage.key, type: currentStage.type } },
+    );
+  }
+  const targetStage = findStage(accordoSalesPipeline, toStage);
+  if (!targetStage) {
+    throw new ValidationError('toStage must be one of the accordo-sales pipeline stages', {
+      field: 'toStage',
+      allowed: accordoSalesPipeline.stages.map((stage) => stage.key),
+    });
+  }
   if (toStage === fromStage) {
     throw new ValidationError('toStage must differ from fromStage: a proposal moves the offer somewhere else', {
       field: 'toStage',
       fromStage,
     });
   }
+  const closeReason = args.reason === undefined || args.reason === null
+    ? null
+    : requireText(args.reason, 'reason', QUOTE_MAX);
+  const needsCloseReason = targetStage.type === 'lost';
   const quote = requireText(args.quote, 'quote', QUOTE_MAX);
   if (!messageBody.includes(quote)) {
     throw new ValidationError('quote must be a sentence of the customer reply it motivates', {
@@ -110,7 +144,18 @@ export function routeOfferMoveFromReply(args = {}) {
     );
   }
 
-  if (args.moveOffersEnabled === true) {
+  const overrideRows = args.overrideRows ?? [];
+  if (!Array.isArray(overrideRows)) {
+    throw new ValidationError('overrideRows must be an array of space-permission-override rows when provided', {
+      field: 'overrideRows',
+    });
+  }
+  // The master ai-enabled switch gates everything: with the master off every
+  // reply stays a proposal, whatever the move-offers switch says.
+  if (isAiActionAllowed(spaceId, 'move-offers', overrideRows)) {
+    if (needsCloseReason && !closeReason) {
+      throw new ValidationError('reason is required when moving to the lost stage', { field: 'reason' });
+    }
     return Object.freeze({
       decision: 'apply',
       spaceId,
@@ -118,7 +163,14 @@ export function routeOfferMoveFromReply(args = {}) {
       messageId,
       fromStage,
       toStage,
-      reason: `move-offers is on for this space: «${quote}» moves the offer from ${fromStage} to ${toStage} with no confirmation`,
+      ...(needsCloseReason ? { reason: closeReason } : {}),
+      move: Object.freeze({
+        opportunityId,
+        spaceId,
+        fromStage,
+        toStage,
+        ...(needsCloseReason ? { reason: closeReason } : {}),
+      }),
       suggestedBy: Object.freeze({ ...suggestedBy }),
     });
   }
@@ -135,6 +187,8 @@ export function routeOfferMoveFromReply(args = {}) {
       fromStage,
       toStage,
       quote,
+      closeReason,
+      needsCloseReason,
       proposedBy: Object.freeze({ ...suggestedBy }),
       proposedAt: nowIso(),
       decidedBy: null,
@@ -175,6 +229,17 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   if (decision === 'reject' && (typeof reason !== 'string' || reason === '')) {
     throw new ValidationError('rejecting an offer move requires a reason', { field: 'reason' });
   }
+  // A confirmed move to the lost stage must satisfy the move-stage contract:
+  // move-stage refuses a lost move with no reason, so the accept carries the
+  // close reason — supplied at confirm time, or suggested with the proposal.
+  const targetStage = typeof proposal.toStage === 'string' ? findStage(accordoSalesPipeline, proposal.toStage) : null;
+  const needsCloseReason = proposal.needsCloseReason === true || targetStage === null || targetStage.type === 'lost';
+  const acceptReason = typeof reason === 'string' && reason !== ''
+    ? reason
+    : (typeof proposal.closeReason === 'string' && proposal.closeReason !== '' ? proposal.closeReason : null);
+  if (decision === 'accept' && needsCloseReason && !acceptReason) {
+    throw new ValidationError('accepting a move to the lost stage requires a reason', { field: 'reason' });
+  }
   const decided = Object.freeze({
     ...proposal,
     status: decision === 'accept' ? 'confirmed' : 'rejected',
@@ -185,7 +250,13 @@ export function confirmOfferMoveProposal(proposal, { actor, decision, reason } =
   return {
     proposal: decided,
     move: decision === 'accept'
-      ? Object.freeze({ opportunityId: proposal.opportunityId, fromStage: proposal.fromStage, toStage: proposal.toStage })
+      ? Object.freeze({
+        opportunityId: proposal.opportunityId,
+        spaceId: proposal.spaceId,
+        fromStage: proposal.fromStage,
+        toStage: proposal.toStage,
+        ...(needsCloseReason ? { reason: acceptReason } : {}),
+      })
       : null,
   };
 }
