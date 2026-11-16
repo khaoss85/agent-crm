@@ -16,6 +16,39 @@ function projectDoctor(report, publicStorage) {
   return { ...rest, storage: { adapter: publicStorage.adapter, available: publicStorage.available } };
 }
 
+/**
+ * The space's sales playbook, read-only over MCP: an external agent reads
+ * the context the member compiled, it never writes it here. Missing
+ * composition or a missing row is an honest error, never invented content.
+ *
+ * @param {any} app
+ */
+function playbookService(app) {
+  const service = app?.modules?.get?.('sales-playbook')?.service;
+  if (!service || typeof service.getBySpace !== 'function') {
+    throw new Error('The sales-playbook module is not composed: no playbook to read');
+  }
+  return service;
+}
+
+/**
+ * The human-decided AI proposals of one space, read-only over MCP and
+ * always scoped to the caller's space: listing another space's queue is
+ * not possible through this tool.
+ *
+ * @param {any} app
+ */
+function proposalService(app) {
+  const service = app?.modules?.get?.('space-ai-proposal')?.service;
+  if (!service || typeof service.listWhere !== 'function' || typeof service.get !== 'function') {
+    throw new Error('The space-ai-proposal module is not composed: no proposals to read');
+  }
+  return service;
+}
+
+const PROPOSAL_DECISIONS = Object.freeze(['approved', 'refused']);
+const PROPOSAL_STATUSES = Object.freeze(['proposed', 'approved', 'refused']);
+
 /** @param {{app: any, rootDir: string, publicStorage?: { adapter: string, available: boolean } | null}} dependencies */
 export function createToolRegistry({ app, rootDir, publicStorage = null }) {
   const definitions = [
@@ -156,6 +189,123 @@ export function createToolRegistry({ app, rootDir, publicStorage = null }) {
       },
       annotations: readOnlyAnnotations(),
       handler: async (args) => app.workflows.getRun(args.runId),
+    },
+    {
+      name: 'crm_read_playbook',
+      title: 'Read Space Sales Playbook',
+      description: 'Read the sales playbook the member compiled for one space: who the space is, what it sells, to whom, in what tone. Read-only; a space with no playbook answers an error, never invented content.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          spaceId: { type: 'string', description: 'The Accordo space id — always explicit, never inferred.' },
+        },
+        required: ['spaceId'],
+        additionalProperties: false,
+      },
+      annotations: readOnlyAnnotations(),
+      handler: async (args) => {
+        const spaceId = requiredString(args.spaceId, 'spaceId');
+        const playbook = playbookService(app).getBySpace(spaceId);
+        if (!playbook) {
+          throw new Error(`No sales playbook for space "${spaceId}": the member has not compiled one`);
+        }
+        return playbook;
+      },
+    },
+    {
+      name: 'crm_create_assignment',
+      title: 'Create Teammate Assignment',
+      description: 'Give a teammate agent an assignment from a human phrase with a cadence and a next run. Runs the governed create-assignment operation with the caller actor, so the write carries identity and audit; an unclear phrase or an unknown agent refuses instead of guessing.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          spaceId: { type: 'string', description: 'The Accordo space id — always explicit, never inferred.' },
+          sourceKey: { type: 'string', description: 'Caller-supplied idempotency identity for the assignment: a retry replays, never doubles.' },
+          agentSourceKey: { type: 'string', description: 'The agent this assignment belongs to.' },
+          phrase: { type: 'string', description: 'The human phrase, e.g. ogni lunedi il report vendite.' },
+          plan: { type: 'object', description: 'Optional explicit schedule (cadence, weekday, timeOfDay, runAt). Without it the built-in Italian parser places the phrase.' },
+          actorId: { type: 'string', description: 'Identity of the external agent giving the assignment. Required: the tool never invents it.' },
+        },
+        required: ['spaceId', 'sourceKey', 'agentSourceKey', 'phrase', 'actorId'],
+        additionalProperties: false,
+      },
+      annotations: writeAnnotations(),
+      handler: async (args) => app.createTeammateAssignment({
+        actor: { type: 'agent', id: requiredString(args.actorId, 'actorId') },
+        spaceId: args.spaceId,
+        sourceKey: args.sourceKey,
+        agentSourceKey: args.agentSourceKey,
+        phrase: args.phrase,
+        ...(args.plan === undefined ? {} : { plan: args.plan }),
+      }),
+    },
+    {
+      name: 'crm_list_proposals',
+      title: 'List Space AI Proposals',
+      description: 'List the AI action proposals of one space waiting for or holding a human decision. Always scoped to the given space; another space queue is not reachable through this tool.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          spaceId: { type: 'string', description: 'The Accordo space id — always explicit, never inferred.' },
+          status: { type: 'string', enum: ['proposed', 'approved', 'refused'] },
+          limit: { type: 'integer', minimum: 1, maximum: 500 },
+        },
+        required: ['spaceId'],
+        additionalProperties: false,
+      },
+      annotations: readOnlyAnnotations(),
+      handler: async (args) => {
+        const spaceId = requiredString(args.spaceId, 'spaceId');
+        if (args.status !== undefined && !PROPOSAL_STATUSES.includes(args.status)) {
+          throw new Error(`status must be one of: ${PROPOSAL_STATUSES.join(', ')}`);
+        }
+        const requested = Number.isInteger(args.limit) ? args.limit : 100;
+        const limit = Math.min(Math.max(requested, 1), 500);
+        const items = await proposalService(app).listWhere({
+          spaceId,
+          ...(args.status === undefined ? {} : { status: args.status }),
+        });
+        return { items: items.slice(0, limit) };
+      },
+    },
+    {
+      name: 'crm_decide_proposal',
+      title: 'Decide Space AI Proposal',
+      description: 'Record an explicit human approval or refusal of one proposed AI action of one space. Runs the governed decide record action with a human actor, so the write carries identity and audit; without the human identity the tool refuses, and a proposal of another space is refused.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          spaceId: { type: 'string', description: 'The Accordo space id — always explicit, never inferred.' },
+          proposalId: { type: 'string', description: 'The proposal to decide.' },
+          decision: { type: 'string', enum: ['approved', 'refused'] },
+          decidedBy: { type: 'string', description: 'Identity of the human decision-maker. Required: the tool never invents it.' },
+          refusalReason: { type: 'string', description: 'Why the action must not run (refused only).' },
+        },
+        required: ['spaceId', 'proposalId', 'decision', 'decidedBy'],
+        additionalProperties: false,
+      },
+      annotations: writeAnnotations(),
+      _meta: { 'anthropic/requiresUserInteraction': true },
+      handler: async (args) => {
+        const spaceId = requiredString(args.spaceId, 'spaceId');
+        const decidedBy = requiredString(args.decidedBy, 'decidedBy');
+        if (!PROPOSAL_DECISIONS.includes(args.decision)) {
+          throw new Error(`decision must be one of: ${PROPOSAL_DECISIONS.join(', ')}`);
+        }
+        const proposal = await proposalService(app).get(args.proposalId);
+        if (proposal.spaceId !== spaceId) {
+          throw new Error('This proposal belongs to another space: deciding it from here is refused');
+        }
+        return app.runAction({
+          module: 'space-ai-proposal',
+          action: args.decision,
+          recordId: args.proposalId,
+          input: args.decision === 'refused' && args.refusalReason !== undefined
+            ? { refusalReason: args.refusalReason }
+            : {},
+          actor: { type: 'user', id: decidedBy },
+        });
+      },
     },
     {
       name: 'crm_scaffold_module',
