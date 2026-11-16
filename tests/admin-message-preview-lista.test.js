@@ -94,3 +94,14 @@ test('a stored Ahrefs body (pilot import, 2000 chars) reads clean: no «&zwnj;»
   assert.doesNotMatch(full, /&zwnj;|style=|box-sizing|cellpadding|"/, 'the scheda full text is clean too');
   assert.match(full, /Unsubscribe from this project/);
 });
+
+test('an empty mail previews the subject, otherwise the one fallback — Clienti and Oggi agree', () => {
+  // backlog:1740985ba18c: Widiba/MuscleWiki mail imported before the cure
+  // have an empty body. Oggi already fell back to the subject; the Clienti
+  // row carries the same preview from the server (see customer-list.test.js),
+  // so both read one rule.
+  assert.equal(oggiPreview('', 'Il tuo estratto conto è pronto'), 'Il tuo estratto conto è pronto');
+  assert.equal(oggiPreview('', null), 'Messaggio senza testo');
+  assert.equal(oggiPreview('<table><tr><td>Danielepelleri</td><td>400 internal URLs</td></tr></table>', 'Ahrefs Site Audit'),
+    'Ahrefs Site Audit — Danielepelleri 400 internal URLs', 'cells never glue words, after the subject');
+});
