@@ -1,7 +1,7 @@
 // @ts-check
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
-import { MAX_FIELD_LENGTH, safeString } from './normalize.js';
+import { CONTROL_RE, MAX_FIELD_LENGTH, safeString } from './normalize.js';
 import { canonicalPhone } from './enrichment.js';
 import { recordExternalIdentityRow } from './sender.js';
 import { deciding, trusted } from './store.js';
@@ -684,7 +684,11 @@ export async function proposeFieldFromQuestion({ adapter } = {}, request) {
   let answer;
   try {
     answer = await callable.extractField({ question: question.trim() });
-  } catch {
+  } catch (error) {
+    // Degraded, never silent: the cause (name/code and space), never data.
+    console.error(
+      `[accordo] customer field proposal unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(input.spaceId ?? 'unknown')})`.trim(),
+    );
     throw refusal('CUSTOMER_FIELD_AI_UNUSABLE', 503,
       'l’AI non ha capito la domanda: aggiungi il campo a mano');
   }
@@ -696,6 +700,28 @@ export async function proposeFieldFromQuestion({ adapter } = {}, request) {
     throw new ValidationError('l’AI propone solo testo, sì-no o punteggio: gli altri tipi li decide una persona', { field: 'type' });
   }
   return Object.freeze({ key, label, type: fieldType, question: question.trim() });
+}
+
+/**
+ * A fill source text is a pasted block, like a signature: multi-line by
+ * nature (review agent-crm#975 giro 1 P2: `safeString` refused embedded
+ * newlines, so an ordinary signature rejected the whole fill). Newlines,
+ * carriage returns and tabs separate lines; any other control character
+ * refuses, and the value itself is never echoed back.
+ */
+function requireFillSourceText(value, field) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ValidationError('a fill source text is never empty', { field });
+  }
+  if (value.length > MAX_FILL_SOURCE_TEXT) {
+    throw new ValidationError(`a fill source text is at most ${MAX_FILL_SOURCE_TEXT} characters`, { field });
+  }
+  for (const line of value.split(/\r?\n/)) {
+    if (CONTROL_RE.test(line.replaceAll('\t', ''))) {
+      throw new ValidationError('a fill source text must not contain control characters', { field });
+    }
+  }
+  return value;
 }
 
 function requireFillSources(value) {
@@ -714,10 +740,7 @@ function requireFillSources(value) {
       throw new ValidationError(
         `a fill source kind must be one of: ${AI_FILL_SOURCE_KINDS.join(', ')}`, { field: `${at}.kind` });
     }
-    const text = safeString(source.text, `${at}.text`, { max: MAX_FILL_SOURCE_TEXT, required: true });
-    if (text.trim() === '') {
-      throw new ValidationError('a fill source text is never empty', { field: `${at}.text` });
-    }
+    const text = requireFillSourceText(source.text, `${at}.text`);
     const detail = source.detail === undefined || source.detail === null
       ? null
       : safeString(source.detail, `${at}.detail`, { max: MAX_FILL_SOURCE_DETAIL });
@@ -808,7 +831,11 @@ export async function fillAiFieldValues({ modules, names }, request) {
         key: entry.key, question: entry.question,
         sources: sources.map((source) => ({ kind: source.kind, text: source.text, detail: source.detail })),
       });
-    } catch {
+    } catch (error) {
+      // Degraded, never silent: the cause (name/code and space), never data.
+      console.error(
+        `[accordo] customer AI fill unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(input.spaceId ?? 'unknown')})`.trim(),
+      );
       skipped.push(Object.freeze({ key: entry.key, reason: 'l’AI non ha risposto: il campo resta vuoto' }));
       continue;
     }

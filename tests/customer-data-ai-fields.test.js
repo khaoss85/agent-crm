@@ -228,3 +228,70 @@ test('il punteggio vive in filtri e colonne come gli altri campi', async (t) => 
   assert.ok(filtered.items.some((item) => item.id === hot.id));
   assert.ok(!filtered.items.some((item) => item.id === cold.id));
 });
+
+test('una firma su più righe non blocca il riempimento', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Gestionale', type: 'punteggio' });
+  const contact = await newContact(app, 'Pietro');
+
+  const outcome = await app.fillAiFieldValues({
+    actor: OPERATOR,
+    resource: 'contact',
+    id: contact.id,
+    fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+    sources: [{ kind: 'email-signature', text: 'Guido Presti\nPalestra Esempio\nusiamo FattureSmart', detail: 'sig:1' }],
+    adapter: fakeFillAdapter({ gestionale: { value: '72', source: 'email-signature' } }),
+  });
+  assert.equal(outcome.filled.length, 1, 'a multiline source reads, it never rejects the fill');
+  assert.equal(outcome.filled[0].value, '72');
+
+  await assert.rejects(
+    () => app.fillAiFieldValues({
+      actor: OPERATOR,
+      resource: 'contact',
+      id: contact.id,
+      fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+      sources: [{ kind: 'email-signature', text: 'riga pulita\u0000e poi un controllo' }],
+      adapter: fakeFillAdapter({ gestionale: { value: '72', source: 'email-signature' } }),
+    }),
+    /control characters/,
+    'other control characters still refuse',
+  );
+});
+
+test('un guasto dell’AI si diagnostica senza mostrare i testi', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Gestionale', type: 'punteggio' });
+  const contact = await newContact(app, 'Paola');
+
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => { logged.push(args.join(' ')); };
+  try {
+    const failure = new Error('provider down');
+    failure.code = 'PROVIDER_AUTH';
+    const outcome = await app.fillAiFieldValues({
+      actor: OPERATOR,
+      resource: 'contact',
+      id: contact.id,
+      fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+      sources: SOURCES,
+      adapter: { async extractFieldValue() { throw failure; } },
+    });
+    assert.equal(outcome.filled.length, 0);
+    assert.match(outcome.skipped[0].reason, /resta vuoto/, 'the user-facing reason stays generic');
+
+    await assert.rejects(
+      () => app.proposeFieldFromQuestion({
+        actor: OPERATOR,
+        question: 'usano già un gestionale?',
+        adapter: { async extractField() { throw failure; } },
+      }),
+      (error) => error?.code === 'CUSTOMER_FIELD_AI_UNUSABLE',
+    );
+  } finally {
+    console.error = original;
+  }
+  assert.ok(logged.some((line) => line.includes('PROVIDER_AUTH')), 'the diagnostic names the cause');
+  assert.ok(!logged.some((line) => line.includes('FattureSmart')), 'the diagnostic never echoes source text');
+});
