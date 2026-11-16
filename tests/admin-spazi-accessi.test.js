@@ -67,7 +67,9 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
           members.push({ subject: body.subject, role: body.role, status: 'active' });
           return { subject: body.subject };
         }
-        return { items: members };
+        // Review giro 2 (P2): no aliasing — the view reconciles from the
+        // server truth, never from the object the POST just wrote.
+        return { items: members.map((row) => ({ ...row })) };
       }
       if (path.startsWith('/api/spine/memberships/') && path.endsWith('/suspend')) {
         const subject = decodeURIComponent(path.split('/')[4]);
@@ -82,7 +84,9 @@ function stubClient({ context = null, members = [], overrides = [], calls = null
       }
       if (path.startsWith('/api/space-permissions/effective')) {
         if (fail.overrides) throw fail.overrides;
-        return { spaceId: SPACE, overrides: overrides.filter((row) => row.spaceId === SPACE) };
+        // Review giro 2 (P2): same no-aliasing rule as the memberships GET —
+        // the settled flip paint must come from the server store.
+        return { spaceId: SPACE, overrides: overrides.filter((row) => row.spaceId === SPACE).map((row) => ({ ...row })) };
       }
       if (path === '/api/space-permissions/set-permission') {
         const found = overrides.find((row) => row.spaceId === body.spaceId && row.permission === body.permission);
@@ -2229,4 +2233,32 @@ test('71a6574a review giro 1 (P2): a click while the post-flip re-read is out op
   await flush();
   const settled = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
   assert.equal(settled.find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta')?.getAttribute('aria-checked'), 'false', 'the server truth keeps the flipped state');
+});
+
+test('71a6574a review giro 2 (P2): a click while the post-invite re-read is out opens its confirm, never «Permessi non disponibili.»', async () => {
+  const members = [{ subject: 'owner-1', role: 'owner', status: 'active' }];
+  const gate = gatedGets(stubClient({ members }), ['/api/spine/memberships', '/api/space-permissions/effective']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Identificativo della persona da invitare').value = 'nuova@esempio.it';
+  mount.findAll('input').find((node) => node.getAttribute('aria-label') === 'Motivo dell\u2019invito').value = 'nuova collega';
+  const done = mount.findAll('button').find((node) => node.textContent === 'Invita').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and both re-reads are still held: the invited row paints
+  // at once, and clicking a switch must open its confirmation against the
+  // confirmed overrides snapshot.
+  const names = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(names.includes('nuova@esempio.it'), 'the invited person is already listed');
+  const toggle = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await toggle.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Permessi non disponibili/, 'no unavailable note while the re-read is out');
+  assert.match(text(mount), /(Accendere|Spegnere) «Scrivere bozze di risposta»\?/, 'the switch confirm opened');
+  gate.free();
+  await done;
+  await flush();
+  const settledNames = byClassIn(mount, 'div', 'bo-spazi-subject').map((node) => node.textContent);
+  assert.ok(settledNames.includes('nuova@esempio.it'), 'the server truth keeps the invited person');
 });

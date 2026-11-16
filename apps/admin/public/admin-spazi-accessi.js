@@ -947,9 +947,15 @@ export function createSpaziAccessiView(deps) {
    * the pre-two-phase `load()` the refusal paths called: same reset, same
    * reads, no render.
    */
-  async function reload() {
+  async function reload({ keepOverrides = null } = {}) {
     const space = readActiveSpace().trim();
     if (!resetLoadState(space)) return;
+    if (Array.isArray(keepOverrides)) {
+      // Same confirmed snapshot as refresh(): a write the 200 just
+      // confirmed keeps its values while the re-read is out. The GET in
+      // loadCore still replaces this with the server truth (or its error).
+      state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
     const reads = beginReads(space);
     await loadCore(reads);
     await loadStats(reads);
@@ -992,8 +998,8 @@ export function createSpaziAccessiView(deps) {
     const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
     if (found !== undefined) {
       // The store already lists the subject (a re-read landed between the
-      // 200 and this paint, or the test store shares the array): the
-      // confirmed role and status still apply at once.
+      // 200 and this paint): the confirmed role and status still apply at
+      // once.
       found.role = role;
       found.status = status;
       return;
@@ -1368,8 +1374,14 @@ export function createSpaziAccessiView(deps) {
             // backlog:71a6574a: the 200s suspended every subject — the row
             // reads sospeso now with live buttons; the refresh reconciles.
             applySuspensions(row.removable);
+            // Review giro 2 (P2): the confirmed overrides snapshot survives
+            // the refresh like on the flip path — a click while the re-read
+            // is out never paints «Permessi non disponibili.».
+            const confirmedRemoval = Array.isArray(state.overrides)
+              ? state.overrides.map((row) => ({ ...row }))
+              : null;
             render();
-            await refresh();
+            await refresh({ keepOverrides: confirmedRemoval });
             return;
           }
           const total = row.removable.length;
@@ -1389,8 +1401,14 @@ export function createSpaziAccessiView(deps) {
           // the reload after it reconciles every row with the server truth.
           const refusedSubjects = new Set(refused.map((entry) => entry.subject));
           applySuspensions(row.removable.filter((subject) => !refusedSubjects.has(subject)));
+          // Review giro 2 (P2): the confirmed overrides snapshot survives the
+          // reload like on the flip path — a click while the re-read is out
+          // never paints «Permessi non disponibili.».
+          const confirmedPartial = Array.isArray(state.overrides)
+            ? state.overrides.map((row) => ({ ...row }))
+            : null;
           render();
-          await reload();
+          await reload({ keepOverrides: confirmedPartial });
           // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
           state.confirmRemove = refused[0].subject;
@@ -1458,18 +1476,30 @@ export function createSpaziAccessiView(deps) {
         // backlog:71a6574a: the 200 created the membership — the row paints
         // now with live buttons; the refresh after it reconciles.
         applyInvite(who, picked, inviteStatusOf(answer));
+        // Review giro 2 (P2): the confirmed overrides snapshot survives the
+        // refresh like on the flip path — a click while the re-read is out
+        // never paints «Permessi non disponibili.».
+        const confirmedInvite = Array.isArray(state.overrides)
+          ? state.overrides.map((row) => ({ ...row }))
+          : null;
         render();
+        await refresh({ keepOverrides: confirmedInvite });
+        return;
       } catch (error) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
         // One message, inside the form that failed; a toast only if it cannot show.
-        await reload();
+        // Review giro 2 (P2): same confirmed snapshot as above — the refused
+        // invite still rereads, but the switches stay painted meanwhile.
+        const confirmedInviteRefusal = Array.isArray(state.overrides)
+          ? state.overrides.map((row) => ({ ...row }))
+          : null;
+        await reload({ keepOverrides: confirmedInviteRefusal });
         state.inviteRefusal = message;
         render();
         sayIfHidden(message);
         return;
       }
-      await refresh();
     });
     invite.appendChild(send);
     if (state.inviteRefusal !== null) {
