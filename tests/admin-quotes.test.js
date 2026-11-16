@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bpsToPercentText, createQuoteView, percentReason, percentToBps } from '../apps/admin/public/admin-quotes.js';
-import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseModuleRoute, italianDay } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -12,6 +12,9 @@ import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
  * asserted precisely. The full HTTP path is covered by
  * tests/commercial-e2e.test.js.
  */
+
+/** The non-breaking space the quote view keeps with its number (backlog:cf270ae1f808). */
+const NBSP = String.fromCharCode(160);
 
 const SCHEMA = {
   commercial: {
@@ -134,9 +137,9 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   // Grouped totals: one-time, monthly and annual are shown separately and are
   // never combined into a single grand total. Amounts use the Italian screen
   // form: dot for thousands, comma for cents, EUR as the € sign.
-  assert.ok(text.includes('5.000 €'), `one-time total rendered (${text})`);
-  assert.ok(text.includes('3.200 €'), 'monthly total rendered');
-  assert.ok(text.includes('9.500 €'), 'annual total rendered');
+  assert.ok(text.includes('5.000' + NBSP + '€'), `one-time total rendered (${text})`);
+  assert.ok(text.includes('3.200' + NBSP + '€'), 'monthly total rendered');
+  assert.ok(text.includes('9.500' + NBSP + '€'), 'annual total rendered');
   assert.ok(text.includes('Una tantum'), 'the one-time group is labelled');
   assert.ok(text.includes('Ricorrente ogni 1 mese'), 'the monthly group is labelled');
   assert.ok(text.includes('Ricorrente ogni 1 anno'), 'the annual group is labelled');
@@ -154,7 +157,7 @@ test('draft quotes show server-calculated totals and line/submit controls', asyn
   assert.ok(components[1].textContent.includes('ogni 1 mese'), 'recurrence shown');
   const tiers = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '') === 'quote-tier');
   assert.equal(tiers.length, 1, 'the tier band is shown');
-  assert.ok(tiers[0].textContent.includes('30 × 40 €'), `tier breakdown rendered (${tiers[0].textContent})`);
+  assert.ok(tiers[0].textContent.includes('30 × 40' + NBSP + '€'), `tier breakdown rendered (${tiers[0].textContent})`);
   // Draft controls exist; approval/revise controls do not.
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-add-line'));
   assert.ok(mount.findAll('div').some((node) => (node.getAttribute('class') ?? '') === 'quote-submit'));
@@ -245,8 +248,8 @@ test('version history lists immutable versions with their policy decision', asyn
   assert.equal(rows[0].getAttribute('data-version'), 'v2', 'newest version first');
   assert.ok(rows[1].textContent.includes('Richiede approvazione'));
   assert.ok(rows[1].textContent.includes('standard-sales-discount@1'), 'the row names the policy that decided it');
-  assert.ok(rows[1].textContent.includes('una tantum 5.000 €'), 'versions show grouped periods');
-  assert.ok(rows[1].textContent.includes('3.200 € ogni 1 mese'), 'recurring period shown per version');
+  assert.ok(rows[1].textContent.includes('una tantum 5.000' + NBSP + '€'), 'versions show grouped periods');
+  assert.ok(rows[1].textContent.includes('3.200' + NBSP + '€ ogni 1 mese'), 'recurring period shown per version');
 });
 
 test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total', async () => {
@@ -263,17 +266,17 @@ test('8dc6d4a456e1: a subscription-only quote never paints a zero one-time total
   const listMount = createMount();
   await createQuoteView({ doc: createFakeDocument(), mount: listMount, client: stubClient({ quoteRecord: record }) }).renderQuoteList();
   const listText = listMount.textContent;
-  assert.ok(listText.includes('3.200 € ogni 1 mese'), 'the list shows the recurring group with its period');
+  assert.ok(listText.includes('3.200' + NBSP + '€ ogni 1 mese'), 'the list shows the recurring group with its period');
   assert.ok(!listText.includes('una tantum'), 'the list never shows a zero one-time total for a subscription-only quote');
 
   const doc = createFakeDocument();
   const mount = createMount();
   await createQuoteView({ doc, mount, client: stubClient({ quoteRecord: record, versions }) }).renderQuoteDetail('q1');
   const text = mount.textContent;
-  assert.ok(text.includes('3.200 €'), 'the valued recurring group leads the hero');
+  assert.ok(text.includes('3.200' + NBSP + '€'), 'the valued recurring group leads the hero');
   assert.ok(!text.includes('una tantum 0'), 'the hero never shows a zero one-time total');
   assert.ok(text.includes('standard-sales-discount@1'), 'the history row names the deciding policy');
-  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200 € ogni 1 mese'), 'the history row keeps the recurring period');
+  assert.ok(text.includes('Versione 1 · Approvazione automatica · standard-sales-discount@1 · 3.200' + NBSP + '€ ogni 1 mese'), 'the history row keeps the recurring period');
 });
 
 test('bb833fab673a: the Totale panel hides zero-valued groups like hero and list', async () => {
@@ -356,7 +359,7 @@ test('cf340b571e98: the detail links back to the customer scheda', async () => {
   assert.equal(mount.childNodes[0], back, 'the back link paints above the detail');
   const text = mount.textContent;
   assert.ok(text.includes('Cosa include'), 'the detail still shows the lines');
-  assert.ok(text.includes('5.000 €'), 'the detail still shows the total');
+  assert.ok(text.includes('5.000' + NBSP + '€'), 'the detail still shows the total');
   assert.ok(mount.findAll('span').some((node) => String(node.getAttribute('class') ?? '').startsWith('quote-status ')), 'the detail still shows the state');
   assert.ok(text.includes('Storico') && text.includes('Ancora nessuna versione'), 'the detail still shows the history');
 });
@@ -441,7 +444,7 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
   await createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
   const text = mount.textContent;
   const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
-  assert.equal(title?.textContent, 'Proposta esempio — Pacchetto 10 PT', 'the heading names the offer, never an id');
+  assert.equal(title?.textContent, 'Preventivo · Ada Rossi — Proposta esempio — Pacchetto 10 PT', 'backlog:cf270ae1f808: the heading names the customer and the offer, never an id');
   assert.ok(text.includes('Preventivo'), 'the kicker says it is a quote');
   assert.ok(text.includes('Per Ada Rossi'), 'the quote names who it is for');
   for (const english of [
@@ -453,8 +456,8 @@ test('ef92f728: the quote detail shows no English and no technical id, amounts i
     assert.ok(!text.includes(english), `no English UI text: ${english}`);
   }
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(text), 'no UUID in visible text');
-  assert.ok(text.includes('5.000 €'), 'thousands use the dot separator');
-  assert.ok(text.includes('7.790 €'), 'line totals use the dot separator');
+  assert.ok(text.includes('5.000' + NBSP + '€'), 'thousands use the dot separator');
+  assert.ok(text.includes('7.790' + NBSP + '€'), 'line totals use the dot separator');
   assert.ok(text.includes('5,00%'), 'percentages use the comma');
 });
 
@@ -502,7 +505,7 @@ test('Dan 06/11: the quote is issued by the space and reads as a document beside
   assert.ok(sheet.textContent.includes('Cosa include') && sheet.textContent.includes('Totale'), 'lines and totals live in the document');
   assert.ok(side.textContent.includes('in sola lettura'), 'the approval state lives in the side column');
   const amount = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-amount');
-  assert.equal(amount?.textContent, '5.000 €', 'the one-time total leads the document');
+  assert.equal(amount?.textContent, '5.000' + NBSP + '€', 'the one-time total leads the document');
 });
 
 
@@ -526,7 +529,7 @@ test('a2ea75f705fd: the discount is written and read in percent, never «punti b
   const text = mount.textContent;
   assert.ok(!/punti base/i.test(text), 'no «punti base» anywhere');
   assert.ok(text.includes('Sconto (%)'), 'the field says percent');
-  assert.ok(text.includes('sconto 5,00% (−600 €)'), 'the line reads the discount in percent and in euro');
+  assert.ok(text.includes('sconto 5,00% (−600' + NBSP + '€)'), 'the line reads the discount in percent and in euro');
   const row = mount.findAll('div').find((node) => node.getAttribute('data-line') === LINE.id);
   assert.equal(row.__discount.value, '5', 'the line field shows its percent, not 500');
 
@@ -639,7 +642,7 @@ test('47b89e19: each row shows stato, importo and the linked offer like the offe
   const pill = row.findAll('span').find((node) => String(node.getAttribute('class') ?? '').startsWith('quote-status '));
   assert.ok(pill, 'the stato pill is there');
   assert.equal(pill.textContent, 'Bozza', 'the stato reads Italian, never the raw status');
-  assert.ok(row.textContent.includes('5.000 €'), 'the importo is the server total');
+  assert.ok(row.textContent.includes('5.000' + NBSP + '€'), 'the importo is the server total');
   assert.ok(row.textContent.includes('Offerta:'), 'the linked offer is named');
   assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
   const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
@@ -683,7 +686,7 @@ test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', 
   const rows = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
   assert.equal(rows.length, 1, 'righe, stato and importo still render');
   assert.ok(rows[0].textContent.includes('Bozza'), 'the stato stays');
-  assert.ok(rows[0].textContent.includes('5.000 €'), 'the importo stays');
+  assert.ok(rows[0].textContent.includes('5.000' + NBSP + '€'), 'the importo stays');
 });
 
 test('47b89e19: the detail links stay in the router too (offer, scheda, version)', async () => {
@@ -712,6 +715,72 @@ test('47b89e19: the detail links stay in the router too (offer, scheda, version)
   }
   assert.deepEqual(navigated, ['#/customer-card/contact/c1', '#/offerte/o1', '#/modules/quote-version/v1'],
     'every link goes through navigate(), setting only the hash');
+});
+
+test('cf270ae1f808: each list row shows cliente and data beside stato and importo', async () => {
+  const { mount, render } = listView({
+    quoteRecord: quote({ createdAt: '2026-11-10' }),
+    opportunities: [{ id: 'opp1', name: 'Pacchetto 10 PT', contactName: 'Ada Rossi' }],
+  });
+  await render();
+  const row = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote');
+  assert.ok(row.textContent.includes('Cliente: Ada Rossi'), 'the row names the customer');
+  assert.ok(row.textContent.includes(italianDay('2026-11-10')), 'the row shows the date');
+});
+
+test('cf270ae1f808 review giro 1 P2: the title keeps both names when both are known', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: {
+      id: 'o1', contactId: 'c1', contactName: 'Ada Rossi',
+      name: 'Proposta esempio — Pacchetto 10 PT',
+    },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
+  assert.equal(title?.textContent, 'Preventivo · Ada Rossi — Proposta esempio — Pacchetto 10 PT',
+    'two quotes for the same customer from different offers never share a title');
+});
+
+test('cf270ae1f808: the title keeps the customer when the offer name is missing', async () => {
+  const mount = createMount();
+  const client = stubClient({
+    quoteRecord: quote({ status: 'approved', opportunityId: 'o1' }),
+    lines: [LINE],
+    versions: [],
+    opportunityRecord: { id: 'o1', contactId: 'c1', contactName: 'Ada Rossi' },
+  });
+  await createQuoteView({ doc: createFakeDocument(), mount, client }).renderQuoteDetail('q1');
+  const title = mount.findAll('h2').find((node) => (node.getAttribute('class') ?? '') === 'bo-quote-title');
+  assert.equal(title?.textContent, 'Preventivo · Ada Rossi', 'customer in the title, never a bare «Preventivo»');
+});
+
+test('cf270ae1f808: the euro sign never wraps away from its number', async () => {
+  const mount = createMount();
+  await createQuoteView({ doc: createFakeDocument(), mount, client: stubClient({ lines: [LINE], entries: [ENTRY] }) }).renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('5.000' + NBSP + '€'), 'amount and sign stay together');
+  assert.ok(!mount.textContent.includes('5.000 €'), 'no breaking space before the sign');
+});
+
+test('cf270ae1f808: the detail paints at once, never a blank page', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const inner = stubClient({ lines: [LINE], entries: [ENTRY] });
+  const client = { calls: inner.calls, request: (path, options) => gate.then(() => inner.request(path, options)) };
+  const pending = createQuoteView({ doc, mount, client }).renderQuoteDetail('q1');
+  assert.ok(mount.textContent.includes('Preventivo'), 'the heading paints before any read lands');
+  // backlog:d56122ee2844 (merged as #941): the wait is a skeleton with one
+  // spoken line, not the old «Caricamento…» status.
+  assert.ok(mount.textContent.includes('Carico il preventivo'), 'the wait is announced while the reads are in flight');
+  assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'skeleton bars paint at once');
+  release();
+  await pending;
+  assert.ok(mount.textContent.includes('Cosa include'), 'the content replaces the wait');
 });
 
 test('b9b7912320f8: a flat-fee line reads «Quota fissa» with its quantity locked', async () => {

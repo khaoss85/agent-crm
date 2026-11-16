@@ -4,6 +4,9 @@ import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
+/** The non-breaking space the quote view keeps with its number (backlog:cf270ae1f808). */
+const NBSP = String.fromCharCode(160);
+
 /**
  * The Admin signature and order section (ADR-017) renders from server state
  * only: an approved quote offers exactly one write control (Request
@@ -176,8 +179,8 @@ test('a completed envelope renders evidence and the order, with no edit controls
 
   // The order and its grouped totals, never summed and never annualized.
   assert.equal(byClass(mount, 'div', 'quote-order').getAttribute('data-order'), 'ord1');
-  assert.ok(text.includes('Una tantum: 4.750 € netto'), 'one-time order total');
-  assert.ok(text.includes('Ricorrente ogni 1 mese: 2.850 € netto'), 'monthly order total');
+  assert.ok(text.includes('Una tantum: 4.750' + NBSP + '€ netto'), 'one-time order total');
+  assert.ok(text.includes('Ricorrente ogni 1 mese: 2.850' + NBSP + '€ netto'), 'monthly order total');
   assert.ok(text.includes('mai ricalcolati dal listino attuale'));
   assert.ok(!/\b(ARR|MRR|TCV)\b/.test(text), 'no annualized figure is derived');
 
