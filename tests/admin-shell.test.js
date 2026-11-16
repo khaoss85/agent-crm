@@ -714,8 +714,15 @@ test('shell shows the Clienti count pill after a real count arrives (BO-F6-01)',
 
 test('menu badges reserve their room: the row keeps its height when the number lights (backlog:b76770f82fe9)', () => {
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
-  assert.ok(css.includes('.bo-count.is-empty'), 'hidden Clienti placeholder rule exists');
-  assert.ok(css.includes('.bo-badge.is-empty'), 'hidden Impostazioni placeholder rule exists');
+  // The placeholder must stay laid out while hidden: parse the rule that
+  // covers both empty badges, not the selector text alone. A `display: none`
+  // (or emptied) rule would pass a mere includes() check while rows move again.
+  const rules = css.match(/[^{}]+{[^{}]*}/g) ?? [];
+  const reserved = rules.find((rule) => rule.includes('.bo-count.is-empty') && rule.includes('.bo-badge.is-empty'));
+  assert.ok(reserved, 'shared hidden placeholder rule for both badges exists');
+  const body = reserved.slice(reserved.indexOf('{') + 1, reserved.lastIndexOf('}')).toLowerCase();
+  assert.match(body, /visibility\s*:\s*hidden/, 'empty badges stay laid out but invisible');
+  assert.doesNotMatch(body, /display\s*:\s*none/, 'empty badges must not leave the layout');
   const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
   const pillClasses = () => sidebar.findAll('span')
     .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'))
@@ -727,6 +734,12 @@ test('menu badges reserve their room: the row keeps its height when the number l
   // the row's box never changes, only the placeholder fills in.
   assert.deepEqual(pillClasses(), ['bo-count is-empty']);
   assert.deepEqual(badgeClasses(), ['bo-badge is-empty']);
+  const empties = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('is-empty'));
+  assert.equal(empties.length, 2);
+  for (const node of empties) {
+    assert.equal(node.textContent, '0');
+    assert.equal(node.getAttribute('aria-hidden'), 'true');
+  }
   view.update({ clientCount: 12, clientCountExact: true, fixCount: 2 });
   assert.deepEqual(pillClasses(), ['bo-count']);
   assert.deepEqual(badgeClasses(), ['bo-badge']);
