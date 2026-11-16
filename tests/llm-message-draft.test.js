@@ -205,9 +205,11 @@ test('parseMessageDraftResponse validates the labeled shape on its own', () => {
   }), /intent/);
 });
 
-test('a dry run answers a draft without error instead of parsing the fixture text (backlog:a1c597a4)', async () => {
+test('a dry run stays off without error instead of parsing the fixture text (backlog:a1c597a4)', async () => {
   // What the no-key dry run really produces: the fixture's literal
-  // answer, not the labeled JSON the model owes.
+  // answer, not the labeled JSON the model owes. The draft answers
+  // without error but carries no presentable wording — only the reason —
+  // so fixture text can never be rendered or dispatched as model wording.
   const out = await draftCustomerMessage({
     complete: async () => ({ text: 'fixture answer', dryRun: true }),
     spaceId: 'presti',
@@ -217,29 +219,37 @@ test('a dry run answers a draft without error instead of parsing the fixture tex
     intent: 'conferma lo spostamento alle 18',
     connectedChannels: CHANNELS,
   });
+  assert.equal(out.status, 'llm-disabled');
+  assert.equal(out.draft, null);
   assert.equal(out.dryRun, true);
-  assert.equal(out.corta, 'conferma lo spostamento alle 18');
-  assert.equal(out.lunga, 'conferma lo spostamento alle 18');
-  assert.equal(out.diretta, 'conferma lo spostamento alle 18');
-  assert.ok(out.oggetto.length > 0 && out.oggetto.length <= 200);
-  assert.equal(out.canale, 'whatsapp');
+  assert.ok(typeof out.reason === 'string' && out.reason !== '');
+  assert.ok(!('corta' in out) && !('lunga' in out) && !('diretta' in out) && !('oggetto' in out),
+    'no presentable wording rides a dry run');
 });
 
-test('the longest valid prompt stays under the 32000 per-message fence (backlog:a1c597a4)', async () => {
+test('the fence is the measured prompt, not the history count (backlog:a1c597a4)', async () => {
   const { assertGenerateInput } = await import('../packages/llm/src/adapter.js');
-  const history = Array.from({ length: 10 }, (_, index) => Object.freeze({
-    direction: index % 2 === 0 ? 'in' : 'out', text: 'x'.repeat(2000),
-  }));
-  const { messages } = buildMessageDraftPrompt({
+  const draftOf = (history) => ({
     customerName: 'N'.repeat(100),
     history,
     intent: 'I'.repeat(500),
     connectedChannels: Array.from({ length: 11 }, (_, index) => `canale-${index}`),
   });
-  assertGenerateInput({ messages, model: 'probe', maxTokens: 1024 });
+  const shortHistory = Array.from({ length: 12 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'ciao '.repeat(20),
+  }));
+  // Twelve short entries fit the fence: they draft as on main (giro 1).
+  assertGenerateInput({ messages: buildMessageDraftPrompt(draftOf(shortHistory)).messages, model: 'probe', maxTokens: 1024 });
+  // Twenty full-length entries measure past the fence and refuse here,
+  // fail-closed, before any provider is touched.
+  const fullHistory = Array.from({ length: 20 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'x'.repeat(2000),
+  }));
+  assert.throws(() => buildMessageDraftPrompt(draftOf(fullHistory)), /prompt/);
+  // The count cap is back at main's twenty: twenty-one still refuses.
   assert.throws(() => assertMessageDraftInput({
     customerName: 'Marco',
-    history: Array.from({ length: 11 }, () => ({ direction: 'in', text: 'ciao' })),
+    history: Array.from({ length: 21 }, () => ({ direction: 'in', text: 'ciao' })),
     intent: 'conferma',
     connectedChannels: CHANNELS,
   }), /history/);

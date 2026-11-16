@@ -39,13 +39,17 @@ export const MESSAGE_DRAFT_KINDS = Object.freeze(['corta', 'lunga', 'diretta']);
 
 export const MESSAGE_DRAFT_MAX_INTENT_CHARS = 500;
 /**
- * At most ten history entries: with the longest allowed texts (2000
- * characters each) the user message stays near 23k characters, under the
- * 32000 per-message fence the llm adapter enforces (backlog:a1c597a4).
- * Twenty entries reached past 42k and every full history refused at the
- * provider edge instead of drafting.
+ * Up to twenty history entries, as on main: the count cap alone cannot
+ * enforce the provider per-message fence (eleven short entries fit it
+ * easily while twenty full-length ones do not), so the built user
+ * message is measured below and only a prompt that truly exceeds the
+ * 32000-character fence the llm adapter enforces
+ * (packages/llm/src/adapter.js) refuses, fail-closed, before any
+ * provider is touched (backlog:a1c597a4, review giro 1).
  */
-export const MESSAGE_DRAFT_MAX_HISTORY = 10;
+export const MESSAGE_DRAFT_MAX_HISTORY = 20;
+/** The provider per-message bound the built prompt is measured against. */
+const MESSAGE_DRAFT_MAX_PROMPT_CHARS = 32000;
 export const MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_VARIANT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_SUBJECT_CHARS = 200;
@@ -175,6 +179,17 @@ export function buildMessageDraftPrompt(draft) {
     ` "canale": "<uno tra: ${checked.connectedChannels.join(', ')}>"} —`,
     'il canale suggerito deve essere uno di quelli collegati.',
   ].join('\n');
+  // Voce a1c597a4, review giro 1: the count cap is not the fence — measure
+  // what would actually travel. Only a user message past the 32000
+  // per-message bound the adapter enforces refuses here, fail-closed,
+  // before any provider is touched; shorter full histories draft as
+  // on main.
+  if (user.length > MESSAGE_DRAFT_MAX_PROMPT_CHARS) {
+    throw new ValidationError(
+      `message draft prompt is ${user.length} characters: at most ${MESSAGE_DRAFT_MAX_PROMPT_CHARS} fit the provider per-message fence`,
+      { field: 'prompt' },
+    );
+  }
   return Object.freeze({
     messages: Object.freeze([
       Object.freeze({
@@ -252,24 +267,22 @@ export async function draftCustomerMessage({
     // on another organization's space. Absent keeps historic behavior.
     ...(organizationId === undefined ? {} : { organizationId }),
   });
-  // Voce a1c597a4: the no-key dry run answers the fixture's literal
-  // 'fixture answer', which is not the labeled JSON the model owes —
-  // parsing it failed every dry run. A dry run still answers a draft
-  // without error: it echoes the already-validated operator intent
-  // instead of parsing fixture text. Every field respects the composer
-  // fence (the intent carries no control characters, the subject keeps
-  // its bound), and dryRun stays true so the pilot never mistakes the
-  // echo for model wording.
-  // DECISION (to be confirmed): the echo carries the intent verbatim in
-  // all three variants, the subject truncated to its bound.
+  // Voce a1c597a4, review giro 1: the no-key dry run answers the
+  // fixture's literal 'fixture answer', which is not the labeled JSON
+  // the model owes — parsing it failed every dry run. A dry run answers
+  // without error but stays off, following the product-import off-status
+  // pattern: no presentable wording rides a dry run, only the reason,
+  // so a pilot that misses the flag can neither render nor dispatch
+  // fixture text as model wording. The success shape is untouched.
+  // DECISION (to be confirmed): off-status instead of a thrown
+  // MESSAGE_DRAFT_DRY_RUN because the acceptance pins a dry run that
+  // responds without error; the pilot must branch on status/dryRun
+  // before reading any draft, and no production pilot exists yet.
   if (result?.dryRun === true) {
-    const [first] = [...checked.connectedChannels];
     return Object.freeze({
-      corta: checked.intent,
-      lunga: checked.intent,
-      diretta: checked.intent,
-      oggetto: checked.intent.slice(0, MESSAGE_DRAFT_MAX_SUBJECT_CHARS),
-      canale: first,
+      status: 'llm-disabled',
+      reason: 'the completion ran as a dry run without a key: the message draft stays off, retry with a key instead',
+      draft: null,
       dryRun: true,
     });
   }
