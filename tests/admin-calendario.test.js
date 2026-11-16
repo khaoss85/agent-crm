@@ -38,6 +38,7 @@ import {
   romeWeekKeys,
   serviceKeyFor,
   serviceLabel,
+  wakeSearchText,
   slugifyServiceKey,
   slotInGrid,
   statusWord,
@@ -46,7 +47,7 @@ import {
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
-import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseModuleRoute, WAKE_WAIT_TEXT } from '../apps/admin/public/admin-core.js';
 import { hasUnsavedWork, resetVersionWatchState } from '../apps/admin/public/admin-version.js';
 import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -682,6 +683,89 @@ test('a failed search says so in plain words, never a code', async () => {
   const notes = texts(mount, 'p');
   assert.ok(notes.includes('Ricerca non riuscita. Riprova più tardi.'));
   assert.ok(!notes.some((text) => text.includes('backend down')), 'no raw error leaks to the operator');
+});
+
+// backlog:0ffb1dd0 — the same booking reads «Servizio · Cliente» in the
+// week block and in the detail card: one titleOf behind both paints.
+test('the same booking reads «Servizio · Cliente» in the block and in the detail card', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'short-1', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'marco', priceCents: 4500, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:short:c1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        },
+        {
+          id: 'long-1', status: 'booked',
+          startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T15:00:00.000Z',
+          serviceKey: 'colore', teamMemberId: 'marco', priceCents: 6000, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:long:c9',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        },
+      ],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const detailTitle = () => mount.findAll('div')
+    .find((node) => node.getAttribute('data-role') === 'event-detail')
+    ?.findAll('h2')
+    .find((node) => (node.getAttribute('class') ?? '').includes('cal-detail-title'))
+    ?.textContent;
+  // The 30-min block reads one compact line «Titolo, ora»; the 60-min
+  // block reads the title in its strong: same «Servizio · Cliente» both.
+  assert.ok(texts(mount, 'span').includes('Taglio · Ada, 18:00'), 'the short block keeps the title before the time');
+  assert.ok(texts(mount, 'strong').includes('Colore · Bea'), 'the long block titles «Servizio · Cliente»');
+  mount.findAll('button').find((node) => /Taglio · Ada/.test(node.textContent)).dispatch('click');
+  assert.ok(detailTitle()?.includes('Taglio · Ada'), 'the card titles the same booking the same way');
+  mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
+  mount.findAll('button').find((node) => /Colore · Bea/.test(node.textContent)).dispatch('click');
+  assert.ok(detailTitle()?.includes('Colore · Bea'), 'the card titles the long booking the same way too');
+});
+
+// backlog:0ffb1dd0 — only failures the shell reads as waking name the wait.
+test('wakeSearchText names the wait only for waking failures', () => {
+  assert.equal(wakeSearchText(Object.assign(new Error('down'), { status: 503, code: 'UNKNOWN' })), WAKE_WAIT_TEXT);
+  assert.equal(wakeSearchText(new TypeError('Failed to fetch')), WAKE_WAIT_TEXT);
+  assert.equal(wakeSearchText(Object.assign(new Error('avvio'), { status: 503, code: 'WORKSPACE_STARTING' })), WAKE_WAIT_TEXT);
+  assert.equal(wakeSearchText(new Error('backend down')), null, 'a named failure keeps the generic sentence');
+  assert.equal(wakeSearchText(Object.assign(new Error('bad'), { status: 400 })), null);
+});
+
+// backlog:0ffb1dd0 — during the server wake-up the search says the true
+// reason (the service is starting, retry soon), never «Ricerca non riuscita».
+test('a search during the server wake-up names the wait, never «Ricerca non riuscita»', async () => {
+  for (const fail of [
+    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'UNKNOWN' }),
+    new TypeError('Failed to fetch'),
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failPhraseWith: fail }), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    for (let round = 0; round < 7; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const notes = texts(mount, 'p');
+    assert.ok(notes.includes(WAKE_WAIT_TEXT), `the waking search names the wait (${fail?.code ?? fail?.name})`);
+    assert.ok(!notes.some((text) => text.includes('Ricerca non riuscita')), 'never the generic failure while waking');
+  }
 });
 
 test('a failed Conferma names the manual form, never a code', async () => {

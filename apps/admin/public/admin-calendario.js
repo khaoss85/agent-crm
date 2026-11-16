@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, isWakeTransient, pendingRequestId, readBackPending, unrefWait, WAKE_WAIT_TEXT } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -880,6 +880,20 @@ export function calendarRefusalText(error) {
     return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
   }
   return null;
+}
+
+/**
+ * backlog:0ffb1dd0 — what the «Trova slot liberi» search says when the host
+ * was waking: the wait in plain words, never «Ricerca non riuscita». Only
+ * for failures the shell already reads as waking (isWakeTransient: a read
+ * there earns one retry while the shell toasts «Il server si sta
+ * svegliando…», a write only on an explicit starting signal), so the card
+ * names the same wait the shell announced. A named refusal keeps its own
+ * sentence through calendarRefusalText, checked first by the caller.
+ * @param {unknown} error
+ */
+export function wakeSearchText(error) {
+  return isWakeTransient(error) ? WAKE_WAIT_TEXT : null;
 }
 
 /**
@@ -4192,9 +4206,13 @@ export function createCalendarioView(deps) {
       if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
       state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
+      // backlog:0ffb1dd0 — the waking host names its wait; log the cause
+      // (code and space, never the message or personal data) like refusals do.
+      const waking = refusal === null && record.code !== 'APPOINTMENTS_AI_DRAFT_IN_PAST' ? wakeSearchText(error) : null;
+      if (waking !== null) console.warn('bo-calendario phrase waking:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
         ? 'La frase indica un momento già passato: prova con un giorno futuro.'
-        : refusal ?? humanReadError(error, {
+        : refusal ?? waking ?? humanReadError(error, {
           failed: 'Ricerca non riuscita. Riprova più tardi.',
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
