@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AppError } from '../packages/core/index.js';
+import { AppError, ValidationError } from '../packages/core/index.js';
 import {
   MESSAGE_DRAFT_KINDS,
   assertMessageDraftInput,
@@ -203,4 +203,75 @@ test('parseMessageDraftResponse validates the labeled shape on its own', () => {
   assert.throws(() => assertMessageDraftInput({
     customerName: 'Marco', history: [], intent: 'x'.repeat(501), connectedChannels: CHANNELS,
   }), /intent/);
+});
+
+test('a dry run stays off without error instead of parsing the fixture text (backlog:a1c597a4)', async () => {
+  // What the no-key dry run really produces: the fixture's literal
+  // answer, not the labeled JSON the model owes. The draft answers
+  // without error but carries no presentable wording — only the reason —
+  // so fixture text can never be rendered or dispatched as model wording.
+  const out = await draftCustomerMessage({
+    complete: async () => ({ text: 'fixture answer', dryRun: true }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  });
+  assert.equal(out.status, 'llm-disabled');
+  assert.equal(out.draft, null);
+  assert.equal(out.dryRun, true);
+  assert.ok(typeof out.reason === 'string' && out.reason !== '');
+  assert.ok(!('corta' in out) && !('lunga' in out) && !('diretta' in out) && !('oggetto' in out),
+    'no presentable wording rides a dry run');
+});
+
+test('the fence is the measured prompt, not the history count (backlog:a1c597a4)', async () => {
+  const { assertGenerateInput } = await import('../packages/llm/src/adapter.js');
+  const draftOf = (history) => ({
+    customerName: 'N'.repeat(100),
+    history,
+    intent: 'I'.repeat(500),
+    connectedChannels: Array.from({ length: 11 }, (_, index) => `canale-${index}`),
+  });
+  const shortHistory = Array.from({ length: 12 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'ciao '.repeat(20),
+  }));
+  // Twelve short entries fit the fence: they draft as on main (giro 1).
+  assertGenerateInput({ messages: buildMessageDraftPrompt(draftOf(shortHistory)).messages, model: 'probe', maxTokens: 1024 });
+  // Twenty full-length entries measure past the fence and refuse here,
+  // fail-closed, before any provider is touched.
+  const fullHistory = Array.from({ length: 20 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'x'.repeat(2000),
+  }));
+  assert.throws(() => buildMessageDraftPrompt(draftOf(fullHistory)), /prompt/);
+  // The count cap is back at main's twenty: twenty-one still refuses.
+  assert.throws(() => assertMessageDraftInput({
+    customerName: 'Marco',
+    history: Array.from({ length: 21 }, () => ({ direction: 'in', text: 'ciao' })),
+    intent: 'conferma',
+    connectedChannels: CHANNELS,
+  }), /history/);
+});
+
+test('draft text validation matches the composer fence: tab refuses here as it refuses there (backlog:a1c597a4)', async () => {
+  const { composerTimelineRefusal } = await import('../packages/channels/src/composer-text.js');
+  const withTab = JSON.stringify({
+    corta: 'Ciao\tMarco', lunga: 'Ciao Marco, confermato.', diretta: 'Confermato.',
+    oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.ok(composerTimelineRefusal('Ciao\tMarco') !== null, 'the composer refuses the tab downstream');
+  assert.throws(() => parseMessageDraftResponse(withTab, CHANNELS), ValidationError);
+  const withCr = JSON.stringify({
+    corta: 'Ciao\rMarco', lunga: 'ok', diretta: 'ok', oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.ok(composerTimelineRefusal('Ciao\rMarco') !== null);
+  assert.throws(() => parseMessageDraftResponse(withCr, CHANNELS), ValidationError);
+  const withNewline = JSON.stringify({
+    corta: 'Ciao\nMarco', lunga: 'Ciao Marco,\nconfermato.', diretta: 'Confermato.',
+    oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.equal(composerTimelineRefusal('Ciao\nMarco'), null, 'the composer keeps line feeds');
+  assert.equal(parseMessageDraftResponse(withNewline, CHANNELS).corta, 'Ciao\nMarco');
 });

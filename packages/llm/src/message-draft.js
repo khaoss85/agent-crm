@@ -38,15 +38,35 @@ export const MESSAGE_DRAFT_PURPOSE = 'assistant';
 export const MESSAGE_DRAFT_KINDS = Object.freeze(['corta', 'lunga', 'diretta']);
 
 export const MESSAGE_DRAFT_MAX_INTENT_CHARS = 500;
+/**
+ * Up to twenty history entries, as on main: the count cap alone cannot
+ * enforce the provider per-message fence (eleven short entries fit it
+ * easily while twenty full-length ones do not), so the built user
+ * message is measured below and only a prompt that truly exceeds the
+ * 32000-character fence the llm adapter enforces
+ * (packages/llm/src/adapter.js) refuses, fail-closed, before any
+ * provider is touched (backlog:a1c597a4, review giro 1).
+ */
 export const MESSAGE_DRAFT_MAX_HISTORY = 20;
+/** The provider per-message bound the built prompt is measured against. */
+const MESSAGE_DRAFT_MAX_PROMPT_CHARS = 32000;
 export const MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_VARIANT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_SUBJECT_CHARS = 200;
 export const MESSAGE_DRAFT_MAX_NAME_CHARS = 100;
 export const MESSAGE_DRAFT_MAX_CHANNELS = 11;
 
-/** Control characters no draft, subject or intent may carry. */
-const CONTROL_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\x9f]/;
+/**
+ * Control characters no draft, subject or intent may carry: the line feed
+ * aside, the same fence as the interaction log's safeMessageBody
+ * (packages/interactions/src/interactions.js) and the composer timeline
+ * row (packages/channels/src/composer-text.js), mirrored here so a draft
+ * accepted here is never refused downstream at send time (backlog:a1c597a4).
+ * In particular the tab, the carriage return and U+2028/U+2029 refuse here
+ * exactly as they refuse there; only `\n` may pass, and only in the three
+ * variants.
+ */
+const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 
 const CHANNEL_SHAPE = /^[a-z][a-z0-9-]{0,63}$/;
 
@@ -58,11 +78,11 @@ function boundedText(value, field, max, allowNewlines) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new ValidationError(`message draft ${field} must be non-empty text`, { field });
   }
-  const text = value.trim();
+  const text = value.replace(/\r\n/g, '\n').trim();
   if (text.length > max) {
     throw new ValidationError(`message draft ${field} is at most ${max} characters`, { field });
   }
-  const probe = allowNewlines ? text.replace(/\n|\t/g, '') : text;
+  const probe = allowNewlines ? text.replace(/\n/g, '') : text;
   if (CONTROL_RE.test(probe)) {
     throw new ValidationError(`message draft ${field} carries no control characters`, { field });
   }
@@ -159,6 +179,17 @@ export function buildMessageDraftPrompt(draft) {
     ` "canale": "<uno tra: ${checked.connectedChannels.join(', ')}>"} —`,
     'il canale suggerito deve essere uno di quelli collegati.',
   ].join('\n');
+  // Voce a1c597a4, review giro 1: the count cap is not the fence — measure
+  // what would actually travel. Only a user message past the 32000
+  // per-message bound the adapter enforces refuses here, fail-closed,
+  // before any provider is touched; shorter full histories draft as
+  // on main.
+  if (user.length > MESSAGE_DRAFT_MAX_PROMPT_CHARS) {
+    throw new ValidationError(
+      `message draft prompt is ${user.length} characters: at most ${MESSAGE_DRAFT_MAX_PROMPT_CHARS} fit the provider per-message fence`,
+      { field: 'prompt' },
+    );
+  }
   return Object.freeze({
     messages: Object.freeze([
       Object.freeze({
@@ -236,6 +267,25 @@ export async function draftCustomerMessage({
     // on another organization's space. Absent keeps historic behavior.
     ...(organizationId === undefined ? {} : { organizationId }),
   });
+  // Voce a1c597a4, review giro 1: the no-key dry run answers the
+  // fixture's literal 'fixture answer', which is not the labeled JSON
+  // the model owes — parsing it failed every dry run. A dry run answers
+  // without error but stays off, following the product-import off-status
+  // pattern: no presentable wording rides a dry run, only the reason,
+  // so a pilot that misses the flag can neither render nor dispatch
+  // fixture text as model wording. The success shape is untouched.
+  // DECISION (to be confirmed): off-status instead of a thrown
+  // MESSAGE_DRAFT_DRY_RUN because the acceptance pins a dry run that
+  // responds without error; the pilot must branch on status/dryRun
+  // before reading any draft, and no production pilot exists yet.
+  if (result?.dryRun === true) {
+    return Object.freeze({
+      status: 'llm-disabled',
+      reason: 'the completion ran as a dry run without a key: the message draft stays off, retry with a key instead',
+      draft: null,
+      dryRun: true,
+    });
+  }
   const parsed = parseMessageDraftResponse(result?.text, [...checked.connectedChannels]);
   return Object.freeze({ ...parsed, dryRun: result?.dryRun === true });
 }
