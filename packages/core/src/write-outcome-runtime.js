@@ -309,7 +309,16 @@ export async function runIdempotentWrite(database, events, spec, execute) {
       if (isUnknownCommit(error)) {
         throw unknownCommitError(rawKey, runId);
       }
-      if (error && typeof error === 'object' && /** @type {any} */ (error).code === 'CONFLICT') {
+      // A contested first attempt is decided by the lock, never by a deadline
+      // (backlog:fe03f452): a timeout or a lost connection while the attempt
+      // was in flight cannot prove the write failed — the concurrent attempt
+      // holding the lock may still commit. Look the winner up exactly like a
+      // serialization conflict does: replay it when it committed, report the
+      // outcome as unknown (503, reconciles) when nothing committed. A defect
+      // with its own code still propagates below.
+      const contested = error && typeof error === 'object'
+        && (/** @type {any} */ (error).code === 'CONFLICT' || unknownCommitUnprovable(error));
+      if (contested) {
         try {
           const winner = await store.lookup(tenantNs, rawKey, phase);
           if (winner) {
@@ -335,6 +344,7 @@ export async function runIdempotentWrite(database, events, spec, execute) {
         }
         const transient = Boolean(/** @type {any} */ (error).details?.transient);
         if (transient && attempt < maxAttempts) continue;
+        if (unknownCommitUnprovable(error)) throw unknownCommitError(rawKey, runId);
       }
       throw error;
     }
