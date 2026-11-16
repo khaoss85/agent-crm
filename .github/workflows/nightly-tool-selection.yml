@@ -79,15 +79,22 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
-      # workspace between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero; the matrix runs one test file
-      # and needs no history, so a shallow fetch is enough. `npm ci` below
-      # rebuilds node_modules, so the matrix never reads stale dependencies.
+      # `.git` between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Same threat model as ci.yml
+      # `fast` (shared runner): the step below drops untracked files BEFORE
+      # the `npm ci` after it, under the same window condition, so the matrix
+      # only ever sees this ref plus a fresh install.
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
           clean: false
           fetch-depth: 1
+      # Pairs every `clean: false` checkout in this repo (contract:
+      # tests/ci-checkout-reuse.test.js): same `if:` as the checkout — when
+      # the checkout is skipped no code runs at all, so the pairing holds.
+      - if: steps.window.outputs.run == 'true'
+        name: Drop untracked files from the reused workspace
+        run: git clean -ffdx && git reset --hard HEAD
       - if: steps.window.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:

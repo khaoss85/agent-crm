@@ -82,14 +82,32 @@ jobs:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
-      # workspace between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
-      # to the job ref, and `npm ci` below rebuilds node_modules, so the fast
-      # gate never reads stale files from the reused space.
+      # `.git` between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Threat model: this runner is
+      # shared, so an untrusted PR job and a trusted main job can use the same
+      # workspace one after the other — `clean: false` would also keep an
+      # untracked poison file (a planted `.npmrc`, `.env`, tool config) that
+      # `npm ci` or later steps would honor. Tracked files are always reset to
+      # this job's ref by the checkout itself; the step below removes
+      # everything else BEFORE any code runs, and the unconditional `npm ci`
+      # after it rebuilds node_modules, so the fast gate only ever sees this
+      # ref plus a fresh install.
       - uses: actions/checkout@v4
         with:
           clean: false
           fetch-depth: 0
+      # Pairs every `clean: false` checkout in this repo (contract:
+      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
+      # space before this step.
+      - name: Drop untracked files from the reused workspace
+        run: git clean -ffdx && git reset --hard HEAD
+      # Production measure (backlog:f16911e3): server disk written per job
+      # start was ~1.3 GB (Leader 13/11: ~1.2 GB checkout rewrite + ~107 MB
+      # npm ci) with 16-20% disk wait. Target after merge, mean over the next
+      # 3 jobs on the server: disk-budget-gb-per-job-start 0.7, disk-wait-pct below 5.
+      # revert-when: mean above either number -> revert the clean:false hunks
+      # of this PR. (Local runs cannot measure this: the measure reads the
+      # production server after the merge.)
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -209,14 +227,22 @@ jobs:
       # the slices' wiring. Same backlog as the slicing above.
     steps:
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
-      # workspace between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
-      # to the job ref, and `npm ci` below rebuilds node_modules.
+      # `.git` between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Same threat model as `fast`:
+      # the guard step below runs repo code (`node scripts/...`) with no
+      # install before it by design (builtins only), so the untracked-file
+      # drop comes first and the guard only ever sees this ref. `npm ci`
+      # stays conditional on the guard (skip = no measure, no code runs).
       - uses: actions/checkout@v4
         with:
           # Full history: see the job-level comment above.
           clean: false
           fetch-depth: 0
+      # Pairs every `clean: false` checkout in this repo (contract:
+      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
+      # space before this step.
+      - name: Drop untracked files from the reused workspace
+        run: git clean -ffdx && git reset --hard HEAD
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
@@ -404,9 +430,11 @@ jobs:
     if: ${{ github.event_name == 'push' }}
     steps:
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
-      # workspace between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
-      # to the job ref, and `npm ci` below rebuilds node_modules.
+      # `.git` between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Same threat model as `fast`
+      # (shared runner, untrusted PR job before trusted main job): the step
+      # below drops untracked files BEFORE the unconditional `npm ci`, so
+      # this job only ever sees this ref plus a fresh install.
       - uses: actions/checkout@v4
         with:
           clean: false
@@ -428,6 +456,11 @@ jobs:
           # not silently re-break them: the gate now recognises a shallow clone and fails
           # with "history unavailable" instead.
           fetch-depth: 0
+      # Pairs every `clean: false` checkout in this repo (contract:
+      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
+      # space before this step.
+      - name: Drop untracked files from the reused workspace
+        run: git clean -ffdx && git reset --hard HEAD
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

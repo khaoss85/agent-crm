@@ -40,13 +40,15 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     timeout-minutes: 20
     steps:
-      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
-      # workspace between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero; the render uses node builtins
-      # only and needs no history, so a shallow fetch is enough.
+      # NOT reused (backlog:f16911e3): this job renders review PNGs with no
+      # install step, so it must see exactly the checked-out ref. `clean: true`
+      # drops untracked leftovers (stale node_modules, generated files, tool
+      # configs a previous job on this shared runner may have left) while the
+      # shallow fetch keeps the start cheap. Reusing the space here (`clean:
+      # false`) would render a previous job's stale tree instead of this ref.
       - uses: actions/checkout@v4
         with:
-          clean: false
+          clean: true
           fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
