@@ -76,12 +76,15 @@ const MAX_SOURCE_KEY = 200;
 const MAX_ID = 200;
 const MAX_LABEL = 200;
 const MAX_NOTES = 2000;
+const MAX_LOCATION = 300;
+const MAX_LOCATION_URL = 2000;
 const MAX_REASON = 300;
 const MAX_FOLLOW_UP_TITLE = 200;
 const MAX_SLOT_MS = 24 * 60 * 60 * 1000;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
+const LOCATION_URL_RE = /^https?:\/\/[^\s]+$/i;
 const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
 const SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
@@ -248,6 +251,45 @@ function realIsoInstant(value, field) {
   return { iso: normalized, ms };
 }
 
+/**
+ * The meeting place (backlog:9ff9a9ee1fea, like the Google Calendar event
+ * form): a free address, or «Online» with the meeting link. Both ride the
+ * booking as evidence — the popover and the scheda read them, the reminder
+ * names them, the Google export fills the event location with them.
+ *
+ * A link without a label is refused: the popover and the history render the
+ * label and hang the link on it, so a bare URL would paint as an unlabeled
+ * link nobody can read aloud. A label without a link is a plain address.
+ */
+function validateLocation(value) {
+  return optionalSafeText(value, 'location', MAX_LOCATION);
+}
+
+/** @param {unknown} value @param {string|null} location */
+function validateLocationUrl(value, location) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError('locationUrl must be a meeting link', { field: 'locationUrl' });
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length > MAX_LOCATION_URL) {
+    throw new ValidationError(`locationUrl must be at most ${MAX_LOCATION_URL} characters`, { field: 'locationUrl' });
+  }
+  if (CONTROL_RE.test(trimmed) || /\s/.test(trimmed)) {
+    throw new ValidationError('locationUrl must be a single link with no spaces or line breaks', { field: 'locationUrl' });
+  }
+  if (!LOCATION_URL_RE.test(trimmed)) {
+    throw new ValidationError('locationUrl must be an http(s) link to the online meeting', { field: 'locationUrl' });
+  }
+  if (location === null) {
+    throw new ValidationError('locationUrl needs a location label: name the place («Online») beside the link', {
+      field: 'locationUrl',
+    });
+  }
+  return trimmed;
+}
+
 /** @param {unknown} value @param {string} field */
 function validateSourceKey(value, field) {
   const key = safeText(value, field, MAX_SOURCE_KEY);
@@ -383,6 +425,8 @@ export function validateAppointmentRequest(request) {
     throw new ValidationError('remindAt must be before startsAt: a reminder at or after the slot reminds nobody', { field: 'remindAt' });
   }
   const sourceKey = validateSourceKey(value.sourceKey, 'sourceKey');
+  const location = validateLocation(value.location);
+  const locationUrl = validateLocationUrl(value.locationUrl, location);
   const reminderChannel = validateReminderChannel(value.reminderChannel, remindAt);
   if (reminderChannel !== null) {
     // One bound, one place: the derivation throws naming it when the
@@ -408,6 +452,8 @@ export function validateAppointmentRequest(request) {
     startMs: startsAt.ms,
     endMs: endsAt.ms,
     notes: optionalSafeText(value.notes, 'notes', MAX_NOTES),
+    location,
+    locationUrl,
     remindAt,
     reminderChannel,
     source: validateSource(value.source),
@@ -980,6 +1026,8 @@ export async function bookAppointment(context, request) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    location: input.location,
+    locationUrl: input.locationUrl,
     // The reminder intent IS the booking's identity: the same source key with
     // a different reminder (added, removed or moved) is a different claim
     // behind the same key and is refused 409 rather than replayed into a
@@ -2010,6 +2058,8 @@ function publicDraft(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    location: input.location,
+    locationUrl: input.locationUrl,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
@@ -2023,6 +2073,35 @@ function publicDraft(input) {
     }),
     source: Object.freeze({ ...input.source }),
   });
+}
+
+/**
+ * The booking claim the proposal dedup binds: the same validated fields the
+ * booking idempotency counts (`submitted` in bookAppointment: customer,
+ * member, service, price, slot, notes, place, reminder, provenance) and the
+ * confirm-required draft round-trips (publicDraft). This list is the single
+ * source of truth for that identity — proposalActionKey hashes exactly these
+ * parts, so a new validated field belongs here first and no mirror can
+ * silently drop it again (backlog:9ff9a9ee1fea: location/locationUrl reached
+ * the booking and then the draft while the key still missed them — two P1s
+ * with that one root cause).
+ *
+ * The label is deliberately not identity: it is a display snapshot, like the
+ * booking replay treats it.
+ *
+ * @param {ReturnType<typeof validateAppointmentRequest>} input
+ */
+function bookingClaimKeyParts(input) {
+  const subject = input.subject;
+  return Object.freeze([
+    input.sourceKey,
+    subject.resource, subject.id, subject.owner, subject.ownerPackage,
+    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
+    input.startsAt, input.endsAt, input.notes,
+    input.location, input.locationUrl,
+    input.remindAt, input.reminderChannel,
+    input.source.package, input.source.action,
+  ]);
 }
 
 /** The gate replays an open proposal for one action key: bind that key to
@@ -2041,15 +2120,7 @@ function publicDraft(input) {
  * @param {ReturnType<typeof validateAppointmentRequest>} input
  */
 function proposalActionKey(input) {
-  const subject = input.subject;
-  const claim = JSON.stringify([
-    input.sourceKey,
-    subject.resource, subject.id, subject.owner, subject.ownerPackage,
-    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
-    input.startsAt, input.endsAt, input.notes,
-    input.remindAt, input.reminderChannel,
-    input.source.package, input.source.action,
-  ]);
+  const claim = JSON.stringify(bookingClaimKeyParts(input));
   const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
   return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
 }
