@@ -55,6 +55,24 @@ export const MESSAGE_DRAFT_MAX_VARIANT_CHARS = 2000;
 export const MESSAGE_DRAFT_MAX_SUBJECT_CHARS = 200;
 export const MESSAGE_DRAFT_MAX_NAME_CHARS = 100;
 export const MESSAGE_DRAFT_MAX_CHANNELS = 11;
+/** One playbook field, as the member compiled it: concrete text, never a paragraph of prose. */
+export const MESSAGE_DRAFT_MAX_PLAYBOOK_FIELD_CHARS = 2000;
+
+/**
+ * The playbook fields the draft may quote, in the order the prompt reads
+ * them: who the space is, what it sells, to whom, in what tone, what it
+ * never says, where to point, when it is open.
+ */
+export const MESSAGE_DRAFT_PLAYBOOK_FIELDS = Object.freeze([
+  'companyName',
+  'description',
+  'products',
+  'idealCustomer',
+  'tone',
+  'avoidTopics',
+  'links',
+  'hours',
+]);
 
 /**
  * Control characters no draft, subject or intent may carry: the line feed
@@ -137,6 +155,86 @@ function assertConnectedChannels(connectedChannels) {
 }
 
 /**
+ * Validate the space playbook the draft writes from, or null when the
+ * space compiled none (backlog:ad7e03ac: with the AI off the member
+ * compiles the playbook by hand, and one may equally be absent). A
+ * non-object refuses fail-closed; a missing or empty field stays null so
+ * the prompt quotes only what the member wrote; a playbook with no usable
+ * field answers null, never an empty context block.
+ *
+ * @param {unknown} playbook
+ */
+export function assertMessageDraftPlaybook(playbook) {
+  if (playbook === undefined || playbook === null) return null;
+  if (typeof playbook !== 'object' || Array.isArray(playbook)) {
+    throw new ValidationError('message draft playbook must be a plain object', { field: 'playbook' });
+  }
+  const value = /** @type {Record<string, unknown>} */ (playbook);
+  const normalized = {};
+  for (const field of MESSAGE_DRAFT_PLAYBOOK_FIELDS) {
+    const raw = value[field];
+    if (raw === undefined || raw === null) {
+      normalized[field] = null;
+      continue;
+    }
+    if (typeof raw !== 'string') {
+      throw new ValidationError(`message draft playbook ${field} must be text`, { field: `playbook.${field}` });
+    }
+    const text = raw.replace(/\r\n/g, '\n').trim();
+    if (text === '') {
+      normalized[field] = null;
+      continue;
+    }
+    if (text.length > MESSAGE_DRAFT_MAX_PLAYBOOK_FIELD_CHARS) {
+      throw new ValidationError(
+        `message draft playbook ${field} is at most ${MESSAGE_DRAFT_MAX_PLAYBOOK_FIELD_CHARS} characters`,
+        { field: `playbook.${field}` },
+      );
+    }
+    if (CONTROL_RE.test(text.replace(/\n/g, ''))) {
+      throw new ValidationError(`message draft playbook ${field} carries no control characters`, {
+        field: `playbook.${field}`,
+      });
+    }
+    normalized[field] = text;
+  }
+  if (Object.values(normalized).every((entry) => entry === null)) return null;
+  return Object.freeze(normalized);
+}
+
+/**
+ * Render one validated playbook as the prompt's context block, or null
+ * when the space compiled none. Pure: the acceptance pins that two
+ * playbooks give the same request a different context, so the test reads
+ * the difference back from exactly what this function returns.
+ *
+ * @param {{companyName: string | null, description: string | null, products: string | null, idealCustomer: string | null, tone: string | null, avoidTopics: string | null, links: string | null, hours: string | null} | null} playbook
+ */
+export function buildPlaybookContextBlock(playbook) {
+  const checked = assertMessageDraftPlaybook(playbook);
+  if (checked === null) return null;
+  const labels = {
+    companyName: 'Azienda',
+    description: 'Cosa fa',
+    products: 'Cosa vende',
+    idealCustomer: 'A chi vende',
+    tone: 'Tono di voce',
+    avoidTopics: 'Cose da non dire mai',
+    links: 'Link utili',
+    hours: 'Orari',
+  };
+  const lines = ['Playbook dello spazio (chi siamo, cosa vendiamo, a chi):'];
+  for (const field of MESSAGE_DRAFT_PLAYBOOK_FIELDS) {
+    const text = checked[field];
+    if (typeof text === 'string' && text !== '') {
+      lines.push(`- ${labels[field]}: ${text.replace(/\n/g, ' | ')}`);
+    }
+  }
+  if (lines.length === 1) return null;
+  return lines.join('\n');
+}
+
+/**
  * Validate the draft request. Throws fail-closed; returns the frozen
  * request the prompt builder and the caller execute.
  */
@@ -150,6 +248,7 @@ export function assertMessageDraftInput(input) {
     history: assertHistory(value.history),
     intent: boundedText(value.intent, 'intent', MESSAGE_DRAFT_MAX_INTENT_CHARS, false),
     connectedChannels: assertConnectedChannels(value.connectedChannels),
+    playbook: assertMessageDraftPlaybook(value.playbook ?? null),
   });
 }
 
@@ -157,15 +256,19 @@ export function assertMessageDraftInput(input) {
  * Build the completion messages for one draft. Pure: the acceptance pins
  * that the card's own data reaches the model — the customer name and the
  * latest inbound line travel verbatim — so the test reads them back from
- * exactly what this function returns.
+ * exactly what this function returns. The space playbook rides the same
+ * road (backlog:ad7e03ac): with different playbooks the same request
+ * produces a different context, with none the prompt stays as on main.
  *
- * @param {{customerName: string, history: Array<{direction: string, text: string}>, intent: string, connectedChannels: string[]}} draft
+ * @param {{customerName: string, history: Array<{direction: string, text: string}>, intent: string, connectedChannels: string[], playbook?: unknown}} draft
  */
 export function buildMessageDraftPrompt(draft) {
   const checked = assertMessageDraftInput(draft);
   const lines = checked.history.map((entry) => `- ${entry.direction === 'in' ? 'cliente' : 'team'}: ${entry.text}`);
+  const playbookBlock = buildPlaybookContextBlock(checked.playbook);
   const user = [
     `Cliente: ${checked.customerName}`,
+    ...(playbookBlock === null ? [] : [playbookBlock]),
     'Cronologia della scheda (dalla meno recente alla più recente):',
     ...(lines.length > 0 ? lines : ['- (nessun messaggio precedente)']),
     `Canali collegati alla scheda: ${checked.connectedChannels.join(', ')}`,
@@ -249,16 +352,16 @@ export function parseMessageDraftResponse(text, connectedChannels) {
  *
  * @param {{complete: (request: any) => Promise<any>, spaceId: string, actor: unknown,
  *   customerName: string, history: unknown, intent: string, connectedChannels: unknown,
- *   maxTokens?: number, organizationId?: string}} input
+ *   playbook?: unknown, maxTokens?: number, organizationId?: string}} input
  */
 export async function draftCustomerMessage({
-  complete, spaceId, actor, customerName, history, intent, connectedChannels, maxTokens = 1024,
-  organizationId = undefined,
+  complete, spaceId, actor, customerName, history, intent, connectedChannels, playbook = null,
+  maxTokens = 1024, organizationId = undefined,
 }) {
   if (typeof complete !== 'function') {
     throw new ValidationError('message draft needs the llm complete handle', { field: 'complete' });
   }
-  const checked = assertMessageDraftInput({ customerName, history, intent, connectedChannels });
+  const checked = assertMessageDraftInput({ customerName, history, intent, connectedChannels, playbook });
   const { messages } = buildMessageDraftPrompt(checked);
   const result = await complete({
     actor, spaceId, purpose: MESSAGE_DRAFT_PURPOSE, messages, maxTokens,
