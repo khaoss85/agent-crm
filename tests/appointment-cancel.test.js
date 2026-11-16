@@ -228,6 +228,114 @@ test('a named calendar without a push handle or a spaceId fails before any write
   assert.equal(service.writes.length, 0);
 });
 
+test('a cancel without a named calendar auto-pushes through the sync link; without a link nothing is pushed', async () => {
+  const service = fakeAppointments([row()]);
+  const pushes = [];
+  const calendarSync = {
+    async readAppointmentDetail({ id }) {
+      assert.equal(id, 'a-1');
+      return {
+        appointment: { id: 'a-1' },
+        origin: 'google-calendar',
+        sync: { calendarId: 'primary', googleEventId: 'g1', googleUpdated: 'x', pending: false, conflict: null },
+      };
+    },
+    async pushAppointment(calendarId, sourceKey, options) {
+      pushes.push({ calendarId, sourceKey, options });
+      return { status: 'pushed', sourceKey, change: 'cancelled' };
+    },
+  };
+  const out = await cancelAppointment(contextFor(service, { calendarSync }), {
+    id: 'a-1', reason: 'Disdetto', spaceId: 'spazio-1',
+  });
+  assert.equal(out.appointment.status, 'cancelled');
+  assert.deepEqual(out.push, { status: 'pushed', sourceKey: 'gym:cancel:1', change: 'cancelled' });
+  assert.equal(out.pushError, null);
+  assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].calendarId, 'primary', 'the calendar comes from the link, never the caller');
+  assert.equal(pushes[0].options.spaceId, 'spazio-1');
+
+  // No link — a booking made here, never synced: nothing is pushed.
+  const local = fakeAppointments([row()]);
+  const noLink = {
+    async readAppointmentDetail() {
+      return { appointment: { id: 'a-1' }, origin: 'locale', sync: null };
+    },
+    async pushAppointment() {
+      throw new Error('must not push without a link');
+    },
+  };
+  const outLocal = await cancelAppointment(contextFor(local, { calendarSync: noLink }), { id: 'a-1', reason: 'Disdetto' });
+  assert.equal(outLocal.appointment.status, 'cancelled');
+  assert.equal(outLocal.push, null);
+  assert.equal(outLocal.pushError, null);
+
+  // spaceId is optional: without it the push still runs with an absent space.
+  const unspaced = fakeAppointments([row()]);
+  const seen = [];
+  const syncUnspaced = {
+    async readAppointmentDetail() {
+      return { appointment: { id: 'a-1' }, origin: 'google-calendar', sync: { calendarId: 'primary' } };
+    },
+    async pushAppointment(calendarId, sourceKey, options) {
+      seen.push(options);
+      return { status: 'pushed', sourceKey };
+    },
+  };
+  await cancelAppointment(contextFor(unspaced, { calendarSync: syncUnspaced }), { id: 'a-1', reason: 'Disdetto' });
+  assert.equal(seen[0].spaceId, undefined);
+});
+
+test('an unreachable Google in the auto-push keeps the Accordo cancellation and rides as data', async () => {
+  const service = fakeAppointments([row()]);
+  const broken = {
+    async readAppointmentDetail() {
+      return { appointment: { id: 'a-1' }, origin: 'google-calendar', sync: { calendarId: 'primary' } };
+    },
+    async pushAppointment() {
+      throw Object.assign(new Error('provider down'), { code: 'PROVIDER_UNREACHABLE' });
+    },
+  };
+  const out = await cancelAppointment(contextFor(service, { calendarSync: broken }), {
+    id: 'a-1', reason: 'Disdetto', spaceId: 's',
+  });
+  assert.equal(out.appointment.status, 'cancelled', 'the cancellation stands');
+  assert.equal(out.push, null);
+  assert.deepEqual(out.pushError, { code: 'PROVIDER_UNREACHABLE' }, 'only the code travels');
+
+  // A detail read that fails is data too, never a throw past the commit.
+  const blind = fakeAppointments([row()]);
+  const unreadable = {
+    async readAppointmentDetail() {
+      throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+    },
+    async pushAppointment() {
+      throw new Error('must not push: the link never resolved');
+    },
+  };
+  const out2 = await cancelAppointment(contextFor(blind, { calendarSync: unreadable }), { id: 'a-1', reason: 'Disdetto' });
+  assert.equal(out2.appointment.status, 'cancelled');
+  assert.deepEqual(out2.pushError, { code: 'STORE_DOWN' });
+});
+
+test('an explicit calendar still wins over the link', async () => {
+  const service = fakeAppointments([row()]);
+  const pushes = [];
+  const calendarSync = {
+    async readAppointmentDetail() {
+      return { appointment: { id: 'a-1' }, origin: 'google-calendar', sync: { calendarId: 'other' } };
+    },
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(calendarId);
+      return { status: 'pushed', sourceKey };
+    },
+  };
+  await cancelAppointment(contextFor(service, { calendarSync }), {
+    id: 'a-1', reason: 'Disdetto', spaceId: 's', calendar: { calendarId: 'primary' },
+  });
+  assert.deepEqual(pushes, ['primary']);
+});
+
 test('appointment-book@1 opens cancelAppointment beside reschedule and advance', async () => {
   const service = fakeAppointments([row()]);
   const handle = createAppointmentBookCapability({}).create({
