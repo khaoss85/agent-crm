@@ -106,6 +106,12 @@ export function createCalendarSyncPackage(options = {}) {
         database: options.database ?? runtime.database,
         resolveSecret: options.resolveSecret,
         ownerEmails: options.ownerEmails,
+        // The traced-execution edge (backlog:f7a380e7): the ADR-032 bounded
+        // operation context injects the External Operation sequencer, so
+        // every Google-touching call leaves a trace run. Absent when the
+        // package is composed without the application runtime (validation,
+        // conformance), and the engine then calls the provider directly.
+        runExternal: runtime.runExternal,
       });
       composedByRuntime.set(runtime, composed);
     }

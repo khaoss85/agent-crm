@@ -355,6 +355,15 @@ export function createCalendarSyncOperations(options = {}) {
   // its addresses here instead of letting an alias become its own lead.
   // Absent means no alias is known — only the wire signals exclude.
   const ownerEmails = normalizeOwnerEmails(options.ownerEmails);
+  // The traced-execution edge (ADR-017/ADR-032, backlog:f7a380e7): the
+  // ADR-032 bounded operation context injects `runExternal`, and every
+  // Google-touching call runs as an external operation through it — a
+  // frozen intent descriptor without secrets, the provider call outside
+  // every transaction, and a minimal receipt as finalization, never the
+  // provider payload. The trace runs are the per-write evidence. Optional
+  // at composition so validation and conformance compose empty; without
+  // it the engine calls the provider directly, exactly as before.
+  const runExternal = typeof options.runExternal === 'function' ? options.runExternal : null;
   const defaultActor = options.actor ?? { type: 'system', id: 'calendar-sync' };
   const now = typeof options.now === 'function' ? options.now : () => new Date().toISOString();
   // Process-local run ledger behind readSyncStatus (backlog:d1da1ed51e9c):
@@ -585,26 +594,60 @@ export function createCalendarSyncOperations(options = {}) {
     return state;
   }
 
-  async function providerCall(calendarId, op, params, purpose) {
+  async function providerCall(calendarId, op, params, purpose, actor) {
     const cal = canonicalCalendarId(calendarId);
     const state = await requireUsableGrant(cal);
     const grant = await resolveGrant(state, purpose);
     // The provider never sees a padded variant: the canonical id wins over
     // whatever spelling the caller passed in `params`.
     const canonicalParams = { ...params, calendarId: cal };
-    try {
-      return await provider[op]({ ...canonicalParams, ...(grant === null ? {} : { secret: grant }) });
-    } catch (error) {
-      if (providerErrorCode(error) === 'GOOGLE_SYNC_TOKEN_INVALID') {
-        // The expired-token signal survives, but never with provider text:
-        // a real Google error may echo the grant, a token, or personal
-        // data, so the code rides with a fixed message instead.
-        throw syncError('GOOGLE_SYNC_TOKEN_INVALID', providerErrorStatus(error),
-          'google sync token expired or unknown: running a full reconcile without provider detail');
+    const invoke = async () => {
+      try {
+        return await provider[op]({ ...canonicalParams, ...(grant === null ? {} : { secret: grant }) });
+      } catch (error) {
+        if (providerErrorCode(error) === 'GOOGLE_SYNC_TOKEN_INVALID') {
+          // The expired-token signal survives, but never with provider text:
+          // a real Google error may echo the grant, a token, or personal
+          // data, so the code rides with a fixed message instead.
+          throw syncError('GOOGLE_SYNC_TOKEN_INVALID', providerErrorStatus(error),
+            'google sync token expired or unknown: running a full reconcile without provider detail');
+        }
+        throw syncError(providerErrorCode(error), providerErrorStatus(error),
+          `google calendar ${op} failed without provider detail: retry the sync`);
       }
-      throw syncError(providerErrorCode(error), providerErrorStatus(error),
-        `google calendar ${op} failed without provider detail: retry the sync`);
-    }
+    };
+    if (runExternal === null || eventBuffer === null || serviceEvents === null) return invoke();
+    // Traced execution (backlog:f7a380e7): the grant travels only in this
+    // closure into the external phase — never in the frozen intent, never
+    // in a trace row — and finalization keeps a minimal receipt (operation,
+    // calendar, event id), never the provider payload that may carry
+    // personal data. Callers still receive the full provider result; the
+    // trace carries only the evidence that the write happened.
+    const traceName = `calendar-sync.google.${op}`;
+    const who = actor ?? defaultActor;
+    /** @type {any} */
+    let provided;
+    await runExternal({
+      database: transactionSource,
+      events: serviceEvents,
+      name: traceName,
+      input: { calendarId: cal, op },
+      actor: who,
+      async intent() {
+        return { calendarId: cal, op };
+      },
+      async external() {
+        provided = await invoke();
+        return { ok: true };
+      },
+      async finalize() {
+        const eventId = provided !== null && typeof provided === 'object' && typeof provided.id === 'string'
+          ? provided.id
+          : null;
+        return { op, calendarId: cal, eventId };
+      },
+    });
+    return provided;
   }
 
   /**
@@ -1068,7 +1111,7 @@ export function createCalendarSyncOperations(options = {}) {
       // Cancellation wins: converge Google onto the freed slot. A pending
       // move snapshot is moot — the local cancel it raced has won — so it
       // clears instead of retrying a move onto a freed booking forever.
-      const pushed = await providerCall(calendarId, 'cancelEvent', { calendarId, eventId }, GRANT_PURPOSE_WRITE);
+      const pushed = await providerCall(calendarId, 'cancelEvent', { calendarId, eventId }, GRANT_PURPOSE_WRITE, actor);
       await linkService(context).applyManaged(link.id, {
         googleUpdated: pushed.updated, localFingerprint: appointmentFingerprint(row),
         conflictNote: null, pendingRemote: null,
@@ -1169,7 +1212,7 @@ export function createCalendarSyncOperations(options = {}) {
 
   async function reconcileFull(handle, actor, calendarId, timeMin) {
     const page = await providerCall(calendarId, 'listEvents',
-      { calendarId, timeMin: timeMin ?? now(), showDeleted: true }, GRANT_PURPOSE_READ);
+      { calendarId, timeMin: timeMin ?? now(), showDeleted: true }, GRANT_PURPOSE_READ, actor);
     const entries = [];
     for (const event of page.items) {
       entries.push(await applyRemoteChange(handle, actor, calendarId, event));
@@ -1211,7 +1254,7 @@ export function createCalendarSyncOperations(options = {}) {
       await requireLiveGrant(calendarId, spaceId);
       const handle = bookHandle(who);
       const page = await providerCall(calendarId, 'listEvents',
-        { calendarId, timeMin: timeMin ?? now(), showDeleted: true }, GRANT_PURPOSE_READ);
+        { calendarId, timeMin: timeMin ?? now(), showDeleted: true }, GRANT_PURPOSE_READ, who);
       const entries = [];
       for (const event of page.items) {
         if (event?.status === 'cancelled') {
@@ -1286,7 +1329,7 @@ export function createCalendarSyncOperations(options = {}) {
       let page;
       try {
         page = await providerCall(calendarId, 'listEvents',
-          { calendarId, syncToken: state.syncToken }, GRANT_PURPOSE_READ);
+          { calendarId, syncToken: state.syncToken }, GRANT_PURPOSE_READ, who);
       } catch (error) {
         if (error?.code === 'GOOGLE_SYNC_TOKEN_INVALID') {
           const recovered = await reconcileFull(handle, who, calendarId);
@@ -1327,7 +1370,7 @@ export function createCalendarSyncOperations(options = {}) {
       const link = await findLinkBySource(sourceKey);
       if (!link) {
         const reconciled = await providerCall(calendarId, 'findByAccordoSourceKey',
-          { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ);
+          { calendarId, sourceKey: row.sourceKey }, GRANT_PURPOSE_READ, who);
         if (row.status === 'cancelled') {
           // backlog:5346ab531538 (review #781): a cancelled row is never
           // exported as an active event. An event an earlier export left
@@ -1339,7 +1382,7 @@ export function createCalendarSyncOperations(options = {}) {
           }
           const pushed = reconciled.status === 'cancelled'
             ? reconciled
-            : await providerCall(calendarId, 'cancelEvent', { calendarId, eventId: reconciled.id }, GRANT_PURPOSE_WRITE);
+            : await providerCall(calendarId, 'cancelEvent', { calendarId, eventId: reconciled.id }, GRANT_PURPOSE_WRITE, who);
           await storeLink({
             linkKey: linkKeyFor(calendarId, reconciled.id),
             calendarId,
@@ -1382,7 +1425,7 @@ export function createCalendarSyncOperations(options = {}) {
           start: { dateTime: row.startsAt },
           end: { dateTime: row.endsAt },
           extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
-        }, GRANT_PURPOSE_WRITE);
+        }, GRANT_PURPOSE_WRITE, who);
         await storeLink({
           linkKey: linkKeyFor(calendarId, created.id),
           calendarId,
@@ -1403,7 +1446,7 @@ export function createCalendarSyncOperations(options = {}) {
       }
       if (row.status === 'cancelled' && JSON.parse(link.localFingerprint)[3] !== 'cancelled') {
         const pushed = await providerCall(calendarId, 'cancelEvent',
-          { calendarId, eventId: rowLinkEventId(link, calendarId) }, GRANT_PURPOSE_WRITE);
+          { calendarId, eventId: rowLinkEventId(link, calendarId) }, GRANT_PURPOSE_WRITE, who);
         await linkService(context).applyManaged(link.id, {
           googleUpdated: pushed.updated, localFingerprint: fingerprint, conflictNote: null,
         }, { actor: who });
@@ -1449,7 +1492,7 @@ export function createCalendarSyncOperations(options = {}) {
           calendarId,
           eventId: rowLinkEventId(link, calendarId),
           patch: { start: { dateTime: row.startsAt }, end: { dateTime: row.endsAt } },
-        }, GRANT_PURPOSE_WRITE);
+        }, GRANT_PURPOSE_WRITE, who);
         await linkService(context).applyManaged(link.id, {
           googleUpdated: patched.updated, localFingerprint: fingerprint, conflictNote: null,
         }, { actor: who });
