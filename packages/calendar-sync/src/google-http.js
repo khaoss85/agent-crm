@@ -5,7 +5,8 @@
  *
  * The same four provider functions the sync engine needs
  * (`listEvents`, `findByAccordoSourceKey`, `insertEvent`, `cancelEvent` —
- * the contract `createCalendarSyncOperations` checks), spoken against the
+ * the contract `createCalendarSyncOperations` checks), plus `watch` to
+ * open a push channel for the deployment to record, spoken against the
  * Google Calendar v3 REST API instead of the in-memory fake. The transport
  * is injected (`fetchImpl`), so tests prove the mapping against a fake
  * HTTP layer and production passes the platform's authenticated fetch:
@@ -354,6 +355,39 @@ export function createHttpGoogleCalendar(options = {}) {
         ...(typeof id === 'string' && EVENT_ID_RE.test(id) ? { id } : {}),
       });
       return toEngineEvent(body);
+    },
+
+    /**
+     * Open a push channel against Google (`POST .../events/watch`), so a
+     * later Google push finds the registered channel instead of refusing
+     * as unknown (backlog:f7a380e7). The deployment passes its webhook
+     * address and the bearer token it echoes back on deliveries; the
+     * token travels only in the request body, never into a row. Returns
+     * the provider channel id and resource id for the engine to record —
+     * the same pair the fake's `watch` returns. `channelId` is
+     * client-chosen: pass a stable id when the deployment retries, or the
+     * provider mints one per call.
+     */
+    async watch({ calendarId, address, token, channelId, secret } = {}) {
+      assertSecret(secret, 'watch');
+      const cal = assertCalendarId(calendarId);
+      if (typeof address !== 'string' || address.trim() === '' || address.length > 512) {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google watch needs the deployment webhook address');
+      }
+      if (typeof token !== 'string' || token === '') {
+        throw httpError('GOOGLE_CALL_MALFORMED', 422, 'google watch needs a non-empty channel token');
+      }
+      const id = typeof channelId === 'string' && channelId !== '' && channelId.length <= 128
+        ? channelId
+        : `accordo-${Date.now().toString(36)}`;
+      const body = await write('POST', `/calendars/${encodeURIComponent(cal)}/events/watch`, secret, 'watch', {
+        id, type: 'web_hook', address, token,
+      });
+      if (typeof body?.id !== 'string' || body.id === '' || typeof body?.resourceId !== 'string' || body.resourceId === '') {
+        throw httpError('CALENDAR_PROVIDER_UNAVAILABLE', 502,
+          'google calendar watch answered without a channel: retry the sync');
+      }
+      return Object.freeze({ channelId: body.id, resourceId: body.resourceId });
     },
 
     /**
