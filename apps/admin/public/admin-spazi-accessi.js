@@ -28,6 +28,7 @@
 // - writes: POST /api/spine/memberships (grant) and
 //   POST /api/spine/memberships/:subject/suspend (removal), the same store
 //   the Identity screen uses — grant names a reason, removal is two-step;
+//   a 200 paints at once (backlog:71a6574a), the refresh after it reconciles;
 // - flips: POST /api/space-permissions/set-permission, the operation that
 //   runs the package's own `set-permission` action (human-only, same codes),
 //   never a direct row write — every override row field is managed;
@@ -47,7 +48,7 @@ import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
-import { subjectText, teamPeople } from './admin-labels.js';
+import { memberText, profileName, subjectText, teamPeople } from './admin-labels.js';
 
 /**
  * The five AI switches, in the package's own order, with the Italian label
@@ -332,6 +333,25 @@ function selfSubjectOf(settled) {
   return null;
 }
 
+/**
+ * The session profile's own member (name and mailbox) from a `/api/profile`
+ * answer, or null. Both fields pass the same member-text filter the team
+ * rows use, so a technical id never becomes a name. backlog:71a6574a: the
+ * self row's fallback when the roster leaves it with a bare handle.
+ * @param {unknown} answer
+ */
+export function profileMemberOf(answer) {
+  const member = answer !== null && typeof answer === 'object'
+    ? /** @type {{member?: unknown}} */ (answer).member
+    : null;
+  if (member === null || typeof member !== 'object') return null;
+  const shaped = /** @type {{name?: unknown, email?: unknown}} */ (member);
+  const name = memberText(shaped.name);
+  const email = memberText(shaped.email);
+  if (name === null && email === null) return null;
+  return { name, email };
+}
+
 /** The sign-in kind of a person's subjects, or null (never a technical id). Also read by the Calendario Team card sub-line. */
 const ACCESS_KINDS = Object.freeze([['google|', 'Accesso Google'], ['github|', 'Accesso GitHub'], ['broker+', 'Accesso di servizio']]);
 /** @param {Array<string>} subjects */
@@ -367,11 +387,14 @@ export function accessLabel(subjects) {
  *
  * Without enrichment the subject is the name when it reads as one, else
  * «Membro del team» — never a technical subject (production 10/11) — and
- * the status sits under it. Sorted by name, then subject, so the
- * list is stable regardless of store order.
+ * the status sits in its own column beside the role. Sorted by name, then
+ * subject, so the list is stable regardless of store order.
  * @param {Array<{subject?: unknown, role?: unknown, status?: unknown, displayName?: unknown, email?: unknown, operatorAccountId?: unknown}>} members
+ * @param {{selfSubject?: unknown, selfName?: unknown, selfEmail?: unknown}} [options]
+ *   the session profile's own name and mailbox: only the session's own
+ *   person may borrow them, when the roster leaves it with a bare handle
  */
-export function buildTeamRows(members = [], { selfSubject = null } = {}) {
+export function buildTeamRows(members = [], { selfSubject = null, selfName = null, selfEmail = null } = {}) {
   // backlog:3ce220e60c33 (famiglia F5): the people come from the shared
   // teamPeople (admin-labels.js), the same rows the Calendario team reads.
   const people = teamPeople(Array.isArray(members) ? members : []).map((row) => ({
@@ -389,6 +412,27 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
   // server link a same-named subject stays a row of its own, with its own
   // «Rimuovi», told apart by its access kind (accessLabel below): one row
   // too many beats a person hidden.
+  // backlog:71a6574a (verifica Mac 11/11, punto 5): the session profile
+  // names the operator's own person when the roster does not — a bare
+  // profile handle («khaoss85») never stands alone. The profile name joins
+  // the same candidates `profileName` scores in admin-labels, so a full
+  // name wins over the handle and nothing else changes; the profile mailbox
+  // fills a missing row email. Only the session's own person is enriched —
+  // another row never borrows the operator's name or mailbox.
+  if (typeof selfSubject === 'string' && selfSubject !== '') {
+    const self = people.find((person) => person.subjects.includes(selfSubject));
+    if (self !== undefined) {
+      // The same pick admin-labels makes among roster names, with the
+      // profile name added: a full name wins over the handle, ties and
+      // better roster names keep what the team already showed.
+      const candidates = [self.displayName, memberText(selfName)]
+        .filter((name) => typeof name === 'string');
+      const best = profileName(candidates);
+      if (best !== null) self.displayName = best;
+      const profileMailbox = memberText(selfEmail);
+      if (self.email === null && profileMailbox !== null) self.email = profileMailbox;
+    }
+  }
   return people
     .map((person) => {
       const subject = [...person.subjects].sort()[0];
@@ -525,6 +569,10 @@ export function createSpaziAccessiView(deps) {
     // whether the context read that names the role is still out.
     selfSubject: null,
     contextPending: false,
+    // backlog:71a6574a: the session profile's own member (name, mailbox),
+    // read with the stats — the self row's fallback when the roster is bare.
+    /** @type {{name: string|null, email: string|null}|null} */
+    profileMember: null,
     /** @type {Array<string>|null} roles the server advertises, or null */
     roles: null,
     /** @type {Array<any>|null} team rows, or null when unread */
@@ -765,6 +813,7 @@ export function createSpaziAccessiView(deps) {
   function resetLoadState(space) {
     state.myRole = null;
     state.contextPending = true;
+    state.profileMember = null;
     state.roles = null;
     state.members = null;
     state.membersUnavailable = null;
@@ -833,7 +882,7 @@ export function createSpaziAccessiView(deps) {
       const stat = await loadSpaceStat(id, memberCountRead, id === current ? profileRead : Promise.resolve(null));
       if (stat !== null) state.stats.set(id, stat);
     }));
-    return { contextRead, membersRead, agentsRead, switchesRead, statsRead };
+    return { contextRead, membersRead, agentsRead, profileRead, switchesRead, statsRead };
   }
 
   /**
@@ -905,6 +954,9 @@ export function createSpaziAccessiView(deps) {
     await loadCore(reads);
     await loadStats(reads);
     state.statsPending = false;
+    // backlog:71a6574a: the profile resolved with the stats above — the
+    // self row reads it when the roster leaves it bare. The caller paints.
+    state.profileMember = profileMemberOf(await reads.profileRead);
   }
 
   async function mutate(path, body) {
@@ -919,6 +971,54 @@ export function createSpaziAccessiView(deps) {
   }
   let busyPath = '';
   const busyOn = (test) => state.busy && test(busyPath);
+
+  /**
+   * backlog:71a6574a (verifica Mac 11/11, punto 2): after a 200 the screen
+   * paints the write at once — state and buttons come back with the new
+   * values instead of staying grey through the re-read. Each helper applies
+   * only what the 200 just confirmed; the refresh after it reconciles with
+   * the server truth, so a wrong guess never sticks.
+   */
+  function applySwitchFlip(spaceId, key, to) {
+    if (!Array.isArray(state.overrides)) return;
+    const found = state.overrides.find(
+      (row) => row !== null && typeof row === 'object' && row.spaceId === spaceId && row.permission === key,
+    );
+    if (found !== undefined) found.enabled = to === true;
+    else state.overrides.push({ spaceId, permission: key, enabled: to === true });
+  }
+  function applyInvite(subject, role, status) {
+    if (!Array.isArray(state.members)) return;
+    const found = state.members.find((row) => row !== null && typeof row === 'object' && row.subject === subject);
+    if (found !== undefined) {
+      // The store already lists the subject (a re-read landed between the
+      // 200 and this paint, or the test store shares the array): the
+      // confirmed role and status still apply at once.
+      found.role = role;
+      found.status = status;
+      return;
+    }
+    state.members.push({ subject, role, status });
+  }
+  function applySuspensions(subjects) {
+    if (!Array.isArray(state.members)) return;
+    const wanted = new Set(subjects);
+    for (const member of state.members) {
+      if (member !== null && typeof member === 'object' && wanted.has(member.subject)) member.status = 'suspended';
+    }
+  }
+  /**
+   * The transient status of a just-invited person: the 200 answer's own
+   * status when it carries one, else «invited» — the person has not accessed
+   * yet. The refresh after it paints the server truth.
+   * @param {unknown} answer
+   */
+  function inviteStatusOf(answer) {
+    const status = answer !== null && typeof answer === 'object'
+      ? /** @type {{status?: unknown}} */ (answer).status
+      : null;
+    return typeof status === 'string' && status.trim() !== '' ? status.trim() : 'invited';
+  }
 
   function activeSpace() {
     const spaces = readSpaces();
@@ -1169,7 +1269,13 @@ export function createSpaziAccessiView(deps) {
       box.appendChild(section);
       return;
     }
-    const rows = buildTeamRows(state.members, { selfSubject: state.selfSubject });
+    // backlog:71a6574a: the self row borrows the session profile's name or
+    // mailbox when the roster leaves it with a bare handle («khaoss85»).
+    const rows = buildTeamRows(state.members, {
+      selfSubject: state.selfSubject,
+      selfName: state.profileMember !== null ? state.profileMember.name : null,
+      selfEmail: state.profileMember !== null ? state.profileMember.email : null,
+    });
     // backlog:67e14a50efb6 (specs/account.md C13/C14): every team row paints
     // this space's shared calendar state and channel tiles from the same
     // connectors answer the cards counted — the team is one per organization
@@ -1192,22 +1298,22 @@ export function createSpaziAccessiView(deps) {
       const identity = el(doc, 'div', { cls: 'bo-spazi-identity' });
       identity.appendChild(el(doc, 'span', { text: row.initials, cls: 'bo-spazi-avatar', attrs: { 'aria-hidden': 'true' } }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
-      // Prototype 08: name over email. The email line carries the
-      // ellipsis (C13) with the full address in its title; a non-active
-      // status joins it. A roster without email keeps the status line.
+      // backlog:71a6574a (verifica Mac 11/11): name over email, always —
+      // «Daniele Pelleri · attivo» never stands where the email belongs —
+      // and the status lives in its own column beside the role. The email
+      // line keeps the ellipsis (C13) with the full address in its title.
       names.appendChild(el(doc, 'div', { text: row.name, cls: 'bo-spazi-subject' }));
       if (row.email !== null) {
-        const line = row.status === 'attivo' ? row.email : `${row.email} \u00b7 ${row.status}`;
-        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status bo-spazi-email', attrs: { title: row.email } }));
-      } else {
-        // backlog:9d06eb1e174b: no real mailbox — the access kind tells
-        // same-named rows apart, beside the status.
-        const line = row.access !== null ? `${row.access} \u00b7 ${row.status}` : row.status;
-        names.appendChild(el(doc, 'div', { text: line, cls: 'bo-spazi-status' }));
+        names.appendChild(el(doc, 'div', { text: row.email, cls: 'bo-spazi-email', attrs: { title: row.email } }));
+      } else if (row.access !== null) {
+        // backlog:9d06eb1e174b: no real mailbox — the access kind still
+        // tells same-named rows apart under the name.
+        names.appendChild(el(doc, 'div', { text: row.access, cls: 'bo-spazi-access' }));
       }
       names.appendChild(renderTeamConns(conns, connsOut));
       identity.appendChild(names);
       item.appendChild(identity);
+      item.appendChild(el(doc, 'span', { text: row.status, cls: 'bo-spazi-status' }));
       item.appendChild(el(doc, 'span', { text: row.role, cls: 'bo-spazi-role' }));
       if (state.confirmRemove !== null && row.subjects.includes(state.confirmRemove)) {
         const retry = state.removeRetry !== null && row.subjects.includes(state.removeRetry.subject)
@@ -1259,6 +1365,10 @@ export function createSpaziAccessiView(deps) {
             say(`${row.name} rimosso dal team.`);
             state.confirmRemove = null;
             state.removeRetry = null;
+            // backlog:71a6574a: the 200s suspended every subject — the row
+            // reads sospeso now with live buttons; the refresh reconciles.
+            applySuspensions(row.removable);
+            render();
             await refresh();
             return;
           }
@@ -1275,6 +1385,11 @@ export function createSpaziAccessiView(deps) {
               ? `Nessuno dei ${total} account di ${row.name} \u00E8 stato sospeso. ${why}`
               : `${row.name}: account sospesi ${done} su ${total}, rifiutati ${refused.length}. ${why} Riprova sospende solo quelli rifiutati.`;
           // One message, inside the row that failed; a toast only if it cannot show.
+          // backlog:71a6574a: the subjects the server took read sospeso now;
+          // the reload after it reconciles every row with the server truth.
+          const refusedSubjects = new Set(refused.map((entry) => entry.subject));
+          applySuspensions(row.removable.filter((subject) => !refusedSubjects.has(subject)));
+          render();
           await reload();
           // reload() closes every confirmation: reopen this one on a subject
           // that is still there, with the refusal and the motive kept.
@@ -1338,8 +1453,12 @@ export function createSpaziAccessiView(deps) {
         return;
       }
       try {
-        await mutate('/api/spine/memberships', { subject: who, role: picked, reason: motive });
+        const answer = await mutate('/api/spine/memberships', { subject: who, role: picked, reason: motive });
         say(`${who} invitato come ${spaceRoleLabel(picked)}.`);
+        // backlog:71a6574a: the 200 created the membership — the row paints
+        // now with live buttons; the refresh after it reconciles.
+        applyInvite(who, picked, inviteStatusOf(answer));
+        render();
       } catch (error) {
         const failure = errorOf(error);
         const message = humanWriteError(failure, { failed: writeFailedText(failure, 'L’invito non è riuscito. Riprova più tardi.') });
@@ -1452,6 +1571,10 @@ export function createSpaziAccessiView(deps) {
               enabled: pending.to ? 'on' : 'off',
             });
             say(`\u00AB${entry.label}\u00BB ${pending.to ? 'accesa' : 'spenta'}.`);
+            // backlog:71a6574a: the 200 applied the flip — paint it now with
+            // live buttons; the refresh after it reconciles with the server.
+            applySwitchFlip(space.id, pending.key, pending.to);
+            render();
           } catch (error) {
             const failure = errorOf(error);
             // A server that cannot take the change right now (a 5xx with
@@ -1637,9 +1760,15 @@ export function createSpaziAccessiView(deps) {
     const connsBefore = state.spaceConns.get(space);
     await loadStats(reads);
     state.statsPending = false;
+    // backlog:71a6574a: the profile resolved with the stats above — the
+    // self row reads its name or mailbox when the roster leaves it bare.
+    const profileMember = profileMemberOf(await reads.profileRead);
+    const profileChanged = (profileMember?.name ?? null) !== (state.profileMember?.name ?? null)
+      || (profileMember?.email ?? null) !== (state.profileMember?.email ?? null);
+    state.profileMember = profileMember;
     if (mine !== generation) return;
     if (space === '' || readActiveSpace().trim() !== space) return;
-    if (!paintedPending && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
+    if (!paintedPending && !profileChanged && state.stats.get(space) === statBefore && state.spaceConns.get(space) === connsBefore) return;
     if (!sameNodes(childrenOf(), lastPaint)) return;
     render();
   }

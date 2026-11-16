@@ -1233,7 +1233,7 @@ button.bo-seq-ai:hover { border-color: var(--agent-ink); }
 }
 .bo-spazi-subject { font-size: 13px; font-weight: 700; overflow-wrap: anywhere; }
 .bo-spazi-member .bo-spazi-confirm { grid-column: 1 / -1; }
-.bo-spazi-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.bo-spazi-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; white-space: nowrap; }
 .bo-spazi-role {
   justify-self: start; padding: 4px 10px; border-radius: 99px; white-space: nowrap;
   background: var(--surface-soft); font-size: 12px; font-weight: 700;
@@ -1302,7 +1302,7 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-teamhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line-faint); }
 .bo-spazi-teamhead h3, .bo-spazi-panel > h3 { font-size: 18px; letter-spacing: -.01em; }
 .bo-spazi-invite-toggle.ui-btn { height: 34px; padding: 0 12px; border-radius: 9px; border: none; background: var(--accent); color: var(--paper); font-size: 13px; font-weight: 700; }
-.bo-spazi-team .bo-spazi-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; }
+.bo-spazi-team .bo-spazi-member { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 12px; }
 .bo-spazi-team .bo-spazi-member > .bo-spazi-confirm { grid-column: 1 / -1; }
 .bo-spazi-panel > .bo-muted { margin: 0; padding: 0 20px 12px; font-size: 13px; }
 .bo-spazi-team-panel > .bo-muted { padding-top: 10px; }
@@ -1329,7 +1329,10 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
 .bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
-.bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bo-spazi-email { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); }
+/* backlog:71a6574a: the row line under the name when the roster carries no
+   mailbox — the same small muted line the email used, never the status. */
+.bo-spazi-access { font-size: 12px; color: var(--muted); }
 .bo-spazi-names { overflow: hidden; }
 /* backlog:67e14a50efb6: the calendar-and-channels line of every team row —
    shared state with the Connettori tile vocabulary, small enough to wrap. */

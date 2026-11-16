@@ -261,7 +261,7 @@ function memberBornAt(member) {
  * beats a lower-case copy («daniele pelleri»); ties keep roster order.
  * @param {Array<string>} names
  */
-function profileName(names) {
+export function profileName(names) {
   let best = null;
   let bestScore = -1;
   for (const name of names) {
