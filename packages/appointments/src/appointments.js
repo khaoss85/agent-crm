@@ -1799,6 +1799,28 @@ function viewerSeesFull(viewer, row) {
 }
 
 /**
+ * The masked projection of a private row (backlog:9aa5c073): the slot and
+ * the hold, nothing else. It stays inside `appointments` (never beside it
+ * in `busy`) so the grid paints it as «Occupato» and the overlap guards
+ * keep refusing over it: a masked row that left the list would free its
+ * slot for a double booking. No customer, no service, no notes, no price,
+ * no source key — the opaque id stays so the grid keys its block.
+ *
+ * @param {any} row
+ */
+function projectMaskedWeekRow(row) {
+  return Object.freeze({
+    id: row.id,
+    status: row.status,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    teamMemberId: row.teamMemberId,
+    visibility: 'private',
+    masked: true,
+  });
+}
+
+/**
  * The team week (BO-F3-01, "07 Calendario"): every appointment overlapping
  * `[from, to)` for each named team member, grouped per person, soonest slot
  * first. The caller passes the person filter as the member list itself — a
@@ -1825,9 +1847,10 @@ function viewerSeesFull(viewer, row) {
  *
  * A private booking (backlog:9aa5c073) reads full only for its creator and
  * the administrators (`filter.viewer = { actorId, isAdmin }`, server-side
- * only like the owner holds — never from the caller): anyone else reads it
- * as «Occupato» beside the bookings, a cancelled one not at all. Without a
- * viewer the read is unprivileged and masks every private row.
+ * only like the owner holds — never from the caller): anyone else reads a
+ * masked row inside `appointments` (slot and hold, «Occupato», never the
+ * customer, the service or the notes), a cancelled one not at all. Without
+ * a viewer the read is unprivileged and masks every private row.
  *
  * @param {{appointments: any, calendarSync?: any}} storage
  * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, viewer?: unknown}} filter
@@ -1877,29 +1900,23 @@ export async function readTeamWeek({ appointments, calendarSync }, filter) {
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
     // Private rows the viewer may not read (backlog:9aa5c073): held ones
-    // read as «Occupato» beside the bookings, cancelled ones not at all —
-    // a cancelled slot is free, painting it busy would lie about the grid.
-    const full = [];
-    const masked = [];
+    // project masked inside `appointments`, cancelled ones drop out — a
+    // cancelled slot is free, painting it would lie about the grid.
+    const projected = [];
     for (const row of overlapping) {
-      if (viewerSeesFull(viewer, row)) full.push(row);
-      else if (row.status !== 'cancelled') masked.push(row);
+      if (viewerSeesFull(viewer, row)) projected.push(projectTeamWeekRow(row));
+      else if (row.status !== 'cancelled') projected.push(projectMaskedWeekRow(row));
     }
-    const maskedBusy = masked
-      .map((row) => projectBusyWeekRow({ startsAt: row.startsAt, endsAt: row.endsAt }))
-      .filter((projected) => projected !== null)
-      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso);
-    const busy = [...(await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
+    const busy = (await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
       .map((block) => projectBusyWeekRow(block))
-      .filter((projected) => projected !== null)
-      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso),
-    ...maskedBusy]
+      .filter((projectedBlock) => projectedBlock !== null)
+      .filter((projectedBlock) => projectedBlock.startsAt < to.iso && projectedBlock.endsAt > from.iso)
       .sort((a, b) => (
         a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt)
       ));
     groups.push(Object.freeze({
       teamMemberId,
-      appointments: Object.freeze(full.map(projectTeamWeekRow)),
+      appointments: Object.freeze(projected),
       busy: Object.freeze(busy),
     }));
   }

@@ -4914,6 +4914,33 @@ export function createCalendarioView(deps) {
       // no date ever gets cut on the 340 px popover.
       form.appendChild(fieldBox(label, input, { wide: name === 'notes' || name === 'date' }));
     }
+    // Team visibility (backlog:9aa5c073), like Google Calendar: «Predefinita
+    // / Pubblico / Privato». Predefinita is the team default (everyone
+    // reads everything); Privato reads as «Occupato» for everyone but the
+    // creator and the administrators. The select owns the claim value, like
+    // the service menu: the claim reads the live node, never a copy.
+    const visibilityWrap = uiSelect(doc, {
+      name: 'visibility',
+      value: 'default',
+      options: [
+        { value: 'default', label: 'Predefinita' },
+        { value: 'public', label: 'Pubblico' },
+        { value: 'private', label: 'Privato' },
+      ],
+    });
+    const visibilitySelect = visibilityWrap.querySelector('select') ?? visibilityWrap;
+    if (typeof state.manual?.visibility === 'string' && state.manual.visibility !== '') {
+      visibilitySelect.value = state.manual.visibility;
+    }
+    const trackVisibility = () => {
+      state.manual = { ...(state.manual ?? {}), visibility: String(visibilitySelect.value ?? '') };
+      state.manualTyped.add('visibility');
+    };
+    visibilitySelect.addEventListener('input', trackVisibility);
+    visibilitySelect.addEventListener('change', trackVisibility);
+    form.appendChild(fieldBox('Visibilità', visibilityWrap, { wide: true }));
+    paintUnder(visibilitySelect);
+    inputs.visibility = visibilitySelect;
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
@@ -5054,6 +5081,7 @@ export function createCalendarioView(deps) {
         startsAt,
         endsAt,
         notes: read('notes') === '' ? null : read('notes'),
+        visibility: read('visibility'),
       }),
     };
   }
@@ -5392,6 +5420,10 @@ export function bookingClaim(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes ?? null,
+    // Team visibility (backlog:9aa5c073): the live select value, or absent
+    // when the form never painted one — the server reads absent as the team
+    // default and refuses anything outside default/public/private.
+    visibility: input.visibility === '' || input.visibility == null ? undefined : input.visibility,
     sourceKey: member !== '' && input.startsAt
       ? `calendario:${member}:${input.startsAt}:${id || 'senza-cliente'}`
       : undefined,

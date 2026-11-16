@@ -1431,12 +1431,16 @@ export function createCalendarSyncOperations(options = {}) {
             field: 'mapping.summaryForAppointment',
           });
         }
+        // A private booking (backlog:9aa5c073) exports with Google
+        // visibility private; any other value exports with the calendar
+        // default, never a guessed one.
         const created = await providerCall(calendarId, 'insertEvent', {
           calendarId,
           summary: summary.slice(0, 200),
           description: row.notes ?? '',
           start: { dateTime: row.startsAt },
           end: { dateTime: row.endsAt },
+          ...((row?.visibility ?? 'default') === 'private' ? { visibility: 'private' } : {}),
           extendedProperties: { accordoSourceKey: row.sourceKey, accordoSubject: `${row.subjectResource}:${row.subjectId}` },
         }, GRANT_PURPOSE_WRITE, who);
         await storeLink({

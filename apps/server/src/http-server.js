@@ -458,7 +458,7 @@ export function buildRouter(app) {
   // route. Query flags arrive as strings and are parsed here; bodies pass
   // through (server-controlled keys stripped) because the operations
   // validate their own input fail-closed.
-  router.add('GET', '/api/appointments/team-week', async ({ query, identity, organizationId }) => {
+  router.add('GET', '/api/appointments/team-week', async ({ query, identity, actor, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     if (typeof app.readAppointmentTeamWeek !== 'function') {
       throw new NotFoundError('Operation', 'team week');
@@ -466,11 +466,26 @@ export function buildRouter(app) {
     // Owner holds arrive server-side only, through the composed
     // calendar-sync handle inside the appointments operations — never
     // through the query, so no private commitment title lands in URLs,
-    // logs or browser history (backlog:af190faf).
+    // logs or browser history (backlog:af190faf). The private-booking
+    // viewer rides the same seam (backlog:9aa5c073): who calls and whether
+    // they administer is decided here from the verified identity, never
+    // from a query flag a caller could forge.
+    const actorId = typeof actor?.id === 'string' ? actor.id : '';
+    let isAdmin = false;
+    if (app.spine && identity?.subject && organizationId) {
+      try {
+        const membership = await app.spine.memberships.find({ organizationId, subject: identity.subject });
+        isAdmin = Array.isArray(membership?.permissions)
+          && membership.permissions.includes('admin.memberships.manage');
+      } catch {
+        isAdmin = false;
+      }
+    }
     return await app.readAppointmentTeamWeek({
       teamMemberIds: parseMemberList(query.teamMemberIds),
       from: query.from,
       to: query.to,
+      viewer: { actorId, isAdmin },
     });
   });
   router.add('GET', '/api/appointments/suggest-slots', async ({ query, identity, organizationId }) => {

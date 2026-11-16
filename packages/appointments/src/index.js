@@ -284,6 +284,7 @@ export function createAppointmentsPackage(options = {}) {
           { name: 'teamMemberIds', type: 'json', required: true, hint: 'Named team member identities, at least one.' },
           { name: 'from', type: 'string', required: true, hint: 'Window start, ISO instant.' },
           { name: 'to', type: 'string', required: true, hint: 'Window end, ISO instant.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { actorId, isAdmin }: a private booking reads full for its creator and the administrators, masked for anyone else. Never from the caller.' },
         ],
         create(runtime) {
           return (input) => flowFor(runtime).schedule.teamWeekFor(input);
