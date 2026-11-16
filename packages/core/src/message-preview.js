@@ -21,6 +21,14 @@
 /** Default bound of a preview, the Clienti cell's (LAST_CONTACT_PREVIEW_CHARS). */
 export const MESSAGE_PREVIEW_CHARS = 140;
 
+/**
+ * The one fallback when a message has neither readable text nor a subject
+ * (backlog:1740985ba18c): Clienti and the Oggi inbox read this same line, so
+ * an empty mail never shows a blank row in one and another line in the other.
+ * Calls keep no excerpt at all — the fallback is for messages only.
+ */
+export const MESSAGE_NO_TEXT = 'Messaggio senza testo';
+
 /** Inline styles that hide an element: the preheader trick newsletters use. */
 const HIDDEN_STYLE = '(?:display\\s*:\\s*none|visibility\\s*:\\s*hidden|max-height\\s*:\\s*0(?![.\\d])|opacity\\s*:\\s*0(?![.\\d])|font-size\\s*:\\s*0(?![.\\d]))';
 /** One tag attribute or bare tag text, quote-aware: a `>` inside a value never ends the tag. */
@@ -52,9 +60,14 @@ const CLOSING_TAG = '<\\/[a-zA-Z][\\w:-]*\\s*>';
 const TAG_RE = new RegExp('<\\/?(?:' + TAG_NAME + '|' + ATTRIBUTED_TAG + ')' + IN_TAG + '*>|' + CLOSING_TAG, 'gi');
 /** A tag cut by a length fence: `<div style=…` with no `>` until the end. */
 const CUT_TAG_RE = new RegExp('<\\/?' + HTML_TAG_NAMES + '(?:\\s[^<>]*)?$', 'i');
+
 /**
  * Blocks, cells and sections break the text (Dan 10/11: «Danielepelleri400
- * internal URLs» came from two table cells glued together).
+ * internal URLs» came from two table cells glued together). Inline tags
+ * (backlog:1740985ba18c review: formatting inside one word, e.g.
+ * `a<b>b</b>c` or `<strong>Daniele</strong>pelleri`) go away with nothing in
+ * their place, like the browser renders them — only block and cell
+ * boundaries separate words, and those already break on newlines below.
  */
 const BLOCK_NAMES = '(p|div|li|ul|ol|tr|td|th|table|tbody|thead|tfoot|caption|blockquote|section|header|footer|article|main|nav|center|hr|h[1-6])';
 const BLOCK_OPEN_RE = new RegExp('<' + BLOCK_NAMES + '(?=[\\s/>])', 'gi');
