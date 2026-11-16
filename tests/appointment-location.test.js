@@ -153,6 +153,87 @@ test('9ff9a9ee1fea: labels are trimmed, a blank label is missing', () => {
   );
 });
 
+const AGENT = { type: 'agent', id: 'agente-agenda' };
+
+/** A switch-off gate that dedups on the proposal action key, like the real one. */
+const keyDedupGate = (seen = new Map()) => ({
+  async gate() { return { decision: 'deny' }; },
+  async propose({ actionKey }) {
+    if (seen.has(actionKey)) return { proposalId: seen.get(actionKey), replayed: true };
+    const id = `p-${seen.size + 1}`;
+    seen.set(actionKey, id);
+    return { proposalId: id, replayed: false };
+  },
+});
+
+const proposeAsAgent = (overrides = {}, gate) => proposeBooking(
+  { ...contextFor(fakeAppointments()), actor: AGENT, permissionGate: gate },
+  { ...booking({ sourceKey: 'gym:location:7' }), spaceId: 'spazio-1', ...overrides },
+);
+
+test('9ff9a9ee1fea: the same place replays its proposal, another place opens a new one (review P1 giro 2)', async () => {
+  // Before the fix proposalActionKey missed location/locationUrl while the
+  // booking counted them: two proposals for the same source key with a
+  // different place collapsed onto one action key.
+  const gate = keyDedupGate();
+  const first = await proposeAsAgent({ location: 'Via delle Rose 12, Milano' }, gate);
+  assert.equal(first.decision, 'proposal');
+  assert.equal(first.replayed, false);
+  const same = await proposeAsAgent({ location: 'Via delle Rose 12, Milano' }, gate);
+  assert.equal(same.proposalId, first.proposalId);
+  assert.equal(same.replayed, true);
+  const moved = await proposeAsAgent(
+    { location: 'Online', locationUrl: 'https://meet.example.com/abc' }, gate,
+  );
+  assert.equal(moved.replayed, false);
+  assert.notEqual(moved.proposalId, first.proposalId);
+  const movedAgain = await proposeAsAgent(
+    { location: 'Online', locationUrl: 'https://meet.example.com/abc' }, gate,
+  );
+  assert.equal(movedAgain.proposalId, moved.proposalId);
+  assert.equal(movedAgain.replayed, true);
+});
+
+test('9ff9a9ee1fea: every booking-claim field opens its own proposal (single source of truth)', async () => {
+  // bookingClaimKeyParts is the one list the key hashes: changing any field
+  // the booking idempotency counts must change the action key. The table
+  // holds every case of the earlier rounds (notes, reminderChannel, the
+  // place in the draft) and this one (the place in the key).
+  const gate = keyDedupGate();
+  const base = await proposeAsAgent({}, gate);
+  assert.equal(base.replayed, false);
+  const cases = {
+    subject: { subject: { resource: 'contact', id: 'c-altro', owner: 'host' } },
+    teamMemberId: { teamMemberId: 'coach-maria' },
+    serviceKey: { serviceKey: 'pt-double' },
+    priceCents: { priceCents: 5000 },
+    currency: { currency: 'USD' },
+    slot: { startsAt: '2026-11-20T18:00:00.000Z', endsAt: '2026-11-20T19:00:00.000Z' },
+    notes: { notes: 'porta il tappetino' },
+    location: { location: 'Via delle Rose 12, Milano' },
+    locationUrl: { location: 'Online', locationUrl: 'https://meet.example.com/abc' },
+    remindAt: { remindAt: '2026-11-20T16:00:00.000Z' },
+    reminderChannel: {
+      remindAt: '2026-11-20T16:00:00.000Z',
+      reminderChannel: {
+        spaceId: 'spazio-1',
+        connectionKey: 'wa-principale',
+        to: '+393331234567',
+        template: { name: 'promemoria_appuntamento', language: 'it', variables: ['Guido'] },
+      },
+    },
+    source: { source: { package: 'host', action: 'link' } },
+  };
+  for (const [name, overrides] of Object.entries(cases)) {
+    const varied = await proposeAsAgent(overrides, gate);
+    assert.equal(varied.replayed, false, `${name} diverges the claim: no replay`);
+    assert.notEqual(varied.proposalId, base.proposalId, `${name} opens its own proposal`);
+  }
+  const replay = await proposeAsAgent({}, gate);
+  assert.equal(replay.proposalId, base.proposalId);
+  assert.equal(replay.replayed, true);
+});
+
 test('9ff9a9ee1fea: the confirm-required draft round-trips the validated place (review P1)', async () => {
   // A person who books is the approval: the switch answer is allow and the
   // draft is the confirm payload. Before the fix the draft dropped the new

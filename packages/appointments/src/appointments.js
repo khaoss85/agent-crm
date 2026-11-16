@@ -2075,6 +2075,35 @@ function publicDraft(input) {
   });
 }
 
+/**
+ * The booking claim the proposal dedup binds: the same validated fields the
+ * booking idempotency counts (`submitted` in bookAppointment: customer,
+ * member, service, price, slot, notes, place, reminder, provenance) and the
+ * confirm-required draft round-trips (publicDraft). This list is the single
+ * source of truth for that identity — proposalActionKey hashes exactly these
+ * parts, so a new validated field belongs here first and no mirror can
+ * silently drop it again (backlog:9ff9a9ee1fea: location/locationUrl reached
+ * the booking and then the draft while the key still missed them — two P1s
+ * with that one root cause).
+ *
+ * The label is deliberately not identity: it is a display snapshot, like the
+ * booking replay treats it.
+ *
+ * @param {ReturnType<typeof validateAppointmentRequest>} input
+ */
+function bookingClaimKeyParts(input) {
+  const subject = input.subject;
+  return Object.freeze([
+    input.sourceKey,
+    subject.resource, subject.id, subject.owner, subject.ownerPackage,
+    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
+    input.startsAt, input.endsAt, input.notes,
+    input.location, input.locationUrl,
+    input.remindAt, input.reminderChannel,
+    input.source.package, input.source.action,
+  ]);
+}
+
 /** The gate replays an open proposal for one action key: bind that key to
  * the whole booking claim, not just its source key. The booking path treats
  * the customer, member, service, price, slot, reminder and provenance behind
@@ -2091,15 +2120,7 @@ function publicDraft(input) {
  * @param {ReturnType<typeof validateAppointmentRequest>} input
  */
 function proposalActionKey(input) {
-  const subject = input.subject;
-  const claim = JSON.stringify([
-    input.sourceKey,
-    subject.resource, subject.id, subject.owner, subject.ownerPackage,
-    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
-    input.startsAt, input.endsAt, input.notes,
-    input.remindAt, input.reminderChannel,
-    input.source.package, input.source.action,
-  ]);
+  const claim = JSON.stringify(bookingClaimKeyParts(input));
   const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
   return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
 }
