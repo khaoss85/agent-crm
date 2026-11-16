@@ -280,7 +280,19 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   }
   if (waiting) {
     const importing = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'importazione');
-    return { tone: 'wait', title: importing ? 'Importazione in corso' : 'In attesa del primo evento', detail, count: 0 };
+    // Voce a5fb0770: the wait names who waits, so the title never reads
+    // against the counts («In attesa del primo evento» beside «1 evento
+    // ricevuto» and an «Attivo» row meant another channel's wait). One
+    // waiting channel reads by name, several read as a count.
+    const waitingNames = rows
+      .filter((row) => row.connected && row.pill !== null && row.pill.tone === 'attesa')
+      .map((row) => row.label);
+    const waitingTitle = waitingNames.length === 1
+      ? `${waitingNames[0]} in attesa del primo evento`
+      : waitingNames.length > 1
+        ? `${waitingNames.length} canali in attesa del primo evento`
+        : 'In attesa del primo evento';
+    return { tone: 'wait', title: importing ? 'Importazione in corso' : waitingTitle, detail, count: 0 };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }

@@ -3,7 +3,7 @@
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
-import { matchConnections } from './admin-connectors.js';
+import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
@@ -3124,8 +3124,21 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
-    const directions = observedDirections(timeline);
-    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    // Voce a5fb0770: alias spellings share one mailbox — Gmail, Email and
+    // Outlook read the union of their passages, Messenger the Facebook one —
+    // so an Email row never reads «→ in uscita» alone while arrivals sit
+    // under another spelling. Keyed by the counted channel, like the shared
+    // `channelState` below.
+    const directions = new Map();
+    for (const [system, seen] of observedDirections(timeline)) {
+      const counted = cardCountedChannel(system);
+      const union = directions.get(counted) ?? { in: false, out: false };
+      union.in = union.in || seen.in === true;
+      union.out = union.out || seen.out === true;
+      directions.set(counted, union);
+    }
+    const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+    /** @type {Array<{ node: any, counted: string, both: boolean, traffic: string }>} */
     const syncLines = [];
     for (const row of merged.rows) {
       const { system } = row;
@@ -3139,37 +3152,49 @@ export function createCustomerCardView(deps) {
         : ` ${channelLabel(system)} · ${row.externalId}`));
       // Voce 59def6cb805d (C10): the prototype's sync line, from what the
       // passages on this channel prove — both directions seen reads
-      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «↔ in entrata e in uscita», received only «← in entrata», sent only
       // «→ in uscita». A channel with no directed passage says nothing.
       // Review #650 (P2): the directions come from the entries page, so on
       // a truncated read a single direction is not exhaustive — the other
       // may sit on a later page. Both seen is proven either way; one seen
       // names the partial list, the same honesty standard as the count.
-      const seen = directions.get(system);
-      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
-      // backlog:e381c48581fa: both directions seen prove traffic, not a
-      // sync. «↔ sincronizzato» needs the channel linked in the space (the
-      // shared `channelState`); until that is known the line says what was
-      // seen, and a channel known unlinked says so.
-      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
-        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) {
-        const node = el('span', 'bo-scheda-identity-sync', sync);
+      // Voce a5fb0770: an in-only channel (TikTok) never reads outbound —
+      // the matrix capability caps what the passages prove, so TikTok reads
+      // at most «← in entrata».
+      const counted = cardCountedChannel(system);
+      const seen = directions.get(counted) ?? { in: false, out: false };
+      const inbound = seen.in === true;
+      const outbound = seen.out === true && directionOf(counted) !== 'in-only';
+      const traffic = inbound && outbound ? '↔ in entrata e in uscita'
+        : inbound ? `← in entrata${partial}` : outbound ? `→ in uscita${partial}` : null;
+      if (traffic !== null) {
+        // Voce a5fb0770: the channel state arrives after the paint
+        // (/api/connectors is the last read). Until it lands the line is a
+        // placeholder, never a claim the state then corrects: the final
+        // text lands once, traffic then linked or unlinked.
+        // backlog:e381c48581fa: both directions seen prove traffic, not a
+        // sync. «↔ sincronizzato» needs the channel linked in the space (the
+        // shared `channelState`); a channel known unlinked says so.
+        const node = el('span', 'bo-scheda-identity-sync', '…');
         line.appendChild(node);
-        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+        syncLines.push({ node, counted, both: inbound && outbound, traffic });
       }
       box.appendChild(line);
     }
     if (syncLines.length > 0) {
       void readSpaceChannels().then((space) => {
-        if (space === null) return;
         for (const entry of syncLines) {
-          const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
+          if (space === null) {
+            entry.node.textContent = entry.traffic;
+            continue;
+          }
+          const linked = channelState(entry.counted, space).state === 'collegato';
           if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
           // «non collegato» only when known (review #819 P2): with the
           // profile unread a Profilo link cannot be ruled out, so the line
           // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+          else if (!linked && space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
+          else entry.node.textContent = entry.traffic;
         }
       });
     }
