@@ -1,7 +1,7 @@
 // @ts-check
 
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { AppError, ConflictError, NotFoundError, ValidationError } from '../../core/index.js';
+import { AppError, ConflictError, NotFoundError, ValidationError, usesWriteOutcomes } from '../../core/index.js';
 
 /**
  * Two-way calendar sync (backlog:bf0351325a8c): the hybrid Appointments /
@@ -616,7 +616,20 @@ export function createCalendarSyncOperations(options = {}) {
           `google calendar ${op} failed without provider detail: retry the sync`);
       }
     };
-    if (runExternal === null || eventBuffer === null || serviceEvents === null) return invoke();
+    if (runExternal === null) return invoke();
+    // Fail closed when tracing was requested but the evidence path is
+    // absent: an untraced invoke() would silently break the
+    // every-write-leaves-a-trace guarantee, and a failed write would leave
+    // no failed-trace evidence either.
+    if (eventBuffer === null || serviceEvents === null) {
+      throw syncError('CALENDAR_SYNC_CONTEXT_INVALID', 500,
+        'calendar-sync traced execution needs a buffered event bus: refusing an untraced Google call');
+    }
+    // Write-outcome storages (PostgreSQL) run external operations as V2,
+    // which requires a provider with call/reconcile — none is supplied
+    // here — so the traced path stays off there until a real V2 provider
+    // exists. The provider call still runs, exactly as the untraced engine.
+    if (usesWriteOutcomes(transactionSource)) return invoke();
     // Traced execution (backlog:f7a380e7): the grant travels only in this
     // closure into the external phase — never in the frozen intent, never
     // in a trace row — and finalization keeps a minimal receipt (operation,

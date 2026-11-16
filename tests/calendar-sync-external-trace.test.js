@@ -43,6 +43,11 @@ const slot = (day, from, to) => ({
 
 function setup(options = {}) {
   const database = createDatabase({ path: ':memory:' });
+  // A write-outcome-shaped handle (PostgreSQL): transactionAsync but no
+  // sync storage, so usesWriteOutcomes() is true for it.
+  const asyncHandle = options.asyncEngine === true
+    ? { transactionAsync: async (fn) => fn() }
+    : null;
   const manifests = [
     { name: 'appointment', manifest: manifest('appointments', 'appointment') },
     { name: 'calendar-link', manifest: manifest('calendar-sync', 'calendar-link') },
@@ -50,7 +55,9 @@ function setup(options = {}) {
   ];
   for (const { sql } of recordModuleMigrations(manifests)) database.raw.exec(sql);
   const audit = new AuditLog(database);
-  const events = new EventBus();
+  // A bus without buffered() proves the fail-closed path: tracing was
+  // requested but there is no evidence path to write to.
+  const events = options.unbufferedEvents === true ? { emit: async () => {} } : new EventBus();
   const modules = new Map();
   for (const { name, manifest: body } of manifests) {
     modules.set(name, { service: createRecordModuleFromManifest(body, { database, audit, events, references: {} }).service });
@@ -65,7 +72,8 @@ function setup(options = {}) {
     summaryForAppointment: (row) => `Appointment ${row.serviceKey} ${row.startsAt}`,
   };
   const sync = createCalendarSyncOperations({
-    modules, appointmentBook, provider, mapping, database,
+    modules, appointmentBook, provider, mapping,
+    database: asyncHandle ?? database,
     actor: ACTOR, now: () => new Date(fakeNow).toISOString(),
     ...(options.traced === true ? { runExternal: runExternalOperation } : {}),
   });
@@ -162,4 +170,30 @@ test('a failed Google write keeps its code and leaves a failed trace', async (t)
   assert.equal(failed.length, 1);
   assert.equal(failed[0].status, 'failed');
   assert.ok(!String(failed[0].error ?? '').includes('exploded'), 'no provider text in the failed trace');
+});
+
+test('P0 repro: a write-outcome storage skips the traced path instead of throwing V2-required', async (t) => {
+  const ctx = setup({ traced: true, asyncEngine: true });
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  // Before the cure this rejected with EXTERNAL_OPERATION_V2_REQUIRED:
+  // runExternal dispatches to V2 on a write-outcome storage and no
+  // provider with call/reconcile is supplied. Now the call runs directly.
+  const out = await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z', actor: ACTOR });
+  assert.ok(Array.isArray(out.entries) && out.entries.length >= 1, 'the Google read still runs');
+  assert.equal(ctx.tracedRuns().length, 0, 'no V1 trace row on a write-outcome storage');
+});
+
+test('P1 repro: traced execution without a buffered bus refuses instead of calling untraced', async (t) => {
+  const ctx = setup({ traced: true, unbufferedEvents: true });
+  t.after(() => ctx.close());
+  seedEvent(ctx, 'evt1', '21', '09:00', '10:00');
+  // Before the cure this silently fell back to the untraced provider call
+  // with zero trace rows. Now it fails closed so the missing evidence path
+  // reads as an error, never as "no writes happened".
+  await assert.rejects(
+    ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z', actor: ACTOR }),
+    (error) => error.code === 'CALENDAR_SYNC_CONTEXT_INVALID',
+  );
+  assert.equal(ctx.tracedRuns().length, 0, 'no silent untraced write');
 });
