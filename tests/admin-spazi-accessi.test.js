@@ -2203,3 +2203,30 @@ test('71a6574a: the painted self row shows the profile name and mailbox instead 
     'the profile mailbox paints under the name',
   );
 });
+
+test('71a6574a review giro 1 (P2): a click while the post-flip re-read is out opens its confirm, never «Permessi non disponibili.»', async () => {
+  const calls = [];
+  const overrides = [];
+  const gate = gatedGets(stubClient({ calls, overrides }), ['/api/space-permissions/effective']);
+  const { mount, view: v } = view({ client: gate.client });
+  await v.render();
+  await flush();
+  gate.arm();
+  const first = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta');
+  await first.listeners.click[0]();
+  await flush();
+  const done = mount.findAll('button').find((node) => node.textContent === 'Conferma').listeners.click[0]();
+  await flush(8);
+  // The 200 landed and the re-read is still held: clicking another switch
+  // must open its confirmation against the confirmed snapshot.
+  const second = mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Inviare risposte senza approvazione');
+  await second.listeners.click[0]();
+  await flush();
+  assert.doesNotMatch(text(mount), /Permessi non disponibili/, 'no unavailable note while the re-read is out');
+  assert.match(text(mount), /(Accendere|Spegnere) «Inviare risposte senza approvazione»\?/, 'the second switch confirm opened');
+  gate.free();
+  await done;
+  await flush();
+  const settled = mount.findAll('button').filter((node) => node.getAttribute('role') === 'switch');
+  assert.equal(settled.find((node) => node.getAttribute('aria-label') === 'Scrivere bozze di risposta')?.getAttribute('aria-checked'), 'false', 'the server truth keeps the flipped state');
+});

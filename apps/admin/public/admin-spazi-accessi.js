@@ -1564,6 +1564,7 @@ export function createSpaziAccessiView(deps) {
         yes.disabled = state.busy;
         if (busyOn((path) => path === '/api/space-permissions/set-permission')) uiMarkBusy(yes, 'Salvo…');
         yes.addEventListener('click', async () => {
+          let confirmed = null;
           try {
             await mutate('/api/space-permissions/set-permission', {
               spaceId: space.id,
@@ -1573,7 +1574,14 @@ export function createSpaziAccessiView(deps) {
             say(`\u00AB${entry.label}\u00BB ${pending.to ? 'accesa' : 'spenta'}.`);
             // backlog:71a6574a: the 200 applied the flip — paint it now with
             // live buttons; the refresh after it reconciles with the server.
+            // Review giro 1 (P2): the refresh clears the reads, so a click
+            // while the re-read is out painted «Permessi non disponibili.»
+            // instead of opening its confirm. The confirmed snapshot below
+            // paints until the GET lands; the server truth still wins.
             applySwitchFlip(space.id, pending.key, pending.to);
+            confirmed = Array.isArray(state.overrides)
+              ? state.overrides.map((row) => ({ ...row }))
+              : null;
             render();
           } catch (error) {
             const failure = errorOf(error);
@@ -1591,7 +1599,7 @@ export function createSpaziAccessiView(deps) {
             return;
           }
           state.confirmFlip = null;
-          await refresh();
+          await refresh({ keepOverrides: confirmed });
           // backlog 3136d15da7bd: a flipped switch may be the space AI
           // master — the top AI bar re-reads it at once instead of naming
           // questions while the AI is off (or hiding that it is back on).
@@ -1694,7 +1702,7 @@ export function createSpaziAccessiView(deps) {
     }
   }
 
-  async function refresh({ skeleton = false } = {}) {
+  async function refresh({ skeleton = false, keepOverrides = null } = {}) {
     const mine = (generation += 1);
     const space = readActiveSpace().trim();
     // A space change drops the previous space's count before anything
@@ -1709,6 +1717,13 @@ export function createSpaziAccessiView(deps) {
     // another space's late count.
     const countRead = space !== '' ? loadFixCount(client, { spaceId: space }) : Promise.resolve(null);
     const hasSpace = resetLoadState(space);
+    if (Array.isArray(keepOverrides)) {
+      // Review giro 1 (P2): a write the 200 just confirmed keeps its
+      // snapshot while the re-read is out — a click then paints against
+      // confirmed values, never «Permessi non disponibili.». The GET in
+      // loadCore still replaces this with the server truth (or its error).
+      state.overrides = keepOverrides.map((row) => ({ ...row }));
+    }
     const reads = hasSpace ? beginReads(space) : null;
     // A statistic that already landed paints as data, never as pending:
     // the flag flips in the settlement turn, before the data paint below.
