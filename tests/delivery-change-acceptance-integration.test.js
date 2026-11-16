@@ -140,7 +140,7 @@ test('the shipped M14b2 solution plan validates, and checks against a composed p
   assert.deepEqual(validated.problems, [], 'the shipped plan passes the AX2 contract');
 
   assert.equal(validated.plan.application.inspectionFingerprint, inspectionFingerprint(report),
-    'the plan is stale: re-run `crm solution check --json` against a delivery project and record its inspectionFingerprint');
+    'the plan is stale: run `npm run repin:example-pins` (scripts/repin-example-pins.js) and commit the rewritten files instead of hand-editing the pins');
 
   const checked = await solutionCommand({ planPath: PLAN, mode: 'check', json: true, rootDir: root, out: () => {} });
   assert.deepEqual(checked.problems, [], 'and it is current against a composed project');
