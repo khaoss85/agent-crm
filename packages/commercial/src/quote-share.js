@@ -173,11 +173,14 @@ async function findShare(shares, token) {
 
 /**
  * One source of truth for the first accept: the committing write is a
- * single conditional UPDATE gated on `status = 'active'` where it executes
- * — the product-import row-decision idiom (`affectedRows` verdict, audit
- * mirror, managed re-read, one event). Zero rows means a concurrent accept
- * won or the row moved meanwhile: the caller re-reads and answers from the
- * row it finds. Never accept with an unconditional write.
+ * single conditional UPDATE gated on `status = 'active'` AND the bearer
+ * hash the caller based its decision on — the same pin the rotate claim
+ * carries, so a bearer revoked between the read and the commit cannot
+ * steal the rotated row. The product-import row-decision idiom holds
+ * (`affectedRows` verdict, audit mirror, managed re-read, one event).
+ * Zero rows means a concurrent accept won, the link was rotated meanwhile,
+ * or the row moved: the caller re-resolves by hash and answers from what
+ * it finds. Never accept with an unconditional write.
  *
  * @param {any} shares the quote-share managed service
  */
@@ -188,6 +191,7 @@ async function claimAcceptedShare(shares, share, at, actor) {
   const table = manifest?.table;
   const columns = {
     status: columnOf('status'),
+    tokenHash: columnOf('tokenHash'),
     acceptedAt: columnOf('acceptedAt'),
     acceptCount: columnOf('acceptCount'),
   };
@@ -219,6 +223,7 @@ async function claimAcceptedShare(shares, share, at, actor) {
     where: [
       { column: 'id', op: 'eq', value: share.id },
       { column: columns.status, op: 'eq', value: 'active' },
+      { column: columns.tokenHash, op: 'eq', value: share.tokenHash },
     ],
   };
   const auditEvent = {
@@ -703,9 +708,13 @@ export function buildAcceptLinkAction(config) {
       const offer = await frozenOffer(modules, cfg, share);
       const updated = await claimAcceptedShare(shares, share, at, actor);
       if (!updated) {
-        // Another accept won the conditional claim between our read and our
-        // write (another connection): answer from the row it left, never
-        // from our stale read.
+        // The claim is pinned on the hash we read, so losing it means the
+        // row moved under us: a rotation revoked our bearer, or another
+        // accept won (another connection). Re-resolve by the presented
+        // hash first, never from our stale read: a gone hash is a dead
+        // link (404), a live one decides below.
+        const reread = await findShare(shares, input.token);
+        if (!reread || reread.quoteId !== quote.id) throw invalidLink();
         const current = await shares.get(share.id);
         if (current.status === 'accepted') {
           return {

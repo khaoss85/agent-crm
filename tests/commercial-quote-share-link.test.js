@@ -650,6 +650,73 @@ test('A5-4: a lost first answer regenerates — the old token dies, the new one 
   assert.equal(rows[0].tokenHash, hashOf(token), 'the row holds the fresh hash, never the bearer');
 });
 
+test('A5-4e: a bearer revoked between the accept read and its commit cannot steal the rotated row', async (t) => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-4E', cents: 10000 });
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const lost = first.result.token;
+  assert.match(lost, /^[0-9a-f]{64}$/, 'the first answer carried a bearer');
+
+  // The rotation the pending accept is about to lose against: a fresh
+  // bearer the operator holds, committed mid-accept.
+  const fresh = hashOf(`${lost}:fresh`);
+  const freshHash = hashOf(fresh);
+
+  const shares = app.modules.get('quote-share').service;
+  const shareTable = shares.manifest.table;
+  const tokenHashCol = shares.manifest.fields.find((field) => field?.name === 'tokenHash')?.column;
+  assert.equal(typeof tokenHashCol, 'string', 'the test pins the same mapped hash column as the claim');
+  const shareId = shares.listWhere({ tokenHash: hashOf(lost) })[0].id;
+
+  // Stage the supervisor's race: the rotation commits after the accept
+  // read its bearer but before the accept claim writes. The raw handle is
+  // the same connection the claim writes through, so the staged write is
+  // visible to the claim — no nested action, no second connection,
+  // deterministic on every run. The first UPDATE on the share row inside
+  // this window is the accept claim (reads before it are all SELECTs).
+  const raw = app.database.raw;
+  const origPrepare = raw.prepare.bind(raw);
+  let staged = false;
+  raw.prepare = (sql, ...rest) => {
+    if (!staged && typeof sql === 'string' && sql.startsWith('UPDATE "') && sql.includes(`"${shareTable}"`)) {
+      staged = true;
+      origPrepare(`UPDATE "${shareTable}" SET ${tokenHashCol} = ? WHERE id = ?`).run(freshHash, shareId);
+    }
+    return origPrepare(sql, ...rest);
+  };
+  let dead;
+  try {
+    dead = await refusal(app.runAction({
+      module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: lost }, actor: PUBLIC,
+    }));
+  } finally {
+    raw.prepare = origPrepare;
+  }
+  assert.equal(staged, true, 'the rotation really landed between the accept read and its commit');
+  assert.equal(dead.ok, false, 'the revoked bearer never accepts the row it lost');
+  assert.equal(dead.code, 'QUOTE_LINK_INVALID');
+  assert.equal(dead.status, 404);
+
+  // The refused claim wrote nothing: the row is still live, never accepted.
+  const current = await shares.get(shareId);
+  assert.equal(current.status, 'active', 'the refused accept left the live row alone');
+  assert.equal(current.acceptCount, 0, 'the refused accept recorded no acceptance');
+
+  // The operator recovers through the real chain: regenerate revokes and
+  // the fresh bearer opens the frozen send price.
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.regenerated, true);
+  const recovered = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: again.result.token }, actor: PUBLIC,
+  });
+  assert.equal(recovered.result.accepted, true, 'the fresh bearer accepts without a login');
+  assert.equal(recovered.result.offer.oneTimeNetCents, 10000, 'the price is the frozen send price');
+});
+
 test('A5-4b: an accepted link is never revoked nor regenerated — the receipt stays', async (t) => {
   const app = await sharedApp();
   const { quote } = await approvedQuote(app, { sku: 'LINK-4B', cents: 10000 });
