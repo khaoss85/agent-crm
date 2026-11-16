@@ -993,15 +993,26 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     if (shapes.length === 0) return { rows: [], readable: true, complete: true };
     if (typeof service.listWhere === 'function') {
       const byId = new Map();
-      let exact = false;
-      for (const shape of shapes) {
+      // Backlog ca53e443db44 (the list's reads ran one after the other: the
+      // contact shapes, the company shapes, then every module in turn): the
+      // shapes of one module start together, each fail-soft per shape as
+      // before — a shape that refuses still leaves the sibling shapes' rows.
+      const settled = await Promise.all(shapes.map(async (shape) => {
+        const part = new Map();
         try {
-          for (const row of await service.listWhere(shape)) byId.set(row.id, row);
-          exact = true;
+          for (const row of await service.listWhere(shape)) part.set(row.id, row);
+          return { part, ok: true };
         } catch {
           // A module that declares none of these shapes is not readable from
-          // here; the next shape (or the fallback below) still runs.
+          // here; the sibling shapes (and the fallback below) still run.
+          return { part: null, ok: false };
         }
+      }));
+      let exact = false;
+      for (const { part, ok } of settled) {
+        if (!ok) continue;
+        exact = true;
+        for (const [id, row] of part) byId.set(id, row);
       }
       // An exact read with zero rows is complete, not partial: falling
       // through to the bounded page would mislabel an exact zero as a floor.
@@ -1015,7 +1026,161 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     return { rows: [], readable: false };
   };
 
-  const identities = await batched(names.identity);
+  // Backlog ca53e443db44 (every module read awaited the previous one, so the
+  // server view paid one round trip per module in a row): the reads that
+  // need nothing but the scanned subjects start together. Only the evidence
+  // reads wait, because they hop through the opportunity ids found above.
+  // Fail-soft is unchanged: a shape that refuses still leaves its siblings'
+  // rows, and a module without the exact read still falls back to the
+  // bounded page.
+  const readFns = interactions ?? null;
+  const [
+    identities,
+    opportunities,
+    tasks,
+    messages,
+    calls,
+    // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
+    // closed state and label; an unreadable conversation module reads none.
+    conversations,
+    // backlog:2262771da550 — the Calendario column: the same batched exact
+    // read over the appointment records, keyed by customer subject. Without
+    // the module composed the rows carry no calendar state, never an
+    // invented «nessuno».
+    appointments,
+    // The space's own mailboxes (review Muse #821): the accounts of its email
+    // connections, read straight at the record module like the reads above.
+    // Mail from them is the team's own, never a customer waiting.
+    ownAddresses,
+    // «Da leggere» (backlog:9e003582): one member's read watermarks over
+    // every conversation, read once for the whole page. The member is always
+    // the request actor — the query names no member — and without one (or
+    // without the watermark table composed, or without the interactions
+    // read-state functions) every row below carries nulls: no read state,
+    // never an invented count. The table lives in the interactions package,
+    // but this read goes straight at the record module (like the message and
+    // call reads above), never through that package's code — a domain package
+    // reaches another only through requires plus capability, and this list
+    // has no edge to add for a display column. The one unread rule arrives
+    // through `options.interactions` instead, so both readers count alike.
+    watermarks,
+    signals,
+    // Custom fields (backlog:434cc39a): definitions and values join the
+    // same wave — they read nothing but the scanned subjects. The checks
+    // below (unknown campo refuses, unread values refuse under a campo
+    // filter) run after every read resolves, as before.
+    customDefs,
+    customValues,
+  ] = await Promise.all([
+    batched(names.identity),
+    batched('opportunity', [
+      { companyId: [...refs.companyIds] },
+      { contactId: [...refs.contactIds] },
+    ]),
+    batched('work-task'),
+    batched('interaction-message'),
+    batched('interaction-call'),
+    batched('conversation'),
+    batched('appointment'),
+    (async () => {
+      const service = optional(modules, 'channel-connection');
+      if (!service) return [];
+      try {
+        const rows = typeof service.listWhere === 'function'
+          ? await service.listWhere({ channel: 'email' })
+          : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
+        return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
+      } catch (error) {
+        // Degraded, never silent (review Muse #821): the cause, never data.
+        console.error(
+          `[accordo] customer own mailboxes unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+        );
+        return [];
+      }
+    })(),
+    (async () => {
+      if (readFns === null || typeof readFns.actorMemberId !== 'function') return null;
+      const member = readFns.actorMemberId(normalizeActor(request?.actor));
+      if (member === null) return null;
+      const reads = optional(modules, 'conversation-read');
+      if (!reads || typeof reads.listWhere !== 'function') return null;
+      const byConversation = new Map();
+      const marks = await reads.listWhere({ memberId: member });
+      for (const row of marks ?? []) {
+        if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
+        byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
+      }
+      return byConversation;
+    })(),
+    (async () => {
+      if (!query.spaceId) return { rows: [], readable: false };
+      const signalSvc = optional(modules, 'call-signal');
+      if (!signalSvc || typeof signalSvc.listWhere !== 'function') return { rows: [], readable: false };
+      const byId = new Map();
+      await Promise.all(['contact', 'company'].map(async (resource) => {
+        const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
+        if (ids.length === 0) return;
+        try {
+          for (const row of await signalSvc.listWhere({ spaceId: query.spaceId, subjectResource: resource, subjectId: ids })) {
+            if (row?.signalType === 'budget') byId.set(row.id, row);
+          }
+        } catch {
+          // A renamed signal module stays unreadable, never misread.
+        }
+      }));
+      return { rows: [...byId.values()], readable: true };
+    })(),
+    (async () => {
+      const service = optional(modules, names.fieldDef);
+      if (!service) return [];
+      const shaped = [];
+      const rows = typeof service.listWhere === 'function'
+        ? await service.listWhere({})
+        : (typeof service.list === 'function' ? await service.list({ limit: CUSTOMER_SCAN_LIMIT }) : []);
+      for (const row of rows) {
+        if (!row || typeof row.fieldKey !== 'string' || row.fieldKey === '') continue;
+        let options = [];
+        if (typeof row.options === 'string' && row.options !== '') {
+          try {
+            const parsed = JSON.parse(row.options);
+            if (Array.isArray(parsed)) options = parsed.filter((entry) => typeof entry === 'string');
+          } catch { /* a malformed options text reads as no options, never a crash */ }
+        }
+        shaped.push({
+          key: row.fieldKey,
+          label: typeof row.label === 'string' && row.label !== '' ? row.label : row.fieldKey,
+          type: typeof row.fieldType === 'string' ? row.fieldType : 'testo',
+          options,
+        });
+      }
+      return shaped;
+    })(),
+    (async () => {
+      const service = optional(modules, names.fieldValue);
+      if (!service || typeof service.listWhere !== 'function') return { rows: [], failed: null };
+      const rows = [];
+      let failed = null;
+      await Promise.all(['contact', 'company'].map(async (resource) => {
+        const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
+        if (ids.length === 0) return;
+        try {
+          for (const row of await service.listWhere({ subjectResource: resource, subjectId: ids })) {
+            rows.push(row);
+          }
+        } catch (error) {
+          // A module that declares none of these shapes stays unread here;
+          // the rows below then read null values, never invented ones. Any
+          // other failure is recorded: it refuses below when a campo filter
+          // would turn it into an exact-looking wrong page.
+          failed = error;
+          console.error(
+            `[accordo] customer custom values unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+          );
+        }
+      }));
+      return { rows, failed };
+    })(),
+  ]);
   const identitiesBySubject = new Map(subjectKeys.map((key) => [key, []]));
   for (const row of identities.rows) {
     const key = keyOf(row.subjectResource, row.subjectId);
@@ -1027,104 +1192,28 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     }
   }
 
-  const opportunities = await batched('opportunity', [
-    { companyId: [...refs.companyIds] },
-    { contactId: [...refs.contactIds] },
-  ]);
   for (const row of opportunities.rows) {
     if (row?.id) refs.opportunityIds.add(row.id);
   }
 
   // Evidence after opportunities: an evidence row may name the opportunity
   // rather than the customer, and that hop is explicit, never guessed.
+  // The three evidence modules read together, like the wave above.
   const evidenceReads = {};
-  for (const [sectionKey, moduleName] of [['orders', 'order'], ['contracts', 'commercial-contract'], ['subscriptions', 'subscription']]) {
-    evidenceReads[sectionKey] = await batched(moduleName, [
-      { companyId: [...refs.companyIds] },
-      { contactId: [...refs.contactIds] },
-      ...(refs.opportunityIds.size > 0 ? [{ opportunityId: [...refs.opportunityIds] }] : []),
-    ]);
-  }
+  await Promise.all([['orders', 'order'], ['contracts', 'commercial-contract'], ['subscriptions', 'subscription']].map(
+    async ([sectionKey, moduleName]) => {
+      evidenceReads[sectionKey] = await batched(moduleName, [
+        { companyId: [...refs.companyIds] },
+        { contactId: [...refs.contactIds] },
+        ...(refs.opportunityIds.size > 0 ? [{ opportunityId: [...refs.opportunityIds] }] : []),
+      ]);
+    },
+  ));
 
-  const tasks = await batched('work-task');
-  const messages = await batched('interaction-message');
-  const calls = await batched('interaction-call');
-  // «Da rispondere» (backlog:c2bf6b206d96): the threads only lend their
-  // closed state and label; an unreadable conversation module reads none.
-  const conversations = await batched('conversation');
-  // backlog:2262771da550 — the Calendario column: the same batched exact
-  // read over the appointment records, keyed by customer subject. Without
-  // the module composed the rows carry no calendar state, never an
-  // invented «nessuno».
-  const appointments = await batched('appointment');
   const appointmentsComplete = appointments.readable === true && appointments.complete !== false;
-  // The space's own mailboxes (review Muse #821): the accounts of its email
-  // connections, read straight at the record module like the reads above.
-  // Mail from them is the team's own, never a customer waiting.
-  const ownAddresses = await (async () => {
-    const service = optional(modules, 'channel-connection');
-    if (!service) return [];
-    try {
-      const rows = typeof service.listWhere === 'function'
-        ? await service.listWhere({ channel: 'email' })
-        : (await service.list({ limit: CUSTOMER_SCAN_LIMIT })).filter((row) => row?.channel === 'email');
-      return rows.filter((row) => typeof row?.account === 'string' && row.account.includes('@')).map((row) => row.account);
-    } catch (error) {
-      // Degraded, never silent (review Muse #821): the cause, never data.
-      console.error(
-        `[accordo] customer own mailboxes unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
-      );
-      return [];
-    }
-  })();
   // Who the team ever wrote to, over every message of the scan (review
   // Muse #821 giro 2): one scope for every row, like Oggi over its read.
   const correspondents = teamCorrespondents(messages.rows);
-  // «Da leggere» (backlog:9e003582): one member's read watermarks over
-  // every conversation, read once for the whole page. The member is always
-  // the request actor — the query names no member — and without one (or
-  // without the watermark table composed, or without the interactions
-  // read-state functions) every row below carries nulls: no read state,
-  // never an invented count. The table lives in the interactions package,
-  // but this read goes straight at the record module (like the message and
-  // call reads above), never through that package's code — a domain package
-  // reaches another only through requires plus capability, and this list
-  // has no edge to add for a display column. The one unread rule arrives
-  // through `options.interactions` instead, so both readers count alike.
-  const readFns = interactions ?? null;
-  const watermarks = await (async () => {
-    if (readFns === null || typeof readFns.actorMemberId !== 'function') return null;
-    const member = readFns.actorMemberId(normalizeActor(request?.actor));
-    if (member === null) return null;
-    const reads = optional(modules, 'conversation-read');
-    if (!reads || typeof reads.listWhere !== 'function') return null;
-    const byConversation = new Map();
-    const marks = await reads.listWhere({ memberId: member });
-    for (const row of marks ?? []) {
-      if (row?.conversationId === undefined || row?.conversationId === null || row?.conversationId === '') continue;
-      byConversation.set(String(row.conversationId), row?.lastReadAt ?? null);
-    }
-    return byConversation;
-  })();
-  let signals = { rows: [], readable: false };
-  if (query.spaceId) {
-    const signalSvc = optional(modules, 'call-signal');
-    if (signalSvc && typeof signalSvc.listWhere === 'function') {
-      const byId = new Map();
-      for (const resource of ['contact', 'company']) {
-        const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
-        if (ids.length === 0) continue;
-        try {
-          for (const row of await signalSvc.listWhere({ spaceId: query.spaceId, subjectResource: resource, subjectId: ids })) {
-            if (row?.signalType === 'budget') byId.set(row.id, row);
-          }
-        } catch {
-          // A renamed signal module stays unreadable, never misread.
-        }
-      }
-      signals = { rows: [...byId.values()], readable: true };
-    }
-  }
 
   // Custom fields (backlog:434cc39a): space-wide definitions with this
   // customer's value. The def/value modules are package-owned, so a missing
@@ -1135,31 +1224,6 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // campo filter over one would wrongly refuse CUSTOM_FIELD_UNKNOWN.
   // A campo filter over an unknown field refuses CUSTOM_FIELD_UNKNOWN
   // instead of answering an exact-looking empty page.
-  const customDefs = await (async () => {
-    const service = optional(modules, names.fieldDef);
-    if (!service) return [];
-    const shaped = [];
-    const rows = typeof service.listWhere === 'function'
-      ? await service.listWhere({})
-      : (typeof service.list === 'function' ? await service.list({ limit: CUSTOMER_SCAN_LIMIT }) : []);
-    for (const row of rows) {
-      if (!row || typeof row.fieldKey !== 'string' || row.fieldKey === '') continue;
-      let options = [];
-      if (typeof row.options === 'string' && row.options !== '') {
-        try {
-          const parsed = JSON.parse(row.options);
-          if (Array.isArray(parsed)) options = parsed.filter((entry) => typeof entry === 'string');
-        } catch { /* a malformed options text reads as no options, never a crash */ }
-      }
-      shaped.push({
-        key: row.fieldKey,
-        label: typeof row.label === 'string' && row.label !== '' ? row.label : row.fieldKey,
-        type: typeof row.fieldType === 'string' ? row.fieldType : 'testo',
-        options,
-      });
-    }
-    return shaped;
-  })();
   if (query.campo !== undefined && !customDefs.some((def) => def.key === query.campo)) {
     throw new AppError(`custom field «${query.campo}» is not defined: add it first`, { code: 'CUSTOM_FIELD_UNKNOWN', status: 404 });
   }
@@ -1168,31 +1232,8 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // so the read refuses instead. Without a filter the scheda still reads
   // — with null values — but the cause is logged with the space, never
   // swallowed, so a failure nobody can diagnose is impossible (AGENTS.md).
-  let customValuesFailed = null;
-  const customValueRows = await (async () => {
-    const service = optional(modules, names.fieldValue);
-    if (!service || typeof service.listWhere !== 'function') return [];
-    const rows = [];
-    for (const resource of ['contact', 'company']) {
-      const ids = resource === 'contact' ? [...refs.contactIds] : [...refs.companyIds];
-      if (ids.length === 0) continue;
-      try {
-        for (const row of await service.listWhere({ subjectResource: resource, subjectId: ids })) {
-          rows.push(row);
-        }
-      } catch (error) {
-        // A module that declares none of these shapes stays unread here;
-        // the rows below then read null values, never invented ones. Any
-        // other failure is recorded: it refuses below when a campo filter
-        // would turn it into an exact-looking wrong page.
-        customValuesFailed = error;
-        console.error(
-          `[accordo] customer custom values unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
-        );
-      }
-    }
-    return rows;
-  })();
+  const customValuesFailed = customValues.failed;
+  const customValueRows = customValues.rows;
   if (customValuesFailed !== null && query.campo !== undefined) {
     throw new AppError('the campo filter needs the custom-field values, which are not readable here', { code: 'CUSTOMER_LIST_UNAVAILABLE', status: 409 });
   }
