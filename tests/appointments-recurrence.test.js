@@ -1543,4 +1543,109 @@ test('i days sulle regole non settimanali vengono rifiutati, mai ignorati (backl
   );
 });
 
+test('annullo largo con occurrenceIndex stringa: la testa cancellata viene spinta (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(sourceKey);
+      return { status: 'pushed', sourceKey };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  // Il driver può rendere occurrenceIndex come stringa '0': la testa resta la testa.
+  service.rows[0].occurrenceIndex = '0';
+  const keys = booked.occurrences.map((entry) => entry.sourceKey);
+  const headKey = keys[0];
+  const withCalendar = (id, scope) => ({
+    id, scope, reason: 'spostato', calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
+  });
+  await cancelAppointment(context, withCalendar(booked.occurrences[0].id, 'single'));
+  assert.ok(pushes.includes(headKey), 'la testa nominata viene spinta');
+  // La testa è cancellata ma il master Google porta ancora la RRULE viva:
+  // un annullo largo nominato da un’altra occorrenza deve spingere anche lei.
+  pushes.length = 0;
+  await cancelAppointment(context, withCalendar(booked.occurrences[1].id, 'all'));
+  assert.deepEqual([...pushes].sort(), [...keys].sort(), 'ogni chiave in-scope viene spinta');
+  assert.ok(pushes.includes(headKey), 'la testa cancellata viene spinta anche con occurrenceIndex stringa');
+});
+
+test('serie mai esportata con «calendar»: la converge local-only non spegne la spinta legacy (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const scoped = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(sourceKey);
+      return { status: 'pushed', sourceKey };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'local-only', sourceKey: headSourceKey, reason: 'finto' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[2].id,
+    startsAt: '2026-12-03T16:00:00.000Z',
+    endsAt: '2026-12-03T17:00:00.000Z',
+    scope: 'single',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.moved, true, 'la serie mai esportata si sposta in griglia');
+  assert.equal(scoped.length, 1, 'la converge corre e risponde local-only');
+  assert.equal(pushes.length, 1, 'local-only non sopprime la spinta legacy con calendario nominato');
+});
+
+test('«tutti» su serie mai esportata con «calendar»: ogni riga in-scope viene spinta (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const calendarSync = {
+    async pushAppointment(calendarId, sourceKey) {
+      pushes.push(sourceKey);
+      return { status: 'pushed', sourceKey };
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      return { status: 'local-only', sourceKey: headSourceKey, reason: 'finto' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({ recurrence: { kind: 'weekly', count: 3 } }));
+  const keys = booked.occurrences.map((entry) => entry.sourceKey);
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[0].id,
+    startsAt: '2026-11-18T16:00:00.000Z',
+    endsAt: '2026-11-18T17:00:00.000Z',
+    scope: 'all',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.moved, true, 'la serie mai esportata si sposta in griglia');
+  assert.deepEqual([...pushes].sort(), [...keys].sort(), 'la griglia muove ogni riga, Google vede ogni riga');
+  pushes.length = 0;
+  const movedFollowing = await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-11-19T16:00:00.000Z',
+    endsAt: '2026-11-19T17:00:00.000Z',
+    scope: 'following',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(movedFollowing.moved, true, 'anche «questo e i successivi» si sposta in griglia');
+  assert.deepEqual(
+    [...pushes].sort(),
+    [booked.occurrences[1].sourceKey, booked.occurrences[2].sourceKey].sort(),
+    'la converge local-only non sopprime la spinta: ogni riga in-scope viene spinta',
+  );
+  pushes.length = 0;
+  await cancelAppointment(context, {
+    id: booked.occurrences[0].id, scope: 'all', reason: 'spostato',
+    calendar: { calendarId: 'cal-1' }, spaceId: 'spazio-1',
+  });
+  assert.deepEqual([...pushes].sort(), [...keys].sort(), 'l’annullo largo spinge ogni chiave in-scope');
+});
+
 

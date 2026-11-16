@@ -1960,8 +1960,12 @@ export async function rescheduleAppointment(context, request) {
       checkSlotFree([...held, ...singleBlocks], current.teamMemberId, startsAt.ms, endsAt.ms, new Set([current.id]), null);
       // Google first: the EXDATE (plus the moved standalone event) lands
       // before the row moves, so a Google refusal leaves the grid untouched.
+      // A `local-only` answer converges nothing (the series was never
+      // exported), so only a real `pushed` converge suppresses the legacy
+      // post-commit push below: with a calendar named, a local-only series
+      // still rides the legacy export path instead of moving the grid alone.
       if (googleScope !== null) {
-        await convergeGoogleSeriesScope(googleScope, {
+        const converged = await convergeGoogleSeriesScope(googleScope, {
           headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
           spaceId: record.spaceId,
           actor: who,
@@ -1971,7 +1975,7 @@ export async function rescheduleAppointment(context, request) {
           movedEndsAt: endsAt.iso,
           movedSourceKey: current.sourceKey,
         });
-        scopedConverged = true;
+        if (converged?.status === 'pushed') scopedConverged = true;
       }
       return {
         appointment: await appointments.applyManaged(
@@ -2052,7 +2056,7 @@ export async function rescheduleAppointment(context, request) {
           { code: 'APPOINTMENTS_SERIES_INVALID', status: 500 },
         );
       }
-      await convergeGoogleSeriesScope(googleScope, {
+      const converged = await convergeGoogleSeriesScope(googleScope, {
         headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
         spaceId: record.spaceId,
         actor: who,
@@ -2064,7 +2068,7 @@ export async function rescheduleAppointment(context, request) {
         tailSourceKey: targets[0].sourceKey,
         inScopeSourceKeys: targets.map((entry) => entry.sourceKey),
       });
-      scopedConverged = true;
+      if (converged?.status === 'pushed') scopedConverged = true;
     }
     const moved = [];
     for (const plan of plans) {
@@ -2118,23 +2122,38 @@ export async function rescheduleAppointment(context, request) {
   // A scoped converge already wrote this series to Google BEFORE the commit
   // (backlog:6acf0a73bfc3): pushing the head again after the commit would
   // re-apply one occurrence onto the whole master — cancelling one occurrence
-  // could wipe the entire Google series. One write path only.
-  let pushKey = appointment.sourceKey;
-  if (first.seriesKey) {
+  // could wipe the entire Google series. One write path only. A wide scope on
+  // a link-absent series pushes every in-scope key instead: the grid moved
+  // every row, so Google sees every row, never just the head.
+  let pushKeys = [appointment.sourceKey];
+  if (scope === 'single' && first.seriesKey) {
     const siblings = await appointments.listWhere({ seriesKey: first.seriesKey });
     const head = siblings.find((row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0')) ?? null;
-    if (head) pushKey = head.sourceKey;
+    if (head) pushKeys = [head.sourceKey];
+  } else if (scope !== 'single') {
+    pushKeys = [];
+    for (const entry of occurrences ?? []) {
+      if (entry && typeof entry.sourceKey === 'string' && entry.sourceKey !== '' && !pushKeys.includes(entry.sourceKey)) {
+        pushKeys.push(entry.sourceKey);
+      }
+    }
+    if (pushKeys.length === 0) pushKeys = [appointment.sourceKey];
   }
   let push = null;
   let pushError = null;
   if (calendarPush !== null && scopedConverged !== true) {
-    try {
-      push = await calendarPush(calendarId, pushKey, { spaceId, actor: who });
-    } catch (error) {
-      const code = typeof error?.code === 'string' && error.code !== ''
-        ? error.code
-        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
-      pushError = Object.freeze({ code });
+    for (const pushKey of pushKeys) {
+      try {
+        const answered = await calendarPush(calendarId, pushKey, { spaceId, actor: who });
+        if (push === null) push = answered;
+      } catch (error) {
+        if (pushError === null) {
+          const code = typeof error?.code === 'string' && error.code !== ''
+            ? error.code
+            : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+          pushError = Object.freeze({ code });
+        }
+      }
     }
   }
   return Object.freeze({ appointment, moved, occurrences: occurrences ?? Object.freeze([]), scope, push, pushError });
@@ -2321,13 +2340,13 @@ export async function cancelAppointment(context, request) {
           tailSourceKey: scoped[0].sourceKey,
           inScopeSourceKeys: scoped.map((entry) => entry.sourceKey),
         };
-      await convergeGoogleSeriesScope(googleScope, {
+      const converged = await convergeGoogleSeriesScope(googleScope, {
         ...plan,
         headSourceKey: await seriesHeadSourceKey(appointments, current.seriesKey, current),
         spaceId: record.spaceId,
         actor: who,
       });
-      scopedConverged = true;
+      if (converged?.status === 'pushed') scopedConverged = true;
     }
     const settled = [];
     for (const target of scoped) settled.push(await advanceOne(target));
@@ -2345,8 +2364,25 @@ export async function cancelAppointment(context, request) {
     // also converges the series head — it carries the Google RRULE, so Google
     // sees the series change even when the named row is a later occurrence.
     const pushKeys = [appointment.sourceKey];
-    const head = settled.map((entry) => entry.row).find((row) => row && row.occurrenceIndex === 0) ?? null;
-    if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE) pushKeys.push(head.sourceKey);
+    // A wide scope on a link-absent series pushes every in-scope key: the
+    // grid cancelled every row, so Google sees every row, never just the
+    // named one.
+    if (scope !== 'single') {
+      for (const entry of settled) {
+        const key = entry?.row?.sourceKey;
+        if (typeof key === 'string' && key !== '' && !pushKeys.includes(key)) pushKeys.push(key);
+      }
+    }
+    // The head matches the tolerant way the reschedule and confirm paths do:
+    // a driver may hand occurrenceIndex back as the string '0', and missing
+    // the cancelled head would leave Google carrying a live RRULE master the
+    // grid already cancelled.
+    const head = settled.map((entry) => entry.row).find(
+      (row) => row && (row.occurrenceIndex === 0 || row.occurrenceIndex === '0'),
+    ) ?? null;
+    if (head && head.sourceKey !== appointment.sourceKey && head.status === CANCELLED_STATE && !pushKeys.includes(head.sourceKey)) {
+      pushKeys.push(head.sourceKey);
+    }
     return { appointment, cancelled, occurrences, pushKeys, scopedConverged };
   };
   // The lookup, the scope read, the terminal pre-check and the advance loop

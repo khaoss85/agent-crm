@@ -161,6 +161,23 @@ function toGoogleInstant(ms) {
   return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
+/**
+ * Deterministic scoped Google id prefix (`<master>-ex-` / `<master>-serie-`)
+ * that always fits the provider bound (1-128 chars of letters, digits, `_`
+ * or `-`, the same `EVENT_ID_RE` both providers enforce). A long master id
+ * would grow the plain form past the bound and every attempt — the first and
+ * the retry — would refuse 422 with the grid stuck behind it, so a long
+ * master rides a stable `sha256` digest of itself instead: same prefix for
+ * the same master, so retries replay into the same event and the stacked
+ * guards below still prove the prior by prefix.
+ */
+function scopedSeriesEventPrefix(masterId, kind) {
+  const plain = `${masterId}-${kind}-`;
+  if (plain.length + 16 <= 128) return plain;
+  const digest = createHash('sha256').update(`${masterId}-${kind}`).digest('hex').slice(0, 40);
+  return `sc-${digest}-${kind}-`;
+}
+
 /** Binding a grant and revoking one are human decisions, like connecting a channel. */
 function requireUserActor(actor, action) {
   if (!actor || typeof actor !== 'object' || actor.type !== 'user') {
@@ -1533,8 +1550,9 @@ export function createCalendarSyncOperations(options = {}) {
      * a link is stored for every created moved/tail event), so the next pull
      * reads the converge as settled instead of as a newer remote change.
      * Inserts ride deterministic ids (`<master>-ex-<instant>` /
-     * `<master>-serie-<instant>`), so a retry after a lost answer replays
-     * into the same event instead of duplicating the series.
+     * `<master>-serie-<instant>`, hashed to a stable digest when the master
+     * is too long for the provider bound), so a retry after a lost answer
+     * replays into the same event instead of duplicating the series.
      */
     async seriesScopeLink(headSourceKey, { spaceId } = {}) {
       // Space-scoped link probe (backlog:6acf0a73bfc3): answers whether the
@@ -1633,7 +1651,10 @@ export function createCalendarSyncOperations(options = {}) {
           if (!known) continue;
           const priorId = rowLinkEventId(known, calendarId);
           if (priorId === eventId) continue;
-          if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+          if (
+            priorId.startsWith(scopedSeriesEventPrefix(eventId, 'ex'))
+            || priorId.startsWith(scopedSeriesEventPrefix(eventId, 'serie'))
+          ) {
             out.push({ link: known, eventId: priorId, sourceKey });
           }
         }
@@ -1641,7 +1662,7 @@ export function createCalendarSyncOperations(options = {}) {
       };
       if (scope === 'single' && typeof movedSourceKey === 'string' && movedSourceKey !== '') {
         const tailLives = (await scopedPriorsOf(movedSourceKey))
-          .filter((entry) => entry.eventId.startsWith(`${eventId}-serie-`));
+          .filter((entry) => entry.eventId.startsWith(scopedSeriesEventPrefix(eventId, 'serie')));
         if (tailLives.length > 0) {
           throw syncError('CALENDAR_SYNC_SERIES_SCOPE_AMBIGUOUS', 409,
             '«Solo questo» su un’occorrenza che vive in una coda già spostata su Google non è supportato: '
@@ -1674,7 +1695,10 @@ export function createCalendarSyncOperations(options = {}) {
             if (known.appointmentSourceKey === tailSourceKey) continue;
             if (known.appointmentSourceKey === headSourceKey) continue;
             const priorId = rowLinkEventId(known, calendarId);
-            if (priorId.startsWith(`${eventId}-ex-`) || priorId.startsWith(`${eventId}-serie-`)) {
+            if (
+              priorId.startsWith(scopedSeriesEventPrefix(eventId, 'ex'))
+              || priorId.startsWith(scopedSeriesEventPrefix(eventId, 'serie'))
+            ) {
               throw syncError('CALENDAR_SYNC_SERIES_SCOPE_STACKED', 409,
                 '«Questo e i successivi» tocca una riga che ha già un evento con ambito su Google: '
                 + 'la griglia non è cambiata. Chiudi prima l’operazione precedente, poi riprova.');
@@ -1723,7 +1747,7 @@ export function createCalendarSyncOperations(options = {}) {
       };
       const scopedPriorFor = async (sourceKey, kind) => {
         if (typeof sourceKey !== 'string' || sourceKey === '') return null;
-        const prefix = `${rowLinkEventId(link, calendarId)}-${kind}-`;
+        const prefix = scopedSeriesEventPrefix(rowLinkEventId(link, calendarId), kind);
         const rows = await linkService(context).listWhere({ appointmentSourceKey: sourceKey });
         for (const known of Array.isArray(rows) ? rows : []) {
           if (!known) continue;
@@ -1747,6 +1771,13 @@ export function createCalendarSyncOperations(options = {}) {
         return prior.eventId;
       };
       const insertOnce = async ({ id, start, end, recurrence, sourceKey }) => {
+        // The deterministic id is bounded by construction, but a prior stored
+        // under another release could still hand one over: refuse 422 before
+        // the provider call instead of dropping the id for a random one.
+        if (typeof id !== 'string' || id.length > 128 || !/^[A-Za-z0-9_-]+$/.test(id)) {
+          throw syncError('GOOGLE_CALL_MALFORMED', 422,
+            'calendar-sync pushSeriesScope needs a bounded deterministic event id (1-128 chars of letters, digits, _ or -): the grid is unchanged');
+        }
         const subject = await subjectOf(sourceKey);
         const patch = {
           start: { dateTime: start },
@@ -1857,7 +1888,7 @@ export function createCalendarSyncOperations(options = {}) {
               'calendar-sync pushSeriesScope needs movedSourceKey when a single occurrence moves');
           }
           const created = await insertOnce({
-            id: prior?.eventId ?? `${eventId}-ex-${toGoogleInstant(effectiveAnchorMs)}`,
+            id: prior?.eventId ?? `${scopedSeriesEventPrefix(eventId, 'ex')}${toGoogleInstant(effectiveAnchorMs)}`,
             start: moved.startsAt,
             end: moved.endsAt,
             recurrence: null,
@@ -1912,7 +1943,7 @@ export function createCalendarSyncOperations(options = {}) {
             'calendar-sync pushSeriesScope needs tailSourceKey when a following scope moves');
         }
         const created = await insertOnce({
-          id: tailPrior?.eventId ?? `${eventId}-serie-${toGoogleInstant(effectiveScopeMs)}`,
+          id: tailPrior?.eventId ?? `${scopedSeriesEventPrefix(eventId, 'serie')}${toGoogleInstant(effectiveScopeMs)}`,
           start: moved.startsAt,
           end: moved.endsAt,
           recurrence: tailLines,

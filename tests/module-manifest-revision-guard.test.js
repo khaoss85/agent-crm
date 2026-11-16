@@ -48,7 +48,7 @@ const sha = (sql) => createHash('sha256').update(sql).digest('hex');
  * of them ships history.
  */
 const RECORDED = Object.freeze({
-  "appointment": { revision: 4, sqlite: "PENDING", pg: "PENDING" },
+  "appointment": { revision: 4, sqlite: "f523aacb4116472173d5d5e3696534ef92ef602a9f7dc698bfc10c17c1f2ed8e", pg: "a10894dc5a60aeb3066b1abec6d3489a9bc11bef20c7034f3f8469b5c552872c" },
   "calendar-link": { revision: 1, sqlite: "0833adb4ddf2a25a5232c66f768ea091da8f682072dbccd2045803ab4d6fcc99", pg: "537b281541bbe59a4423bf40c3c4af28cb12170c5e4d848ef2f235cf171c7592" },
   "calendar-sync-state": { revision: 2, sqlite: "9a07b39afe234be4acb2f910752cd359082628b3794ad9a89bb279f580f37d09", pg: "eca193443a3dcfe428760b31761f66ab1d5cd35125c53ee549ff23b80642111b" },
   "channel-connection": { revision: 4, sqlite: "6918b101900a5e3825caf1ef6a71a2ecf60d30e8b338d5d5c7b33c7057fc8c2e", pg: "f5e4d1b0073ed7fe69621df5f2fab2f8e8f1b5defab480e1450c45d2952c292d" },

@@ -13,7 +13,7 @@ import {
 } from '../packages/core/src/record-module-runtime.js';
 import { createAppointmentBookCapability, readTeamWeek } from '../packages/appointments/src/appointments.js';
 import { assertPackageConforms } from './helpers/package-conformance.js';
-import { createCalendarSyncOperations } from '../packages/calendar-sync/src/sync.js';
+import { appointmentFingerprint, createCalendarSyncOperations } from '../packages/calendar-sync/src/sync.js';
 import { createCalendarSyncPackage } from '../packages/calendar-sync/src/index.js';
 import { createFakeGoogleCalendar } from '../packages/calendar-sync/src/google-fake.js';
 
@@ -1776,4 +1776,82 @@ test('cancelling an exported booking cancels its linked Google event (review #78
   });
   assert.equal(replay.cancelled, false);
   assert.equal(replay.push.status, 'noop', 'the replay converges nothing twice');
+});
+
+// backlog:6acf0a73bfc3 — un master con l'id lungo non blocca la converge:
+// l'id con ambito resta entro il bound dei provider, il ritentativo riusa
+// lo stesso evento e il master prende la EXDATE.
+test('pushSeriesScope converge anche con un master lungo: id con ambito entro il bound (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const wired = createCalendarSyncOperations({
+    modules: ctx.modules,
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: ctx.provider,
+    mapping: ctx.mapping,
+    database: ctx.database,
+    actor: ACTOR,
+    now: () => new Date(T0).toISOString(),
+    resolveSecret: async () => 'sekrit',
+  });
+  await wired.bindCalendarGrant({ spaceId: 'space-a', calendarId: CAL, secretRef: 'vault://space-a/grant', actor: ACTOR });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:lunga',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  // Un master con 110 caratteri: la forma piena `<master>-ex-<istante>`
+  // romperebbe il bound di 128, la converge la rifiuterebbe 422 a ogni
+  // tentativo e la griglia resterebbe bloccata.
+  const longId = 'm'.repeat(110);
+  const seeded = ctx.provider.seedEvent(CAL, {
+    id: longId,
+    summary: 'Serie lunga',
+    ...slot('21', '09:00', '10:00'),
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'],
+  });
+  const row = ctx.appointmentRows().find((entry) => entry.sourceKey === appointment.sourceKey);
+  await ctx.modules.get('calendar-link').service.createManaged({
+    linkKey: `${CAL}:${longId}`,
+    calendarId: CAL,
+    googleEventId: `${CAL}:${longId}`,
+    appointmentSourceKey: appointment.sourceKey,
+    appointmentId: row.id,
+    googleUpdated: seeded.updated,
+    localFingerprint: appointmentFingerprint(row),
+    revision: 0,
+    conflictNote: null,
+    pendingRemote: null,
+  }, { actor: ACTOR });
+  const single = await wired.pushSeriesScope(appointment.sourceKey, {
+    spaceId: 'space-a',
+    scope: 'single',
+    occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+    movedStartsAt: '2026-10-28T16:00:00.000Z',
+    movedEndsAt: '2026-10-28T17:00:00.000Z',
+    movedSourceKey: 'gym:serie:engine:lunga:spostata',
+  });
+  assert.equal(single.status, 'pushed', 'la converge sul master lungo riesce, mai 422');
+  assert.ok(single.movedEventId, 'lo spostamento apre il suo evento');
+  assert.ok(single.movedEventId.length <= 128, 'l’id con ambito resta entro il bound dei provider');
+  assert.ok(ctx.provider.getEvent(CAL, single.movedEventId), 'l’evento spostato esiste su Google');
+  assert.ok(
+    ctx.provider.getEvent(CAL, longId).recurrence.some((line) => line === 'EXDATE:20261028T090000Z'),
+    'il master prende la EXDATE',
+  );
+  const retry = await wired.pushSeriesScope(appointment.sourceKey, {
+    spaceId: 'space-a',
+    scope: 'single',
+    occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+    movedStartsAt: '2026-10-28T16:00:00.000Z',
+    movedEndsAt: '2026-10-28T17:00:00.000Z',
+    movedSourceKey: 'gym:serie:engine:lunga:spostata',
+  });
+  assert.equal(retry.status, 'pushed', 'il ritentativo converge');
+  assert.equal(retry.movedEventId, single.movedEventId, 'il ritentativo riusa lo stesso evento, mai un duplicato');
 });
