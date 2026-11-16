@@ -165,6 +165,10 @@ test('the packaging document describes the starter it would actually find', () =
     `docs/SKILL_PACKAGING.md must say "${tour.counts.actions} actions"`,
   );
   assert.ok(
+    text.includes(`${NUMERALS[tour.counts.capabilities] ?? tour.counts.capabilities} resolved capabilities`),
+    `docs/SKILL_PACKAGING.md must name the ${tour.counts.capabilities} resolved capabilities the tour reports`,
+  );
+  assert.ok(
     text.includes(`${NUMERALS[resolved] ?? resolved} standing limitations`),
     `docs/SKILL_PACKAGING.md must name the ${resolved} standing limitations the inspector reports`,
   );
