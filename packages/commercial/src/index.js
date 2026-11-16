@@ -209,7 +209,16 @@ export function createCommercialDomain(options = {}) {
     // 10: the mint exclusion is a same-quote-row fence inside the action
     // transaction (cross-process, web and worker): the in-process lock is
     // only the fast path. Additive: the share-link contract is unchanged.
-    version: 10,
+    // 11: the approved version gains `regenerate-link` — the live link is
+    // revoked and a fresh token is minted on the same share row (lost first
+    // answer), the old token answers «link non valido o scaduto», an
+    // accepted link is never touched. Additive: the other three link
+    // actions are unchanged.
+    // 12: the accept claim pins the UPDATE on the bearer hash it read (same
+    // pin as the rotation), so a bearer revoked between the accept read and
+    // its commit answers 404 QUOTE_LINK_INVALID instead of claiming the
+    // rotated row. Additive: the link contract is unchanged.
+    version: 12,
     label: 'Commercial Operations',
     description:
       'Catalog, server-priced quotes and versioned discount approval: immutable products, offers and tiers synchronized from declared providers, quotes priced only by the server, immutable quote versions with per-component evidence, and human-decided discount approval under fingerprinted policies.',

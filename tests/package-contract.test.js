@@ -324,7 +324,7 @@ test('a customer-authored package conforms through the identical contract', () =
   assert.deepEqual([...registry.names()], ['commercial', 'signature', 'contracts', 'delivery', 'partner-scorecard']);
   assert.deepEqual(Object.keys(registry.metadata()), ['commercial', 'contracts', 'delivery', 'partner-scorecard', 'signature'],
     'metadata is published in name order, whatever the registration order was');
-  assert.equal(registry.actions().length, 37, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition; A5 public quote links add share-link, accept-link and link-info (backlog:a3b394dd)');
+  assert.equal(registry.actions().length, 38, 'M14b2 added seven change and acceptance actions on top of M14b1\'s five; the extracted commercial (8) and signature (1) actions now arrive by composition; A5 public quote links add share-link, accept-link and link-info (backlog:a3b394dd); the lost-answer cure adds regenerate-link (backlog:4d88e946)');
   assert.equal(registry.resources().length, 56, 'M16b added contract-succession to the contracts package; signed commercial terms added quote-term, quote-version-term and order-term before it; package credits added package-credit; BO-F2-07 adds product-import and product-import-row (import drafts confirmed row by row, never a parallel catalog); A5 public quote links add quote-share (backlog:a3b394dd)');
 });
 
