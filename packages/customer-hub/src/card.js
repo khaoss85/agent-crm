@@ -175,8 +175,15 @@ function legacyName(contact, company) {
   const kept = head.filter((word) => !LEGACY_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
   while (kept.length > 0) {
     const last = kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, '');
-    if (!LEGACY_NO_REPLY.test(last) && !LEGACY_BARE_REPLY.test(last)) break;
-    kept.pop();
+    if (LEGACY_NO_REPLY.test(last)) {
+      kept.pop();
+      continue;
+    }
+    if (LEGACY_BARE_REPLY.test(last) && kept.length > 2) {
+      kept.pop();
+      continue;
+    }
+    break;
   }
   const text = kept.join(' ');
   if (text === '' || !/[\p{L}\p{N}]/u.test(text)) return null;
@@ -209,12 +216,18 @@ const LEGACY_BARE_REPLY = /^(?:reply|replies)$/i;
 /** customer-data `stripNameQualifier`, restated (no cross-package import). */
 function LEGACY_QUALIFIER(text) {
   let out = text;
-  const pipe = out.indexOf('|');
-  if (pipe >= 0) out = out.slice(0, pipe);
   for (;;) {
     const trailing = /\s*\([^()]*\)\s*$/.exec(out);
-    if (!trailing) return out;
-    out = out.slice(0, trailing.index);
+    if (trailing) {
+      out = out.slice(0, trailing.index);
+      continue;
+    }
+    const pipe = out.indexOf('|');
+    if (pipe >= 0) {
+      out = out.slice(0, pipe);
+      continue;
+    }
+    return out;
   }
 }
 

@@ -34,9 +34,12 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
- * A bare reply word: a mailbox token, never a surname (backlog:088b639d96a2:
- * `apple.reply@…` was stored and shown as «Apple Reply»). Dropped only at
- * the end, like the no-reply markers: a word in the middle stays.
+ * A bare reply word: a mailbox token, never a surname on its own
+ * (backlog:088b639d96a2: new leads from `apple.reply@…` are born without
+ * it, in the lead path). In the read path it drops only past a kept
+ * surname (review rev-agent-crm-955-d7262d39: popping it when it is the
+ * only surname word left would erase a real surname, so `John Reply`
+ * stays `John Reply`): a word in the middle stays.
  */
 const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
 
@@ -47,17 +50,25 @@ const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
  * A stored name without its trailing platform qualifier: the co-brand after
  * a pipe («MailUp | TeamSystem» reads «MailUp») and trailing parenthetical
  * notes («Francesco Tirsi (Documenti Google)» reads «Francesco Tirsi»).
- * Only trailing qualifiers go — inner words stay untouched.
+ * Only trailing qualifiers go — inner words stay untouched. Trailing
+ * parentheses strip before the pipe cut (review rev-agent-crm-955-d7262d39),
+ * so a pipe inside parens (`Studio (A|B)`) never truncates the name mid-paren.
  * @param {string} text
  */
 function stripNameQualifier(text) {
   let out = text;
-  const pipe = out.indexOf('|');
-  if (pipe >= 0) out = out.slice(0, pipe);
   for (;;) {
     const trailing = /\s*\([^()]*\)\s*$/.exec(out);
-    if (!trailing) return out;
-    out = out.slice(0, trailing.index);
+    if (trailing) {
+      out = out.slice(0, trailing.index);
+      continue;
+    }
+    const pipe = out.indexOf('|');
+    if (pipe >= 0) {
+      out = out.slice(0, pipe);
+      continue;
+    }
+    return out;
   }
 }
 
@@ -78,8 +89,18 @@ export function readableName(value) {
   const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !MAILBOX_ID_WORD(word));
   while (kept.length > 0) {
     const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
-    if (!NO_REPLY_WORD.test(last) && !BARE_REPLY_WORD.test(last)) break;
-    kept.pop();
+    if (NO_REPLY_WORD.test(last)) {
+      kept.pop();
+      continue;
+    }
+    // A bare `Reply` drops only past a kept surname: when it is the only
+    // surname word left (`John Reply`, a lone `Reply`) it stays, or a real
+    // surname would be silently erased in read (review rev-agent-crm-955-d7262d39).
+    if (BARE_REPLY_WORD.test(last) && kept.length > 2) {
+      kept.pop();
+      continue;
+    }
+    break;
   }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
@@ -189,13 +210,32 @@ export function companyDisplayName(company) {
   const name = company?.name;
   if (typeof name !== 'string' || isPlaceholderCompanyName(name)) return null;
   let text = name.trim();
-  const pipe = text.indexOf('|');
+  // A pipe inside parentheses belongs to the qualifier (`Studio (A|B)`),
+  // never a co-brand cut (review rev-agent-crm-955-d7262d39).
+  const pipe = pipeOutsideParens(text);
   if (pipe >= 0) text = text.slice(0, pipe).trim();
   if (text === '') return null;
   if (!/\s/.test(text) && BARE_DOMAIN_SHAPE.test(text) && text.slice(text.lastIndexOf('.') + 1).length >= 2) {
     text = text.toLowerCase();
   }
   return text;
+}
+
+/**
+ * The first pipe outside parentheses: a pipe inside parens belongs to the
+ * qualifier, never a co-brand cut.
+ * @param {string} text
+ */
+function pipeOutsideParens(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth > 0) depth--;
+    } else if (ch === '|' && depth === 0) return i;
+  }
+  return -1;
 }
 
 /**

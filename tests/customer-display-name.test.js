@@ -370,6 +370,27 @@ test('backlog:088b639d96a2: placeholder and variant company and sender names rea
   assert.equal(noReply.firstName, 'Apple', 'no_reply reads the brand');
   assert.ok(!`${noReply.firstName} ${noReply.lastName}`.includes('Reply'), '«no_reply» never becomes «Apple Reply»');
   assert.equal(contactDisplayName({ firstName: 'no_reply', lastName: null, email: 'no_reply@apple.com' }), 'Apple');
+  // Review rev-agent-crm-955-d7262d39 on #955 (P1): the email fallback is
+  // lazy and reply-only locals keep their token.
+  assert.deepEqual(leadNamesForEmail('reply@apple.com'), { firstName: 'Reply', lastName: '—' },
+    'a reply-only local part keeps its token, as before');
+  assert.deepEqual(contactNamesFor({ firstName: 'Mario', lastName: 'Rossi', email: 'reply@apple.com' }),
+    { firstName: 'Mario', lastName: 'Rossi' }, 'a valid display name never throws for the address');
+  assert.deepEqual(contactNamesFor({ firstName: 'Mario', lastName: 'Rossi', email: '+tag@example.com' }),
+    { firstName: 'Mario', lastName: 'Rossi' }, 'a valid display name survives an empty local part');
+  // Review rev-agent-crm-955-d7262d39 on #955 (P2): a real trailing
+  // surname `Reply` stays in read on every copy.
+  assert.equal(readableName('John Reply'), 'John Reply', 'a real surname is never dropped in read');
+  assert.equal(readableName('Reply'), 'Reply');
+  assert.equal(browserReadableName('John Reply'), 'John Reply');
+  assert.equal(hubName('John', 'Reply', 'john.reply@esempio.it'), 'John Reply');
+  assert.equal(contactDisplayName({ firstName: 'John', lastName: 'Reply', email: 'john.reply@esempio.it' }), 'John Reply');
+  // Review rev-agent-crm-955-d7262d39 on #955 (P2): a pipe inside parens
+  // never truncates the name mid-paren, on every copy.
+  assert.equal(readableName('Studio (A|B)'), 'Studio');
+  assert.equal(browserReadableName('Studio (A|B)'), 'Studio');
+  assert.equal(hubName('Studio (A|B)', ''), 'Studio');
+  assert.equal(readableName('MailUp (old) | TeamSystem'), 'MailUp');
   const row = (company) => shapeCustomerRow({ contact: null, company }, {});
   assert.equal(row({ id: 'co1', name: 'MailUp | TeamSystem' }).company?.name, 'MailUp');
   assert.equal(row({ id: 'co9', name: 'esempio.invalid' }).company, null, 'a placeholder company lists no company line');

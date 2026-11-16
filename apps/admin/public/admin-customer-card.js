@@ -797,7 +797,10 @@ export function shownCompanyName(card) {
   // (`esempio.invalid`) is no company; co-brands read by their own brand;
   // bare domains read united.
   let shown = name;
-  const pipe = shown.indexOf('|');
+  // A pipe inside parentheses belongs to the qualifier, never a co-brand
+  // cut (review rev-agent-crm-955-d7262d39): the scheda keeps the same rule
+  // as customer-data `companyDisplayName`.
+  const pipe = pipeOutsideParens(shown);
   if (pipe >= 0) shown = shown.slice(0, pipe).trim();
   if (shown === '') return null;
   if (!/\s/.test(shown) && BARE_COMPANY_DOMAIN.test(shown)) {
@@ -806,6 +809,23 @@ export function shownCompanyName(card) {
     if (top.length >= 2) shown = shown.toLowerCase();
   }
   return shown;
+}
+
+/**
+ * The first pipe outside parentheses (the customer-data `pipeOutsideParens`
+ * rule, restated: the bundle cannot import a package).
+ * @param {string} text
+ */
+function pipeOutsideParens(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth > 0) depth--;
+    } else if (ch === '|' && depth === 0) return i;
+  }
+  return -1;
 }
 
 /**

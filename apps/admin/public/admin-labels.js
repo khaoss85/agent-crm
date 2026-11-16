@@ -94,9 +94,10 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
- * A bare reply word: a mailbox token, never a surname (backlog:088b639d96a2:
- * `apple.reply@…` was stored and shown as «Apple Reply»). Dropped only at
- * the end, like the no-reply markers: a word in the middle stays.
+ * A bare reply word: a mailbox token, never a surname on its own
+ * (backlog:088b639d96a2). In the read path it drops only past a kept
+ * surname (review rev-agent-crm-955-d7262d39, so `John Reply` stays):
+ * a word in the middle stays.
  */
 const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
 
@@ -112,12 +113,18 @@ const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
  */
 function stripNameQualifier(text) {
   let out = text;
-  const pipe = out.indexOf('|');
-  if (pipe >= 0) out = out.slice(0, pipe);
   for (;;) {
     const trailing = /\s*\([^()]*\)\s*$/.exec(out);
-    if (!trailing) return out;
-    out = out.slice(0, trailing.index);
+    if (trailing) {
+      out = out.slice(0, trailing.index);
+      continue;
+    }
+    const pipe = out.indexOf('|');
+    if (pipe >= 0) {
+      out = out.slice(0, pipe);
+      continue;
+    }
+    return out;
   }
 }
 
@@ -142,8 +149,15 @@ export function readableName(value) {
   const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
   while (kept.length > 0) {
     const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
-    if (!NO_REPLY_WORD.test(last) && !BARE_REPLY_WORD.test(last)) break;
-    kept.pop();
+    if (NO_REPLY_WORD.test(last)) {
+      kept.pop();
+      continue;
+    }
+    if (BARE_REPLY_WORD.test(last) && kept.length > 2) {
+      kept.pop();
+      continue;
+    }
+    break;
   }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
