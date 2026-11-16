@@ -186,9 +186,9 @@ run_phase 'package surfaces still match the baseline' node --no-warnings --test 
 # main on schedule: backlog:ea9b4bba). This phase runs those four tests on
 # every PR (~15 s: two composed-project inspections), so a PR that changes
 # the composition and leaves a pin behind fails here, on the PR, instead of
-# on main at the next scheduled measure. The fix is a repin: record the live
-# fingerprint (`crm solution check <plan> --json`), recompute the plan
-# fingerprint, and update the paired evidence pins.
+# on main at the next scheduled measure. The fix is a repin, never a hand-edit:
+# `npm run repin:example-pins` (scripts/repin-example-pins.js) recomputes every
+# pin from its live authority and rewrites the drifted example files.
 run_phase 'checked-in plan pins still bind' bash -c 'node --no-warnings --test --test-name-pattern="the shipped example is current against this repository, and check says so" tests/solution-plan.test.js && node --no-warnings --test --test-name-pattern="the shipped Service solution plan validates, and checks against a composed project" tests/service-operations-integration.test.js && node --no-warnings --test --test-name-pattern="the shipped M14b2 solution plan validates, and checks against a composed project" tests/delivery-change-acceptance-integration.test.js && node --no-warnings --test --test-name-pattern="every source artifact the checked-in documents cite is present with exactly that hash" tests/solution-verify.test.js'
 
 if [ "$(parallel_cap)" -gt 1 ]; then
