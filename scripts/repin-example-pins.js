@@ -76,10 +76,9 @@ export const PLAN_AUTHORITIES = Object.freeze({
 
 const sink = () => {};
 
-/** Canonical bytes for a checked-in example document: 2-space JSON with non-ASCII escaped. */
+/** Canonical bytes for a checked-in example document: 2-space JSON, literal UTF-8, trailing newline. */
 function canonicalBytes(document) {
-  const text = `${JSON.stringify(document, null, 2)}\n`;
-  return text.replace(/[^\x00-\x7F]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return `${JSON.stringify(document, null, 2)}\n`;
 }
 
 function hex64(value) {
@@ -89,6 +88,9 @@ function hex64(value) {
 /**
  * @param {{rootDir?: string, check?: boolean, inspect?: Function, inspectFixture?: Function,
  *   scenario?: Function, readFile?: Function, out?: Function, err?: Function}} options
+ *   `inspect` and `inspectFixture` both answer like `inspectApplicationCommand`
+ *   (the `{ exitCode, report }` envelope); the fingerprint is always derived
+ *   here via `inspectionFingerprint`, never typed by the caller.
  */
 export async function repinExamplePins({
   rootDir = process.cwd(),
@@ -139,7 +141,7 @@ export async function repinExamplePins({
     const cleanups = [];
     const fixtureRoot = composeFixtureProject({ after: (fn) => cleanups.push(fn) }, options);
     try {
-      return fingerprintOf(await inspect({ rootDir: fixtureRoot, json: true, capture: true }));
+      return inspect({ rootDir: fixtureRoot, json: true, capture: true });
     } finally {
       for (const fn of cleanups.splice(0)) {
         try { fn(); } catch { /* the inspection already ran; cleanup is best-effort */ }
@@ -147,7 +149,7 @@ export async function repinExamplePins({
     }
   });
 
-  const inspectRootAuthority = async () => fingerprintOf(await inspect({ rootDir: root, json: true, capture: true }));
+  const inspectRootAuthority = async () => inspect({ rootDir: root, json: true, capture: true });
 
   // Resolve every authority first, before any file is touched: a repin that
   // cannot observe is not a repin.
@@ -156,9 +158,9 @@ export async function repinExamplePins({
     const authority = PLAN_AUTHORITIES[relative];
     if (authority.type === 'verifier-fixture' || authority.type === 'frozen') continue;
     try {
-      const fingerprint = authority.type === 'root'
+      const fingerprint = fingerprintOf(authority.type === 'root'
         ? await inspectRootAuthority()
-        : await inspectFixtureAuthority(authority.options);
+        : await inspectFixtureAuthority(authority.options));
       if (!hex64(fingerprint)) return fail(`${relative}: its authority produced no composition fingerprint.`);
       compositionFingerprints[relative] = fingerprint;
     } catch (error) {
@@ -197,6 +199,20 @@ export async function repinExamplePins({
     }
     pending.set(relative, canonicalBytes(repinned));
   }
+
+  // The verifier pair first: it validates and writes through its own command,
+  // so the evidence loop below reads back the live pins it just wrote instead
+  // of overwriting them with the stale bytes this turn started from — a
+  // refusal anywhere leaves the tree untouched either way.
+  const verifierArgs = { rootDir: root, check, out: sink, err: sink };
+  if (scenario !== undefined) verifierArgs.scenario = scenario;
+  const verifier = await repinVerifierFixture(verifierArgs);
+  if (verifier.exitCode === 2) {
+    verifier.err?.('');
+    return fail('the verifier fixture refused its repin; nothing was written.');
+  }
+  for (const field of verifier.drifted) drifted.push(field);
+  if (verifier.exitCode !== 0 && !check) return fail('the verifier fixture repin failed; nothing was written.');
 
   // Repin the paired evidences: the plan fingerprint and the composition pin
   // follow the (possibly repinned) plan, and every cited source artifact is
@@ -254,19 +270,6 @@ export async function repinExamplePins({
     pending.set(relative, canonicalBytes(repinned));
   }
 
-  // The verifier pair last: it validates and writes through its own command,
-  // so it runs only after every other pair already validated — a refusal
-  // anywhere leaves the tree untouched.
-  const verifierArgs = { rootDir: root, check, out: sink, err: sink };
-  if (scenario !== undefined) verifierArgs.scenario = scenario;
-  const verifier = await repinVerifierFixture(verifierArgs);
-  if (verifier.exitCode === 2) {
-    verifier.err?.('');
-    return fail('the verifier fixture refused its repin; nothing was written.');
-  }
-  for (const field of verifier.drifted) drifted.push(field);
-  if (verifier.exitCode !== 0 && !check) return fail('the verifier fixture repin failed; nothing was written.');
-
   if (check) {
     if (drifted.length === 0) {
       out('repin-example-pins --check: every example pin binds its live authority.\n');
@@ -278,10 +281,6 @@ export async function repinExamplePins({
     return { exitCode: 1, compositionFingerprints, drifted, wrote: [] };
   }
 
-  if (drifted.length === 0) {
-    out('repin-example-pins: every example pin is already current; nothing written.\n');
-    return { exitCode: 0, compositionFingerprints, drifted, wrote: [] };
-  }
   /** @type {string[]} */
   const wrote = [];
   for (const [relative, bytes] of pending) {
@@ -291,7 +290,14 @@ export async function repinExamplePins({
       wrote.push(relative);
     }
   }
-  out(`repin-example-pins: repinned ${wrote.length} file(s): ${wrote.join(', ')}.\n`);
+  for (const relative of verifier.wrote) {
+    if (!wrote.includes(relative)) wrote.push(relative);
+  }
+  if (wrote.length === 0) {
+    out('repin-example-pins: every example pin is already current; nothing written.\n');
+  } else {
+    out(`repin-example-pins: repinned ${wrote.length} file(s): ${wrote.join(', ')}.\n`);
+  }
   return { exitCode: 0, compositionFingerprints, drifted, wrote };
 }
 
