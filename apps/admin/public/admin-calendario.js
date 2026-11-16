@@ -884,16 +884,18 @@ export function calendarRefusalText(error) {
 
 /**
  * backlog:0ffb1dd0 — what the «Trova slot liberi» search says when the host
- * was waking: the wait in plain words, never «Ricerca non riuscita». Only
- * for failures the shell already reads as waking (isWakeTransient: a read
- * there earns one retry while the shell toasts «Il server si sta
- * svegliando…», a write only on an explicit starting signal), so the card
- * names the same wait the shell announced. A named refusal keeps its own
- * sentence through calendarRefusalText, checked first by the caller.
+ * was waking: the wait in plain words, never «Ricerca non riuscita». The
+ * phrase answer is a POST, so only failures the shell retries as a POST
+ * name the wait (isWakeTransient with method POST: an explicit starting
+ * signal only — the shell toasts «Il server si sta svegliando…» around
+ * that single retry). A bare 503, a gateway 502/504 UNKNOWN or a network
+ * fault earns no POST retry and keeps the generic «Ricerca non riuscita».
+ * A named refusal keeps its own sentence through calendarRefusalText,
+ * checked first by the caller.
  * @param {unknown} error
  */
 export function wakeSearchText(error) {
-  return isWakeTransient(error) ? WAKE_WAIT_TEXT : null;
+  return isWakeTransient(error, { method: 'POST' }) ? WAKE_WAIT_TEXT : null;
 }
 
 /**

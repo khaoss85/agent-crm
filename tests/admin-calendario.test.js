@@ -737,11 +737,18 @@ test('the same booking reads «Servizio · Cliente» in the block and in the det
   assert.ok(detailTitle()?.includes('Colore · Bea'), 'the card titles the long booking the same way too');
 });
 
-// backlog:0ffb1dd0 — only failures the shell reads as waking name the wait.
+// backlog:0ffb1dd0 — only failures the shell retries as a POST name the
+// wait (review khaoss85/agent-crm#956: the phrase answer is a POST, so a
+// bare 503, a gateway 502/504 UNKNOWN or a network fault keeps the generic
+// sentence, like the shell that neither retries nor toasts them).
 test('wakeSearchText names the wait only for waking failures', () => {
-  assert.equal(wakeSearchText(Object.assign(new Error('down'), { status: 503, code: 'UNKNOWN' })), WAKE_WAIT_TEXT);
-  assert.equal(wakeSearchText(new TypeError('Failed to fetch')), WAKE_WAIT_TEXT);
   assert.equal(wakeSearchText(Object.assign(new Error('avvio'), { status: 503, code: 'WORKSPACE_STARTING' })), WAKE_WAIT_TEXT);
+  assert.equal(wakeSearchText(Object.assign(new Error('down'), { status: 503, code: 'UNKNOWN' })), null, 'a bare 503 POST earns no retry');
+  assert.equal(wakeSearchText(new TypeError('Failed to fetch')), null, 'a network fault on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('gw'), { status: 502, code: 'UNKNOWN' })), null, 'a gateway 502 on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('gw'), { status: 504, code: 'UNKNOWN' })), null, 'a gateway 504 on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('app'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' })), null, 'a named 503 keeps its own sentence');
+  assert.equal(wakeSearchText(Object.assign(new Error('bridge'), { status: 503, code: 'BO_BRIDGE_NOT_CONFIGURED' })), null, 'an unconfigured bridge is a state, not a wake');
   assert.equal(wakeSearchText(new Error('backend down')), null, 'a named failure keeps the generic sentence');
   assert.equal(wakeSearchText(Object.assign(new Error('bad'), { status: 400 })), null);
 });
@@ -750,8 +757,8 @@ test('wakeSearchText names the wait only for waking failures', () => {
 // reason (the service is starting, retry soon), never «Ricerca non riuscita».
 test('a search during the server wake-up names the wait, never «Ricerca non riuscita»', async () => {
   for (const fail of [
-    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'UNKNOWN' }),
-    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'WORKSPACE_STARTING' }),
+    Object.assign(new Error('bridge down'), { status: 503, code: 'BRIDGE_UNREACHABLE' }),
   ]) {
     const doc = createFakeDocument();
     const mount = createMount();
@@ -765,6 +772,30 @@ test('a search during the server wake-up names the wait, never «Ricerca non riu
     const notes = texts(mount, 'p');
     assert.ok(notes.includes(WAKE_WAIT_TEXT), `the waking search names the wait (${fail?.code ?? fail?.name})`);
     assert.ok(!notes.some((text) => text.includes('Ricerca non riuscita')), 'never the generic failure while waking');
+  }
+});
+
+// backlog:0ffb1dd0 — a bare 503 on the phrase POST is not a waking host
+// (review khaoss85/agent-crm#956): the card keeps the honest generic
+// failure, it never names the wait the shell did not announce.
+test('a bare 503 search keeps the generic failure, never the wait', async () => {
+  for (const fail of [
+    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'UNKNOWN' }),
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('app down'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' }),
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failPhraseWith: fail }), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    for (let round = 0; round < 7; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const notes = texts(mount, 'p');
+    assert.ok(notes.includes('Ricerca non riuscita. Riprova più tardi.'), `the non-waking search fails honestly (${fail?.code ?? fail?.name})`);
+    assert.ok(!notes.some((text) => text.includes('sta avviando')), 'never the wait without a starting signal');
   }
 });
 
