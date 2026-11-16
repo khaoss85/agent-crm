@@ -295,3 +295,64 @@ test('un guasto dell’AI si diagnostica senza mostrare i testi', async (t) => {
   assert.ok(logged.some((line) => line.includes('PROVIDER_AUTH')), 'the diagnostic names the cause');
   assert.ok(!logged.some((line) => line.includes('FattureSmart')), 'the diagnostic never echoes source text');
 });
+
+test('stesso valore, fonte diversa: la scrittura avviene e replayed resta falso (review giro 2 P2)', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Gestionale', type: 'punteggio' });
+  const contact = await newContact(app, 'Rita');
+
+  await app.fillAiFieldValues({
+    actor: OPERATOR,
+    resource: 'contact',
+    id: contact.id,
+    fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+    sources: SOURCES,
+    adapter: fakeFillAdapter({ gestionale: { value: '72', source: 'channel-message' } }),
+  });
+
+  const manual = await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'gestionale', value: '72',
+  });
+  assert.equal(manual.value.source, null, 'the hand-typed score rewrites the row with no source');
+  assert.equal(manual.replayed, false, 'same digits, new provenance: a real write, never a replay');
+
+  const refill = await app.fillAiFieldValues({
+    actor: OPERATOR,
+    resource: 'contact',
+    id: contact.id,
+    fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+    sources: SOURCES,
+    adapter: fakeFillAdapter({ gestionale: { value: '72', source: 'channel-message' } }),
+  });
+  assert.equal(refill.filled.length, 1);
+  const reread = await app.setCustomFieldValue({
+    actor: OPERATOR, resource: 'contact', id: contact.id, key: 'gestionale', value: '72', source: 'channel-message',
+  });
+  assert.equal(reread.replayed, true, 'same value and same source: nothing rewritten, a true replay');
+
+  const values = await app.readCustomFieldValues({ resource: 'contact', id: contact.id });
+  assert.equal(values.find((entry) => entry.key === 'gestionale')?.source, 'channel-message');
+});
+
+test('scheda sconosciuta: il riempimento rifiuta senza chiamare l’AI (review giro 2 P1)', async (t) => {
+  const { app } = scene(t);
+  await app.defineCustomField({ actor: OPERATOR, label: 'Gestionale', type: 'punteggio' });
+
+  const calls = [];
+  const guardCalls = [];
+  await assert.rejects(
+    () => app.fillAiFieldValues({
+      actor: OPERATOR,
+      resource: 'contact',
+      id: 'contatto-inesistente',
+      fields: [{ key: 'gestionale', question: 'usano già un gestionale?' }],
+      sources: SOURCES,
+      spendGuard: () => { guardCalls.push('cap'); return 'ok'; },
+      adapter: fakeFillAdapter({ gestionale: { value: '72', source: 'channel-message' } }, calls),
+    }),
+    (error) => error?.code === 'SUBJECT_NOT_FOUND' && error?.status === 404,
+    'an unknown subject refuses instead of filling',
+  );
+  assert.equal(calls.length, 0, 'no spend on a missing scheda: the adapter never runs');
+  assert.equal(guardCalls.length, 0, 'the cap check comes after the subject exists');
+});

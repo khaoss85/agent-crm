@@ -316,6 +316,18 @@ function requireSubject(request) {
  * An edit rewrites the single row (updatedAt moves), so a reload reads the
  * edit and the list never doubles the customer.
  */
+async function requireExistingSubject(modules, resource, id) {
+  const host = modules.get?.(resource)?.service ?? null;
+  if (host && typeof host.get === 'function') {
+    try {
+      await host.get(id);
+    } catch {
+      throw refusal('SUBJECT_NOT_FOUND', 404,
+        'la scheda di questo cliente non esiste: niente valore senza scheda');
+    }
+  }
+}
+
 export async function setCustomFieldValue({ database, modules, names }, request) {
   void database;
   const actor = requireUser(request?.actor, 'Setting a custom field value');
@@ -329,15 +341,7 @@ export async function setCustomFieldValue({ database, modules, names }, request)
     throw refusal('CUSTOM_FIELD_UNKNOWN', 404,
       'questo campo non esiste più: aggiungilo di nuovo prima di dare un valore');
   }
-  const host = modules.get?.(resource)?.service ?? null;
-  if (host && typeof host.get === 'function') {
-    try {
-      await host.get(id);
-    } catch {
-      throw refusal('SUBJECT_NOT_FOUND', 404,
-        'la scheda di questo cliente non esiste: niente valore senza scheda');
-    }
-  }
+  await requireExistingSubject(modules, resource, id);
   const value = normalizeFieldValue(shapeDef(def), input.value);
   const source = requireValueSource(input.source);
   const sourceKey = valueSourceKey(resource, id, key);
@@ -346,6 +350,7 @@ export async function setCustomFieldValue({ database, modules, names }, request)
     return Object.freeze({ value: shapeValue(def, stored[0]), replayed: true });
   }
   let row;
+  let replayed = false;
   if (stored[0]) {
     row = await values.applyManaged(stored[0].id, { value, source, updatedBy: actor.id }, { actor });
   } else {
@@ -357,12 +362,15 @@ export async function setCustomFieldValue({ database, modules, names }, request)
       if (!isUniqueConflict(error)) throw error;
       const winner = (await deciding(values, { sourceKey }))[0];
       if (!winner) throw error;
-      row = winner.value === value && (winner.source ?? null) === source
-        ? winner
-        : await values.applyManaged(winner.id, { value, source, updatedBy: actor.id }, { actor });
+      if (winner.value === value && (winner.source ?? null) === source) {
+        row = winner;
+        replayed = true;
+      } else {
+        row = await values.applyManaged(winner.id, { value, source, updatedBy: actor.id }, { actor });
+      }
     }
   }
-  return Object.freeze({ value: shapeValue(def, row), replayed: stored[0]?.value === value });
+  return Object.freeze({ value: shapeValue(def, row), replayed });
 }
 
 function shapeValue(def, row) {
@@ -797,6 +805,7 @@ export async function fillAiFieldValues({ modules, names }, request) {
     throw refusal('CUSTOMER_FIELD_AI_UNAVAILABLE', 503,
       'l’AI non è attiva per questo spazio: compila i campi a mano');
   }
+  await requireExistingSubject(modules, resource, id);
   const spendGuard = typeof input.spendGuard === 'function' ? input.spendGuard : null;
   if (spendGuard) {
     const verdict = await spendGuard({ fields: fields.map((entry) => entry.key), subject: { resource, id } });
