@@ -141,7 +141,10 @@ export async function repinExamplePins({
     const cleanups = [];
     const fixtureRoot = composeFixtureProject({ after: (fn) => cleanups.push(fn) }, options);
     try {
-      return inspect({ rootDir: fixtureRoot, json: true, capture: true });
+      // Awaited inside the try: returning the bare promise would run the
+      // cleanup below while the inspection child is still loading the
+      // fixture project it was pointed at.
+      return await inspect({ rootDir: fixtureRoot, json: true, capture: true });
     } finally {
       for (const fn of cleanups.splice(0)) {
         try { fn(); } catch { /* the inspection already ran; cleanup is best-effort */ }
@@ -200,19 +203,21 @@ export async function repinExamplePins({
     pending.set(relative, canonicalBytes(repinned));
   }
 
-  // The verifier pair first: it validates and writes through its own command,
-  // so the evidence loop below reads back the live pins it just wrote instead
-  // of overwriting them with the stale bytes this turn started from — a
-  // refusal anywhere leaves the tree untouched either way.
-  const verifierArgs = { rootDir: root, check, out: sink, err: sink };
+  // The verifier pair is staged, never written early: the dry run below
+  // validates through its own command without touching the tree, so a refusal
+  // in the evidence loop leaves every file untouched. Only after every
+  // evidence document validated does the write phase below run the verifier
+  // command for real (so in write mode the scenario runs twice: once to
+  // validate, once to write). The evidence loop reads the verifier pair's live pins
+  // back after that write instead of overwriting them with the stale bytes
+  // this turn started from.
+  const verifierArgs = { rootDir: root, check: true, out: sink, err: sink };
   if (scenario !== undefined) verifierArgs.scenario = scenario;
-  const verifier = await repinVerifierFixture(verifierArgs);
-  if (verifier.exitCode === 2) {
-    verifier.err?.('');
+  const verifierDry = await repinVerifierFixture(verifierArgs);
+  if (verifierDry.exitCode === 2) {
     return fail('the verifier fixture refused its repin; nothing was written.');
   }
-  for (const field of verifier.drifted) drifted.push(field);
-  if (verifier.exitCode !== 0 && !check) return fail('the verifier fixture repin failed; nothing was written.');
+  for (const field of verifierDry.drifted) drifted.push(field);
 
   // Repin the paired evidences: the plan fingerprint and the composition pin
   // follow the (possibly repinned) plan, and every cited source artifact is
@@ -279,6 +284,18 @@ export async function repinExamplePins({
     for (const field of drifted) err(`  drifted ${field}\n`);
     err('Run `npm run repin:example-pins` and commit the rewritten files.\n');
     return { exitCode: 1, compositionFingerprints, drifted, wrote: [] };
+  }
+
+  // Write phase, reached only after every plan and evidence validated: the
+  // verifier command runs for real here, and its fresh bytes replace the
+  // stale-derived staging for the pair it owns (its command writes canonical
+  // bytes, so the replacement is a no-op rewrite, never a revert).
+  const verifierWriteArgs = { rootDir: root, check: false, out: sink, err: sink };
+  if (scenario !== undefined) verifierWriteArgs.scenario = scenario;
+  const verifier = await repinVerifierFixture(verifierWriteArgs);
+  if (verifier.exitCode !== 0) return fail('the verifier fixture repin failed; nothing was written.');
+  for (const relative of verifier.wrote) {
+    pending.set(relative, readFile(join(root, relative), 'utf8'));
   }
 
   /** @type {string[]} */

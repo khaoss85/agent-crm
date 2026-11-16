@@ -16,7 +16,7 @@
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -297,4 +297,58 @@ test('an evidence naming no checked-in plan refuses instead of binding to it', a
   assert.equal(result.exitCode, 2);
   assert.match(stderr, /no-such\.plan\.json/, 'the refusal names the unknown plan');
   assert.deepEqual(pinsOf(directory), checkedInPins(), 'a refused repin writes nothing');
+});
+
+test('the default fixture authority holds the fixture project until the inspection resolves', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'repin-example-pins-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  copyTree(directory);
+  // Pristine pins: with honest authorities --check passes, so the only way
+  // this fails is the authority deleting the fixture mid-inspection.
+  let fixtures = 0;
+  const inspect = async ({ rootDir }) => {
+    if (rootDir === directory) return live.root;
+    fixtures += 1;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(existsSync(rootDir), 'the fixture project survives until the inspection resolves');
+    return fixtures === 1 ? live.service : live.delivery;
+  };
+
+  const result = await repinExamplePins({
+    rootDir: directory, inspect, scenario: stubs.scenario, out: SINK, err: SINK, check: true,
+  });
+  assert.equal(fixtures, 2, 'both fixture authorities ran through the default path');
+  assert.equal(result.exitCode, 0, 'the inspection saw its project the whole time');
+});
+
+test('a refused repin in write mode leaves even the verifier pair untouched', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'repin-example-pins-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  copyTree(directory);
+  // Drift the verifier plan so the verifier command would rewrite its pair
+  // in write mode, then break an unrelated evidence document: the refusal
+  // must land before any file is touched.
+  const verifierPlan = join(directory, 'examples/solution-plans/verifier-fixture-exit-zero.plan.json');
+  const verifierRaw = JSON.parse(readFileSync(verifierPlan, 'utf8'));
+  verifierRaw.application.inspectionFingerprint = staleDigest(verifierRaw.application.inspectionFingerprint);
+  writeFileSync(verifierPlan, `${JSON.stringify(verifierRaw, null, 2)}\n`);
+  const broken = join(directory, 'examples/implementation-evidence/lead-to-won.evidence.json');
+  writeFileSync(broken, `${readFileSync(broken, 'utf8')}not json anymore {{{`);
+
+  const before = {};
+  for (const relative of [...PLAN_FILES, ...EVIDENCE_FILES]) {
+    before[relative] = readFileSync(join(directory, relative), 'utf8');
+  }
+
+  let stderr = '';
+  const result = await repinExamplePins({
+    rootDir: directory, ...stubs, out: SINK, err: (text) => { stderr += text; },
+  });
+  assert.equal(result.exitCode, 2);
+  assert.match(stderr, /lead-to-won\.evidence\.json/, 'the refusal names the unreadable evidence');
+  assert.deepEqual(result.wrote, []);
+  for (const relative of [...PLAN_FILES, ...EVIDENCE_FILES]) {
+    assert.equal(readFileSync(join(directory, relative), 'utf8'), before[relative],
+      `${relative} is untouched by the refused repin`);
+  }
 });
