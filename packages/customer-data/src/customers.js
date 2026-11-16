@@ -690,9 +690,11 @@ export function shapeCustomerRow(subject, reads = {}) {
     // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
     // A company subject named by a placeholder (`Unknown (…)`) lists no
     // company line either: the row keeps its id, never the placeholder
-    // (review #739 giro 3).
+    // (review #739 giro 3). The line carries the display name, not the
+    // stored one (backlog:088b639d96a2): co-brands read by their brand,
+    // bare domains read united, placeholders read as none.
     company: shownCompany && companyDisplayName(shownCompany) !== null
-      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
+      ? Object.freeze({ id: shownCompany.id, name: /** @type {string} */ (companyDisplayName(shownCompany)) }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),

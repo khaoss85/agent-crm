@@ -94,10 +94,40 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
+ * A bare reply word: a mailbox token, never a surname (backlog:088b639d96a2:
+ * `apple.reply@…` was stored and shown as «Apple Reply»). Dropped only at
+ * the end, like the no-reply markers: a word in the middle stays.
+ */
+const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
+
+/** Wrapping punctuation around a word of a display name. */
+const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
+
+/**
+ * A stored name without its trailing platform qualifier: the co-brand after
+ * a pipe («MailUp | TeamSystem» reads «MailUp») and trailing parenthetical
+ * notes («Francesco Tirsi (Documenti Google)» reads «Francesco Tirsi»).
+ * Only trailing qualifiers go — inner words stay untouched.
+ * @param {string} text
+ */
+function stripNameQualifier(text) {
+  let out = text;
+  const pipe = out.indexOf('|');
+  if (pipe >= 0) out = out.slice(0, pipe);
+  for (;;) {
+    const trailing = /\s*\([^()]*\)\s*$/.exec(out);
+    if (!trailing) return out;
+    out = out.slice(0, trailing.index);
+  }
+}
+
+/**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
  * address (`Mittente: x@…`, or a bare email used as a label) names nobody:
- * null, never the long address on screen (production 10/11).
+ * null, never the long address on screen (production 10/11). The address
+ * check runs on the whole stored value first, so a qualifier never hides
+ * an address (`Mario (x@y.com)` still names nobody).
  * The browser twin of customer-data `readableName` (display-name.js): the
  * bundle cannot import a package, so tests/customer-display-name.test.js
  * runs both on the same table.
@@ -108,8 +138,13 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
-  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const head = stripNameQualifier(value.trim()).split(/\s+/).filter((word) => word !== '');
+  const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
+    if (!NO_REPLY_WORD.test(last) && !BARE_REPLY_WORD.test(last)) break;
+    kept.pop();
+  }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }

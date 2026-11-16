@@ -792,8 +792,28 @@ export function shownCompanyName(card) {
   // (review #739 giro 3): the same rule as customer-data
   // `isPlaceholderCompanyName`, through the browser twin.
   if (readableName(name.replace(/\([^)]*\)/g, ' ')) === null) return null;
-  return name;
+  // The display name, not the stored one (backlog:088b639d96a2): the same
+  // rule as customer-data `companyDisplayName`. A documentation domain
+  // (`esempio.invalid`) is no company; co-brands read by their own brand;
+  // bare domains read united.
+  let shown = name;
+  const pipe = shown.indexOf('|');
+  if (pipe >= 0) shown = shown.slice(0, pipe).trim();
+  if (shown === '') return null;
+  if (!/\s/.test(shown) && BARE_COMPANY_DOMAIN.test(shown)) {
+    const top = shown.slice(shown.lastIndexOf('.') + 1);
+    if (/^(?:example|invalid|localhost|test)$/i.test(top)) return null;
+    if (top.length >= 2) shown = shown.toLowerCase();
+  }
+  return shown;
 }
+
+/**
+ * A bare domain name with no spaces (the customer-data `companyDisplayName`
+ * rule, restated: the bundle cannot import a package). The last label needs
+ * at least two characters, so an abbreviation like `S.p.A` never counts.
+ */
+const BARE_COMPANY_DOMAIN = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 
 /**
  * backlog:2a214b66fe12 — the write applied to what the scheda shows, so

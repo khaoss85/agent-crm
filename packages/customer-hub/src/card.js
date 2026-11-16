@@ -168,8 +168,16 @@ function legacyName(contact, company) {
   // on the same table (parity).
   const words = joined.split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => LEGACY_ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !LEGACY_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
-  while (kept.length > 0 && LEGACY_NO_REPLY.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  // The provider's qualifier rule (customer-data display-name.js
+  // `readableName`, backlog:088b639d96a2): the co-brand after a pipe and
+  // trailing parenthetical notes never reach the screen.
+  const head = LEGACY_QUALIFIER(joined).split(/\s+/).filter((word) => word !== '');
+  const kept = head.filter((word) => !LEGACY_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, '');
+    if (!LEGACY_NO_REPLY.test(last) && !LEGACY_BARE_REPLY.test(last)) break;
+    kept.pop();
+  }
   const text = kept.join(' ');
   if (text === '' || !/[\p{L}\p{N}]/u.test(text)) return null;
   // And the pieces it repeats from its own address («Amazon.it It»,
@@ -194,6 +202,21 @@ function legacyWithoutEchoes(name, email) {
 }
 
 const LEGACY_NO_REPLY = /^(?:no[._-]?reply|do[._-]?not[._-]?reply|no[._-]?risposta|non[._-]?rispondere)$/i;
+
+/** customer-data `BARE_REPLY_WORD`, restated (no cross-package import). */
+const LEGACY_BARE_REPLY = /^(?:reply|replies)$/i;
+
+/** customer-data `stripNameQualifier`, restated (no cross-package import). */
+function LEGACY_QUALIFIER(text) {
+  let out = text;
+  const pipe = out.indexOf('|');
+  if (pipe >= 0) out = out.slice(0, pipe);
+  for (;;) {
+    const trailing = /\s*\([^()]*\)\s*$/.exec(out);
+    if (!trailing) return out;
+    out = out.slice(0, trailing.index);
+  }
+}
 
 const LEGACY_ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 const LEGACY_PLACEHOLDERS = new Set([

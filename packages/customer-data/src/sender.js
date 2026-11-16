@@ -370,7 +370,17 @@ export function leadNamesForEmail(email) {
   const at = text.lastIndexOf('@');
   const local = ((at > 0 ? text.slice(0, at) : text).split('+')[0] ?? '').trim();
   const tokens = local.split(/[._-]+/).map((token) => token.trim()).filter(Boolean)
+    // A reply token names the mailbox, never a surname (backlog:088b639d96a2:
+    // `apple.reply@…` was stored as «Apple Reply»): dropped from
+    // address-derived names. A display name the sender typed keeps its words
+    // (readableName only drops such a word at the end).
+    .filter((token) => !/^(?:reply|replies)$/i.test(token))
     .map((token) => token.charAt(0).toUpperCase() + token.slice(1, 64)).slice(0, 8);
+  if (tokens.length === 0) {
+    const label = labelFromEmail(text);
+    if (label !== null && label !== '') return { firstName: label.slice(0, 64), lastName: '—' };
+    throw new ValidationError('lead email names nobody without a local part', { field: 'email' });
+  }
   const firstName = tokens[0] ?? local.slice(0, 64);
   if (firstName === '' || !/[\p{L}\p{N}]/u.test(firstName)) {
     throw new ValidationError('lead email names nobody without a local part', { field: 'email' });

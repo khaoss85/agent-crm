@@ -34,9 +34,39 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
+ * A bare reply word: a mailbox token, never a surname (backlog:088b639d96a2:
+ * `apple.reply@…` was stored and shown as «Apple Reply»). Dropped only at
+ * the end, like the no-reply markers: a word in the middle stays.
+ */
+const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
+
+/** Wrapping punctuation around a word of a display name. */
+const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
+
+/**
+ * A stored name without its trailing platform qualifier: the co-brand after
+ * a pipe («MailUp | TeamSystem» reads «MailUp») and trailing parenthetical
+ * notes («Francesco Tirsi (Documenti Google)» reads «Francesco Tirsi»).
+ * Only trailing qualifiers go — inner words stay untouched.
+ * @param {string} text
+ */
+function stripNameQualifier(text) {
+  let out = text;
+  const pipe = out.indexOf('|');
+  if (pipe >= 0) out = out.slice(0, pipe);
+  for (;;) {
+    const trailing = /\s*\([^()]*\)\s*$/.exec(out);
+    if (!trailing) return out;
+    out = out.slice(0, trailing.index);
+  }
+}
+
+/**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
- * address-shaped word (`Mittente: x@y.com`) names nobody: null.
+ * address-shaped word (`Mittente: x@y.com`) names nobody: null. The
+ * address check runs on the whole stored value first, so a qualifier never
+ * hides an address (`Mario (x@y.com)` still names nobody).
  * @param {unknown} value
  * @returns {string | null}
  */
@@ -44,8 +74,13 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !MAILBOX_ID_WORD(word));
-  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const head = stripNameQualifier(value.trim()).split(/\s+/).filter((word) => word !== '');
+  const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !MAILBOX_ID_WORD(word));
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
+    if (!NO_REPLY_WORD.test(last) && !BARE_REPLY_WORD.test(last)) break;
+    kept.pop();
+  }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
@@ -142,27 +177,49 @@ function isTokenName(name, email) {
 
 /**
  * The name a company subject is shown by: its stored name, or null for a
- * placeholder (`Unknown (assistenza@…)`) — the screen then says «senza
- * nome» in its own words, never the placeholder (review #739).
+ * placeholder (`Unknown (assistenza@…)`, a documentation domain like
+ * `esempio.invalid`) — the screen then says «senza nome» in its own words,
+ * never the placeholder (review #739, backlog:088b639d96a2). Co-branded
+ * names read by their own brand («MailUp | TeamSystem» reads «MailUp»)
+ * and bare domains read united (`amazon.it`, never `Amazon.it` beside it).
  * @param {{name?: unknown} | null | undefined} company
  * @returns {string | null}
  */
 export function companyDisplayName(company) {
   const name = company?.name;
   if (typeof name !== 'string' || isPlaceholderCompanyName(name)) return null;
-  return name.trim();
+  let text = name.trim();
+  const pipe = text.indexOf('|');
+  if (pipe >= 0) text = text.slice(0, pipe).trim();
+  if (text === '') return null;
+  if (!/\s/.test(text) && BARE_DOMAIN_SHAPE.test(text) && text.slice(text.lastIndexOf('.') + 1).length >= 2) {
+    text = text.toLowerCase();
+  }
+  return text;
 }
 
 /**
+ * A bare domain name with no spaces: case is how it was typed, not who it
+ * is, so `amazon.it` and `Amazon.it` read united. The last label needs at
+ * least two characters, so an abbreviation like `S.p.A` never counts.
+ */
+const BARE_DOMAIN_SHAPE = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
+
+/**
  * Whether a stored company name is a placeholder rather than a company:
- * `Unknown`, `Unknown (assistenza@paypal.it)` and kin. The reserved
- * «Senza azienda» is `isNoCompany` in sender.js.
+ * `Unknown`, `Unknown (assistenza@paypal.it)` and kin, or a documentation
+ * / test domain stored as a company (`esempio.invalid`, RFC 2606 — never a
+ * customer). The reserved «Senza azienda» is `isNoCompany` in sender.js.
  * @param {unknown} name
  */
 export function isPlaceholderCompanyName(name) {
   if (typeof name !== 'string') return true;
   const bare = name.replace(/\([^)]*\)/g, ' ');
-  return readableName(bare) === null;
+  if (readableName(bare) === null) return true;
+  // A well-shaped domain has a registrable domain — except a documentation
+  // / test one, whose registrable domain is null (core sender-kind.js).
+  const text = bare.trim();
+  return !/\s/.test(text) && BARE_DOMAIN_SHAPE.test(text) && registrableDomain(`placeholder@${text}`) === null;
 }
 
 /**
