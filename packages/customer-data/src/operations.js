@@ -993,15 +993,26 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     if (shapes.length === 0) return { rows: [], readable: true, complete: true };
     if (typeof service.listWhere === 'function') {
       const byId = new Map();
-      let exact = false;
-      for (const shape of shapes) {
+      // Backlog ca53e443db44 (the list's reads ran one after the other: the
+      // contact shapes, the company shapes, then every module in turn): the
+      // shapes of one module start together, each fail-soft per shape as
+      // before — a shape that refuses still leaves the sibling shapes' rows.
+      const settled = await Promise.all(shapes.map(async (shape) => {
+        const part = new Map();
         try {
-          for (const row of await service.listWhere(shape)) byId.set(row.id, row);
-          exact = true;
+          for (const row of await service.listWhere(shape)) part.set(row.id, row);
+          return { part, ok: true };
         } catch {
           // A module that declares none of these shapes is not readable from
-          // here; the next shape (or the fallback below) still runs.
+          // here; the sibling shapes (and the fallback below) still run.
+          return { part: null, ok: false };
         }
+      }));
+      let exact = false;
+      for (const { part, ok } of settled) {
+        if (!ok) continue;
+        exact = true;
+        for (const [id, row] of part) byId.set(id, row);
       }
       // An exact read with zero rows is complete, not partial: falling
       // through to the bounded page would mislabel an exact zero as a floor.
