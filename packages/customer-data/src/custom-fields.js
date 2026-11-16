@@ -7,14 +7,19 @@ import { recordExternalIdentityRow } from './sender.js';
 import { deciding, trusted } from './store.js';
 
 /**
- * Operator-defined customer properties (backlog:434cc39a).
+ * Operator-defined customer properties (backlog:434cc39a, backlog:c6c56dad).
  *
  * A scheda has the properties its space decided: the operator adds a field
- * once («+ Aggiungi campo»: nome, tipo testo/numero/data/sì-no/scelta) and
+ * once («+ Aggiungi campo»: nome, tipo testo/numero/data/sì-no/scelta/punteggio) and
  * the field reads on every scheda, in the filters and in the list columns.
  * The AI way in: «✦ Scrivi o incolla» parses one Italian sentence into the
  * base customer plus custom-field proposals, shows the preview (what it
  * saves, which fields it creates), and only the human confirmation writes.
+ * The c6c56dad way in: una domanda a parole («usano già un gestionale?»)
+ * becomes a space field in one of the AI formats (testo, sì-no, punteggio),
+ * and new customers are filled from their sources without a human hand,
+ * inside the spend cap — every AI value carrying its source, and a missing
+ * source leaving the field empty, never invented.
  *
  * Governing shape, mirroring enrichment/extraction:
  * - definitions are space-wide and human-decided; a value without a
@@ -30,8 +35,22 @@ import { deciding, trusted } from './store.js';
  *   provider's error.
  */
 
-/** The five field types the operator can add. */
-export const CUSTOM_FIELD_TYPES = Object.freeze(['testo', 'numero', 'data', 'si-no', 'scelta']);
+/** The six field types the operator can add. */
+export const CUSTOM_FIELD_TYPES = Object.freeze(['testo', 'numero', 'data', 'si-no', 'scelta', 'punteggio']);
+
+/**
+ * The formats the AI fills from a question (backlog:c6c56dad): free text, a
+ * yes/no answer, or a 0-100 score. The other types stay manual-only: a date,
+ * a number or a fixed choice is decided by a person, never guessed.
+ */
+export const AI_FILLABLE_TYPES = Object.freeze(['testo', 'si-no', 'punteggio']);
+
+/** The linked sources an AI fill may read. Caller-controlled strings are never provenance. */
+export const AI_FILL_SOURCE_KINDS = Object.freeze(['email-signature', 'channel-message', 'company-website']);
+const MAX_FILL_SOURCES = 10;
+const MAX_FILL_SOURCE_TEXT = 8000;
+const MAX_FILL_SOURCE_DETAIL = 256;
+const MAX_QUESTION_LENGTH = 500;
 
 /** Bounds: keys are slugs, labels read on screen, values stay listable. */
 export const MAX_FIELD_KEY_LENGTH = 40;
@@ -144,7 +163,7 @@ export function parseFieldOptions(row) {
  * field the operator typed: a bad value refuses the write, never a silent
  * neighbor. Stored canonical forms: testo as typed, numero without
  * formatting, data as YYYY-MM-DD, si-no as «sì»/«no», scelta as the exact
- * option.
+ * option, punteggio as plain 0-100 digits.
  */
 export function normalizeFieldValue(def, raw) {
   const field = typeof def?.label === 'string' && def.label !== '' ? def.label : (def?.fieldKey ?? 'campo');
@@ -190,6 +209,17 @@ export function normalizeFieldValue(def, raw) {
         throw new ValidationError(`«${field}» vuole una delle opzioni: ${options.join(', ')}`, { field: 'value' });
       }
       return text;
+    }
+    case 'punteggio': {
+      const text = String(raw ?? '').trim().replace(/%$/, '').trim();
+      if (!/^\d{1,3}$/.test(text)) {
+        throw new ValidationError(`«${field}» vuole un punteggio da 0 a 100`, { field: 'value' });
+      }
+      const score = Number(text);
+      if (!Number.isInteger(score) || score < 0 || score > 100) {
+        throw new ValidationError(`«${field}» vuole un punteggio da 0 a 100`, { field: 'value' });
+      }
+      return String(score);
     }
     default:
       throw new ValidationError('a custom field value needs a known field type', { field: 'value' });
@@ -309,26 +339,27 @@ export async function setCustomFieldValue({ database, modules, names }, request)
     }
   }
   const value = normalizeFieldValue(shapeDef(def), input.value);
+  const source = requireValueSource(input.source);
   const sourceKey = valueSourceKey(resource, id, key);
   const stored = await deciding(values, { sourceKey });
-  if (stored[0] && stored[0].value === value) {
+  if (stored[0] && stored[0].value === value && (stored[0].source ?? null) === source) {
     return Object.freeze({ value: shapeValue(def, stored[0]), replayed: true });
   }
   let row;
   if (stored[0]) {
-    row = await values.applyManaged(stored[0].id, { value, updatedBy: actor.id }, { actor });
+    row = await values.applyManaged(stored[0].id, { value, source, updatedBy: actor.id }, { actor });
   } else {
     try {
       row = await values.createManaged({
-        sourceKey, subjectResource: resource, subjectId: id, fieldKey: key, value, updatedBy: actor.id,
+        sourceKey, subjectResource: resource, subjectId: id, fieldKey: key, value, source, updatedBy: actor.id,
       }, { actor });
     } catch (error) {
       if (!isUniqueConflict(error)) throw error;
       const winner = (await deciding(values, { sourceKey }))[0];
       if (!winner) throw error;
-      row = winner.value === value
+      row = winner.value === value && (winner.source ?? null) === source
         ? winner
-        : await values.applyManaged(winner.id, { value, updatedBy: actor.id }, { actor });
+        : await values.applyManaged(winner.id, { value, source, updatedBy: actor.id }, { actor });
     }
   }
   return Object.freeze({ value: shapeValue(def, row), replayed: stored[0]?.value === value });
@@ -338,9 +369,20 @@ function shapeValue(def, row) {
   const shaped = shapeDef(def);
   return Object.freeze({
     key: shaped.key, label: shaped.label, type: shaped.type,
-    options: shaped.options, value: row.value,
+    options: shaped.options, value: row.value, source: row.source ?? null,
     updatedAt: row.updatedAt ?? null, updatedBy: row.updatedBy ?? null,
   });
+}
+
+/**
+ * A stored source names where the value came from. A person entering a value
+ * by hand passes none (null); an AI fill passes the linked source it read —
+ * enforced by fillAiFieldValues, never trusted from the wire.
+ */
+function requireValueSource(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  return safeString(raw.trim(), 'source', { max: MAX_FILL_SOURCE_DETAIL, required: true });
 }
 
 /** Every defined field with this customer's value (null when never set). */
@@ -359,6 +401,7 @@ export async function readCustomFieldValues({ modules, names }, request) {
       return Object.freeze({
         ...def,
         value: row?.value ?? null,
+        source: row?.source ?? null,
         updatedAt: row?.updatedAt ?? null,
         updatedBy: row?.updatedBy ?? null,
       });
@@ -614,9 +657,186 @@ export async function customerPhraseAiAvailable({ phraseLlm }) {
   return Object.freeze({ available: Boolean(phraseLlm && typeof phraseLlm.extractCustomer === 'function') });
 }
 
+/**
+ * From one plain-words question to one space-field proposal (backlog:c6c56dad).
+ *
+ * «usano già un gestionale?» → { key, label, type }: the operator confirms
+ * (defineCustomField) before anything is stored — this preview writes
+ * nothing. The caller-built adapter answers `extractField({ question })`;
+ * without one the preview refuses CUSTOMER_FIELD_AI_UNAVAILABLE and the
+ * manual «+ Aggiungi campo» path stays. The AI proposes only the fillable
+ * formats (testo, sì-no, punteggio): a date, a number or a fixed choice is
+ * decided by a person, never guessed.
+ */
+export async function proposeFieldFromQuestion({ adapter } = {}, request) {
+  const actor = requireUser(request?.actor, 'Proposing a field from a question');
+  void actor;
+  const input = request && typeof request === 'object' ? request : {};
+  const question = safeString(input.question, 'question', { max: MAX_QUESTION_LENGTH, required: true });
+  if (question.trim().length < 3) {
+    throw new ValidationError('la domanda dice troppo poco: scrivi almeno tre caratteri', { field: 'question' });
+  }
+  const callable = typeof adapter?.extractField === 'function' ? adapter : null;
+  if (!callable) {
+    throw refusal('CUSTOMER_FIELD_AI_UNAVAILABLE', 503,
+      'l’AI non è attiva per questo spazio: aggiungi il campo a mano');
+  }
+  let answer;
+  try {
+    answer = await callable.extractField({ question: question.trim() });
+  } catch {
+    throw refusal('CUSTOMER_FIELD_AI_UNUSABLE', 503,
+      'l’AI non ha capito la domanda: aggiungi il campo a mano');
+  }
+  const proposed = answer && typeof answer === 'object' ? answer : {};
+  const label = requireLabel(proposed.label);
+  const key = normalizeFieldKey(proposed.key ?? proposed.label);
+  const fieldType = requireFieldType(proposed.type ?? proposed.fieldType);
+  if (!AI_FILLABLE_TYPES.includes(fieldType)) {
+    throw new ValidationError('l’AI propone solo testo, sì-no o punteggio: gli altri tipi li decide una persona', { field: 'type' });
+  }
+  return Object.freeze({ key, label, type: fieldType, question: question.trim() });
+}
+
+function requireFillSources(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ValidationError('an AI fill reads at least one linked source', { field: 'sources' });
+  }
+  if (value.length > MAX_FILL_SOURCES) {
+    throw new ValidationError(`an AI fill reads at most ${MAX_FILL_SOURCES} sources`, { field: 'sources' });
+  }
+  return value.map((source, index) => {
+    const at = `sources[${index}]`;
+    if (!source || typeof source !== 'object') {
+      throw new ValidationError('a fill source needs a kind and text', { field: at });
+    }
+    if (typeof source.kind !== 'string' || !AI_FILL_SOURCE_KINDS.includes(source.kind)) {
+      throw new ValidationError(
+        `a fill source kind must be one of: ${AI_FILL_SOURCE_KINDS.join(', ')}`, { field: `${at}.kind` });
+    }
+    const text = safeString(source.text, `${at}.text`, { max: MAX_FILL_SOURCE_TEXT, required: true });
+    if (text.trim() === '') {
+      throw new ValidationError('a fill source text is never empty', { field: `${at}.text` });
+    }
+    const detail = source.detail === undefined || source.detail === null
+      ? null
+      : safeString(source.detail, `${at}.detail`, { max: MAX_FILL_SOURCE_DETAIL });
+    return Object.freeze({ kind: source.kind, text, detail });
+  });
+}
+
+function requireFillFields(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ValidationError('an AI fill needs at least one field with its question', { field: 'fields' });
+  }
+  if (value.length > 50) {
+    throw new ValidationError('one AI fill carries at most 50 fields', { field: 'fields' });
+  }
+  return value.map((entry, index) => {
+    const at = `fields[${index}]`;
+    if (!entry || typeof entry !== 'object') {
+      throw new ValidationError('a fill field names a key and its question', { field: at });
+    }
+    const key = normalizeFieldKey(entry.key ?? entry.fieldKey);
+    const question = safeString(entry.question, `${at}.question`, { max: MAX_QUESTION_LENGTH, required: true });
+    if (question.trim().length < 3) {
+      throw new ValidationError('la domanda dice troppo poco: scrivi almeno tre caratteri', { field: `${at}.question` });
+    }
+    return Object.freeze({ key, question: question.trim() });
+  });
+}
+
+/**
+ * Fill the space AI fields of one customer from its linked sources
+ * (backlog:c6c56dad): new customers are filled without a human hand, every
+ * value carrying the source the AI read.
+ *
+ * Governing discipline, mirroring the extraction (backlog:7837a4b1):
+ * - the spend cap is checked BEFORE the adapter runs: when the guard refuses,
+ *   nothing is stored and the AI is never called — the fields stay empty;
+ * - a field is stored only with a source naming one of the read sources: a
+ *   proposal without a source is skipped, the field stays empty, never
+ *   invented;
+ * - only defined fields in an AI format (testo, sì-no, punteggio) are filled:
+ *   an unknown key refuses nothing but is skipped, never created;
+ * - the adapter is caller-built (the fake in tests, the OpenAI wiring in the
+ *   pilot worker): the framework never holds a key.
+ */
+export async function fillAiFieldValues({ modules, names }, request) {
+  const actor = requireUser(request?.actor, 'Filling AI custom fields');
+  const input = request && typeof request === 'object' ? request : {};
+  const { resource, id } = requireSubject(input);
+  const fields = requireFillFields(input.fields);
+  const sources = requireFillSources(input.sources);
+  const kinds = sources.map((source) => source.kind);
+  const adapter = typeof input.adapter?.extractFieldValue === 'function' ? input.adapter : null;
+  if (!adapter) {
+    throw refusal('CUSTOMER_FIELD_AI_UNAVAILABLE', 503,
+      'l’AI non è attiva per questo spazio: compila i campi a mano');
+  }
+  const spendGuard = typeof input.spendGuard === 'function' ? input.spendGuard : null;
+  if (spendGuard) {
+    const verdict = await spendGuard({ fields: fields.map((entry) => entry.key), subject: { resource, id } });
+    const ok = verdict === 'ok' || verdict?.ok === true;
+    if (!ok) {
+      const reason = typeof verdict?.reason === 'string' && verdict.reason !== ''
+        ? verdict.reason
+        : 'tetto di spesa AI raggiunto';
+      return Object.freeze({
+        filled: Object.freeze([]),
+        skipped: Object.freeze(fields.map((entry) => Object.freeze({ key: entry.key, reason }))),
+      });
+    }
+  }
+  const { defs } = servicesFor(modules, names);
+  const filled = [];
+  const skipped = [];
+  for (const entry of fields) {
+    const def = await existingDef(defs, entry.key);
+    if (!def) {
+      skipped.push(Object.freeze({ key: entry.key, reason: 'campo non definito: aggiungilo prima' }));
+      continue;
+    }
+    const shaped = shapeDef(def);
+    if (!AI_FILLABLE_TYPES.includes(shaped.type)) {
+      skipped.push(Object.freeze({ key: entry.key, reason: `«${shaped.label}» non è riempito dall’AI: solo testo, sì-no o punteggio` }));
+      continue;
+    }
+    let proposal;
+    try {
+      proposal = await adapter.extractFieldValue({
+        key: entry.key, question: entry.question,
+        sources: sources.map((source) => ({ kind: source.kind, text: source.text, detail: source.detail })),
+      });
+    } catch {
+      skipped.push(Object.freeze({ key: entry.key, reason: 'l’AI non ha risposto: il campo resta vuoto' }));
+      continue;
+    }
+    const candidate = proposal && typeof proposal === 'object' ? proposal : {};
+    if (typeof candidate.source !== 'string' || !kinds.includes(candidate.source)) {
+      skipped.push(Object.freeze({ key: entry.key, reason: 'senza fonte il campo resta vuoto: mai inventato' }));
+      continue;
+    }
+    let value;
+    try {
+      value = normalizeFieldValue(shaped, candidate.value);
+    } catch {
+      skipped.push(Object.freeze({ key: entry.key, reason: `l’AI ha proposto un valore che «${shaped.label}» non accetta: il campo resta vuoto` }));
+      continue;
+    }
+    const stored = await setCustomFieldValue({ modules, names }, {
+      actor, resource, id, key: entry.key, value, source: candidate.source,
+    });
+    filled.push(Object.freeze({ key: entry.key, value: stored.value.value, source: stored.value.source }));
+  }
+  return Object.freeze({ filled: Object.freeze(filled), skipped: Object.freeze(skipped) });
+}
+
 export const CUSTOM_FIELD_LIMITATIONS = Object.freeze([
   'definitions are space-wide: one field serves every scheda, every filter and every list column',
   'a value without a definition refuses: the framework never invents a field from a value',
-  'an AI proposal writes nothing: only the human confirmation stores, through the same governed paths as the manual form',
+  'a question proposes, a person defines: proposeFieldFromQuestion writes nothing, only defineCustomField stores',
+  'an AI fill stores only with a source naming a read source: without one the field stays empty, never invented',
+  'the spend cap is checked before the AI runs: over the cap nothing is stored and the AI is never called',
   'the apply writes the customer, its phone and its field values, never the note: the cronologia keeps its single writer (POST /api/customer-hub/notes)',
 ]);

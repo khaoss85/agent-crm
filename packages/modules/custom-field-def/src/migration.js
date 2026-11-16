@@ -26,6 +26,25 @@ export const customFieldDefMigrations = [
       ") STRICT;" + '\n' +
       "CREATE INDEX IF NOT EXISTS custom_field_defs_field_key ON custom_field_defs(field_key);",
   },
+  {
+    name: "evolve_custom_field_defs_r2",
+    sql:
+      "CREATE TABLE custom_field_defs__evolve__r2 (" + '\n' +
+      "  id TEXT PRIMARY KEY," + '\n' +
+      "  source_key TEXT UNIQUE," + '\n' +
+      "  field_key TEXT," + '\n' +
+      "  label TEXT," + '\n' +
+      "  field_type TEXT CHECK(field_type IN ('testo', 'numero', 'data', 'si-no', 'scelta', 'punteggio'))," + '\n' +
+      "  options TEXT," + '\n' +
+      "  created_by TEXT," + '\n' +
+      "  created_at TEXT NOT NULL," + '\n' +
+      "  updated_at TEXT NOT NULL" + '\n' +
+      ") STRICT;" + '\n' +
+      "INSERT INTO custom_field_defs__evolve__r2 (id, source_key, field_key, label, field_type, options, created_by, created_at, updated_at) SELECT id, source_key, field_key, label, field_type, options, created_by, created_at, updated_at FROM custom_field_defs;" + '\n' +
+      "DROP TABLE custom_field_defs;" + '\n' +
+      "ALTER TABLE custom_field_defs__evolve__r2 RENAME TO custom_field_defs;" + '\n' +
+      "CREATE INDEX IF NOT EXISTS custom_field_defs_field_key ON custom_field_defs(field_key);",
+  },
 ];
 
 /** The create migration, kept as a named export for pre-evolution consumers. */
