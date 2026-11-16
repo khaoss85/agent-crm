@@ -69,6 +69,15 @@ export const APPOINTMENT_TRANSITIONS = Object.freeze({
 export const APPOINTMENT_TERMINAL = Object.freeze(['done', 'no-show', 'cancelled']);
 export const APPOINTMENT_INITIAL = 'booked';
 
+/**
+ * Team visibility (backlog:9aa5c073), like Google Calendar: `default` (the
+ * team's default, public), `public`, `private`. A private booking reads as
+ * «Occupato» for everyone but its creator and the administrators, and is
+ * exported to Google with visibility private.
+ */
+export const APPOINTMENT_VISIBILITY = Object.freeze(['default', 'public', 'private']);
+export const APPOINTMENT_VISIBILITY_DEFAULT = 'default';
+
 /** A cancelled booking explains itself; any other move carries no reason. */
 export const CANCELLED_STATE = 'cancelled';
 
@@ -265,6 +274,21 @@ function validateLocation(value) {
   return optionalSafeText(value, 'location', MAX_LOCATION);
 }
 
+/**
+ * Team visibility (backlog:9aa5c073): absent, null or '' reads as the team
+ * default (public); anything else must be one of APPOINTMENT_VISIBILITY.
+ * Never trimmed into another value: an unknown word is refused, not guessed.
+ *
+ * @param {unknown} value
+ */
+export function validateVisibility(value) {
+  if (value === undefined || value === null || value === '') return APPOINTMENT_VISIBILITY_DEFAULT;
+  if (typeof value !== 'string' || !APPOINTMENT_VISIBILITY.includes(value)) {
+    throw new ValidationError('visibility must be one of "default", "public" or "private"', { field: 'visibility' });
+  }
+  return value;
+}
+
 /** @param {unknown} value @param {string|null} location */
 function validateLocationUrl(value, location) {
   if (value === undefined || value === null || value === '') return null;
@@ -454,6 +478,7 @@ export function validateAppointmentRequest(request) {
     notes: optionalSafeText(value.notes, 'notes', MAX_NOTES),
     location,
     locationUrl,
+    visibility: validateVisibility(value.visibility),
     remindAt,
     reminderChannel,
     source: validateSource(value.source),
@@ -790,8 +815,14 @@ function bookingTransaction(appointments) {
  * identity: it is a display snapshot taken at creation and never refreshed.
  */
 function replayOrConflict(existing, submitted) {
+  // Rows booked before team visibility existed carry no value (null): they
+  // read as the team default, so a replayed identical claim does not 409
+  // against its own row (backlog:9aa5c073).
+  const effectiveValue = (field) => (field === 'visibility'
+    ? (existing.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT)
+    : (existing[field] ?? null));
   const conflictingFields = Object.keys(submitted)
-    .filter((field) => (existing[field] ?? null) !== (submitted[field] ?? null))
+    .filter((field) => effectiveValue(field) !== (submitted[field] ?? null))
     .sort();
   if (conflictingFields.length === 0) return existing;
   throw new AppError(
@@ -1028,6 +1059,7 @@ export async function bookAppointment(context, request) {
     notes: input.notes,
     location: input.location,
     locationUrl: input.locationUrl,
+    visibility: input.visibility,
     // The reminder intent IS the booking's identity: the same source key with
     // a different reminder (added, removed or moved) is a different claim
     // behind the same key and is refused 409 rather than replayed into a
@@ -1721,6 +1753,7 @@ function projectTeamWeekRow(row) {
     priceCents: row.priceCents,
     currency: row.currency,
     notes: row.notes ?? null,
+    visibility: row.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT,
     sourceKey: row.sourceKey,
     subject: Object.freeze({
       resource: row.subjectResource,
@@ -1729,6 +1762,40 @@ function projectTeamWeekRow(row) {
       ownerPackage: row.subjectOwnerPackage ?? null,
     }),
   });
+}
+
+/**
+ * The effective team visibility of a stored row (backlog:9aa5c073): rows
+ * booked before visibility existed carry no value and read as the team
+ * default (public). A value outside the enum is a corrupt store entry and
+ * fails the read closed (400), like the booking and suggestion paths.
+ *
+ * @param {any} row
+ */
+function effectiveVisibility(row) {
+  const visibility = row.visibility ?? APPOINTMENT_VISIBILITY_DEFAULT;
+  if (!APPOINTMENT_VISIBILITY.includes(visibility)) {
+    throw new ValidationError(`a stored appointment carries an unreadable visibility: refusing the week, never a guessed one`, {
+      field: 'visibility',
+    });
+  }
+  return visibility;
+}
+
+/**
+ * Whether the viewer reads the full row (backlog:9aa5c073): everyone reads
+ * default and public rows; a private row reads full only for its creator
+ * (the booking actor) and the administrators. Anyone else reads it as
+ * «Occupato» — never the customer, the service or the notes.
+ *
+ * @param {{actorId?: unknown, isAdmin?: unknown}|null|undefined} viewer
+ * @param {any} row
+ */
+function viewerSeesFull(viewer, row) {
+  if (effectiveVisibility(row) !== 'private') return true;
+  if (viewer?.isAdmin === true) return true;
+  const watcher = typeof viewer?.actorId === 'string' ? viewer.actorId : '';
+  return watcher !== '' && row.actorId === watcher;
 }
 
 /**
@@ -1756,8 +1823,14 @@ function projectTeamWeekRow(row) {
  * The `busy` list is required on every member group (version 5): an empty
  * week reads `busy: []`, never an absent key.
  *
+ * A private booking (backlog:9aa5c073) reads full only for its creator and
+ * the administrators (`filter.viewer = { actorId, isAdmin }`, server-side
+ * only like the owner holds — never from the caller): anyone else reads it
+ * as «Occupato» beside the bookings, a cancelled one not at all. Without a
+ * viewer the read is unprivileged and masks every private row.
+ *
  * @param {{appointments: any, calendarSync?: any}} storage
- * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter
+ * @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown, viewer?: unknown}} filter
  */
 export async function readTeamWeek({ appointments, calendarSync }, filter) {
   const value = filter && typeof filter === 'object' && !Array.isArray(filter) ? filter : {};
@@ -1790,6 +1863,9 @@ export async function readTeamWeek({ appointments, calendarSync }, filter) {
     });
   }
   const groups = [];
+  const viewer = value.viewer !== undefined && value.viewer !== null
+    && typeof value.viewer === 'object' && !Array.isArray(value.viewer)
+    ? value.viewer : null;
   for (const teamMemberId of members) {
     const held = await appointments.listWhere({ teamMemberId });
     const overlapping = held.filter((row) => (
@@ -1800,16 +1876,30 @@ export async function readTeamWeek({ appointments, calendarSync }, filter) {
       || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
       || String(a.id ?? '').localeCompare(String(b.id ?? ''))
     ));
-    const busy = (await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
+    // Private rows the viewer may not read (backlog:9aa5c073): held ones
+    // read as «Occupato» beside the bookings, cancelled ones not at all —
+    // a cancelled slot is free, painting it busy would lie about the grid.
+    const full = [];
+    const masked = [];
+    for (const row of overlapping) {
+      if (viewerSeesFull(viewer, row)) full.push(row);
+      else if (row.status !== 'cancelled') masked.push(row);
+    }
+    const maskedBusy = masked
+      .map((row) => projectBusyWeekRow({ startsAt: row.startsAt, endsAt: row.endsAt }))
+      .filter((projected) => projected !== null)
+      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso);
+    const busy = [...(await ownerBlocksFor(calendarSync, teamMemberId, from.iso, to.iso))
       .map((block) => projectBusyWeekRow(block))
       .filter((projected) => projected !== null)
-      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso)
+      .filter((projected) => projected.startsAt < to.iso && projected.endsAt > from.iso),
+    ...maskedBusy]
       .sort((a, b) => (
         a.startsAt.localeCompare(b.startsAt) || a.endsAt.localeCompare(b.endsAt)
       ));
     groups.push(Object.freeze({
       teamMemberId,
-      appointments: Object.freeze(overlapping.map(projectTeamWeekRow)),
+      appointments: Object.freeze(full.map(projectTeamWeekRow)),
       busy: Object.freeze(busy),
     }));
   }
@@ -2045,7 +2135,9 @@ export async function suggestSlots({ modules, moduleNames, calendarSync }, filte
 
 /**
  * The validated booking subset a `confirm-required` draft carries: everything
- * the confirm re-validates, minus the internal millisecond bounds.
+ * the confirm re-validates, minus the internal millisecond bounds. Visibility
+ * rides along (backlog:9aa5c073): a draft confirmed later books the
+ * visibility the operator chose, never a silent default.
  */
 function publicDraft(input) {
   return Object.freeze({
@@ -2060,6 +2152,7 @@ function publicDraft(input) {
     notes: input.notes,
     location: input.location,
     locationUrl: input.locationUrl,
+    visibility: input.visibility,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
@@ -2098,7 +2191,7 @@ function bookingClaimKeyParts(input) {
     subject.resource, subject.id, subject.owner, subject.ownerPackage,
     input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
     input.startsAt, input.endsAt, input.notes,
-    input.location, input.locationUrl,
+    input.location, input.locationUrl, input.visibility,
     input.remindAt, input.reminderChannel,
     input.source.package, input.source.action,
   ]);
