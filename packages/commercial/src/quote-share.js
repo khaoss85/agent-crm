@@ -12,13 +12,18 @@ import { AppError, ConflictError, ValidationError, nowIso } from '../../core/ind
  * link). The row stores only the token's SHA-256, so the bearer never rests
  * in the database — and the action traces (`workflow_runs`/`trace_spans`)
  * hold only the hash too, never the bearer: the raw token leaves the server
- * exactly once, as the top-level `token` of a fresh share-link result. The
+ * exactly once, as the top-level `token` of a fresh share-link or
+ * regenerate-link result. The
  * accepted price is read from the immutable `quote-version` rows only, so a
  * later catalog change can never move it. Acceptance is idempotent and
  * terminal per version: the first accept wins one conditional claim, every
  * later accept answers «già accettata» without writing — even after the link
  * itself expired — and a version that already has an accepted share is never
- * minted a new link. An expired or unknown token refuses with a short
+ * minted a new link. When the first share answer is lost, `regenerate-link`
+ * revokes the live link and mints a fresh token on the same share row — the
+ * old token answers «link non valido o scaduto» from then on — while an
+ * accepted link is never revoked nor regenerated: it stays as the receipt.
+ * An expired or unknown token refuses with a short
  * Italian message and never leaks names, prices or rows.
  *
  * The quote record itself stays `approved`: customer acceptance is tracked
@@ -149,7 +154,7 @@ function shareSummary(share) {
   // No token here on purpose: the summary travels in traces, audit and
   // action results, and the hash the row holds is not the bearer. The raw
   // token leaves the server exactly once, as the top-level `token` of a
-  // fresh share-link result.
+  // fresh share-link or regenerate-link result.
   return {
     quoteId: share.quoteId,
     quoteVersionId: share.quoteVersionId,
@@ -396,6 +401,135 @@ function redactedShareResult(result) {
   return { ...result, token: null, tokenHash: hashShareToken(result.token) };
 }
 
+/**
+ * Mint one fresh bearer for the version, sharing share-link's exact conflict
+ * discipline: a non-transient conflict re-reads and reuses the winner's link
+ * instead of leaving a second live row, a transient serialization conflict is
+ * rethrown for the outer runtime to retry fresh. Both share-link (nothing to
+ * reuse) and regenerate-link (nothing live left to revoke) mint through here,
+ * so the two answers can never diverge.
+ *
+ * @param {any} shares the quote-share managed service
+ * @returns {Promise<{ share: any, token: string } | { reused: any }>}
+ */
+async function mintFreshShare(shares, quote, { days, at, createdBy, actor }) {
+  const token = generateShareToken();
+  const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
+  try {
+    const share = await shares.createManaged(
+      {
+        quoteId: quote.id,
+        quoteVersionId: quote.currentVersionId,
+        versionNumber: quote.currentVersionNumber,
+        tokenHash: hashShareToken(token),
+        status: 'active',
+        expiresAt,
+        acceptCount: 0,
+        createdBy,
+      },
+      { actor },
+    );
+    return { share, token };
+  } catch (error) {
+    if (!(error instanceof ConflictError)) throw error;
+    if (isTransientConflict(error)) throw error;
+    const winner = await resolveVersionShare(shares, quote, at);
+    if (!winner) throw error;
+    return { reused: winner.share };
+  }
+}
+
+/**
+ * One source of truth for revoking a live link: the committing write is a
+ * single conditional UPDATE gated on `status = 'active'` AND the bearer hash
+ * the caller based its decision on — the accept-claim idiom
+ * (`affectedRows` verdict, audit mirror, managed re-read, one event), with
+ * the old hash as the extra pin. Zero rows means the link moved meanwhile:
+ * an accept won (the row is `accepted`, the receipt stays and the caller
+ * refuses) or another regenerate won (the caller refuses with a contest
+ * instead of silently killing the just-issued bearer). Never rotate with an
+ * unconditional write.
+ *
+ * The bearer rotates on the same share row: the old token resolves to no row
+ * afterwards, so accept-link and link-info answer «link non valido o
+ * scaduto» for it with no change on their side — and at most one live bearer
+ * per version exists at any instant.
+ *
+ * @param {any} shares the quote-share managed service
+ */
+async function claimRotatedShare(shares, share, { tokenHash, expiresAt }, actor) {
+  const manifest = shares?.manifest;
+  const fields = Array.isArray(manifest?.fields) ? manifest.fields : null;
+  const columnOf = (name) => fields?.find((field) => field?.name === name)?.column ?? null;
+  const table = manifest?.table;
+  const columns = {
+    tokenHash: columnOf('tokenHash'),
+    expiresAt: columnOf('expiresAt'),
+  };
+  const syncApi = shares?.database?.storage?.sync;
+  const syncMutation = syncApi
+    && typeof syncApi.execute === 'function'
+    && typeof syncApi.savepoint === 'function'
+    && typeof shares.mutationSync === 'function';
+  const asyncMutation = typeof shares.mutationAsync === 'function';
+  if (!manifest || typeof table !== 'string' || typeof manifest.name !== 'string'
+    || Object.values(columns).some((column) => typeof column !== 'string' || column === '')
+    || typeof shares.get !== 'function'
+    || typeof shares.audit?.record !== 'function'
+    || typeof shares.events?.emit !== 'function'
+    || (!syncMutation && !asyncMutation)) {
+    throw new AppError('quote-share storage cannot prove an atomic rotate claim', {
+      code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+    });
+  }
+  const statement = {
+    kind: 'update',
+    table,
+    values: [
+      { column: columns.tokenHash, value: tokenHash },
+      { column: columns.expiresAt, value: expiresAt },
+      { column: 'updated_at', value: nowIso() },
+    ],
+    where: [
+      { column: 'id', op: 'eq', value: share.id },
+      { column: 'status', op: 'eq', value: 'active' },
+      { column: columns.tokenHash, op: 'eq', value: share.tokenHash },
+    ],
+  };
+  const auditEvent = {
+    actor, entityType: manifest.name, entityId: share.id,
+    // The hash only: the audit trail must never hold the raw bearer.
+    data: { status: 'active', tokenHash, expiresAt },
+    action: `${manifest.name}.updated`,
+  };
+  let won = false;
+  if (syncMutation) {
+    won = shares.mutationSync(() => {
+      const claimed = syncApi.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) return false;
+      shares.audit.record(auditEvent, syncApi);
+      return true;
+    });
+  } else {
+    won = await shares.mutationAsync(async (tx) => {
+      const claimed = await tx.execute(statement);
+      if (Number(claimed?.affectedRows ?? 0) !== 1) return false;
+      await shares.audit.record(auditEvent, tx);
+      return true;
+    });
+  }
+  if (!won) return null;
+  const updated = await shares.get(share.id);
+  await shares.events.emit(`${manifest.name}.updated`, updated);
+  return updated;
+}
+
+function alreadyAcceptedError() {
+  return new AppError('The version is already accepted: its link stays as the acceptance receipt and is never regenerated', {
+    code: 'QUOTE_LINK_ALREADY_ACCEPTED', status: 409,
+  });
+}
+
 /** @param {QuoteShareConfig} [config] */
 export function buildShareLinkAction(config) {
   const cfg = resolved(config);
@@ -436,30 +570,7 @@ export function buildShareLinkAction(config) {
         await claimMintSlot(modules, cfg, quote);
         const existing = await resolveVersionShare(shares, quote, at);
         if (existing) return { reused: existing.share };
-        const token = generateShareToken();
-        const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
-        try {
-          const share = await shares.createManaged(
-            {
-              quoteId: quote.id,
-              quoteVersionId: quote.currentVersionId,
-              versionNumber: quote.currentVersionNumber,
-              tokenHash: hashShareToken(token),
-              status: 'active',
-              expiresAt,
-              acceptCount: 0,
-              createdBy,
-            },
-            { actor },
-          );
-          return { share, token };
-        } catch (error) {
-          if (!(error instanceof ConflictError)) throw error;
-          if (isTransientConflict(error)) throw error;
-          const winner = await resolveVersionShare(shares, quote, at);
-          if (!winner) throw error;
-          return { reused: winner.share };
-        }
+        return mintFreshShare(shares, quote, { days, at, createdBy, actor });
       });
       if (minted.reused) {
         // The bearer is not recoverable from the hash, so a reused link
@@ -474,6 +585,79 @@ export function buildShareLinkAction(config) {
       // The only result that ever carries the raw bearer: the operator
       // copies it into the message once, then it lives only in the link.
       return { alreadyExisted: false, share: shareSummary(minted.share), token: minted.token };
+    },
+  };
+}
+
+/** @param {QuoteShareConfig} [config] */
+export function buildRegenerateLinkAction(config) {
+  const cfg = resolved(config);
+  return {
+    module: cfg.quoteModule,
+    name: 'regenerate-link',
+    label: 'Regenerate link',
+    description: 'Revoke the live public link of the approved quote version and issue a fresh token (the first answer was lost); the old token stops working at once. An accepted link is never revoked nor regenerated: it stays as the acceptance receipt.',
+    actionContract: 1,
+    stateField: 'status',
+    fromStates: ['approved'],
+    input: [
+      { name: 'expiresInDays', type: 'integer', required: false, hint: 'Link lifetime in days, 1-90 (default 14).' },
+      { name: 'expectedRevision', type: 'integer', required: false },
+    ],
+    traceRedact: { output: redactedShareResult },
+    /** @param {any} ctx */
+    async execute({ record: quote, input, actor, modules, now, step }) {
+      const createdBy = requireUserActor(actor);
+      checkRevision(quote, input);
+      const shares = requireShareService(modules, cfg);
+      if (!quote.currentVersionId) {
+        throw new AppError('The quote carries no approved version to share', { code: 'COMMERCIAL_STATE_CORRUPT', status: 409 });
+      }
+      const days = input.expiresInDays ?? 14;
+      if (!Number.isInteger(days) || days < 1 || days > 90) {
+        throw new ValidationError('expiresInDays must be an integer between 1 and 90', { field: 'expiresInDays' });
+      }
+      const at = now();
+      // Same exclusion as the mint: a concurrent share-link or regenerate-link
+      // for this version serializes here in-process and on the quote-row
+      // fence across processes, so the loser decides on the winner's row.
+      const outcome = await withVersionMintLock(quote.currentVersionId, async () => {
+        await claimMintSlot(modules, cfg, quote);
+        const existing = await resolveVersionShare(shares, quote, at);
+        if (existing?.kind === 'accepted') throw alreadyAcceptedError();
+        let base = existing?.share ?? null;
+        if (!base) {
+          // Nothing live left to revoke (never shared, or only expired rows):
+          // minting here answers exactly what share-link would answer, so
+          // the operator always ends with one working link.
+          const minted = await mintFreshShare(shares, quote, { days, at, createdBy, actor });
+          if (!('reused' in minted) || !minted.reused) return { share: minted.share, token: minted.token, mintedFresh: true };
+          if (minted.reused.status === 'accepted') throw alreadyAcceptedError();
+          base = minted.reused;
+        }
+        const token = generateShareToken();
+        const expiresAt = new Date(Date.parse(at) + days * 86_400_000).toISOString();
+        const rotated = await claimRotatedShare(shares, base, { tokenHash: hashShareToken(token), expiresAt }, actor);
+        if (!rotated) {
+          // The row moved between our read and our claim: an accept won (the
+          // receipt stays, refuse) or another regenerate won (refuse with a
+          // contest instead of silently killing its just-issued bearer).
+          const current = await shares.get(base.id);
+          if (current && current.status === 'accepted') throw alreadyAcceptedError();
+          throw new AppError('quote link was regenerated concurrently: reopen it', {
+            code: 'QUOTE_LINK_CONTEST', status: 409,
+          });
+        }
+        return { share: rotated, token };
+      });
+      if (outcome.mintedFresh) {
+        step('quote.link-shared', { quoteId: quote.id, versionNumber: outcome.share.versionNumber });
+        return { alreadyExisted: false, regenerated: false, share: shareSummary(outcome.share), token: outcome.token };
+      }
+      step('quote.link-regenerated', { quoteId: quote.id, versionNumber: outcome.share.versionNumber });
+      // Like a fresh share-link result, this is the only copy that ever
+      // carries the raw bearer: the persisted trace holds the hash only.
+      return { alreadyExisted: false, regenerated: true, share: shareSummary(outcome.share), token: outcome.token };
     },
   };
 }
@@ -577,9 +761,9 @@ export function buildLinkInfoAction(config) {
 }
 
 /**
- * The three public-link actions the package contributes, in registration order.
+ * The four public-link actions the package contributes, in registration order.
  * @param {QuoteShareConfig|undefined} config
  */
 export function buildQuoteShareActions(config) {
-  return [buildShareLinkAction(config), buildAcceptLinkAction(config), buildLinkInfoAction(config)];
+  return [buildShareLinkAction(config), buildRegenerateLinkAction(config), buildAcceptLinkAction(config), buildLinkInfoAction(config)];
 }
