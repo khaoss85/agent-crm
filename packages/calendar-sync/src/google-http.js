@@ -29,7 +29,10 @@
 export const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 
 const EVENT_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE):[^\s]{1,400}$/;
+// Real Google lines carry RFC 5545 parameters (`EXDATE;TZID=...:...`,
+// `RDATE;VALUE=DATE:...`): the optional `;PARAM=value` groups ride before
+// the colon, each bounded, so a parametrised line never drops the set.
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE)(;[A-Za-z0-9-]+=[^:;\s]{1,80})*:[^\s]{1,400}$/;
 
 /** 1 to 8 Google recurrence lines, or null when absent — the same shape the fake keeps. */
 function checkRecurrenceLines(value, what) {

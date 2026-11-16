@@ -1524,6 +1524,192 @@ test('pushSeriesScope following sopra un’altra riga con ambito viene rifiutato
   assert.equal(ctx.linkRows().length, linksBefore, 'nessun link nuovo');
 });
 
+// backlog:6acf0a73bfc3 — l'inserimento cade prima della mutazione del
+// master: se l'insert rifiuta, il master resta intatto e il ritentativo
+// ritrova lo stesso evento deterministico invece di duplicare la serie.
+test('pushSeriesScope single: un insert che fallisce lascia il master intatto e il ritentativo converge (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:insert-1',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const movedKey = 'gym:serie:engine:insert-1:ex';
+  const call = {
+    scope: 'single', occurrenceStartsAt: '2026-10-28T09:00:00.000Z',
+    movedStartsAt: '2026-10-28T16:00:00.000Z', movedEndsAt: '2026-10-28T17:00:00.000Z',
+    movedSourceKey: movedKey,
+  };
+  const realInsert = ctx.provider.insertEvent.bind(ctx.provider);
+  let failInsert = true;
+  ctx.provider.insertEvent = async (args) => {
+    if (failInsert) {
+      const error = new Error('google insertEvent refused: quota');
+      error.code = 'GOOGLE_CALL_MALFORMED';
+      error.status = 422;
+      throw error;
+    }
+    return realInsert(args);
+  };
+  await assert.rejects(
+    ctx.sync.pushSeriesScope(appointment.sourceKey, call),
+    (error) => {
+      assert.equal(error.code, 'GOOGLE_CALL_MALFORMED');
+      assert.equal(error.status, 422);
+      return true;
+    },
+  );
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  assert.ok(!master().recurrence.some((line) => line.startsWith('EXDATE:')), 'il master non porta la EXDATE');
+  assert.equal(ctx.linkRows().filter((row) => row.appointmentSourceKey === movedKey).length, 0, 'nessun link per l’evento mai nato');
+  failInsert = false;
+  const retry = await ctx.sync.pushSeriesScope(appointment.sourceKey, call);
+  assert.equal(retry.status, 'pushed');
+  assert.ok(retry.movedEventId, 'il ritentativo apre l’evento');
+  assert.ok(master().recurrence.includes('EXDATE:20261028T090000Z'), 'il ritentativo chiude il master');
+  assert.equal(ctx.provider.getEvent(CAL, retry.movedEventId).status, 'confirmed');
+  const replay = await ctx.sync.pushSeriesScope(appointment.sourceKey, call);
+  assert.equal(replay.movedEventId, retry.movedEventId, 'un altro ritentativo riusa lo stesso evento, mai un duplicato');
+});
+
+// backlog:6acf0a73bfc3 — lo stesso per «questo e i successivi»: la coda
+// nasce prima della chiusura UNTIL del master.
+test('pushSeriesScope following: un insert che fallisce lascia il master aperto e il ritentativo converge (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:insert-2',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const exported = await ctx.sync.pushAppointment(CAL, appointment.sourceKey, { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const masterId = exported.eventId;
+  const tailKey = 'gym:serie:engine:insert-2:coda';
+  const call = {
+    scope: 'following', scopeStartsAt: '2026-11-04T09:00:00.000Z',
+    movedStartsAt: '2026-11-04T16:00:00.000Z', movedEndsAt: '2026-11-04T17:00:00.000Z',
+    tailRuleLines: ['RRULE:FREQ=WEEKLY;COUNT=1'], tailSourceKey: tailKey,
+  };
+  const realInsert = ctx.provider.insertEvent.bind(ctx.provider);
+  let failInsert = true;
+  ctx.provider.insertEvent = async (args) => {
+    if (failInsert) {
+      const error = new Error('google insertEvent refused: quota');
+      error.code = 'GOOGLE_CALL_MALFORMED';
+      error.status = 422;
+      throw error;
+    }
+    return realInsert(args);
+  };
+  await assert.rejects(ctx.sync.pushSeriesScope(appointment.sourceKey, call));
+  const master = () => ctx.provider.getEvent(CAL, masterId);
+  assert.ok(!master().recurrence.some((line) => line.includes('UNTIL=')), 'il master resta aperto');
+  assert.equal(ctx.linkRows().filter((row) => row.appointmentSourceKey === tailKey).length, 0, 'nessun link per la coda mai nata');
+  failInsert = false;
+  const retry = await ctx.sync.pushSeriesScope(appointment.sourceKey, call);
+  assert.equal(retry.status, 'pushed');
+  assert.ok(retry.tailEventId, 'il ritentativo apre la coda');
+  assert.ok(master().recurrence.some((line) => line.includes('UNTIL=')), 'il ritentativo chiude il master');
+});
+
+// backlog:6acf0a73bfc3 — isolamento tra spazi: la ricerca del link è
+// vincolata ai calendari dello spazio chiamante prima di ogni risposta,
+// così da un altro spazio la chiave esportata e quella mai vista danno
+// la stessa risposta, senza mai scrivere sul calendario altrui.
+test('pushSeriesScope isola gli spazi: stessa risposta qualunque sia la chiave (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const calls = { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 };
+  for (const fn of Object.keys(calls)) {
+    const real = ctx.provider[fn].bind(ctx.provider);
+    ctx.provider[fn] = async (...args) => { calls[fn] += 1; return real(...args); };
+  }
+  const wired = createCalendarSyncOperations({
+    modules: ctx.modules,
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: ctx.provider,
+    mapping: ctx.mapping,
+    database: ctx.database,
+    actor: ACTOR,
+    now: () => new Date(T0).toISOString(),
+    resolveSecret: async () => 'sekrit',
+  });
+  await wired.bindCalendarGrant({ spaceId: 'space-a', calendarId: CAL, secretRef: 'vault://space-a/grant', actor: ACTOR });
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  const { appointment } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:spazio',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  await wired.pushAppointment(CAL, appointment.sourceKey, { spaceId: 'space-a', recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  const anchor = '2026-10-28T09:00:00.000Z';
+  const own = await wired.pushSeriesScope(appointment.sourceKey, {
+    spaceId: 'space-a', scope: 'single', occurrenceStartsAt: anchor,
+  });
+  assert.equal(own.status, 'pushed', 'lo spazio che possiede il grant converge');
+  const masterBefore = JSON.stringify(ctx.provider.getEvent(CAL, own.eventId));
+  for (const fn of Object.keys(calls)) calls[fn] = 0;
+  const probe = { spaceId: 'space-b', scope: 'single', occurrenceStartsAt: anchor };
+  const fromExported = await wired.pushSeriesScope(appointment.sourceKey, probe);
+  const fromUnknown = await wired.pushSeriesScope('gym:serie:mai:esportata', probe);
+  assert.equal(fromExported.status, 'local-only', 'lo spazio straniero non converge mai');
+  assert.equal(fromUnknown.status, 'local-only', 'la chiave mai vista risponde allo stesso modo');
+  assert.equal(fromExported.reason, fromUnknown.reason, 'stessa risposta qualunque sia la chiave');
+  assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'nessuna chiamata a Google dallo spazio straniero');
+  assert.equal(JSON.stringify(ctx.provider.getEvent(CAL, own.eventId)), masterBefore, 'il calendario altrui non cambia');
+  const { appointment: local } = await handle.bookAppointment({
+    sourceKey: 'gym:serie:engine:spazio-local',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T11:00:00.000Z',
+    endsAt: '2026-10-21T12:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+  });
+  const localOnly = await wired.pushSeriesScope(local.sourceKey, {
+    spaceId: 'space-a', scope: 'single', occurrenceStartsAt: '2026-10-28T11:00:00.000Z',
+  });
+  assert.equal(localOnly.status, 'local-only', 'la serie mai esportata resta solo griglia');
+});
+
+// backlog:6acf0a73bfc3 — un master vero con EXDATE;TZID=... converge come
+// una serie normale: le righe con parametri non buttano più il set.
+test('pushSeriesScope converge un master con EXDATE;TZID=... (backlog:6acf0a73bfc3)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const handle = createAppointmentBookCapability({}).create({ modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync' });
+  seedEvent(ctx, 'evt-tz', '21', '09:00', '10:00', {
+    recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3', 'EXDATE;TZID=Europe/Rome:20261028T090000'],
+  });
+  await ctx.sync.importFuture(CAL, { timeMin: '2026-10-20T00:00:00.000Z' });
+  const row = ctx.appointmentRows().find((entry) => String(entry.sourceKey).includes('evt-tz'));
+  assert.ok(row, 'il master con parametri si importa');
+  const out = await ctx.sync.pushSeriesScope(row.sourceKey, {
+    scope: 'single', occurrenceStartsAt: '2026-11-04T09:00:00.000Z',
+  });
+  assert.equal(out.status, 'pushed');
+  const lines = ctx.provider.getEvent(CAL, 'evt-tz').recurrence;
+  assert.ok(lines.includes('EXDATE;TZID=Europe/Rome:20261028T090000'), 'la riga con parametri resta sul master');
+  assert.ok(lines.includes('EXDATE:20261104T090000Z'), 'la nuova EXDATE si aggiunge');
+});
+
 test('cancelling an exported booking cancels its linked Google event (review #781)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());

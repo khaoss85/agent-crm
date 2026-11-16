@@ -1254,6 +1254,41 @@ test('«questo e i successivi» su una serie senza fine chiude la coda sulle rig
   );
 });
 
+test('«questo e i successivi» su una regola con UNTIL: la coda conta le righe, mai la data vecchia (backlog:6acf0a73bfc3)', async () => {
+  const service = fakeAppointments();
+  const scoped = [];
+  const calendarSync = {
+    async pushAppointment() {
+      throw new Error('non deve spingere la testa: una sola strada verso Google');
+    },
+    async pushSeriesScope(headSourceKey, plan) {
+      scoped.push({ headSourceKey, plan });
+      return { status: 'pushed', sourceKey: headSourceKey, eventId: 'evt-1', change: 'series-test' };
+    },
+  };
+  const context = { ...contextFor(service), calendarSync };
+  const booked = await bookAppointment(context, booking({
+    sourceKey: 'gym:serie:fino-a',
+    recurrence: { kind: 'weekly', until: '2026-12-01' },
+  }));
+  assert.equal(booked.occurrences.length, 3, 'settimanale fino al 1 dicembre: tre righe');
+  const moved = await rescheduleAppointment(context, {
+    id: booked.occurrences[1].id,
+    startsAt: '2026-12-01T16:00:00.000Z',
+    endsAt: '2026-12-01T17:00:00.000Z',
+    scope: 'following',
+    calendar: { calendarId: 'cal-1' },
+    spaceId: 'spazio-1',
+  });
+  assert.equal(moved.scope, 'following');
+  assert.equal(scoped.length, 1);
+  assert.deepEqual(
+    scoped[0].plan.tailRuleLines,
+    ['RRULE:FREQ=WEEKLY;COUNT=2'],
+    'la coda nuova conta le due righe spostate: la UNTIL assoluta non la segue su Google',
+  );
+});
+
 test('«questo e i successivi» che cambia giorno su regola con più giorni viene rifiutato prima di Google (backlog:6acf0a73bfc3)', async () => {
   const service = fakeAppointments();
   const scoped = [];

@@ -53,7 +53,10 @@ function snapshot(event) {
 // array (backlog:6acf0a73bfc3): 1 to 8 `RRULE:`/`EXDATE:`/`RDATE:` lines,
 // never an empty line, never a guessed shape. Absent reads as null —
 // an event without recurrence stays single, exactly like Google.
-const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE):[^\s]{1,400}$/;
+// Real Google lines carry RFC 5545 parameters (`EXDATE;TZID=...:...`,
+// `RDATE;VALUE=DATE:...`): the optional `;PARAM=value` groups ride before
+// the colon, each bounded, so the fake proves what production accepts.
+const RECURRENCE_LINE_RE = /^(RRULE|EXDATE|RDATE)(;[A-Za-z0-9-]+=[^:;\s]{1,80})*:[^\s]{1,400}$/;
 function checkRecurrenceLines(value, what) {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value) || value.length === 0 || value.length > 8

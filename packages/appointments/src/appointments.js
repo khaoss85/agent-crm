@@ -991,7 +991,12 @@ function tailRuleLinesFor(row, tailCount, newStartsAtIso) {
       : RECURRENCE_MAX_OCCURRENCES;
     return recurrenceToRRule({ ...valid, count: bounded }, newStartsAtIso ?? row?.startsAt ?? null);
   }
-  const tail = { ...valid, ...(valid.count === null ? {} : { count: tailCount }) };
+  // An absolute UNTIL never rides the tail (backlog:6acf0a73bfc3): the tail
+  // is a new series of exactly the moved grid rows, so it always ends after
+  // a number of times — count and until together are refused, and a stale
+  // UNTIL date would cut the Google tail short of the grid while the grid
+  // keeps its rows.
+  const tail = { ...valid, until: null, count: tailCount };
   return recurrenceToRRule(tail, newStartsAtIso ?? row?.startsAt ?? null);
 }
 
