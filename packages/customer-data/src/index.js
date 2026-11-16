@@ -167,7 +167,9 @@ export function createCustomerDataPackage(options = {}) {
     // all-or-nothing contract in the metadata. The pilot registers each
     // surface's fingerprint; a changed surface takes a new version, never the
     // old one. Version 5: the erasure reason is a code from a closed list.
-    version: 5,
+    // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
+    // declared surface (propose-field-from-question, fill-ai-field-values).
+    version: 6,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
