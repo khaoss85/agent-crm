@@ -68,14 +68,28 @@ export {
   MESSAGE_DRAFT_MAX_HISTORY_TEXT_CHARS,
   MESSAGE_DRAFT_MAX_INTENT_CHARS,
   MESSAGE_DRAFT_MAX_NAME_CHARS,
+  MESSAGE_DRAFT_MAX_PLAYBOOK_FIELD_CHARS,
   MESSAGE_DRAFT_MAX_SUBJECT_CHARS,
   MESSAGE_DRAFT_MAX_VARIANT_CHARS,
+  MESSAGE_DRAFT_PLAYBOOK_FIELDS,
   MESSAGE_DRAFT_PURPOSE,
   assertMessageDraftInput,
+  assertMessageDraftPlaybook,
   buildMessageDraftPrompt,
+  buildPlaybookContextBlock,
   draftCustomerMessage,
   parseMessageDraftResponse,
 } from './message-draft.js';
+export {
+  SALES_PLAYBOOK_FIELDS,
+  SALES_PLAYBOOK_MAX_FIELD_CHARS,
+  SALES_PLAYBOOK_MAX_SOURCE_CHARS,
+  SALES_PLAYBOOK_PROPOSE_PURPOSE,
+  assertPlaybookProposalInput,
+  buildPlaybookProposalPrompt,
+  parsePlaybookProposalResponse,
+  proposeSalesPlaybook,
+} from './sales-playbook.js';
 export { LLM_ADAPTER_CONTRACT, LLM_MAX_CHARS_PER_TOKEN, LlmRegistries, assertCompletion, assertGenerateInput, validateLlmAdapter } from './adapter.js';
 export { LLM_KIT_CHECKS, runLlmAdapterKit } from './kit.js';
 

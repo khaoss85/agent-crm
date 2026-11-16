@@ -86,7 +86,7 @@ export class CustomFieldDefService {
       customFieldDef.label = patch.label === null ? null : requiredString(patch.label, 'label');
     }
     if (Object.hasOwn(patch, 'fieldType')) {
-      customFieldDef.fieldType = patch.fieldType === null ? null : enumValue(patch.fieldType, ["testo", "numero", "data", "si-no", "scelta"], 'fieldType');
+      customFieldDef.fieldType = patch.fieldType === null ? null : enumValue(patch.fieldType, ["testo", "numero", "data", "si-no", "scelta", "punteggio"], 'fieldType');
     }
     if (Object.hasOwn(patch, 'options')) {
       customFieldDef.options = patch.options === null ? null : requiredString(patch.options, 'options');
@@ -217,7 +217,7 @@ export class CustomFieldDefService {
         changes.label = value;
       }
       if (Object.hasOwn(patch, 'fieldType')) {
-        const value = patch.fieldType === null ? null : enumValue(patch.fieldType, ["testo", "numero", "data", "si-no", "scelta"], 'fieldType');
+        const value = patch.fieldType === null ? null : enumValue(patch.fieldType, ["testo", "numero", "data", "si-no", "scelta", "punteggio"], 'fieldType');
         assignments.push({ column: 'field_type', value: value });
         changes.fieldType = value;
       }
