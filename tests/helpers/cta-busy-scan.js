@@ -22,18 +22,26 @@
  * write runs (the wait is painted from state) cannot be seen this way: the
  * guard lists them by name, with the reason.
  *
- * It is a source scan, deliberately simple. Followed: `function f`,
- * `const f = (…) =>` of the same file, and the callbacks that run with the
- * press (.then/.catch/.finally, array walks, setTimeout, IIFE). Not
- * followed: functions of another module, and object or class methods
- * (`view.save()`, `drawer.moveView.start()`) — those buttons are listed by
- * hand in the guard.
+ * It is a source scan, deliberately simple. Followed: `function f` and
+ * `const f = (…) =>` of the same file, the object or class methods of the
+ * same file (`view.save()`, `drawer.moveView.start()`, `class C { save() }`),
+ * and the callbacks that run with the press (.then/.catch/.finally, array
+ * walks, setTimeout, IIFE). Not followed: functions of another module.
+ * A wait found past the press's own helpers only counts when the path
+ * reaches through one of the press's own methods: a wait painted that deep
+ * by plain helpers belongs to another button's render, not to this press.
  */
 
 const WRITE = /method: ['"](POST|PATCH|PUT|DELETE)['"]|submissions\.submit\(/;
 const BUSY = /\buiBusy\(|\buiHold\(|\buiMarkBusy\(|['"]aria-busy['"]/;
 const WRITE_DEPTH = 4;
 const BUSY_DEPTH = 2;
+const METHOD_BUSY_DEPTH = 5;
+// Words that open `name (…) {` without defining a method.
+const NOT_A_METHOD = new Set([
+  'if', 'for', 'while', 'switch', 'catch', 'with', 'do', 'else',
+  'function', 'async', 'static', 'get', 'set', 'return', 'typeof', 'new',
+]);
 
 /**
  * Index of the closer matching the opener ( [ { or quote at `i`; strings,
@@ -153,10 +161,39 @@ function runsWithThePress(text, start, end) {
 export function immediateCode(text) {
   let out = '';
   let from = 0;
-  const marker = /\.addEventListener\(|=>\s*|\bfunction\b[^(]*\(/g;
+  const marker = /\.addEventListener\(|=>\s*|\bfunction\b[^(]*\(|[A-Za-z_$][\w$]*\s*\(/g;
   let match;
   while ((match = marker.exec(text)) !== null) {
     if (match.index < from) continue;
+    // A shorthand method definition (`save() {…}`, `async save() {…}`) is a
+    // definition, never press code: cut it whole. A call only looks the
+    // same up to the `(` — leave calls alone.
+    if (!match[0].startsWith('.addEventListener') && !match[0].startsWith('=>') && !match[0].startsWith('function')) {
+      const name = match[0].slice(0, match[0].length - 1).trim();
+      // Past the whole match: the tail of a keyword (`if (` leaves `f (`)
+      // is never a definition of its own.
+      if (NOT_A_METHOD.has(name)) {
+        marker.lastIndex = match.index + match[0].length;
+        continue;
+      }
+      const paren = match.index + match[0].length - 1;
+      let k = closeOf(text, paren) + 1;
+      while (/\s/.test(text[k] ?? '')) k += 1;
+      if (text[k] !== '{') {
+        marker.lastIndex = match.index + match[0].length;
+        continue;
+      }
+      const cut = closeOf(text, k) + 1;
+      if (runsWithThePress(text, match.index, cut)) {
+        marker.lastIndex = match.index + match[0].length;
+        continue;
+      }
+      const start = match.index < from ? from : match.index;
+      out += text.slice(from, start);
+      from = cut;
+      marker.lastIndex = cut;
+      continue;
+    }
     let cut;
     let start = match.index;
     if (match[0].startsWith('.addEventListener')) {
@@ -217,12 +254,27 @@ export function withoutComments(src) {
 
 /**
  * Every named function of the file — `function f(…) {…}` and
- * `const f = (…) => …` — by name, with its body.
+ * `const f = (…) => …` — by name, with its body. Object or class methods of
+ * the same file join the same index under their own name: `save() {…}` and
+ * `save: (…) => …` in literals, `class C { save() {…} }`, and member
+ * assignments (`view.save = …`). A call reads only its last segment
+ * (`view.save()` calls `save`), so one name may hold several bodies.
  * @param {string} src
  */
 function functionsOf(src) {
   /** @type {Map<string, string>} */
   const bodies = new Map();
+  /** @param {string} name @param {string} body */
+  const add = (name, body) => {
+    if (NOT_A_METHOD.has(name)) return;
+    bodies.set(name, `${bodies.get(name) ?? ''}\n${body}`);
+  };
+  /** @param {number} paren @returns {string|null} the body inside the `{` after the params, or null */
+  const bracedAfter = (paren) => {
+    let j = closeOf(src, paren) + 1;
+    while (/\s/.test(src[j] ?? '')) j += 1;
+    return src[j] === '{' ? src.slice(j + 1, closeOf(src, j)) : null;
+  };
   const declaration = /(?:async\s+)?function\s+(\w+)\s*\(|(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>\s*/g;
   let match;
   while ((match = declaration.exec(src)) !== null) {
@@ -231,17 +283,80 @@ function functionsOf(src) {
     if (match[1]) j = closeOf(src, j - 1) + 1;
     while (/\s/.test(src[j] ?? '')) j += 1;
     const body = src[j] === '{' ? src.slice(j + 1, closeOf(src, j)) : src.slice(j, expressionEnd(src, j));
-    bodies.set(name, `${bodies.get(name) ?? ''}\n${body}`);
+    add(name, body);
+  }
+  // `save: (…) => …` and `save: function …` in object literals.
+  const property = /(\w+)\s*:\s*(?:async\s*)?(?:function\b\s*(?:\w+\s*)?\(|(?:\([^()]*\)|\w+)\s*=>\s*)/g;
+  while ((match = property.exec(src)) !== null) {
+    const name = match[1];
+    if (NOT_A_METHOD.has(name)) continue;
+    const tail = match[0].length;
+    let j = match.index + tail;
+    let body;
+    if (/function\b/.test(match[0])) {
+      body = bracedAfter(match.index + tail - 1);
+      if (body === null) continue;
+    } else {
+      while (/\s/.test(src[j] ?? '')) j += 1;
+      body = src[j] === '{' ? src.slice(j + 1, closeOf(src, j)) : src.slice(j, expressionEnd(src, j));
+    }
+    add(name, body);
+  }
+  // `view.save = (…) => …` and `view.save = function …`.
+  const member = /(?:[\w$]+\.)+(\w+)\s*=\s*(?:async\s*)?(?:function\b\s*(?:\w+\s*)?\(|(?:\([^()]*\)|\w+)\s*=>\s*)/g;
+  while ((match = member.exec(src)) !== null) {
+    const name = match[1];
+    if (NOT_A_METHOD.has(name)) continue;
+    const tail = match.index + match[0].length;
+    let body;
+    if (/function\b/.test(match[0].slice(match[0].indexOf('=')))) {
+      body = bracedAfter(tail - 1);
+      if (body === null) continue;
+    } else {
+      let j = tail;
+      while (/\s/.test(src[j] ?? '')) j += 1;
+      body = src[j] === '{' ? src.slice(j + 1, closeOf(src, j)) : src.slice(j, expressionEnd(src, j));
+    }
+    add(name, body);
+  }
+  // Shorthand methods of object literals and classes: `save() {…}`,
+  // `async save() {…}`, `static save() {…}`. In valid code `name (…) {` is
+  // always such a method, except for keywords and declarations.
+  const shorthand = /([A-Za-z_$][\w$]*)\s*\(/g;
+  while ((match = shorthand.exec(src)) !== null) {
+    const name = match[1];
+    if (NOT_A_METHOD.has(name)) continue;
+    if (/function\s*\*?\s*$/.test(src.slice(Math.max(0, match.index - 16), match.index))) continue;
+    const body = bracedAfter(match.index + match[0].length - 1);
+    if (body === null) continue;
+    add(name, body);
   }
   return bodies;
 }
 
-/** @param {string} text @param {Map<string, string>} bodies */
+/**
+ * Every call in `text` that resolves to an indexed body, with whether it
+ * reads as a method (`view.save()`, `view.save?.()`) or a plain call.
+ * @param {string} text @param {Map<string, string>} bodies
+ * @returns {Array<{ name: string, isMethod: boolean }>}
+ */
 function calledFunctions(text, bodies) {
+  /** @type {Array<{ name: string, isMethod: boolean }>} */
+  const found = [];
   /** @type {Set<string>} */
-  const names = new Set();
-  for (const match of text.matchAll(/\b(\w+)\s*\(/g)) if (bodies.has(match[1])) names.add(match[1]);
-  return names;
+  const seen = new Set();
+  const call = /\b(\w+)\s*(\?\.\s*)?\(/g;
+  let match;
+  while ((match = call.exec(text)) !== null) {
+    const name = match[1];
+    if (!bodies.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    // A bounded window is enough: a missed dot only reads as a plain call,
+    // which is what the scan did before methods were followed.
+    const before = text.slice(Math.max(0, match.index - 64), match.index).replace(/\s+$/, '');
+    found.push({ name, isMethod: match[2] != null || /(?<!\.)\.\s*$/.test(before) });
+  }
+  return found;
 }
 
 /**
@@ -253,24 +368,32 @@ function writeChain(text, bodies, depth, seen) {
   const code = immediateCode(text);
   if (WRITE.test(code)) return [];
   if (depth === 0) return null;
-  for (const name of calledFunctions(code, bodies)) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    const rest = writeChain(bodies.get(name) ?? '', bodies, depth - 1, seen);
-    if (rest !== null) return [name, ...rest];
+  for (const callee of calledFunctions(code, bodies)) {
+    if (seen.has(callee.name)) continue;
+    seen.add(callee.name);
+    const rest = writeChain(bodies.get(callee.name) ?? '', bodies, depth - 1, seen);
+    if (rest !== null) return [callee.name, ...rest];
   }
   return null;
 }
 
-/** @param {string} text @param {Map<string, string>} bodies @param {number} depth @param {Set<string>} seen */
-function showsWait(text, bodies, depth, seen) {
+/**
+ * Whether the press shows it is waiting. The press's own helpers (two hops)
+ * count as before; past them only a path through one of the press's own
+ * object or class methods counts — a wait painted that deep by plain
+ * helpers belongs to another button's render (a re-read paints its panels
+ * aria-busy), not to this press.
+ * @param {string} text @param {Map<string, string>} bodies @param {number} level hops from the press @param {Set<string>} seen @param {boolean} wide the path reached through a method
+ */
+function showsWait(text, bodies, level, seen, wide) {
   const code = immediateCode(text);
-  if (BUSY.test(code)) return true;
-  if (depth === 0) return false;
-  for (const name of calledFunctions(code, bodies)) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    if (showsWait(bodies.get(name) ?? '', bodies, depth - 1, seen)) return true;
+  if (BUSY.test(code) && (wide || level <= BUSY_DEPTH)) return true;
+  if (level >= METHOD_BUSY_DEPTH) return false;
+  for (const callee of calledFunctions(code, bodies)) {
+    const key = `${callee.name}${wide || callee.isMethod ? ':wide' : ':plain'}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (showsWait(bodies.get(callee.name) ?? '', bodies, level + 1, seen, wide || callee.isMethod)) return true;
   }
   return false;
 }
@@ -309,7 +432,7 @@ export function writeButtonsWithoutWait(raw) {
     const code = handlerCode(argument);
     const chain = writeChain(code, bodies, WRITE_DEPTH, new Set());
     if (chain === null) continue;
-    if (showsWait(code, bodies, BUSY_DEPTH, new Set())) continue;
+    if (showsWait(code, bodies, 0, new Set(), false)) continue;
     found.push({ line: src.slice(0, match.index).split('\n').length, button: match[1], chain });
   }
   return found;
