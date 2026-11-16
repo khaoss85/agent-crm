@@ -71,6 +71,11 @@ export const LLM_PURPOSES = Object.freeze([
   // of voice notes is attributed separately from call summaries.
   // Additive: every purpose accepted before stays accepted.
   'voice-note-structure',
+  // Voce 317fcc684f51: the three-line customer brief on the card is its
+  // own audited workload, so its spend is attributed separately from
+  // assistant chatter. Additive: every purpose accepted before stays
+  // accepted.
+  'contact-brief',
 ]);
 
 export const LLM_AUDIT_LIMIT = 200;
