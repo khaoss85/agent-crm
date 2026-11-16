@@ -737,6 +737,10 @@ test('the declared list holds the acceptance guards', () => {
     REPO_WIDE_GUARDS.includes('tests/module-manifest-revision-guard.test.js'),
     'a manifest-only PR must run tests/module-manifest-revision-guard.test.js',
   );
+  assert.ok(
+    REPO_WIDE_GUARDS.includes('tests/tour-claim.test.js'),
+    'a composition-only PR must run tests/tour-claim.test.js (nightly main run 43665590178)',
+  );
 });
 
 test('a payments-only change runs the guards on top of its selection', () => {
