@@ -164,6 +164,7 @@ export function createCustomerHubPackage(options = {}) {
           { name: 'id', type: 'string', hint: 'The record id.' },
           { name: 'before', type: 'string', required: false, hint: 'Entries cursor: the nextCursor of the previous page (<occurredAt>|<id>); reads strictly older entries, newest first.' },
           { name: 'limit', type: 'integer', required: false, hint: 'Entries per page, newest first (default 20, at most 50). With neither before nor limit the entries read oldest first, capped at 50.' },
+          { name: 'viewer', type: 'json', required: false, hint: 'Server-side only { actorId, isAdmin }: someone else\u2019s private booking reads as Occupato, never its service, price or notes. Never from the caller.' },
         ],
         create(runtime) {
           // Opened lazily on first read, NOT at composition: the framework
@@ -229,7 +230,7 @@ export function createCustomerHubPackage(options = {}) {
               readProfile: (input) => profile.readProfile(input),
               readConversations: (subject) => threads.conversations(subject),
               readTimeline: (subject) => threads.timeline(subject),
-              readSchedule: (subject) => schedule.scheduleFor(subject),
+              readSchedule: (subject) => schedule.scheduleFor(subject, request?.viewer ?? null),
               readFlags,
               // backlog:ea463d6ff10d: the cursor read only when the caller
               // asks for a page; every other caller keeps the legacy read.

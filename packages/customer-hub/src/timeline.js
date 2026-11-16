@@ -49,7 +49,13 @@ const ENTRY_PAGE_MAX = 50;
  *   page (backlog:ea463d6ff10d) switches the entries to the cursor read,
  *   newest first; absent, the entries read exactly as before.
  */
-export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null, page = null }) {
+/**
+ * The server-side appointment viewer (backlog:9aa5c073): someone else's
+ * private booking reads as «Occupato» in the timeline, never its service,
+ * price or notes. Absent, the appointment read is unprivileged and masks
+ * every private row.
+ */
+export async function readCustomerTimeline({ core, subject, readProfile, readConversations, readTimeline, readSchedule, readFlags = null, page = null, viewer = null }) {
   const resource = subject?.resource;
   const id = subject?.id;
   if (typeof resource !== 'string' || typeof id !== 'string' || resource === '' || id === '') {
@@ -88,7 +94,7 @@ export async function readCustomerTimeline({ core, subject, readProfile, readCon
   const providerPromises = [
     call(readConversations, envelope),
     call(readTimeline, envelope),
-    call(readSchedule, envelope),
+    Promise.resolve().then(() => readSchedule(envelope, viewer)),
   ];
   // The profile error wins, exactly as when it ran first: a late provider
   // failure behind a failed profile must not surface as an unhandled
@@ -455,7 +461,19 @@ function parsePage(page) {
 function shapeAppointments(schedule) {
   const rows = schedule ?? [];
   const capped = rows.length > APPOINTMENT_LIMIT;
-  const items = rows.slice(0, APPOINTMENT_LIMIT).map((row) => Object.freeze({
+  // A masked row (backlog:9aa5c073) is someone else's private booking: the
+  // timeline reads «Occupato» with the slot, never the service, the price
+  // or the notes.
+  const items = rows.slice(0, APPOINTMENT_LIMIT).map((row) => (row?.masked === true
+    ? Object.freeze({
+      id: row.id,
+      status: row.status,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      teamMemberId: row.teamMemberId,
+      masked: true,
+    })
+    : Object.freeze({
     id: row.id,
     status: row.status,
     startsAt: row.startsAt,
@@ -468,7 +486,7 @@ function shapeAppointments(schedule) {
     // backlog:5346ab531538: the history row of a cancellation.
     cancelReason: row.cancelReason ?? null,
     decidedAt: row.decidedAt ?? null,
-  }));
+  })));
   return Object.freeze({
     available: true,
     count: rows.length,

@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 
 import {
-  ANONYMOUS_ACTOR, AppError, ConflictError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
+  ANONYMOUS_ACTOR, AppError, ConflictError, ForbiddenError, NotFoundError, TRANSACTION_PROOF, ValidationError, isCalendarDate, proveCallerTransaction,
   requireActor, optionalIsoDate, requireAmount,
 } from '../../core/index.js';
 
@@ -1426,6 +1426,11 @@ export async function rescheduleAppointment(context, request) {
   // re-reads inside the member chain, so the check and the write see the
   // winner of any race that committed between the two reads.
   const first = await lookup();
+  // A private booking moves only for its creator and the administrators
+  // (backlog:9aa5c073): visibility never changes after booking, so the
+  // first read already settles it — anyone else is refused 403 before any
+  // write, on a same-slot reschedule too, so a stranger never reads it.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first);
   const memberId = typeof first.teamMemberId === 'string' && first.teamMemberId !== ''
     ? first.teamMemberId
     : safeText(first.teamMemberId, 'teamMemberId', MAX_ID);
@@ -1604,6 +1609,10 @@ export async function cancelAppointment(context, request) {
     return row;
   };
   const first = await lookup();
+  // A private booking cancels only for its creator and the administrators
+  // (backlog:9aa5c073): anyone else is refused 403 before any write — on
+  // an already-cancelled row too, so a stranger never reads its fate.
+  refuseUnlessSeesFull(mutationViewer(who.id, record.viewer), first);
   let appointment = first;
   let cancelled = false;
   if (first.status !== CANCELLED_STATE) {
@@ -1673,7 +1682,7 @@ export async function readAppointment({ appointments }, id) {
  * @param {{appointments: any}} storage
  * @param {unknown} subject the ADR-030 envelope pointing at the host record
  */
-export async function readSchedule({ appointments }, subject) {
+export async function readSchedule({ appointments }, subject, viewer = null) {
   const envelope = validateSubject(subject);
   if (!appointments || typeof appointments.listWhere !== 'function') {
     throw new AppError('The appointments package is installed without an exact-match read on its "appointment" records', {
@@ -1689,7 +1698,12 @@ export async function readSchedule({ appointments }, subject) {
     || String(a.endsAt ?? '').localeCompare(String(b.endsAt ?? ''))
     || String(a.id ?? '').localeCompare(String(b.id ?? ''))
   ));
-  return Object.freeze(bySlot.map((row) => Object.freeze({
+  // A private booking (backlog:9aa5c073) reads full only for its creator
+  // and the administrators (`viewer = { actorId, isAdmin }`, server-side
+  // only): anyone else reads the masked slot-and-hold, never the service,
+  // the price or the notes. Without a viewer the read is unprivileged.
+  const visible = bySlot.map((row) => (viewerSeesFull(viewer, row) ? row : projectMaskedWeekRow(row)));
+  return Object.freeze(visible.map((row) => (row?.masked === true ? row : Object.freeze({
     id: row.id,
     status: row.status,
     startsAt: row.startsAt,
@@ -1786,12 +1800,14 @@ function effectiveVisibility(row) {
  * Whether the viewer reads the full row (backlog:9aa5c073): everyone reads
  * default and public rows; a private row reads full only for its creator
  * (the booking actor) and the administrators. Anyone else reads it as
- * «Occupato» — never the customer, the service or the notes.
+ * «Occupato» — never the customer, the service or the notes. Exported for
+ * the generic module and customer-hub reads, which enforce the same rule
+ * outside the team-week projection.
  *
  * @param {{actorId?: unknown, isAdmin?: unknown}|null|undefined} viewer
  * @param {any} row
  */
-function viewerSeesFull(viewer, row) {
+export function viewerSeesFull(viewer, row) {
   if (effectiveVisibility(row) !== 'private') return true;
   if (viewer?.isAdmin === true) return true;
   const watcher = typeof viewer?.actorId === 'string' ? viewer.actorId : '';
@@ -1804,11 +1820,13 @@ function viewerSeesFull(viewer, row) {
  * in `busy`) so the grid paints it as «Occupato» and the overlap guards
  * keep refusing over it: a masked row that left the list would free its
  * slot for a double booking. No customer, no service, no notes, no price,
- * no source key — the opaque id stays so the grid keys its block.
+ * no source key — the opaque id stays so the grid keys its block. Exported
+ * for the generic module and customer-hub reads, which project the same
+ * shape outside the team week.
  *
  * @param {any} row
  */
-function projectMaskedWeekRow(row) {
+export function projectMaskedWeekRow(row) {
   return Object.freeze({
     id: row.id,
     status: row.status,
@@ -1818,6 +1836,42 @@ function projectMaskedWeekRow(row) {
     visibility: 'private',
     masked: true,
   });
+}
+
+/**
+ * Refuse a mutation of someone else's private booking (backlog:9aa5c073):
+ * only its creator (the booking actor) and the administrators may move or
+ * cancel it. Everyone else is refused 403 before any write — the masked
+ * grid row never moves, never opens an edit form and never offers
+ * cancellation. The admin flag arrives server-side with the operation
+ * input, like the team-week viewer; the actor id is the authenticated
+ * caller, never a request field.
+ *
+ * @param {{actorId: string, isAdmin: boolean}} viewer
+ * @param {any} row
+ */
+export function refuseUnlessSeesFull(viewer, row) {
+  if (viewerSeesFull(viewer, row)) return;
+  throw new ForbiddenError('only its creator and the administrators may change a private booking', {
+    field: 'visibility',
+  });
+}
+
+/**
+ * Normalize the server-side viewer for a mutation (backlog:9aa5c073): the
+ * actor id is the authenticated caller; the admin flag arrives with the
+ * operation input from the server (never from the caller). Absent, the
+ * call is unprivileged — a private row then refuses, a public one passes.
+ *
+ * @param {unknown} actorId
+ * @param {unknown} viewer
+ */
+export function mutationViewer(actorId, viewer) {
+  const value = viewer && typeof viewer === 'object' && !Array.isArray(viewer) ? viewer : null;
+  return {
+    actorId: typeof actorId === 'string' ? actorId : '',
+    isAdmin: value?.isAdmin === true,
+  };
 }
 
 /**
@@ -2820,8 +2874,8 @@ export function createAppointmentScheduleCapability({ moduleNames, calendarSync 
       const blocks = calendarSync ?? context?.calendarSync ?? null;
       return Object.freeze({
         capabilityContract: 1,
-        /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject */
-        scheduleFor: (subject) => readSchedule({ appointments: service }, subject),
+        /** @param {{resource: string, id: string, owner: string, ownerPackage?: string|null, label?: string|null}} subject @param {{actorId?: unknown, isAdmin?: unknown}|null|undefined} [viewer] */
+        scheduleFor: (subject, viewer = null) => readSchedule({ appointments: service }, subject, viewer),
         /** @param {{teamMemberIds?: unknown, from?: unknown, to?: unknown}} filter */
         teamWeekFor: (filter) => readTeamWeek({ appointments: service, calendarSync: blocks }, filter),
       });
