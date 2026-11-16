@@ -54,21 +54,22 @@ const CONTACT_BRIEF_MAX_PROMPT_CHARS = 32000;
  * Words no brief line may carry: personality judgments (Kombo section 10,
  * group C: the DISC/MBTI profile is not copied). The prompt forbids them
  * and the parser refuses them typed, so a model that judges anyway never
- * reaches the card. Lowercase substring match on the joined lines.
+ * reaches the card. Word-boundary match on the joined lines, so ordinary
+ * words that merely contain a banned token (discutere, disciplina) pass.
  */
 const CONTACT_BRIEF_BANNED = Object.freeze([
-  'disc',
-  'mbti',
-  'enneagramma',
-  'narcisista',
-  'psicopatico',
-  'pigro',
-  'maleducato',
-  'stupido',
-  'disonesto',
-  'manipolatore',
-  'personalità disturbata',
-  'disturbo di personalità',
+  /\bdisc\b/,
+  /\bmbti\b/,
+  /\benneagramma\b/,
+  /\bnarcisista\b/,
+  /\bpsicopatico\b/,
+  /\bpigro\b/,
+  /\bmaleducato\b/,
+  /\bstupido\b/,
+  /\bdisonesto\b/,
+  /\bmanipolatore\b/,
+  /personalità disturbata/,
+  /disturbo di personalità/,
 ]);
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
@@ -279,7 +280,7 @@ export function parseContactBriefResponse(text) {
     lines[key] = Object.freeze({ testo: line, fonte: source });
   }
   const joined = Object.values(lines).map((line) => `${line.testo} ${line.fonte}`).join('\n').toLowerCase();
-  if (CONTACT_BRIEF_BANNED.some((word) => joined.includes(word))) {
+  if (CONTACT_BRIEF_BANNED.some((banned) => banned.test(joined))) {
     throw new AppError('the model judged the person instead of citing facts', {
       code: 'CONTACT_BRIEF_JUDGMENT', status: 502,
     });

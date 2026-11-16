@@ -192,6 +192,9 @@ test('parseContactBriefResponse drops the sourceless line and refuses judgments'
   judging.cosaDire = { testo: 'Digli che è pigro e maleducato.', fonte: 'appuntamento' };
   assert.throws(() => parseContactBriefResponse(JSON.stringify(judging)), (error) => error?.code === 'CONTACT_BRIEF_JUDGMENT');
   assert.throws(() => parseContactBriefResponse('non json'), (error) => error?.code === 'CONTACT_BRIEF_INVALID');
+  const innocent = JSON.parse(BRIEF_JSON);
+  innocent.cosaDire = { testo: 'Ne abbiamo discusso in chiamata: conferma la prova.', fonte: 'appuntamento del 18/11' };
+  assert.doesNotThrow(() => parseContactBriefResponse(JSON.stringify(innocent)), 'ordinary words pass the judgment fence');
 });
 
 test('with the AI off (dry run) the brief stays off: no lines to show', async () => {
