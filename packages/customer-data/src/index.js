@@ -732,9 +732,8 @@ export function createCustomerDataPackage(options = {}) {
         appMethod: 'proposeFieldFromQuestion',
         label: 'Propose one space field from a question',
         description:
-          'From one plain-words question («usano già un gestionale?») to one field proposal (key, label, one of testo/si-no/punteggio). '
-          + 'Writes nothing: the operator confirms through defineCustomField. Without a caller-built extractField adapter '
-          + 'it refuses CUSTOMER_FIELD_AI_UNAVAILABLE. A human decision: the actor must be a user.',
+          'One plain-words question to one field proposal (key, label: testo/si-no/punteggio). Writes nothing; '
+          + 'the operator confirms via defineCustomField. Without an extractField adapter refuses CUSTOMER_FIELD_AI_UNAVAILABLE.',
         input: [
           { name: 'question', type: 'string', hint: 'The plain-words question, e.g. "usano già un gestionale?".' },
           { name: 'adapter', type: 'json', hint: 'Caller-built extractField adapter for in-process calls (tests): only a callable counts.' },
@@ -749,11 +748,9 @@ export function createCustomerDataPackage(options = {}) {
         appMethod: 'fillAiFieldValues',
         label: 'Fill AI fields of one customer from sources',
         description:
-          'Fill the space AI fields (testo, sì-no, punteggio) of one customer from its linked sources, without a human hand. '
-          + 'Every stored value carries the source read; a proposal without a source is skipped and the field stays empty, never invented. '
-          + 'The spend cap is checked before the AI runs: over the cap nothing is stored and the AI is never called. '
-          + 'Caller-built extractFieldValue adapter (tests fake, pilot worker OpenAI wiring): the framework never holds a key. '
-          + 'A human decision: the actor must be a user.',
+          'Fill one customer AI fields (testo, si-no, punteggio) from linked sources, no human hand. '
+          + 'Every value carries its source; sourceless proposals are skipped, never invented. '
+          + 'Spend cap checked before the AI runs: over cap nothing stored, AI never called.',
         input: [
           { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
           { name: 'id', type: 'string', hint: 'The record id.' },
@@ -762,7 +759,7 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'adapter', type: 'json', hint: 'Caller-built extractFieldValue adapter for in-process calls (tests): only a callable counts.' },
           { name: 'spendGuard', type: 'json', hint: 'Optional spend-cap guard for in-process calls (tests): only a callable counts. Absent means allowed.' },
         ],
-        create() {
+        create(runtime) {
           return (request) => fillAiFieldValues(
             { modules: runtime.modules, names },
             { ...request, adapter: callableFieldValueAdapter(request?.adapter), spendGuard: callableSpendGuard(request?.spendGuard) },

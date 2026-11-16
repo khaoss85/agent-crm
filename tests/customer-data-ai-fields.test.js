@@ -43,7 +43,7 @@ function fakeFillAdapter(answers, calls = null) {
 function scene(t) {
   const app = createAccordoApp({ dbPath: ':memory:' });
   t.after(() => app.close());
-  for (const method of ['defineCustomField', 'listCustomFieldDefs', 'setCustomFieldValue',
+  for (const method of ['defineCustomField', 'listCustomFields', 'setCustomFieldValue',
     'readCustomFieldValues', 'proposeFieldFromQuestion', 'fillAiFieldValues']) {
     assert.equal(typeof app[method], 'function', `the customer-data package offers ${method}`);
   }
@@ -71,12 +71,12 @@ test('da una domanda nasce un campo punteggio: la proposta scrive niente, la con
   assert.equal(proposal.key, 'gestionale');
   assert.equal(proposal.label, 'Gestionale');
   assert.equal(proposal.type, 'punteggio');
-  assert.deepEqual(await app.listCustomFieldDefs({}), [], 'the proposal writes nothing');
+  assert.deepEqual(await app.listCustomFields({}), [], 'the proposal writes nothing');
 
   const defined = await app.defineCustomField({ actor: OPERATOR, label: proposal.label, type: proposal.type });
   assert.equal(defined.definition.key, 'gestionale');
   assert.equal(defined.replayed, false);
-  assert.deepEqual((await app.listCustomFieldDefs({})).map((def) => def.type), ['punteggio']);
+  assert.deepEqual((await app.listCustomFields({})).map((def) => def.type), ['punteggio']);
 
   await assert.rejects(
     () => app.defineCustomField({ actor: OPERATOR, label: 'Gestionale', type: 'numero' }),
