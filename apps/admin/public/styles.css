@@ -721,14 +721,25 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 14px 12px 0; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 8px 12px 8px; }
+  /* backlog:dd6a01de569b: the AI bar touched the bar's bottom edge (0px) —
+   * the 8px bottom inset is its margin, funded by the top inset (14→8) and
+   * the tighter space row, so the 120px phone budget still holds. */
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; font-size: 14px; font-weight: 750; }
   .bo-topbar .bo-phonebar-space .bo-space-badge { width: 28px; height: 28px; font-size: 11px; }
   .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 14px; line-height: 1.2; }
   .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
   .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  /* backlog:dd6a01de569b: on a phone the bar above already names the space,
+   * so the path keeps the screen only; and ⌘K needs a keyboard — without
+   * one the hint only eats bar room. Both stay on desktop. */
+  .bo-crumb .bo-crumb-space { display: none; }
+  .bo-ai .bo-ai-key { display: none; }
+  /* backlog:dd6a01de569b: once the page slides under the sticky bar, an
+   * edge — shadow only, never a border, so the 120px budget cannot move. */
+  .bo-topbar.bo-topbar-scrolled { box-shadow: var(--shadow-pop); }
   .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
