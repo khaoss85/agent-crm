@@ -349,6 +349,35 @@ test('seguito P3 #743 (1): hub and browser copies read a legacy stored name exac
   assert.equal(nameFromProfile({ identity: { contact: { firstName: 'Amazon.it', lastName: 'It', email: 'a@amazon.it' } } }), 'Amazon.it');
 });
 
+test('backlog:088b639d96a2: placeholder and variant company and sender names read clean', () => {
+  assert.equal(companyDisplayName({ name: 'esempio.invalid' }), null, 'a documentation domain is no company');
+  assert.equal(isPlaceholderCompanyName('esempio.invalid'), true);
+  assert.equal(registrableDomain('x@esempio.invalid'), null);
+  assert.equal(labelFromEmail('x@esempio.invalid'), null, 'no «Esempio» brand from a placeholder address');
+  assert.equal(companyDisplayName({ name: 'amazon.it' }), 'amazon.it');
+  assert.equal(companyDisplayName({ name: 'Amazon.it' }), 'amazon.it', 'variants read united');
+  assert.equal(companyDisplayName({ name: 'MailUp | TeamSystem' }), 'MailUp', 'a co-brand reads by its own brand');
+  assert.equal(readableName('Francesco Tirsi (Documenti Google)'), 'Francesco Tirsi');
+  assert.equal(browserReadableName('Francesco Tirsi (Documenti Google)'), 'Francesco Tirsi', 'the browser twin drops the same qualifier');
+  assert.equal(browserReadableName('MailUp | TeamSystem'), 'MailUp');
+  const hubName = (firstName, lastName, email = 'x@esempio.it') => shapeCustomerCard(
+    { ...LEGACY_SECTIONS(), identity: { contact: { firstName, lastName, email }, company: null } },
+    { resource: 'contact', id: 'c1' }).name;
+  assert.equal(hubName('Francesco Tirsi (Documenti Google)', ''), 'Francesco Tirsi', 'the hub twin drops the same qualifier');
+  assert.equal(hubName('MailUp | TeamSystem', ''), 'MailUp');
+  assert.deepEqual(leadNamesForEmail('apple.reply@apple.com'), { firstName: 'Apple', lastName: '—' }, 'a reply token is never a surname');
+  const noReply = leadNamesForEmail('no_reply@apple.com');
+  assert.equal(noReply.firstName, 'Apple', 'no_reply reads the brand');
+  assert.ok(!`${noReply.firstName} ${noReply.lastName}`.includes('Reply'), '«no_reply» never becomes «Apple Reply»');
+  assert.equal(contactDisplayName({ firstName: 'no_reply', lastName: null, email: 'no_reply@apple.com' }), 'Apple');
+  const row = (company) => shapeCustomerRow({ contact: null, company }, {});
+  assert.equal(row({ id: 'co1', name: 'MailUp | TeamSystem' }).company?.name, 'MailUp');
+  assert.equal(row({ id: 'co9', name: 'esempio.invalid' }).company, null, 'a placeholder company lists no company line');
+  assert.equal(shownCompanyName({ company: { id: 'co1', name: 'Amazon.it' } }), 'amazon.it', 'the scheda unites the variants too');
+  assert.equal(shownCompanyName({ company: { id: 'co1', name: 'MailUp | TeamSystem' } }), 'MailUp');
+  assert.equal(shownCompanyName({ company: { id: 'co9', name: 'esempio.invalid' } }), null);
+});
+
 test('seguito P3 #743 (2): arrival drops a repeated piece even inside the last name, never a real name', () => {
   const email = 'conferma-spedizione@amazon.it';
   assert.deepEqual(contactNamesFor({ firstName: 'Amazon.it', lastName: 'It Rossi', email }), { firstName: 'Amazon.it', lastName: 'Rossi' });
