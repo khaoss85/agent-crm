@@ -11,12 +11,14 @@ import {
   parsePlaybookProposalResponse,
   proposeSalesPlaybook,
 } from '../packages/llm/src/sales-playbook.js';
+import { assertMessageDraftPlaybook } from '../packages/llm/src/message-draft.js';
 import { createAccordoApp } from '../packages/app/src/index.js';
 
 /**
  * Sales playbook tests (backlog:ad7e03ac): one playbook per space, read
- * and edited by the member; the AI proposes it from a site or a plain
- * description and nothing is saved until the member confirms; with the
+ * and edited by the member; the AI proposes it from the member's
+ * description (a site travels only beside it, never alone) and nothing
+ * is saved until the member confirms; with the
  * AI off the member compiles it by hand and the rest works.
  */
 
@@ -89,7 +91,7 @@ test('the member compiles the playbook by hand with the AI off', async (t) => {
   assert.equal(service.getBySpace('presti'), null, 'spaces never share a playbook');
 });
 
-test('the AI proposes from a site and nothing is saved without confirm', async (t) => {
+test('the AI proposes from a description and nothing is saved without confirm', async (t) => {
   const service = appFor(t);
   const seen = {};
   const out = await proposeSalesPlaybook({
@@ -111,16 +113,21 @@ test('the AI proposes from a site and nothing is saved without confirm', async (
 
 test('the prompt carries the member source verbatim', () => {
   const { messages } = buildPlaybookProposalPrompt(assertPlaybookProposalInput({
+    website: 'https://x.example',
     description: 'Palestra con personal training e corsi di gruppo.',
   }));
   const user = messages.find((entry) => entry.role === 'user').content;
   assert.ok(user.includes('Palestra con personal training e corsi di gruppo.'));
+  assert.ok(user.includes('https://x.example'));
   assert.ok(user.includes('"companyName"'));
   assert.ok(user.includes('"hours"'));
-  assert.deepEqual(Object.keys(assertPlaybookProposalInput({ website: 'https://x.example' })), ['website', 'description']);
+  assert.deepEqual(
+    Object.keys(assertPlaybookProposalInput({ description: 'Palestra.' })),
+    ['website', 'description'],
+  );
 });
 
-test('a description alone proposes, an empty source refuses', async () => {
+test('a description alone proposes, a website alone refuses', async () => {
   const seen = {};
   const out = await proposeSalesPlaybook({
     complete: fakeComplete({ seen }),
@@ -132,6 +139,20 @@ test('a description alone proposes, an empty source refuses', async () => {
   assert.ok(seen.request);
   assert.throws(() => assertPlaybookProposalInput({}), ValidationError);
   assert.throws(() => assertPlaybookProposalInput({ website: '   ' }), ValidationError);
+  assert.throws(
+    () => assertPlaybookProposalInput({ website: 'https://x.example' }),
+    /member description/,
+    'no page fetch exists, so a bare URL grounds nothing',
+  );
+  await assert.rejects(
+    proposeSalesPlaybook({
+      complete: fakeComplete(),
+      spaceId: 'presti',
+      actor: ACTOR,
+      website: 'https://x.example',
+    }),
+    ValidationError,
+  );
 });
 
 test('an unusable model answer refuses typed, never an empty playbook', () => {
@@ -145,6 +166,34 @@ test('an unusable model answer refuses typed, never an empty playbook', () => {
   assert.equal(partial.products, 'Solo corsi');
   assert.equal(partial.companyName, null, 'missing fields stay null for the member to fill');
   assert.deepEqual(Object.keys(partial).sort(), [...SALES_PLAYBOOK_FIELDS].sort());
+});
+
+test('the save keeps the draft fence, so a stored playbook stays draftable', async (t) => {
+  const service = appFor(t);
+  await assert.rejects(
+    service.savePlaybook('presti', { products: `${'x'.repeat(2000)}y` }, { actor: ACTOR }),
+    /at most 2000/,
+    'over-long content refuses on save, never at draft time',
+  );
+  await assert.rejects(
+    service.savePlaybook('presti', { products: 'Corsi\te serali' }, { actor: ACTOR }),
+    /control characters/,
+    'a tab refuses on save, never at draft time',
+  );
+  await assert.rejects(
+    service.savePlaybook('presti', { products: 42 }, { actor: ACTOR }),
+    /must be text/,
+  );
+  assert.equal(service.getBySpace('presti'), null, 'three refuses wrote no row');
+  const boundary = await service.savePlaybook('presti', {
+    companyName: 'Presti Group',
+    products: 'x'.repeat(2000),
+  }, { actor: ACTOR });
+  assert.equal(boundary.products.length, 2000, 'exactly 2000 chars still saves');
+  assert.doesNotThrow(
+    () => assertMessageDraftPlaybook(service.getBySpace('presti')),
+    'what the save accepted, the draft accepts too',
+  );
 });
 
 test('a dry run answers off-status and saves nothing', async (t) => {

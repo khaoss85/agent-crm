@@ -9,12 +9,16 @@ import { AppError, ValidationError } from '../../core/index.js';
  * what tone, what never to say, links and hours — is the context every
  * space AI writes from (Kombo map 12/11, sections 8-9: «si dice
  * l'obiettivo, l'agente propone, la persona approva»). This module is the
- * framework side of the proposal: it builds the prompt from a site or a
- * plain description, calls the package's `complete` handle (purpose
+ * framework side of the proposal: it builds the prompt from the member's
+ * description (a site travels only beside it, never alone, because there
+ * is no page fetch), calls the package's `complete` handle (purpose
  * `assistant`, so the spend is audited exactly like every other
  * assistant call, reusing `message-draft.js` and never a second billing
  * path), and parses the model's answer back into the playbook shape the
- * member reviews.
+ * member reviews. The description is always required: there is no page
+ * fetch here, so a bare URL would give the model zero facts to ground
+ * the business details it must output — the site travels only as extra
+ * context beside the member's own description.
  *
  * What is deliberately NOT here: any storage, any session, any HTTP.
  * Proposing returns values and saves nothing — the member's explicit
@@ -80,9 +84,13 @@ function requiredSource(value, field, max) {
 }
 
 /**
- * Validate the proposal request. At least one source travels: a site, a
- * plain description, or both. Throws fail-closed; returns the frozen
- * request the prompt builder and the caller execute.
+ * Validate the proposal request. The member's own description is always
+ * required: this module performs no page fetch and the provider adapter
+ * has no browsing tools, so a website-only proposal would send the model
+ * a bare URL with zero page facts to ground the business details it must
+ * output. The site travels only as extra context beside the description.
+ * Throws fail-closed; returns the frozen request the prompt builder and
+ * the caller execute.
  */
 export function assertPlaybookProposalInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -91,24 +99,25 @@ export function assertPlaybookProposalInput(input) {
   const value = /** @type {Record<string, unknown>} */ (input);
   const hasWebsite = typeof value.website === 'string' && value.website.trim() !== '';
   const hasDescription = typeof value.description === 'string' && value.description.trim() !== '';
-  if (!hasWebsite && !hasDescription) {
-    throw new ValidationError('playbook proposal needs a website or a description', { field: 'input' });
+  if (!hasDescription) {
+    throw new ValidationError(
+      'playbook proposal needs the member description (a website alone carries no page facts)',
+      { field: 'input' },
+    );
   }
   return Object.freeze({
     website: hasWebsite
       ? requiredSource(value.website, 'website', SALES_PLAYBOOK_MAX_SOURCE_CHARS)
       : null,
-    description: hasDescription
-      ? requiredSource(value.description, 'description', SALES_PLAYBOOK_MAX_SOURCE_CHARS)
-      : null,
+    description: requiredSource(value.description, 'description', SALES_PLAYBOOK_MAX_SOURCE_CHARS),
   });
 }
 
 /**
  * Build the completion messages for one proposal. Pure: the acceptance
- * pins that the member's own source reaches the model — the site or the
- * description travels verbatim — so the test reads it back from exactly
- * what this function returns.
+ * pins that the member's own source reaches the model — the description
+ * always travels verbatim, the site (when given) beside it — so the test
+ * reads it back from exactly what this function returns.
  *
  * @param {{website: string | null, description: string | null}} source
  */

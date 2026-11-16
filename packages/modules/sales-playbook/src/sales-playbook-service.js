@@ -6,10 +6,43 @@
 import { randomUUID } from 'node:crypto';
 import { ConflictError, NotFoundError, ValidationError } from '../../../core/src/errors.js';
 import {
-  optionalString,
   requiredString,
 } from '../../../core/src/validation.js';
 import { nowIso } from '../../../core/src/time.js';
+
+// The same fence the draft consumer (packages/llm/src/message-draft.js
+// assertMessageDraftPlaybook) and the proposal parser
+// (packages/llm/src/sales-playbook.js optionalField) enforce: at most 2000
+// chars, no control characters (only \n may pass). A row saved without it
+// would later throw at draft time instead of drafting, so every write path
+// below validates through here.
+const SALES_PLAYBOOK_MAX_FIELD_CHARS = 2000;
+const PLAYBOOK_CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+
+/**
+ * One playbook content field on the save path: null, undefined or blank
+ * stays null (clears the field), anything else is trimmed text inside the
+ * 2000-char fence with no control characters.
+ * @param {unknown} value @param {string} field
+ */
+function playbookField(value, field) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError(`sales-playbook ${field} must be text`, { field });
+  }
+  const text = value.replace(/\r\n/g, '\n').trim();
+  if (text === '') return null;
+  if (text.length > SALES_PLAYBOOK_MAX_FIELD_CHARS) {
+    throw new ValidationError(
+      `sales-playbook ${field} is at most ${SALES_PLAYBOOK_MAX_FIELD_CHARS} characters`,
+      { field },
+    );
+  }
+  if (PLAYBOOK_CONTROL_RE.test(text.replace(/\n/g, ''))) {
+    throw new ValidationError(`sales-playbook ${field} carries no control characters`, { field });
+  }
+  return text;
+}
 
 export class SalesPlaybookService {
   /** @param {{database: any, audit: any, events: any, references?: any}} dependencies */
@@ -84,31 +117,31 @@ export class SalesPlaybookService {
       salesPlaybook.spaceId = patch.spaceId === null ? null : requiredString(patch.spaceId, 'spaceId');
     }
     if (Object.hasOwn(patch, 'companyName')) {
-      salesPlaybook.companyName = patch.companyName === null ? null : requiredString(patch.companyName, 'companyName');
+      salesPlaybook.companyName = playbookField(patch.companyName, 'companyName');
     }
     if (Object.hasOwn(patch, 'description')) {
-      salesPlaybook.description = patch.description === null ? null : requiredString(patch.description, 'description');
+      salesPlaybook.description = playbookField(patch.description, 'description');
     }
     if (Object.hasOwn(patch, 'website')) {
-      salesPlaybook.website = patch.website === null ? null : requiredString(patch.website, 'website');
+      salesPlaybook.website = playbookField(patch.website, 'website');
     }
     if (Object.hasOwn(patch, 'products')) {
-      salesPlaybook.products = patch.products === null ? null : requiredString(patch.products, 'products');
+      salesPlaybook.products = playbookField(patch.products, 'products');
     }
     if (Object.hasOwn(patch, 'idealCustomer')) {
-      salesPlaybook.idealCustomer = patch.idealCustomer === null ? null : requiredString(patch.idealCustomer, 'idealCustomer');
+      salesPlaybook.idealCustomer = playbookField(patch.idealCustomer, 'idealCustomer');
     }
     if (Object.hasOwn(patch, 'tone')) {
-      salesPlaybook.tone = patch.tone === null ? null : requiredString(patch.tone, 'tone');
+      salesPlaybook.tone = playbookField(patch.tone, 'tone');
     }
     if (Object.hasOwn(patch, 'avoidTopics')) {
-      salesPlaybook.avoidTopics = patch.avoidTopics === null ? null : requiredString(patch.avoidTopics, 'avoidTopics');
+      salesPlaybook.avoidTopics = playbookField(patch.avoidTopics, 'avoidTopics');
     }
     if (Object.hasOwn(patch, 'links')) {
-      salesPlaybook.links = patch.links === null ? null : requiredString(patch.links, 'links');
+      salesPlaybook.links = playbookField(patch.links, 'links');
     }
     if (Object.hasOwn(patch, 'hours')) {
-      salesPlaybook.hours = patch.hours === null ? null : requiredString(patch.hours, 'hours');
+      salesPlaybook.hours = playbookField(patch.hours, 'hours');
     }
 
     this.#mutation(() => {
@@ -227,47 +260,47 @@ export class SalesPlaybookService {
         changes.spaceId = value;
       }
       if (Object.hasOwn(patch, 'companyName')) {
-        const value = patch.companyName === null ? null : requiredString(patch.companyName, 'companyName');
+        const value = playbookField(patch.companyName, 'companyName');
         assignments.push({ column: 'company_name', value: value });
         changes.companyName = value;
       }
       if (Object.hasOwn(patch, 'description')) {
-        const value = patch.description === null ? null : requiredString(patch.description, 'description');
+        const value = playbookField(patch.description, 'description');
         assignments.push({ column: 'description', value: value });
         changes.description = value;
       }
       if (Object.hasOwn(patch, 'website')) {
-        const value = patch.website === null ? null : requiredString(patch.website, 'website');
+        const value = playbookField(patch.website, 'website');
         assignments.push({ column: 'website', value: value });
         changes.website = value;
       }
       if (Object.hasOwn(patch, 'products')) {
-        const value = patch.products === null ? null : requiredString(patch.products, 'products');
+        const value = playbookField(patch.products, 'products');
         assignments.push({ column: 'products', value: value });
         changes.products = value;
       }
       if (Object.hasOwn(patch, 'idealCustomer')) {
-        const value = patch.idealCustomer === null ? null : requiredString(patch.idealCustomer, 'idealCustomer');
+        const value = playbookField(patch.idealCustomer, 'idealCustomer');
         assignments.push({ column: 'ideal_customer', value: value });
         changes.idealCustomer = value;
       }
       if (Object.hasOwn(patch, 'tone')) {
-        const value = patch.tone === null ? null : requiredString(patch.tone, 'tone');
+        const value = playbookField(patch.tone, 'tone');
         assignments.push({ column: 'tone', value: value });
         changes.tone = value;
       }
       if (Object.hasOwn(patch, 'avoidTopics')) {
-        const value = patch.avoidTopics === null ? null : requiredString(patch.avoidTopics, 'avoidTopics');
+        const value = playbookField(patch.avoidTopics, 'avoidTopics');
         assignments.push({ column: 'avoid_topics', value: value });
         changes.avoidTopics = value;
       }
       if (Object.hasOwn(patch, 'links')) {
-        const value = patch.links === null ? null : requiredString(patch.links, 'links');
+        const value = playbookField(patch.links, 'links');
         assignments.push({ column: 'links', value: value });
         changes.links = value;
       }
       if (Object.hasOwn(patch, 'hours')) {
-        const value = patch.hours === null ? null : requiredString(patch.hours, 'hours');
+        const value = playbookField(patch.hours, 'hours');
         assignments.push({ column: 'hours', value: value });
         changes.hours = value;
       }
@@ -311,6 +344,8 @@ export class SalesPlaybookService {
    * reviewed. One row per space — a second save rewrites, never doubles.
    * Every content field is optional text: null or an empty string clears
    * it, an absent key leaves it (on update) or stays null (on create).
+   * Every saved field keeps the draft fence (at most 2000 chars, no
+   * control characters), so a stored playbook is always draftable.
    * @param {string} spaceId @param {Record<string, unknown>} values @param {{actor?: unknown}} [context]
    */
   async savePlaybook(spaceId, values, context = {}) {
@@ -321,7 +356,7 @@ export class SalesPlaybookService {
     const patch = {};
     for (const field of ['companyName', 'description', 'website', 'products', 'idealCustomer', 'tone', 'avoidTopics', 'links', 'hours']) {
       if (Object.hasOwn(values, field)) {
-        patch[field] = optionalString(values[field], field);
+        patch[field] = playbookField(values[field], field);
       }
     }
     const existing = this.getBySpace(id);
