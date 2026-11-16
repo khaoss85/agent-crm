@@ -78,8 +78,16 @@ jobs:
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
+      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
+      # workspace between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero; the matrix runs one test file
+      # and needs no history, so a shallow fetch is enough. `npm ci` below
+      # rebuilds node_modules, so the matrix never reads stale dependencies.
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
       - if: steps.window.outputs.run == 'true'
         uses: actions/setup-node@v4
         with:

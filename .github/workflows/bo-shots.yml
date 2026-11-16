@@ -40,7 +40,14 @@ jobs:
     runs-on: [self-hosted, accordo-ci]
     timeout-minutes: 20
     steps:
+      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
+      # workspace between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero; the render uses node builtins
+      # only and needs no history, so a shallow fetch is enough.
       - uses: actions/checkout@v4
+        with:
+          clean: false
+          fetch-depth: 1
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc

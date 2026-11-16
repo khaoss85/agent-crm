@@ -81,8 +81,14 @@ jobs:
     steps:
       # Full history: the touched-file selection diffs against the PR base,
       # and the truth agreement check reads history like `public-claims` does.
+      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
+      # workspace between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
+      # to the job ref, and `npm ci` below rebuilds node_modules, so the fast
+      # gate never reads stale files from the reused space.
       - uses: actions/checkout@v4
         with:
+          clean: false
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -202,9 +208,14 @@ jobs:
       # `node --test` runs (the PR gate, the pre-push hook) still run only
       # the slices' wiring. Same backlog as the slicing above.
     steps:
+      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
+      # workspace between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
+      # to the job ref, and `npm ci` below rebuilds node_modules.
       - uses: actions/checkout@v4
         with:
           # Full history: see the job-level comment above.
+          clean: false
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -392,8 +403,13 @@ jobs:
       cancel-in-progress: true
     if: ${{ github.event_name == 'push' }}
     steps:
+      # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
+      # workspace between jobs, so each start fetches only the missing objects
+      # instead of rewriting ~1.2 GB from zero. Tracked files are still reset
+      # to the job ref, and `npm ci` below rebuilds node_modules.
       - uses: actions/checkout@v4
         with:
+          clean: false
           # A job that reads history, because it checks a historical fact.
           # site/claims.json records the commit its public numbers were
           # measured at, and scripts/measurement.js has to show that commit is an
