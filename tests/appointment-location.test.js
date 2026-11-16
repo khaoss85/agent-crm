@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   bookAppointment,
+  proposeBooking,
   validateAppointmentRequest,
 } from '../packages/appointments/src/index.js';
 import { NotFoundError } from '../packages/core/index.js';
@@ -150,4 +151,29 @@ test('9ff9a9ee1fea: labels are trimmed, a blank label is missing', () => {
     () => validateAppointmentRequest(booking({ location: '   ', locationUrl: 'https://meet.example.com/abc' })),
     /location is required/,
   );
+});
+
+test('9ff9a9ee1fea: the confirm-required draft round-trips the validated place (review P1)', async () => {
+  // A person who books is the approval: the switch answer is allow and the
+  // draft is the confirm payload. Before the fix the draft dropped the new
+  // location/locationUrl, so confirming from it stored nulls.
+  const gate = {
+    async gate() { return { decision: 'allow' }; },
+    async propose() { return { proposalId: null, replayed: false }; },
+  };
+  const service = fakeAppointments();
+  const context = { ...contextFor(service), permissionGate: gate };
+  const proposed = await proposeBooking(context, {
+    ...booking({ sourceKey: 'gym:location:5', location: 'Via delle Rose 12, Milano' }),
+    spaceId: 'spazio-1',
+  });
+  assert.equal(proposed.decision, 'confirm-required');
+  assert.equal(proposed.draft.location, 'Via delle Rose 12, Milano');
+  assert.equal(proposed.draft.locationUrl, null);
+  const online = await proposeBooking({ ...contextFor(fakeAppointments()), permissionGate: gate }, {
+    ...booking({ sourceKey: 'gym:location:6', location: 'Online', locationUrl: 'https://meet.example.com/abc' }),
+    spaceId: 'spazio-1',
+  });
+  assert.equal(online.draft.location, 'Online');
+  assert.equal(online.draft.locationUrl, 'https://meet.example.com/abc');
 });

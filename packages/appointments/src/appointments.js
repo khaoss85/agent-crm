@@ -2058,6 +2058,8 @@ function publicDraft(input) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    location: input.location,
+    locationUrl: input.locationUrl,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
