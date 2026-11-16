@@ -1418,6 +1418,14 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     let lastContactText = null;
     // An email's stored subject heads the preview, like a mail client.
     let lastContactSubject = null;
+    // backlog:1740985ba18c: whether the latest activity is a message — only
+    // then does an empty preview read the shared no-text fallback downstream
+    // — and whether it carried a file, so an attachment-only mail previews
+    // as 'Allegato' like the Oggi inbox (admin-oggi.js) instead of the
+    // no-text fallback.
+    let lastContactIsMessage = false;
+    let lastContactHasAttachment = false;
+    const messageRowSet = new Set(myMessageRows);
     for (const row of myMessages) {
       const time = Date.parse(String(row?.occurredAt ?? ''));
       if (!Number.isFinite(time)) continue;
@@ -1426,6 +1434,9 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         lastContactChannel = row.channel ?? null;
         lastContactText = typeof row?.body === 'string' ? row.body : null;
         lastContactSubject = typeof row?.mailSubject === 'string' ? row.mailSubject : null;
+        lastContactIsMessage = messageRowSet.has(row);
+        lastContactHasAttachment = lastContactIsMessage && row?.attachmentKind !== undefined
+          && row?.attachmentKind !== null && row?.attachmentKind !== '';
       }
     }
     const renewalWithinDays = mySubscriptions.some((row) => (
@@ -1441,7 +1452,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       unreadBySubject: new Map(myUnread === null ? [] : [[key, myUnread]]),
       awaitingBySubject: new Map(myAwaiting === null ? [] : [[key, myAwaiting]]),
       statusBySubject,
-      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject }]]),
+      activityBySubject: new Map(lastContactAt === null ? [] : [[key, { occurredAt: lastContactAt, channel: lastContactChannel, text: lastContactText, subject: lastContactSubject, isMessage: lastContactIsMessage, hasAttachment: lastContactHasAttachment }]]),
       offerBySubject: new Map(openOffers.length === 0 ? [] : [[key, {
         valueCents: openValue, currency: singleCurrency, parts: currencyParts,
       }]]),

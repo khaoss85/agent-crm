@@ -36,7 +36,7 @@ import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelS
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
-import { messagePreview } from './admin-message-preview.js';
+import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
 import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
 /**
@@ -1062,7 +1062,7 @@ export function buildServerReplies(answer, now = new Date()) {
       // resta in `channel` e nella riga «da … · Email».
       mono: badgeInitials(name),
       name,
-      preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
+      preview: nonEmptyText(item?.awaitingText) ?? MESSAGE_NO_TEXT,
       when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject({ subjectOwner: 'host', subjectResource: resource, subjectId: id }),
     });
@@ -1221,7 +1221,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
       // residue or hidden preheaders; the subject alone when the body cleans away.
-      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
+      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : MESSAGE_NO_TEXT),
       when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject(subject),
     });
