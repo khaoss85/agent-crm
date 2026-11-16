@@ -233,7 +233,10 @@ export function createAppointmentsPackage(options = {}) {
     // required on every member group) and never offered as free. Server
     // seam only: no caller/request input carries blocks, so nothing to
     // forge and nothing to omit. Old callers unchanged.
-    version: 5,
+    // 6 (backlog:9aa5c073): team visibility default/public/private —
+    // `read-team-week` takes a server-side-only `viewer`, private rows mask
+    // to slot-and-hold for anyone but the creator and the administrators.
+    version: 6,
     label: 'Appointments',
     description:
       'Native appointment bookings: one customer meeting one team member for one listino service in one time slot, '
