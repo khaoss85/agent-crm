@@ -5129,6 +5129,29 @@ test('59def6cb805d review: on a truncated page a one-way sync line names itself 
   assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
 });
 
+// backlog:a5fb0770 — TikTok receives only (matrix capability in-only), so
+// even with an outbound passage recorded it never reads outbound: at most
+// «← in entrata», never «↔ in entrata e in uscita».
+test('a5fb0770: TikTok never reads outbound, even with both directions observed', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 't-in', conversationId: 't3', channel: 'tiktok', direction: 'inbound',
+      sync: 'received', body: 'Ciao dal TikTok', teamAuthorId: null,
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 't-out', conversationId: 't3', channel: 'tiktok', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('tiktok'), '← in entrata', 'TikTok caps at inbound');
+  assert.equal(syncOf('phone'), '→ in uscita', 'voice keeps its real outbound call');
+});
+
 // backlog:e381c48581fa (verifica pilota 51ab9ca): on Ada Rossi's scheda
 // Instagram read «↔ sincronizzato» with Instagram not linked in the space.
 // The production shape: raw GET /api/connectors rows plus GET /api/profile.

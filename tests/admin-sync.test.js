@@ -1380,7 +1380,7 @@ test('e381c48581fa: a waiting space never pairs a yellow hero with «Niente da s
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('In attesa del primo evento'));
+  assert.ok(text.includes('in attesa del primo evento'));
   assert.ok(!text.includes('Quasi tutto sincronizzato'), 'nothing to fix: not the yellow headline');
   assert.ok(text.includes('Niente da sistemare'));
   const dot = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-dot'));

@@ -3,7 +3,7 @@
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
-import { directionOf, matchConnections } from './admin-connectors.js';
+import { matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
@@ -3158,13 +3158,14 @@ export function createCustomerCardView(deps) {
       // a truncated read a single direction is not exhaustive — the other
       // may sit on a later page. Both seen is proven either way; one seen
       // names the partial list, the same honesty standard as the count.
-      // Voce a5fb0770: an in-only channel (TikTok) never reads outbound —
-      // the matrix capability caps what the passages prove, so TikTok reads
-      // at most «← in entrata».
+      // Voce a5fb0770: TikTok receives only (matrix capability in-only),
+      // so it never reads outbound — at most «← in entrata». Voice keeps
+      // its outbound: operator calls («Chiama») are real outbound traffic,
+      // and the tests fix it (59def6cb805d C10 phone row).
       const counted = cardCountedChannel(system);
       const seen = directions.get(counted) ?? { in: false, out: false };
       const inbound = seen.in === true;
-      const outbound = seen.out === true && directionOf(counted) !== 'in-only';
+      const outbound = seen.out === true && counted !== 'tiktok';
       const traffic = inbound && outbound ? '↔ in entrata e in uscita'
         : inbound ? `← in entrata${partial}` : outbound ? `→ in uscita${partial}` : null;
       if (traffic !== null) {
