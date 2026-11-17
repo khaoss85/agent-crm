@@ -378,6 +378,38 @@ test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color w
   }
 });
 
+// backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
+// a space switch drops it, so the bar never names the previous space's
+// agent before the new space's own read lands.
+test('f6ad46980054 switching space drops the previous space agent name from the AI bar', () => {
+  const spaces = [
+    { id: 'aurora', name: 'Studio Aurora', initials: 'SA' },
+    { id: 'outlet', name: 'Aurora Outlet', initials: 'AO' },
+    { id: 'verde', name: 'Casa Verde', initials: 'CV' },
+  ];
+  const { view, sidebar, topbar, seen } = renderShell({ spaces });
+  const input = () => topbar.findAll('input')[0];
+  view.update({ aiScreenId: 'agenti', aiAgentName: 'Mano' });
+  assert.ok(input().getAttribute('placeholder').includes('Mano'), 'the bar names this space agent');
+  // The sidebar menu pick clears it at once, before the host calls back.
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  const other = picks.find((node) => !((node.className ?? '').includes('active')));
+  other.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['outlet']);
+  assert.ok(!input().getAttribute('placeholder').includes('Mano'), 'no previous-space agent after the menu pick');
+  assert.equal(input().getAttribute('placeholder'), aiPlaceholder('agenti'));
+  // The host funnel clears it too: a new name lands, then setSpaces moves on.
+  view.update({ aiAgentName: 'Mano' });
+  assert.ok(input().getAttribute('placeholder').includes('Mano'), 'the new space names its own agent');
+  view.setSpaces(spaces, 'verde');
+  assert.ok(!input().getAttribute('placeholder').includes('Mano'), 'no previous-space agent after setSpaces');
+  assert.equal(input().getAttribute('placeholder'), aiPlaceholder('agenti'));
+  // A same-space refresh keeps the freshly read name.
+  view.update({ aiAgentName: 'Guido' });
+  view.setSpaces(spaces, 'verde');
+  assert.ok(input().getAttribute('placeholder').includes('Guido'), 'same-space refresh keeps the name');
+});
+
 test('backlog:b545aca18b8f — setSpaces ignores an empty list and keeps the open space', () => {
   const { sidebar, view } = renderShell();
   assert.ok(sidebar.textContent.includes('Studio Aurora'));

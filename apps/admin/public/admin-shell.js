@@ -702,6 +702,14 @@ export function createShellView({
 
   const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
 
+  // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
+  // every local space switch drops it, so the bar never names for a moment
+  // the previous space's agent before the new space's read lands.
+  function switchSpace(id) {
+    if (state.activeSpaceId !== id) state.aiAgentName = '';
+    state.activeSpaceId = id;
+  }
+
   function clearMount(mount) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
@@ -824,7 +832,7 @@ export function createShellView({
       if (entry.keyHint !== '') pick.appendChild(el(doc, 'span', 'bo-space-key', entry.keyHint));
       if (entry.active) pick.appendChild(el(doc, 'span', 'bo-space-check', '✓'));
       else pick.addEventListener('click', () => {
-        state.activeSpaceId = entry.id;
+        switchSpace(entry.id);
         onPickSpace(entry.id);
         renderSidebar();
         renderTopbar();
@@ -1150,7 +1158,7 @@ export function createShellView({
       const spaceId = resolveSpaceShortcut(event, state.spaces);
       if (spaceId !== null) {
         if (typeof event.preventDefault === 'function') event.preventDefault();
-        state.activeSpaceId = spaceId;
+        switchSpace(spaceId);
         onPickSpace(spaceId);
         renderSidebar();
         renderTopbar();
@@ -1206,9 +1214,9 @@ export function createShellView({
     setSpaces(spaces, activeId) {
       if (Array.isArray(spaces) && spaces.length > 0) state.spaces = spaces;
       if (typeof activeId === 'string' && state.spaces.some((space) => space.id === activeId)) {
-        state.activeSpaceId = activeId;
+        switchSpace(activeId);
       } else if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
-        state.activeSpaceId = state.spaces[0].id;
+        switchSpace(state.spaces[0].id);
       }
       renderSidebar();
       renderTopbar();
