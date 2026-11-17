@@ -1360,6 +1360,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-you strong { color: var(--ink); font-weight: 700; }
 .bo-spazi-foot .bo-spazi-here { align-self: center; }
 .bo-spazi-open.ui-btn { padding: 7px 14px; }
+/* backlog:2de01913d276: the «Riprova» after a failed role/team read — small,
+   inline, never pushing the card foot. */
+.bo-spazi-retry.ui-btn { padding: 6px 12px; margin-left: 8px; }
 .bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
 .bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
