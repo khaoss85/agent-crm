@@ -19,15 +19,15 @@
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract1",
-      "version": 6,
-      "fingerprint": "118d0b0655d54a9448a623a3a16d3655a9e96bf2a043c429760505a522e55df7"
+      "version": 7,
+      "fingerprint": "cecff823d061b945c02820b9f5a2b0779a0212851052226580930021ea8b4dad"
     },
     {
       "name": "appointments",
       "dir": "appointments",
       "graph": "contract2",
-      "version": 6,
-      "fingerprint": "cbb196c4baedba73786e800618cf5e6dff264e100c91363857068db7c8a0c0f1"
+      "version": 7,
+      "fingerprint": "84ddcafe2d067c2ba9c1e0b3cf3e6f0d0ebc173b319e0c33aed35a5c61c0dd02"
     },
     {
       "name": "calendar-sync",
@@ -104,14 +104,14 @@
       "dir": "customer-hub",
       "graph": "contract1",
       "version": 1,
-      "fingerprint": "97065fd8e94612c577517a3e792c4ef35ac6765256f355e774cb8ec3fcba68f4"
+      "fingerprint": "ab74faf1314392e5ddd67cfb4918a3ede96f129665059dffc46ab56cb53faaa9"
     },
     {
       "name": "customer-hub",
       "dir": "customer-hub",
       "graph": "contract2",
       "version": 1,
-      "fingerprint": "ca53a129b334a0d733fe7d81bd4a902cce1c97c37333071235d22511a1b5b2a9"
+      "fingerprint": "18a9104d8775845fc6de207f9eab7f695565c2ea682474abb4f9efe7ea1dd1ed"
     },
     {
       "name": "delivery",
