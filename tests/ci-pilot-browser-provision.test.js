@@ -89,7 +89,17 @@ function stubBin(home) {
     'touch "$HOME/$rel"\n' +
     'chmod +x "$HOME/$rel"\n';
   fs.writeFileSync(join(bin, 'npx'), npxStub);
-  fs.writeFileSync(join(bin, 'npm'), `#!/usr/bin/env bash\necho "$@" >> ${JSON.stringify(join(logDir, 'npm-args'))}\n`);
+  // STUB_NPM_FAIL_TEST_BROWSER=1 (this test only) makes the stub `npm` fail
+  // the pilot proof (`run test:browser`) so the gate's FAIL path
+  // (`::error::` + non-zero exit) is exercised instead of stubbed away.
+  fs.writeFileSync(
+    join(bin, 'npm'),
+    `#!/usr/bin/env bash\necho "$@" >> ${JSON.stringify(join(logDir, 'npm-args'))}\n` +
+      'if [ "${STUB_NPM_FAIL_TEST_BROWSER:-0}" = "1" ]; then\n' +
+      '  for a in "$@"; do [ "$a" = "test:browser" ] && exit 1; done\n' +
+      'fi\n' +
+      'exit 0\n',
+  );
   fs.chmodSync(join(bin, 'npx'), 0o755);
   fs.chmodSync(join(bin, 'npm'), 0o755);
   return { bin, logDir };
@@ -159,6 +169,27 @@ test('a playwright release the hardcoded list does not know still resolves throu
     assert.match(logged(join(logDir, 'npx-args')), /playwright@1\.64\.1 install chromium/);
     assert.match(logged(join(logDir, 'npm-args')), /run test:browser/);
     assert.match(out, /pilot-browser: PASS in \d+s/);
+  } finally {
+    for (const dir of [repo, pilot, home]) fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failing pilot proof fails the gate with ::error:: and a non-zero exit', () => {
+  const repo = clientTouchingRepo();
+  const pilot = fakePilot();
+  const home = fs.mkdtempSync(join(os.tmpdir(), 'ci-pilot-browser-home-'));
+  try {
+    let err = null;
+    try {
+      runGate(repo, pilot, home, { STUB_NPM_FAIL_TEST_BROWSER: '1' });
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, 'the gate must throw when `npm run test:browser` fails');
+    assert.notEqual(err.status, 0, 'the gate must exit non-zero on a failing proof');
+    const combined = `${err.stdout ?? ''}\n${err.stderr ?? ''}`;
+    assert.match(combined, /::error::/, 'the gate must print ::error:: on a failing proof');
+    assert.match(combined, /pilot browser proof failed/, 'the gate must name the failed proof');
   } finally {
     for (const dir of [repo, pilot, home]) fs.rmSync(dir, { recursive: true, force: true });
   }
