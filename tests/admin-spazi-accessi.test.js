@@ -23,6 +23,7 @@ import {
   SPAZI_AI_SWITCHES,
   buildSpaziCards,
   buildTeamRows,
+  coalesceSpaceReads,
   countSpaceChannels,
   countSpaceCustomers,
   createSpaziAccessiView,
@@ -1873,12 +1874,84 @@ test('9d06eb1e174b: the card role is a skeleton while the context read is out, t
   assert.match(text(mount), /Tu: Titolare/);
 });
 
-test('9d06eb1e174b: a failed context read still says the role is not recognized', async () => {
+test('9d06eb1e174b: a failed context read is an error with Riprova, never «ruolo non riconosciuto» (backlog:2de01913d276)', async () => {
   const failed = Object.assign(new Error('down'), { code: 'SPINE_DOWN', status: 500 });
   const { mount, view: v } = view({ client: stubClient({ fail: { context: failed } }) });
   await v.render();
   await flush();
-  assert.match(text(mount), /ruolo non riconosciuto/);
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'a failed read is never an unknown role');
+  assert.match(text(mount), /non leggibile/, 'the cards say the role could not be read');
+  assert.ok(mount.findAll('button').some((node) => node.textContent === 'Riprova'), 'the operator retries');
+});
+
+// backlog:2de01913d276 (verifica 17/11: dopo un 429 su profilo e membri le
+// schede scrivevano «Tu: ruolo non riconosciuto», 11 caricamenti in 60 s).
+// Repro: un errore di rete non è mai un ruolo sconosciuto — serve un errore
+// con «Riprova» — e un caricamento legge profilo/membri una sola volta.
+test('2de01913d276: a 429 on context and members is an error with Riprova, read once per load', async () => {
+  const limited = Object.assign(new Error('too many requests'), { code: 'TOO_MANY_REQUESTS', status: 429 });
+  const failures = { context: limited, members: limited };
+  const calls = [];
+  const base = stubClient({ fail: failures, calls });
+  const client = {
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        calls.push({ path, method: 'GET', body: null });
+        return { connections: { available: true, items: [] } };
+      }
+      return base.request(path, options);
+    },
+  };
+  const { mount, view: v } = view({ client });
+  await v.render();
+  await flush();
+  const count = (path) => calls.filter((call) => call.path === path).length;
+  assert.doesNotMatch(text(mount), /ruolo non riconosciuto/, 'a 429 is never an unknown role');
+  assert.match(text(mount), /non leggibile/, 'the cards say the role could not be read');
+  assert.match(text(mount), /Il team non si è potuto leggere/, 'the team says why it is missing');
+  const retries = mount.findAll('button').filter((node) => node.textContent === 'Riprova');
+  assert.ok(retries.length >= 2, 'cards and team both offer «Riprova»');
+  assert.equal(count('/api/spine/context'), 1, 'one context read per load, no retry storm');
+  assert.equal(count('/api/spine/memberships'), 1, 'one members read per load, no retry storm');
+  assert.equal(count('/api/profile'), 1, 'one profile read per load');
+  // The operator's «Riprova» reads again, once: the role paints.
+  failures.context = null;
+  failures.members = null;
+  await retries[0].listeners.click[0]();
+  await flush();
+  assert.match(text(mount), /Tu: Titolare/, 'the role paints after the retry');
+  assert.doesNotMatch(text(mount), /non leggibile/, 'the error lifts after the retry');
+  assert.equal(count('/api/spine/context'), 2, 'the retry reads once more');
+  assert.equal(count('/api/spine/memberships'), 2, 'the retry reads members once more');
+  assert.equal(count('/api/profile'), 2, 'the retry reads the profile once more');
+});
+
+test('2de01913d276: concurrent identical GETs share one request; writes and later loads do not', async () => {
+  let n = 0;
+  const base = {
+    async request(path) {
+      n += 1;
+      await new Promise((resolve) => { setImmediate(resolve); });
+      return { path, n };
+    },
+  };
+  const shared = coalesceSpaceReads(base);
+  const [a, b] = await Promise.all([
+    shared.request('/api/spine/memberships'),
+    shared.request('/api/spine/memberships'),
+  ]);
+  assert.equal(n, 1, 'one load reads once');
+  assert.equal(a, b, 'both callers share the answer');
+  await shared.request('/api/profile');
+  assert.equal(n, 2, 'a distinct path reads again');
+  await Promise.all([
+    shared.request('/api/invites', { method: 'POST', body: {} }),
+    shared.request('/api/invites', { method: 'POST', body: {} }),
+  ]);
+  assert.equal(n, 4, 'writes are never shared');
+  const next = coalesceSpaceReads(base);
+  await next.request('/api/spine/memberships');
+  assert.equal(n, 5, 'nothing is cached across loads: «Riprova» always reads again');
 });
 
 // backlog:9d06eb1e174b (verifica 13-14/11, roster di produzione): one owner
