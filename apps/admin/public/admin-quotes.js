@@ -249,18 +249,23 @@ export function createQuoteView(deps) {
    * missing or unreadable step yields null, never a failed detail — righe,
    * totale, stato and storia render with or without the way back. Returns
    * the link together with the opportunity name for the Italian heading.
-   * @param {any} quote
+   * backlog:bfc070243427: opened from the quotes list (`from: 'quotes'`)
+   * the way back is «← Preventivi» to the list — never the scheda.
+   * @param {any} quote @param {unknown} [from] the router origin, if any
    */
-  async function resolveCardBackLink(quote) {
+  async function resolveCardBackLink(quote, from = null) {
+    const fromList = from === 'quotes';
+    const listBack = () => linkTo('#/quotes', '← Preventivi', 'quote-back');
     const opportunityId = typeof quote?.opportunityId === 'string' && quote.opportunityId !== '' ? quote.opportunityId : null;
-    if (opportunityId === null) return { back: null, opportunityName: null, customerName: null };
+    // From the list the way back never depends on a read: it is the list.
+    if (opportunityId === null) return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
     let opportunity;
     try {
       // backlog:a2ea75f705fd: the core offer route — the generic records
       // surface never serves core modules and answered 404 here.
       opportunity = await client.request(`/api/opportunities/${encodeURIComponent(opportunityId)}`);
     } catch {
-      return { back: null, opportunityName: null, customerName: null };
+      return { back: fromList ? listBack() : null, opportunityName: null, customerName: null };
     }
     const opportunityName = typeof opportunity?.name === 'string' && opportunity.name.trim() !== '' ? opportunity.name : null;
     // backlog:a2ea75f705fd: the quote opens its offer page — stato, valore
@@ -268,6 +273,14 @@ export function createQuoteView(deps) {
     // never a bare anchor (see linkTo).
     const offer = linkTo(`#/offerte/${encodeURIComponent(opportunityId)}`, 'Apri l’offerta →', 'quote-offer-link');
     offer.setAttribute('data-action', 'quote-open-offer');
+    if (fromList) {
+      // The title still names the customer when the offer knows them; only
+      // the way back changes.
+      const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
+      const rawName = contactId !== null ? opportunity?.contactName : opportunity?.companyName;
+      const customerName = typeof rawName === 'string' && rawName.trim() !== '' ? rawName.trim() : null;
+      return { back: listBack(), offer, opportunityName, customerName };
+    }
     const contactId = typeof opportunity?.contactId === 'string' && opportunity.contactId !== '' ? opportunity.contactId : null;
     const companyId = typeof opportunity?.companyId === 'string' && opportunity.companyId !== '' ? opportunity.companyId : null;
     const resource = contactId !== null ? 'contact' : (companyId !== null ? 'company' : null);
@@ -327,7 +340,8 @@ export function createQuoteView(deps) {
     }
     if (token !== renderToken) return;
     if (!commercialBlock(schema)) {
-      status.textContent = 'La gestione commerciale non è attiva in questo progetto.';
+      // backlog:bfc070243427: plain words, never «progetto».
+      status.textContent = 'La parte commerciale non è attiva qui.';
       return;
     }
     status.textContent = quotes.truncated
@@ -353,7 +367,9 @@ export function createQuoteView(deps) {
       head.appendChild(el('span', `quote-status quote-status-${quote.status}`, quoteStatusLabel(quote.status)));
       head.appendChild(el('h4', 'offer-quote-total',
         quoteTotalSummary(parseTotals(quote.totalsJson), quote.currency)));
-      head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}`, 'Apri il preventivo', 'offer-quote-open'));
+      // backlog:bfc070243427: the row opens the detail with the list as its
+      // origin, so «←» up there goes back to the list it came from.
+      head.appendChild(linkTo(`#/quotes/${encodeURIComponent(quote.id)}/lista`, 'Apri il preventivo', 'offer-quote-open'));
       row.appendChild(head);
       // backlog:cf270ae1f808: ogni riga dice cliente e data, oltre a stato
       // e importo — il cliente arriva dal carico delle offerte, la data dal
@@ -466,7 +482,9 @@ export function createQuoteView(deps) {
         fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false),
         fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true),
         fetchRows('quote-version', (version) => version.quoteId === quote.id),
-        resolveCardBackLink(quote),
+        // backlog:bfc070243427: the list origin rides along, like the
+        // offer page's scheda origin.
+        resolveCardBackLink(quote, options !== null && typeof options === 'object' ? options.from ?? null : null),
       ]);
       restRead.catch(() => {});
       const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
@@ -886,7 +904,8 @@ export function createQuoteView(deps) {
     panel.appendChild(el('h3', undefined, 'Firma'));
     mount.appendChild(panel);
     if (!signatureBlock(schema)) {
-      panel.appendChild(el('p', 'muted', 'La firma non è attiva in questo progetto.'));
+      // backlog:bfc070243427: plain words, never «progetto».
+      panel.appendChild(el('p', 'muted', 'La firma non è attiva qui.'));
       return;
     }
     let envelopes;

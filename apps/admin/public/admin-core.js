@@ -439,12 +439,16 @@ export function parseModuleRoute(hash) {
   }
   // Quote builder routes: #/quotes and #/quotes/<id> (ADR-016). Same
   // canonical discipline; anything else is invalid, not a lookup.
+  // backlog:bfc070243427: #/quotes/<id>/lista names the quotes list as the
+  // origin — the detail's «←» goes back there, like the offer page names
+  // its scheda origin under #/offerte/<id>/cliente/….
   if (rawParts.length && rawParts[0] === 'quotes') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length === 1) return { view: 'quotes' };
-    if (rawParts.length !== 2) return { view: 'invalid' };
+    if (rawParts.length !== 2 && !(rawParts.length === 3 && rawParts[2] === 'lista')) return { view: 'invalid' };
     const quoteId = safeDecode(rawParts[1]);
     if (quoteId === null || quoteId === '' || quoteId.includes('/')) return { view: 'invalid' };
+    if (rawParts.length === 3) return { view: 'quote-detail', quoteId, from: 'quotes' };
     return { view: 'quote-detail', quoteId };
   }
   // Work routes: #/work and #/work/<id> (Work v1, ADR-030). Same canonical

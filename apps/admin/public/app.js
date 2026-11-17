@@ -1565,7 +1565,7 @@ async function route() {
     else if (target.view === 'pipeline') await pipelineBoard.renderBoard(target.pipelineName);
     else if (target.view === 'catalog') await catalogView.renderTable();
     else if (target.view === 'quotes') await quoteView.renderQuoteList();
-    else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId);
+    else if (target.view === 'quote-detail') await quoteView.renderQuoteDetail(target.quoteId, { from: target.from ?? null });
     else if (target.view === 'offer-detail') await offerDetail.renderOfferDetail(target.offerId, { from: target.from ?? null });
     else if (target.view === 'spine') await spineView.render();
     else if (target.view === 'customer-data') {

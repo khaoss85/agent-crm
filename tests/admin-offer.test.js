@@ -300,7 +300,9 @@ test('a full audit page says it is truncated and hides the author', async () => 
       && node.childNodes[0]?.textContent === label);
     return cell ? cell.childNodes[1].textContent : null;
   };
-  assert.equal(fact('Creata da'), '—', 'no author is read from a partial page');
+  // backlog:bfc070243427: no author is read from a partial page — and no
+  // empty field paints for one either.
+  assert.equal(fact('Creata da'), null, 'no author row on a partial page, never «—»');
 });
 
 test('an unreadable audit trail is not an empty one', async () => {

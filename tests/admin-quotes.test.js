@@ -231,7 +231,8 @@ test('pending approval shows human decision controls; approved and rejected show
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'quote-decide').length, 0);
   // The commercial view never invents a signature surface on its own: without
   // the ADR-017 schema block it degrades to a statement, not a control.
-  assert.ok(approved.textContent.includes('La firma non è attiva in questo progetto.'));
+  // backlog:bfc070243427: plain words, never «progetto».
+  assert.ok(approved.textContent.includes('La firma non è attiva qui.'));
   assert.equal(approved.findAll('div').filter((node) => (node.getAttribute('class') ?? '') === 'signature-request').length, 0);
 });
 
@@ -422,7 +423,9 @@ test('quote routes parse canonically; hostile routes are invalid', () => {
   // A trailing slash normalizes to the list view, exactly as module routes do.
   assert.deepEqual(parseModuleRoute('#/quotes/'), { view: 'quotes' });
   assert.deepEqual(parseModuleRoute('#/quotes/q1'), { view: 'quote-detail', quoteId: 'q1' });
-  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/%zz']) {
+  // backlog:bfc070243427: the list origin rides the route.
+  assert.deepEqual(parseModuleRoute('#/quotes/q1/lista'), { view: 'quote-detail', quoteId: 'q1', from: 'quotes' });
+  for (const bad of ['#/quotes//q1', '#/quotes/a/b', '#/quotes/a%2Fb', '#/quotes/a/lista/x', '#/quotes/%zz']) {
     assert.equal(parseModuleRoute(bad).view, 'invalid', `expected invalid for ${bad}`);
   }
   assert.equal(parseModuleRoute('#/modules/quote').view, 'list', 'module routes unchanged');
@@ -647,7 +650,8 @@ test('47b89e19: each row shows stato, importo and the linked offer like the offe
   assert.ok(row.textContent.includes('Pacchetto 10 PT'), 'the offer reads by name, never a bare id');
   const open = row.findAll('a').find((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.ok(open, 'the open link uses the offer-page component');
-  assert.equal(open.getAttribute('href'), '#/quotes/q1');
+  // backlog:bfc070243427: the row names the list as the detail's origin.
+  assert.equal(open.getAttribute('href'), '#/quotes/q1/lista');
   const opens = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'offer-quote-open');
   assert.equal(opens.length, 1, 'one quote link per row');
   const offerLinks = row.findAll('a').filter((node) => (node.getAttribute('class') ?? '') === 'quote-offer-link');
@@ -676,7 +680,7 @@ test('47b89e19: opening a quote from the list stays in the router, without a rel
     link.listeners.click[0]({ preventDefault: () => { prevented = true; } });
     assert.ok(prevented, `the default navigation is stopped for ${link.getAttribute('href')}`);
   }
-  assert.deepEqual(navigated, ['#/quotes/q1', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
+  assert.deepEqual(navigated, ['#/quotes/q1/lista', '#/offerte/opp1'], 'both links go through navigate(), setting only the hash');
 });
 
 test('47b89e19: unreadable linked offers degrade to an honest line, rows stay', async () => {
