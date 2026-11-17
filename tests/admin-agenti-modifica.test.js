@@ -326,7 +326,10 @@ test('7d169a3b1dd2: Ritira chiede Conferma in linea e mette in pausa, mai un dia
   assert.equal(pauses.length, 1);
   assert.deepEqual(pauses[0].body, { spaceId: 'presti', agentSourceKey: MANO.sourceKey, status: 'paused' });
   assert.ok(typeof pauses[0].key === 'string' && pauses[0].key.length > 0, 'Idempotency-Key del chiamante');
-  assert.ok(mount.textContent.includes('Mano ritirato: resta nel team ma non riceve più incarichi.'));
+  assert.ok(mount.textContent.includes('Mano in pausa: resta nel team ma non riceve più incarichi.'));
+  const badge = mount.findAll('span').find((node) => node.classList.contains('bo-agent-status-paused'));
+  assert.ok(badge, 'il badge di pausa resta dipinto');
+  assert.equal(badge.textContent, 'In pausa', 'messaggio e badge usano la stessa parola');
 });
 
 test('7d169a3b1dd2: Ritira su un deploy senza le scritture agenti legge neutra', async () => {
