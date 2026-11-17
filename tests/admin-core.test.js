@@ -273,13 +273,31 @@ test('apiFailure keeps requestId and claimId of a 504 BO_SEND_PENDING', () => {
   assert.equal(error.claimId, 'claim-9');
 });
 
+test('7d4e99ef43d5: un 503 senza risposta del server parla italiano, mai «Request failed»', () => {
+  for (const status of [502, 503, 504]) {
+    const error = apiFailure(status, null);
+    assert.equal(error.status, status);
+    assert.equal(error.code, 'UNKNOWN');
+    assert.equal(error.message, 'Il servizio si sta riavviando, riprova tra poco.');
+    assert.ok(!error.message.includes('Request failed'));
+  }
+  // Un verdetto che il server ha nominato resta quello: il codice resta,
+  // il messaggio grezzo resta il tecnico, mai l'italiano del riavvio.
+  const named = apiFailure(503, { error: { code: 'BO_X' } });
+  assert.equal(named.code, 'BO_X');
+  assert.equal(named.message, 'Request failed (503)');
+  // Un messaggio del server vince sempre.
+  const said = apiFailure(503, { error: { code: 'BO_X', message: 'piano says' } });
+  assert.equal(said.message, 'piano says');
+});
+
 test('apiFailure without ids, or with a non-JSON body, carries none', () => {
   const bare = apiFailure(504, { error: { code: 'BO_SEND_PENDING', message: 'x' } });
   assert.equal('requestId' in bare, false);
   assert.equal('claimId' in bare, false);
   const html = apiFailure(502, undefined);
   assert.equal(html.code, 'UNKNOWN');
-  assert.equal(html.message, 'Request failed (502)');
+  assert.equal(html.message, 'Il servizio si sta riavviando, riprova tra poco.');
   assert.equal(apiFailure(504, { requestId: '', claimId: 7 }).requestId, undefined);
 });
 
