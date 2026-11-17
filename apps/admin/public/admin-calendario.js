@@ -281,7 +281,40 @@ export function memberColorIndex(memberId) {
   for (let index = 0; index < id.length; index += 1) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
-  return hash % 5;
+  return hash % CAL_MEMBER_TINTS;
+}
+
+/** Person tints the calendar palette paints (cal-m0..cal-m4 in styles.css). */
+export const CAL_MEMBER_TINTS = 5;
+
+/**
+ * Unique tint per identity, stable across reloads (backlog:bffe778332e6):
+ * two different people share no tint while the palette has room — the old
+ * hash alone painted khaoss85 and daniele pelleri with the same tint. Order
+ * is the sorted identity, never the roster order, so reloads alone never
+ * repaint anyone; the hashed tint stays the first pick, so a lone person
+ * keeps the tint it always had. A newcomer takes the first free tint from
+ * its hash and may shift later members by one on collision. Past the
+ * palette size tints wrap, still deterministically.
+ * @param {unknown} ids
+ * @returns {Map<string, number>}
+ */
+export function assignMemberColors(ids) {
+  const unique = [...new Set(
+    (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id !== ''),
+  )].sort();
+  const taken = new Set();
+  const colors = new Map();
+  for (const id of unique) {
+    const base = memberColorIndex(id);
+    let color = base;
+    while (taken.has(color) && taken.size < CAL_MEMBER_TINTS) {
+      color = (color + 1) % CAL_MEMBER_TINTS;
+    }
+    taken.add(color);
+    colors.set(id, color);
+  }
+  return colors;
 }
 
 /**
@@ -340,10 +373,12 @@ export function originOf(row) {
 export function teamRows(named, hidden) {
   const names = Array.isArray(named) ? named.filter((id) => typeof id === 'string' && id !== '') : [];
   const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
-  return [...new Set(names)].map((id) => ({
+  const unique = [...new Set(names)];
+  const colors = assignMemberColors(unique);
+  return unique.map((id) => ({
     id,
     active: !off.has(id),
-    color: memberColorIndex(id),
+    color: colors.get(id) ?? memberColorIndex(id),
     initials: memberInitials(id),
   }));
 }
@@ -443,6 +478,9 @@ export function personRows(named, hidden, members) {
     ));
     ranked.forEach((entry, index) => ordinalOf.set(entry.group, index + 1));
   }
+  // backlog:bffe778332e6 — one tint per person, unique while the palette
+  // has room: the hashed tint alone painted two people the same.
+  const colors = assignMemberColors(painted.map((entry) => entry.primary));
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
@@ -463,7 +501,7 @@ export function personRows(named, hidden, members) {
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
       active: listed && group.subjects.some((subject) => !off.has(subject)),
-      color: memberColorIndex(primary),
+      color: colors.get(primary) ?? memberColorIndex(primary),
       initials: memberInitials(name ?? primary),
     };
   });
@@ -3240,16 +3278,20 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:df55cf25 — the booking identity a grid block tints by: the
-   * person's stable primary subject, the same identity the Team toggle
-   * hashes, so a block and its toggle always match even when the person
-   * holds several subjects. Unknown subjects tint by themselves.
+   * backlog:bffe778332e6 — the tint a grid block or popover paints: the
+   * colour of the person's Team toggle row, the same row the operator
+   * filters with, so a block and its toggle always match even when the
+   * person holds several subjects. Unknown subjects fall back to their
+   * own hashed tint.
    * @param {unknown} subject
    */
-  function tintSubjectOf(subject) {
-    if (typeof subject !== 'string' || subject === '') return subject;
-    const rows = personRows(parseMemberFilter(state.memberFilter), [], state.members);
-    return rows.find((row) => row.ids.includes(subject))?.id ?? subject;
+  function tintIndexOf(subject) {
+    if (typeof subject === 'string' && subject !== '') {
+      const rows = personRows(parseMemberFilter(state.memberFilter), [], state.members);
+      const hit = rows.find((row) => row.ids.includes(subject));
+      if (hit) return hit.color;
+    }
+    return memberColorIndex(subject);
   }
 
   /**
@@ -3263,7 +3305,7 @@ export function createCalendarioView(deps) {
    */
   function renderEvent(row, lane) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
-    const classes = ['cal-event', `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`];
+    const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
     const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
     if (selected) classes.push('cal-selected');
@@ -3523,7 +3565,7 @@ export function createCalendarioView(deps) {
     close.addEventListener('click', () => closeEventPop());
     tools.appendChild(close);
     pop.appendChild(tools);
-    const tint = `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`;
+    const tint = `cal-m${tintIndexOf(row?.teamMemberId)}`;
     const title = el(doc, 'h2', { className: 'cal-detail-title', attrs: { id: 'cal-event-pop-title' } });
     title.appendChild(el(doc, 'span', { className: `cal-swatch ${tint}`, attrs: { 'aria-hidden': 'true' } }));
     title.appendChild(el(doc, 'span', { text: titleOf(row) }));

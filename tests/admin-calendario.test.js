@@ -4,6 +4,8 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
+  assignMemberColors,
+  CAL_MEMBER_TINTS,
   catalogBookingServices,
   readBookingServices,
   readBookingServicesDetailed,
@@ -1634,6 +1636,66 @@ test('memberColorIndex and memberInitials never print a name', () => {
   assert.equal(memberInitials('marco'), 'MA');
   assert.equal(memberInitials('sara'), 'SA');
   assert.equal(memberInitials(null), '··');
+});
+
+// backlog:bffe778332e6 — khaoss85 and daniele pelleri hash to the same tint,
+// so the hash alone paints two people the same: the assignment keeps them
+// distinct while the palette has room, and stays put across reloads.
+test('assignMemberColors keeps one tint per person while the palette lasts', () => {
+  assert.equal(memberColorIndex('khaoss85'), memberColorIndex('daniele pelleri'), 'repro: the hash collides');
+  const colors = assignMemberColors(['khaoss85', 'daniele pelleri']);
+  assert.notEqual(colors.get('khaoss85'), colors.get('daniele pelleri'), 'two people, two tints');
+  const five = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco', 'sara', 'luca']);
+  assert.equal(new Set(five.values()).size, 5, 'five people fill the palette with no repeat');
+  for (const color of five.values()) {
+    assert.ok(color >= 0 && color < CAL_MEMBER_TINTS, 'every tint is a painted palette entry');
+  }
+});
+
+// backlog:bffe778332e6 — the assignment is stable: reloads and roster order
+// never repaint anyone, and a lone person keeps its hashed tint.
+test('assignMemberColors is stable across reloads and roster order', () => {
+  const first = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco']);
+  const again = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco']);
+  assert.deepEqual([...first], [...again], 'the same space paints the same tints');
+  const shuffled = assignMemberColors(['marco', 'daniele pelleri', 'khaoss85']);
+  for (const [id, color] of first) {
+    assert.equal(shuffled.get(id), color, 'roster order never repaints anyone');
+  }
+  assert.equal(assignMemberColors(['marco']).get('marco'), memberColorIndex('marco'), 'a lone person keeps its tint');
+});
+
+// backlog:bffe778332e6 — past the palette size tints wrap, still
+// deterministically: reloads never repaint anyone.
+test('assignMemberColors wraps deterministically past the palette', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  const first = assignMemberColors(ids);
+  const again = assignMemberColors([...ids].reverse());
+  for (const [id, color] of first) {
+    assert.equal(again.get(id), color, 'wrapping stays put across reloads');
+  }
+  for (const color of first.values()) {
+    assert.ok(color >= 0 && color < CAL_MEMBER_TINTS, 'wrapped tints stay on the palette');
+  }
+});
+
+// backlog:bffe778332e6 — toggles and blocks read the same row colour, so
+// two colliding people get two distinct toggles.
+test('personRows and teamRows paint distinct toggles for colliding people', () => {
+  const people = teamRows(['khaoss85', 'daniele pelleri'], []);
+  assert.notEqual(people[0].color, people[1].color, 'the two toggles differ');
+  const members = [
+    { subject: 'github|khaoss85', role: 'member', displayName: 'khaoss85' },
+    { subject: 'google|daniele', role: 'member', displayName: 'daniele pelleri' },
+  ];
+  const rows = personRows(['github|khaoss85', 'google|daniele'], [], members);
+  assert.equal(rows.length, 2, 'two humans, two rows');
+  assert.notEqual(rows[0].color, rows[1].color, 'the two rows differ');
+  assert.deepEqual(
+    personRows(['github|khaoss85', 'google|daniele'], [], members).map((row) => row.color),
+    rows.map((row) => row.color),
+    'the rows repaint the same on reload',
+  );
 });
 
 // BO-F6-11 fetta 5 (specs/calendario.md C7), popover Dan 11/11: the linked
