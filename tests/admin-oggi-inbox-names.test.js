@@ -213,3 +213,68 @@ test('971b3e0e: loadOggiData names notification subjects when the server view an
   });
   assert.equal(inbox.notifications.rows[0].name, 'Daniele Pelleri');
 });
+
+// backlog:971b3e0e (review Codex P2 on agent-crm#969 testa df720f0d): the
+// wait for the notification profile names held the ready «Da rispondere»
+// rows and their count back — with a slow profile read the section stayed
+// empty. «Da rispondere» paints as soon as its own data is in; the
+// notification names repaint after, without holding the rows back.
+test('971b3e0e: a slow notification profile never holds the ready «Da rispondere» rows back', async () => {
+  const own = 'daniele.pelleri@prestisport.it';
+  const notice = {
+    conversationId: 'cn', direction: 'inbound', channel: 'email', body: 'Promemoria',
+    occurredAt: '2026-11-07T14:50:00.000Z', subjectOwner: 'host', subjectResource: 'contact', subjectId: 'np', remoteHandle: own,
+  };
+  const conversation = {
+    id: 'cn', channel: 'email', status: 'open', subjectOwner: 'host', subjectResource: 'contact',
+    subjectId: 'np', subjectLabel: null, remoteHandle: own,
+  };
+  /** Reads that stay flying until the test releases them: the server view
+   * answers only after the day already painted, the profile never. */
+  let releaseView = () => {};
+  const viewGate = new Promise((done) => { releaseView = done; });
+  let releaseProfile = () => {};
+  const profileGate = new Promise((done) => { releaseProfile = done; });
+  const seen = [];
+  const load = loadOggiData({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return { member: { email: own }, connections: { available: false, items: [] } };
+      if (path.startsWith('/api/spine/memberships')) return { items: [] };
+      if (path.startsWith('/api/customer-data/customers?')) {
+        await viewGate;
+        return {
+          items: [{
+            subject: { resource: 'contact', id: 'p0' }, resource: 'contact', id: 'p0',
+            name: 'Persona 0', awaitingChannel: 'whatsapp', awaitingText: 'Ciao',
+            lastAwaitingAt: '2026-11-07T14:00:00.000Z',
+          }],
+          total: 1, totalIsExact: true,
+          views: [{ id: 'da-leggere', label: 'Da leggere', count: 0 }],
+        };
+      }
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [notice] };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [conversation] };
+      if (path === '/api/customer-data/profile/contact/np') {
+        await profileGate;
+        return { identity: { contact: { firstName: 'Daniele', lastName: 'Pelleri', email: own } } };
+      }
+      throw new Error(`unexpected read: ${path}`);
+    },
+  }, NOW, { onNames: (outcome) => seen.push(outcome) });
+  for (let i = 0; i < 50; i += 1) await new Promise((done) => { setImmediate(done); });
+  assert.ok(seen.length > 0 && seen.every((outcome) => outcome.repliesPending !== false || outcome.replies === null),
+    'the day painted while the server view is still flying');
+  // The view lands now, after the first paint, while the notification
+  // profile stays flying: the ready rows must paint at once, not with
+  // the names.
+  releaseView();
+  for (let i = 0; i < 50; i += 1) await new Promise((done) => { setImmediate(done); });
+  const painted = seen.filter((outcome) => outcome.replies !== null && outcome.repliesPending === false);
+  assert.ok(painted.length > 0, '«Da rispondere» paints while the notification profile is still flying');
+  assert.equal(painted[0].replies.total, 1, 'the count is there before the names');
+  releaseProfile();
+  const data = await load;
+  assert.deepEqual(data.inboxNames, { 'contact:np': 'Daniele Pelleri' }, 'the notification name fills in after');
+});

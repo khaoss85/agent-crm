@@ -1832,9 +1832,25 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // a slow view never holds the agenda names or the actions back.
   outcome.inboxNamesPending = true;
   let repliesSettled = false;
+  // backlog:971b3e0e (review Codex P2 on df720f0d): «Da rispondere» paints
+  // as soon as its own data is in — the notification profile names repaint
+  // after, without holding the ready rows or their count back.
+  let namesPublished = false;
+  const named = () => {
+    if (typeof onNames !== 'function') return;
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+    namesPublished = true;
+  };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
     outcome.repliesPending = false;
+    // The ready rows and their count paint now, even while a notification
+    // profile read is still flying.
+    if (namesPublished) named();
     // backlog:971b3e0e: «Notifiche automatiche» always comes from the
     // local messages read, so its subjects need profile names on both
     // branches — the server view names «Da rispondere» itself, never the
@@ -1850,6 +1866,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
         });
     outcome.inboxNamesPending = false;
     repliesSettled = true;
+    // The notification names fill in after, in place.
+    if (namesPublished) named();
   });
   // Voce 785aeb28bd18: the roster already rides the first wave beside the
   // profile (see above) — joining it here only waits for what is still
@@ -1861,15 +1879,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
-  // the call recap and «Da rispondere» may still be reading.
-  const named = () => {
-    if (typeof onNames !== 'function') return;
-    try {
-      onNames({ ...outcome, pending: false, briefPending: true });
-    } catch (error) {
-      noteReadFailure('paint', error);
-    }
-  };
+  // the call recap and the notification names may still be reading (their
+  // branches repaint in place through named, backlog:971b3e0e).
   named();
   const answeredLate = !repliesSettled;
   await repliesBranch;
