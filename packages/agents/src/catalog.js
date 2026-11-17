@@ -62,6 +62,16 @@ export const AGENT_CATALOG = Object.freeze([
       + 'sollecito per ciascuna. Ogni messaggio aspetta il tuo ok.',
     examplePhrase: 'ogni giorno controlla le offerte ferme',
   }),
+  Object.freeze({
+    slug: 'risposte',
+    name: 'Risposte',
+    role: 'Risponde ai messaggi in arrivo',
+    instructions: 'Quando arriva un messaggio da WhatsApp, Instagram o email, prepara la risposta '
+      + 'nel filo della conversazione. Ogni risposta aspetta il tuo ok; con l’invio diretto '
+      + 'risponde da sola al massimo tre volte di fila, poi ti passa il filo. Se la persona '
+      + 'chiede di non essere contattata, si ferma.',
+    examplePhrase: 'rispondi ai messaggi in arrivo',
+  }),
 ]);
 
 /**
