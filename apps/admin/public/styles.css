@@ -856,6 +856,15 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
  * opens right of its tile, inside the visible area, and paints above the
  * sidebar (which sits at z-index 40). Small screens keep the static flow. */
 .bo-scheda-offerwrap > .ui-add-menu { left: 0; right: auto; max-width: min(78vw, 320px); z-index: 50; }
+/* Voce 2c1c0e149cf9 (review P2 su 0429edd6: left:0/right:auto da solo non
+ * basta — .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole
+ * CSS overflow-x diventa auto e ritaglia il menu comunque). Al desktop la
+ * colonna resta sticky ma non è più un contenitore di scorrimento: il menu
+ * dipinge sopra la sidebar (z-index 50 > 40). Sotto i 1280px vale già la
+ * regola overflow:visible della media query max-width:1279px. */
+@media (min-width: 1280px) {
+  .bo-scheda-col-side { max-height: none; overflow: visible; }
+}
 /* Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — the same
  * agent tokens as the summary card, with the «Vista per» tabs and the
  * PROSSIME AZIONI rows. */

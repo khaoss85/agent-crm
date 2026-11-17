@@ -6591,10 +6591,27 @@ test('a060a4aa65b6: an offer outside any board reads its core stage like the Pip
 // x=264; AC-3 mancano «Prossime azioni» e «✦ suggeriti» nel Recap).
 // Repro: rosso sul codice prima della cura, verde dopo.
 test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, il Recap mostra Prossime azioni e suggeriti', async () => {
-  // AC-2: il menu condiviso (right:0, largo 290px) esce dal riquadro stretto
-  // e finisce sotto la barra laterale. La scheda lo apre a destra del
-  // bottone, dentro l'area visibile.
+  // AC-2: il menu condiviso (right:0, largo 290px) usciva dal riquadro
+  // stretto e finiva sotto la barra laterale (voci x=156, sidebar a x=264).
+  // Il vero difetto non è il lato dell'ancora ma l'antenato che ritaglia:
+  // .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole CSS
+  // overflow-x diventa auto e ritaglia il menu anche con left:0/right:auto
+  // (review P2 su 0429edd6). La cura toglie il contenitore di scorrimento
+  // al desktop: nessuna regola .bo-scheda-col-side può ritagliare a 1280px
+  // o più, o una regola min-width la riporta a visible.
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const sideClipsAtDesktop = (cssText) => {
+    const baseClips = /\.bo-scheda-col-side\s*\{[^}]*overflow(?:-[xy])?\s*:\s*(auto|scroll|hidden)/.test(cssText);
+    if (!baseClips) return false;
+    const desktopResets = [...cssText.matchAll(/@media\s*\(([^)]*)\)\s*\{[^]*?\.bo-scheda-col-side\s*\{([^}]*)\}/g)];
+    return !desktopResets.some((match) => {
+      const minWidth = match[1].match(/min-width\s*:\s*(\d+)px/);
+      return minWidth && Number(minWidth[1]) >= 1280 && /overflow\s*:\s*visible/.test(match[2]);
+    });
+  };
+  assert.equal(sideClipsAtDesktop(css), false,
+    'no .bo-scheda-col-side clipping ancestor at desktop widths (the Offerta menu would be cut at 1280px+)');
+  // L'ancora resta a destra del bottone, dentro l'area visibile.
   const offerRules = [...css.matchAll(/\.bo-scheda-offerwrap[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(offerRules.some((body) => /left\s*:\s*0/.test(body) && /right\s*:\s*auto/.test(body)),
     'the scheda Offerta menu opens right (left:0, right:auto), never under the sidebar');
@@ -6610,6 +6627,8 @@ test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, 
   const menu = (wrap?.childNodes ?? []).find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-menu'));
   assert.ok(menu, 'the wrap holds the menu');
   assert.ok(!(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible after the click');
+  assert.ok(menu.textContent.includes("Crea con l'AI"), 'the menu voices creating with the AI');
+  assert.ok(menu.textContent.includes('Compila manualmente'), 'the menu voices filling in by hand');
   // AC-3a: con zero passi aperti il titolo resta, con uno stato onesto.
   const empty = await renderCard(stubClient({
     profile: {
