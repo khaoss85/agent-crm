@@ -1043,20 +1043,24 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
   const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
-    // The prototype's second line under each appointment ("chi"): who the
-    // appointment is with — the team member's name from the roster, else a
-    // short honest cue from the notes. Never invented when neither exists,
-    // and never the member's technical id (production 10/11 read
-    // «broker+…@accordo.invalid» and «google|…» here). A team mailbox is
-    // never a name either (backlog:57e3d1685e58: the operator's own
-    // address read under the contact): only a real name reads, then the
-    // contact's own address from the stored label (a synced invitee keeps
-    // its email there), then the notes cue.
+    // The prototype's second line under each appointment ("chi"): the
+    // contact's own channel or address, never the team person holding the
+    // slot (VERIFIER_BACK 2026-11-17 on backlog:57e3d1685e58: live «Prova
+    // verifica 40» read «daniele pelleri», the roster name of the
+    // operator, instead of the contact's email). The contact's own address
+    // from the stored label reads first (a synced invitee keeps its email
+    // there); the team member's real name is only the fallback when no
+    // contact address exists, then a short honest cue from the notes.
+    // Never invented when nothing exists, and never a technical id
+    // (production 10/11 read «broker+…@accordo.invalid» and «google|…»
+    // here). A team mailbox is never a name either (backlog:57e3d1685e58:
+    // the operator's own address read under the contact).
     const team = memberLabel(row?.teamMemberId, members);
     const teamName = team !== null && !team.includes('@') ? team : null;
     const labelMail = memberText(row?.subjectLabel);
-    const cue = teamName
-      ?? (labelMail !== null && labelMail.includes('@') ? labelMail : null)
+    const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
+    const cue = contactMail
+      ?? teamName
       ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
