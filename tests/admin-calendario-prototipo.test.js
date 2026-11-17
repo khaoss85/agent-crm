@@ -79,8 +79,18 @@ async function open(options) {
 }
 
 function blockOf(mount, startLabel) {
-  return mount.findAll('button').find((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-event')
-    && node.textContent.startsWith(startLabel));
+  return mount.findAll('button').find((node) => {
+    if (!(node.getAttribute('class') ?? '').split(' ').includes('cal-event')) return false;
+    if (node.textContent.startsWith(startLabel)) return true;
+    // backlog:667f1f1c: 15–45-min blocks read one compact line
+    // «Titolo, 12:00», so the time label sits at the end of .cal-compact.
+    return node.findAll('span').some((child) => {
+      const childClasses = (child.getAttribute('class') ?? '').split(' ');
+      if (childClasses.includes('cal-compact')) return (child.textContent ?? '').endsWith(`, ${startLabel}`);
+      if (childClasses.includes('cal-time')) return (child.textContent ?? '').startsWith(startLabel);
+      return false;
+    });
+  });
 }
 
 function classed(node, cls) {

@@ -225,6 +225,27 @@ test('7d169a3b1dd2: Modifica salva con update-agent, con la chiave del chiamante
   assert.ok(mount.textContent.includes('Manona aggiornato.'));
 });
 
+test('26afd13657c5: dopo Salva la conferma sta sulla card modificata, non in cima alla pagina', async () => {
+  const { mount } = await paintedView();
+  button(mount, 'edit-agent').dispatch('click', {});
+  const panel = mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`);
+  const name = panel.querySelector('input[name="agent-edit-name"]');
+  name.value = 'Manona';
+  name.dispatch('input', {});
+  panel.querySelector('button[data-action="save-agent-edit"]').dispatch('click', {});
+  await flush();
+  assert.equal(mount.querySelector(`div[data-edit="${MANO.sourceKey}"]`), null, 'il pannello si è chiuso');
+  const card = mount.findAll('article')
+    .find((node) => node.getAttribute('data-agent') === MANO.sourceKey);
+  assert.ok(card, 'la card modificata c’è ancora');
+  const saved = card.querySelector('.bo-agent-done');
+  assert.ok(saved, 'la conferma sta dentro la card');
+  assert.equal(saved.textContent, 'Manona aggiornato.');
+  assert.equal(saved.getAttribute('role'), 'status');
+  // Una sola conferma: quella sulla card, mai anche in cima alla pagina.
+  assert.equal(mount.findAll('p').filter((node) => node.classList.contains('bo-agent-done')).length, 1);
+});
+
 test('7d169a3b1dd2: la Modifica rifiutata dal server resta in cima, senza segnare un campo', async () => {
   // Review #879 giro 2 P2: il rifiuto non eredita il marcatore di campo.
   const boom = Object.assign(new Error('down'), { status: 500 });
@@ -458,6 +479,27 @@ test('f06d06f242d6: dopo Riattiva la riga usa le parole del badge', async () => 
   assert.ok(mount.textContent.includes(`Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`),
     'la riga dice quello che dice il badge');
   assert.ok(mount.textContent.includes(AGENT_NO_ENGINE_LABEL), 'e il badge lo conferma');
+});
+
+test('92829060f8ff: dopo Riattiva le parole del badge restano anche se la rilettura non conferma', async () => {
+  // La scrittura riesce ma gli agenti non si rileggono: la riga dice
+  // comunque quello che dirà il badge, dalla card che già c’è.
+  const { mount, client } = await paintedView({ agents: [RIAGGANCIO, { ...MANO, status: 'paused' }] });
+  const real = client.request.bind(client);
+  client.request = (path, options = {}) => {
+    if (String(path).startsWith('/api/modules/teammate-agent/records?')) {
+      throw Object.assign(new Error('unreadable'), { status: 500 });
+    }
+    return real(path, options);
+  };
+  button(mount, 'retire-agent').dispatch('click', {});
+  mount.querySelector('button[data-action="confirm-retire-agent"]').dispatch('click', {});
+  await flush();
+  const expected = `Mano riattivato: ${AGENT_NO_ENGINE_LABEL.charAt(0).toLowerCase()}${AGENT_NO_ENGINE_LABEL.slice(1)}.`;
+  assert.ok(mount.textContent.includes(expected), 'la riga dice quello che dice il badge');
+  const note = mount.querySelector('.bo-agent-done');
+  assert.ok(note, 'la nota resta in pagina');
+  assert.equal(note.getAttribute('role'), 'status', 'è un avviso');
 });
 
 // ---- Review Muse #895, giro 1 ------------------------------------------------

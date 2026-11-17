@@ -57,6 +57,32 @@ test('2. table cells, line breaks and closing blocks never glue words', () => {
   assert.equal(previewLastContactText(html), 'Danielepelleri 400 internal URLs Ciao Mario prima seconda Totale 12');
 });
 
+test('2b. inline formatting inside one word never splits it; blocks and cells still separate (backlog:1740985ba18c review)', () => {
+  // Review on #944 (P1): a removed tag between word characters becomes a
+  // space only when the tags span a block or cell boundary. Inline
+  // formatting inside one word goes away with nothing in its place, like the
+  // browser renders it — `a<b>b</b>c` stays one word.
+  for (const [html, expected] of [
+    ['a<b>b</b>c', 'abc'],
+    ['<strong>Daniele</strong>pelleri', 'Danielepelleri'],
+    ['<a href="https://example.com/a">Daniele</a>pelleri', 'Danielepelleri'],
+    ['Danielepelleri<img src="https://example.com/p.png">400 internal URLs', 'Danielepelleri400 internal URLs'],
+    ['<span>Danielepelleri</span><span>400 internal URLs</span>', 'Danielepelleri400 internal URLs'],
+    ['Totale</span> <span>12', 'Totale 12'],
+  ]) {
+    assert.equal(preview.cleanPreviewText(html), expected, JSON.stringify(html));
+  }
+  assert.equal(previewLastContactText('<strong>Daniele</strong>pelleri'), 'Danielepelleri', 'Clienti');
+  assert.equal(card.passagePreview({ body: 'a<b>b</b>c', subject: null }), 'abc', 'cronologia');
+  // Blocks, cells and sections still separate words with no space between them.
+  assert.equal(preview.cleanPreviewText('<td>Danielepelleri</td><td>400 internal URLs</td>'),
+    'Danielepelleri 400 internal URLs');
+  assert.equal(preview.cleanPreviewText('<div>Danielepelleri</div><div>400 internal URLs</div>'),
+    'Danielepelleri 400 internal URLs');
+  // A tag before punctuation adds no space: the comma stays with its word.
+  assert.equal(preview.cleanPreviewText('Ciao <b>Mario</b>, come va?'), 'Ciao Mario, come va?');
+});
+
 test('2. a Gmail HTML body with table cells stores separated words', () => {
   const b64 = (text) => Buffer.from(text, 'utf8').toString('base64url');
   const event = normalizeGmailRestMessage({

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
+  OGGI_READ_LIMIT, buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
 import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
@@ -346,7 +346,7 @@ test('bab63e32acdb: receipts and no-reply notices leave Da rispondere for a clos
   assert.equal(toggled, false);
 });
 
-test('bab63e32acdb: the open group stays open when the day repaints, and its rows never read profile names', async () => {
+test('971b3e0e: the open group stays open when the day repaints, and a notification with a subject reads its profile', async () => {
   const notice = {
     id: 'm-2', conversationId: 'c2', direction: 'inbound', channel: 'email', body: 'Nuovo commento',
     occurredAt: '2026-10-19T06:30:00.000Z', ...host, subjectId: 'docs', remoteHandle: 'comments-noreply@docs.google.com', subjectLabel: 'Documenti Google',
@@ -357,7 +357,12 @@ test('bab63e32acdb: the open group stays open when the day repaints, and its row
   const mount = createMount();
   const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
   await view.render({ spaceName: 'Spazio', links: [], now: NOW });
-  assert.ok(!client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'no profile read for a notification');
+  // backlog:971b3e0e changes the bab63e32acdb rule on purpose: a
+  // notification with a customer subject reads its profile with the same
+  // function Clienti reads, so the row shows the profile name. (The
+  // fixture profile read refuses, so the row keeps its stored label here;
+  // the name itself is pinned in admin-oggi-inbox-names.test.js.)
+  assert.ok(client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'the notification subject reads its profile like Clienti');
   const toggle = () => mount.querySelector('button[data-action="inbox-notifications"]');
   assert.equal(toggle().getAttribute('aria-expanded'), 'false');
   toggle().dispatch('click');
@@ -628,8 +633,9 @@ test('c2bf6b206d96: Oggi reads «Da rispondere» from the Clienti server view �
   let prevented = false;
   all.dispatch('click', { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
-  assert.deepEqual(seen, ['#/customer-data']);
-  assert.equal(takePendingClientiView(storage), 'da-rispondere', 'Clienti opens on Da rispondere, once');
+  assert.equal(all.getAttribute('href'), '#/customer-data?vista=da-rispondere', 'the link saves and shares the view');
+  assert.deepEqual(seen, ['#/customer-data?vista=da-rispondere'], 'Clienti opens on Da rispondere, on the address');
+  assert.equal(takePendingClientiView(storage), 'da-rispondere', 'the handoff stays as the fallback');
   assert.equal(takePendingClientiView(storage), null);
   // «Da leggere» stays its own number, named apart, one click from Clienti.
   const unread = section.querySelector('a[data-action="inbox-unread"]');
@@ -911,4 +917,120 @@ test('review #821 P2: a slow «Da rispondere» view never holds the agenda names
   await flush();
   assert.equal(rendered, true);
   assert.ok(mount.querySelector('section[data-oggi-section="inbox"]').textContent.includes('3 in attesa'));
+});
+
+// ---------------------------------------------------------------------------
+// backlog:5cf918c2246e (verifica browser 13/11: Clienti «4 da leggere» mentre
+// Oggi diceva «Nessun messaggio aspetta una risposta», Da rispondere 0) —
+// «da leggere» e «da rispondere» restano due numeri diversi sullo stesso
+// insieme di dati (la stessa risposta della vista server), ma Oggi non
+// dichiara mai vuoto mentre ci sono messaggi da leggere.
+// ---------------------------------------------------------------------------
+
+test('5cf918c2246e: the recap names the unread when nothing else waits', () => {
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
+    'Solo 4 messaggi da leggere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 1 }),
+    'Solo 1 messaggio da leggere e nessun appuntamento per oggi.');
+  assert.equal(buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
+    'Ti restano 4 messaggi da leggere e 1 appuntamento.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 0, unread: 2 }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Restano 2 messaggi da leggere.');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0 }),
+    'Niente in sospeso e nessun appuntamento per oggi.', 'unchanged when nothing is unread');
+  assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 2, unread: 4 }),
+    'Ti aspettano 2 messaggi da rispondere e nessun appuntamento per oggi.', 'waiting still leads over unread');
+});
+
+test('5cf918c2246e: empty «Da rispondere» with unread paints the unread, never «done»', () => {
+  const paintWith = (unread) => {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const seen = [];
+    renderOggi({
+      doc, mount, spaceName: 'Spazio', now: new Date(2026, 9, 19, 9),
+      home: {
+        recap: 'x', actions: [], triage: {}, agenda: [], brief: null, missing: [], connections: [],
+        availability: { work: true, appointments: true, channels: true },
+        inbox: { available: true, total: 0, rows: [], unread, totalIsExact: true, notifications: { total: 0, rows: [] } },
+        events: { openClientiView: (view) => { seen.push(view); } },
+      },
+    });
+    return { mount, seen };
+  };
+  const four = paintWith(4);
+  const fourText = four.mount.textContent;
+  assert.ok(!fourText.includes('Hai finito per oggi'), fourText);
+  assert.ok(!fourText.includes('Niente in sospeso'), fourText);
+  assert.ok(!fourText.includes('Nessun messaggio aspetta una risposta.'), fourText);
+  assert.ok(fourText.includes('Hai risposto a tutto. Restano 4 messaggi da leggere, qui sotto.'), fourText);
+  const section = four.mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('Nessun messaggio aspetta una risposta, ma 4 da leggere in Clienti →'), section.textContent);
+  const links = section.findAll('a').filter((node) => node.getAttribute('data-action') === 'inbox-unread');
+  assert.equal(links.length, 1, 'the unread link fires once, not twice');
+  links[0].dispatch('click', { preventDefault: () => {} });
+  assert.deepEqual(four.seen, ['da-leggere']);
+  const oneText = paintWith(1).mount.textContent;
+  assert.ok(oneText.includes('Resta 1 messaggio da leggere, qui sotto.'), oneText);
+  assert.ok(oneText.includes('ma 1 da leggere in Clienti →'), oneText);
+  const noneText = paintWith(0).mount.textContent;
+  assert.ok(noneText.includes('✓ Hai finito per oggi.'), 'still said when nothing waits at all');
+  assert.ok(noneText.includes('Nessun messaggio aspetta una risposta.'), noneText);
+});
+
+test('5cf918c2246e: the 13/11 case on one server answer — Da rispondere 0, da leggere 4', async () => {
+  const client = serverClient(repliesAnswer(0, { unread: 4 }));
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const text = mount.textContent;
+  assert.ok(!text.includes('Hai finito per oggi'), text);
+  assert.ok(!text.includes('Niente in sospeso'), text);
+  assert.ok(!text.includes('Nessun messaggio aspetta una risposta.'), text);
+  assert.ok(text.includes('Solo 4 messaggi da leggere e nessun appuntamento per oggi.'), text);
+  assert.ok(text.includes('Hai risposto a tutto. Restano 4 messaggi da leggere, qui sotto.'), text);
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes('0 in attesa'), 'the head is the view total');
+  assert.ok(section.textContent.includes('Nessun messaggio aspetta una risposta, ma 4 da leggere in Clienti →'), section.textContent);
+  const links = section.findAll('a').filter((node) => node.getAttribute('data-action') === 'inbox-unread');
+  assert.equal(links.length, 1, 'one unread link on the same answer Clienti counts from');
+  let prevented = false;
+  links[0].dispatch('click', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(takePendingClientiView(storage), 'da-leggere', 'Clienti opens on Da leggere');
+});
+
+test('803d127c4458: with the server view in, a capped messages page still discloses the cut and links Clienti', async () => {
+  const messages = Array.from({ length: OGGI_READ_LIMIT + 1 }, (_, index) => ({
+    ...PERSON_MSG, id: `m-cap-${index}`, conversationId: `c-cap-${index}`,
+  }));
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) return repliesAnswer(2, { unread: 1 });
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createOggiView({ doc, mount, client, storage, navigate: (hash) => seen.push(hash), setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes(`L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`), section.textContent);
+  const all = section.querySelector('a[data-action="inbox-all-messages"]');
+  assert.ok(all, 'the cut names where the rest is');
+  let prevented = false;
+  all.dispatch('click', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(seen[seen.length - 1], '#/customer-data?vista=tutti', 'Clienti opens on Tutti');
+  assert.equal(takePendingClientiView(storage), 'tutti', 'the handoff stays as the fallback');
 });

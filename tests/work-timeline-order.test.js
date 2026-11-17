@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
-import { boot, project } from './helpers/contracts-project.js';
+import { boot, project } from './helpers/contracts-project-cache.js';
 import { sortTimeline } from '../packages/work/src/index.js';
 
 /**

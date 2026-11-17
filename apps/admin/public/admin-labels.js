@@ -94,10 +94,47 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
+ * A bare reply word: a mailbox token, never a surname on its own
+ * (backlog:088b639d96a2). In the read path it drops only past a kept
+ * surname (review rev-agent-crm-955-d7262d39, so `John Reply` stays):
+ * a word in the middle stays.
+ */
+const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
+
+/** Wrapping punctuation around a word of a display name. */
+const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
+
+/**
+ * A stored name without its trailing platform qualifier: the co-brand after
+ * a pipe («MailUp | TeamSystem» reads «MailUp») and trailing parenthetical
+ * notes («Francesco Tirsi (Documenti Google)» reads «Francesco Tirsi»).
+ * Only trailing qualifiers go — inner words stay untouched.
+ * @param {string} text
+ */
+function stripNameQualifier(text) {
+  let out = text;
+  for (;;) {
+    const trailing = /\s*\([^()]*\)\s*$/.exec(out);
+    if (trailing) {
+      out = out.slice(0, trailing.index);
+      continue;
+    }
+    const pipe = out.indexOf('|');
+    if (pipe >= 0) {
+      out = out.slice(0, pipe);
+      continue;
+    }
+    return out;
+  }
+}
+
+/**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
  * address (`Mittente: x@…`, or a bare email used as a label) names nobody:
- * null, never the long address on screen (production 10/11).
+ * null, never the long address on screen (production 10/11). The address
+ * check runs on the whole stored value first, so a qualifier never hides
+ * an address (`Mario (x@y.com)` still names nobody).
  * The browser twin of customer-data `readableName` (display-name.js): the
  * bundle cannot import a package, so tests/customer-display-name.test.js
  * runs both on the same table.
@@ -108,8 +145,20 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
-  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const head = stripNameQualifier(value.trim()).split(/\s+/).filter((word) => word !== '');
+  const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
+    if (NO_REPLY_WORD.test(last)) {
+      kept.pop();
+      continue;
+    }
+    if (BARE_REPLY_WORD.test(last) && kept.length > 2) {
+      kept.pop();
+      continue;
+    }
+    break;
+  }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
@@ -355,7 +404,13 @@ export function teamPeople(roster) {
     };
   });
   const byBase = new Map();
-  for (const row of rows) byBase.set(row.base, [...(byBase.get(row.base) ?? []), row]);
+  for (const row of rows) {
+    // backlog:6563edf41aab: same name modulo case is one unreadable pair —
+    // «Daniele Pelleri» and «daniele pelleri» number like the homonyms,
+    // never two identical-looking rows.
+    const key = row.base.toLowerCase();
+    byBase.set(key, [...(byBase.get(key) ?? []), row]);
+  }
   const ordinal = new Map();
   for (const same of byBase.values()) {
     if (same.length < 2) continue;
@@ -467,8 +522,9 @@ export function offerStateLabel(state) {
  * says it — the scheda, the Pipeline board and the offer detail. A placed
  * offer reads its pipeline stage's own label from `/api/schema` `pipelines`
  * (its named pipeline first, like the board); an offer outside any composed
- * pipeline reads its core stage from OFFER_STATE_LABELS. Null when neither
- * is known. A quote's approval state is not the offer's stage.
+ * pipeline — including a placed offer whose pipelines are not readable here —
+ * reads its core stage from OFFER_STATE_LABELS, never a prettified raw key.
+ * Null when neither is known. A quote's approval state is not the offer's stage.
  * @param {unknown} pipelines `/api/schema` pipelines
  * @param {{ pipelineKey?: unknown, pipelineStage?: unknown, stage?: unknown } | null | undefined} offer
  * @returns {string | null}
@@ -482,16 +538,10 @@ export function offerStageLabel(pipelines, offer) {
       const stage = pipeline.stages.find((candidate) => candidate?.key === placed);
       if (stage) return typeof stage.label === 'string' && stage.label.trim() !== '' ? stage.label : null;
     }
-    // backlog:a060a4aa65b6: a placed offer whose pipelines are not readable
-    // here (the schema read failed or timed out) still reads its column,
-    // from the stage key — never the core stage, which the board does not
-    // show for it.
-    // Review Muse #887: only when no pipeline is readable here — with the
-    // pipelines read, a stage they do not define reads the core stage.
-    if (ordered.length === 0 && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(placed)) {
-      const words = placed.replace(/-/g, ' ');
-      return words.charAt(0).toLocaleUpperCase('it-IT') + words.slice(1);
-    }
+    // Review Muse #887 giro 2: a placed offer whose pipelines are not
+    // readable here (the schema read failed or timed out) never derives a
+    // label from the raw stage key — it reads its core stage in Italian
+    // (or null, which every screen paints as an em dash).
   }
   return offerStateLabel(offer.stage);
 }
@@ -646,10 +696,12 @@ const SERVICE_ACTORS = new Set(['admin-ui']);
 
 /**
  * Backlog c1649d1d: display name of an audit actor, shared by the offerta
- * detail and the scheda «Storia stati». The system reads `sistema`, UUIDs
- * and known service handles read `utente`, and any other id paints only when
- * a record corroborates it as a human display value (the referente, the
- * contact or the company the deal stores). Empty actors stay an em dash.
+ * detail and the scheda «Storia stati». The system reads `sistema`, and an
+ * empty actor stays an em dash. A team member reads their profile name —
+ * else their mailbox (backlog:3f3c143b); any other id paints only when a
+ * record corroborates it as a human display value (the referente, the
+ * contact or the company the deal stores). Anything else reads as itself
+ * only when it is a real mailbox, else the dash: never «utente».
  * @param {any} entry one `/api/audit` item
  * @param {Array<unknown>} known human display values the record corroborates
  * @returns {string}
@@ -658,18 +710,22 @@ export function auditActorLabel(entry, known = [], roster = []) {
   if (entry?.actorType === 'system') return 'sistema';
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (id === '') return '—';
-  // A team member (by subject or person key) reads their profile name
-  // (backlog:ddf7f416ad22: «Creata da: utente»).
+  // A team member (by subject or person key) reads their profile name —
+  // else their mailbox, like personLabel does (backlog:3f3c143b).
   const person = personOf(id, roster);
-  if (person !== null && person.name !== null) return person.label;
-  if (isTechnicalMemberText(id)) return 'utente';
-  if (UUID_SHAPE.test(id) || SERVICE_ACTORS.has(id)) return 'utente';
+  if (person !== null && person.known) return person.label;
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   // A corroborated slug still paints as words, never the raw stored id
   // («coach-guido» reads «Coach Guido», a digit slug names nobody and
-  // stays «utente»); any other corroborated value paints verbatim, like
+  // reads as unknown); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
-  return names.includes(id) ? (SLUG_SHAPE.test(id) ? (subjectText(id) ?? 'utente') : id) : 'utente';
+  if (names.includes(id)) return SLUG_SHAPE.test(id) ? (subjectText(id) ?? '—') : id;
+  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
+  // A real mailbox is self-describing and reads as itself even when no
+  // roster names it; any other uncorroborated id (a slug, a bare handle,
+  // a digit id) stays hidden behind the dash.
+  const text = subjectText(id);
+  return text !== null && id.includes('@') ? text : '—';
 }
 
 /**
@@ -707,79 +763,15 @@ export function offerCreatorLabel(items, record, people = [], limit = OFFER_AUDI
 }
 
 // ---------------------------------------------------------------------------
-// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): numbers, counts and
-// screen names in Italian, from one place. Every view that writes money, a
-// count or a module name reads it here, so a fix lands on every screen.
-// Dates: italianDateTime above («7 nov, 14:30»), italianDay in admin-core
-// («20 nov 2026») and romeDayPhrase in admin-oggi («di domani», «del 12
-// novembre», agent-crm#746) — never a raw ISO stamp on screen.
+// Famiglia F8 (backlog:9236684c96a7, 1d99c8207f90): counts and screen names
+// in Italian, from one place. Money is NOT here: every view that writes
+// money reads the single display helper formatAmount in admin-core.js
+// («1.080 €», cents only when non-zero — backlog:93e26f3d2cdc), so a fix
+// lands on every screen. Dates: italianDateTime above («7 nov, 14:30»),
+// italianDay in admin-core («20 nov 2026») and romeDayPhrase in admin-oggi
+// («di domani», «del 12 novembre», agent-crm#746) — never a raw ISO stamp
+// on screen.
 // ---------------------------------------------------------------------------
-
-/** One formatter per currency code, built once. */
-const MONEY_FORMATS = new Map();
-
-/**
- * Money for the Italian screens, minor units (cents) in: «1.080,00 €»,
- * «26.000,00 €», «0,00 USD». `useGrouping: 'always'` is the point: it-IT
- * leaves four-digit numbers ungrouped by default, so Reporting read
- * «1080,00 €» (backlog:9236684c96a7). Null when the amount is not a whole
- * number of cents — never a guessed figure.
- * @param {unknown} minor amount in 1/100 units
- * @param {unknown} [currency] ISO 4217 code, EUR when missing
- * @returns {string | null}
- */
-export function euro(minor, currency = 'EUR') {
-  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
-  // null/undefined/'' are a missing code; any other non-string is malformed.
-  const raw = typeof currency === 'string' ? currency.trim().toUpperCase() : (currency == null ? '' : '?');
-  // Missing currency reads as EUR; a code that is malformed, unknown to
-  // this runtime or not formattable fails closed (review #761 P1): the
-  // grouped amount with no symbol, never a thrown error nor a presumed €.
-  const code = raw === '' ? 'EUR' : raw;
-  if (!isKnownCurrency(code)) return plainAmount(minor);
-  let format = MONEY_FORMATS.get(code);
-  if (format === undefined) {
-    try {
-      format = new Intl.NumberFormat('it-IT', { style: 'currency', currency: code, useGrouping: 'always' });
-    } catch {
-      return plainAmount(minor);
-    }
-    MONEY_FORMATS.set(code, format);
-  }
-  return format.format(minor / 100);
-}
-
-/**
- * Whether a currency code is a well-formed ISO code this runtime lists
- * (Intl.supportedValuesOf when present; the shape alone on older ones).
- * @param {string} code
- */
-let KNOWN_CURRENCIES;
-function isKnownCurrency(code) {
-  if (!/^[A-Z]{3}$/.test(code)) return false;
-  if (KNOWN_CURRENCIES === undefined) {
-    try {
-      KNOWN_CURRENCIES = typeof Intl.supportedValuesOf === 'function' ? new Set(Intl.supportedValuesOf('currency')) : null;
-    } catch {
-      KNOWN_CURRENCIES = null;
-    }
-  }
-  return KNOWN_CURRENCIES === null || KNOWN_CURRENCIES.has(code);
-}
-
-/** Grouped amount with no currency symbol, built once. */
-const PLAIN_AMOUNT = new Intl.NumberFormat('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
-
-/**
- * An amount whose currency is not known, minor units in: «1.200,00», no
- * symbol — never a presumed € (review #761). Null when not whole cents.
- * @param {unknown} minor amount in 1/100 units
- * @returns {string | null}
- */
-export function plainAmount(minor) {
-  if (typeof minor !== 'number' || !Number.isSafeInteger(minor)) return null;
-  return PLAIN_AMOUNT.format(minor / 100);
-}
 
 /**
  * A count with its noun: «1 appuntamento», «3 appuntamenti», «0 righe».

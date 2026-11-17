@@ -153,7 +153,7 @@ export {
  *   channels?: { capabilities?: Array<any> },
  *   spacePermissions?: { capabilities?: Array<any> },
  *   llm?: { capabilities?: Array<any> },
- *   calendarSync?: { pushAppointment?: Function, listOwnerBlocks?: Function },
+ *   calendarSync?: { pushAppointment?: Function, listOwnerBlocks?: Function, readAppointmentDetail?: Function },
  *   config?: Record<string, string>
  * }} [options]
  *   `calendarSync` is the same handover for the owner-block feed

@@ -12,7 +12,7 @@
 // involved: the window works the same with the AI switched off.
 
 import { elFor, uiHold } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, logWriteFailure } from './admin-core.js';
 import {
   BOOKING_MINUTES, bookingClaim, calendarRefusalText, filterPhraseProposals,
   formatPriceCents, personFreeSlots, personRows, rankPhraseProposals, readBookingServices, servicePresendError, slotInGrid, slotLabel,
@@ -177,7 +177,7 @@ export function openAppointmentPanel(deps) {
     service.appendChild(first);
     for (const entry of services) {
       const price = formatPriceCents(entry.priceCents);
-      const option = el('option', undefined, price === null ? entry.name : `${entry.name} · ${price.replace('.', ',')} €`);
+      const option = el('option', undefined, price === null ? entry.name : `${entry.name} · ${formatAmount(entry.priceCents, 'EUR')}`);
       option.setAttribute('value', entry.key);
       service.appendChild(option);
     }
@@ -282,7 +282,9 @@ export function openAppointmentPanel(deps) {
       say(slotLine, '');
       // Verifica 12/11: the first slots were all today. The free hours are
       // grouped by Rome day — one chip per day with room, the first day
-      // chosen — and the chosen day shows all its hours.
+      // chosen — and the chosen day shows its hours, with «Mostra altri
+      // orari» when they are more than APPOINTMENT_SLOTS_SHOWN (voce
+      // 9a91d09e: no free hour is ever hidden in silence).
       /** @type {Map<string, Array<any>>} */
       const byDay = new Map();
       for (const slot of free) {
@@ -298,7 +300,19 @@ export function openAppointmentPanel(deps) {
         chosen = null;
         submissionKey = null;
         for (const chip of days.childNodes) chip.setAttribute('aria-pressed', chip.getAttribute('data-day') === day ? 'true' : 'false');
-        paintSlots((byDay.get(day) ?? []).slice(0, APPOINTMENT_SLOTS_SHOWN));
+        const hours = byDay.get(day) ?? [];
+        paintSlots(hours.slice(0, APPOINTMENT_SLOTS_SHOWN));
+        if (hours.length > APPOINTMENT_SLOTS_SHOWN) {
+          const left = hours.length - APPOINTMENT_SLOTS_SHOWN;
+          const more = el('button', 'bo-offer-chip', `Mostra altri orari (${left})`);
+          more.setAttribute('type', 'button');
+          more.setAttribute('data-more-slots', day);
+          more.addEventListener('click', () => {
+            chips.removeChild(more);
+            paintSlots(hours.slice(APPOINTMENT_SLOTS_SHOWN));
+          });
+          chips.appendChild(more);
+        }
       };
       for (const day of dayKeys) {
         const chip = el('button', 'bo-offer-chip', dayLabel(byDay.get(day)[0].startsAt));

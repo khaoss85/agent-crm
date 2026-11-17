@@ -5,6 +5,7 @@ import {
   REENGAGEMENT_ACTION_KIND,
   REENGAGEMENT_CONSENTS,
   REENGAGEMENT_DEFAULT_QUIET_DAYS,
+  REENGAGEMENT_FREETEXT_CHANNELS,
   REENGAGEMENT_INBOUND_CHANNELS,
   REENGAGEMENT_PACKAGE,
   REENGAGEMENT_PERMISSION,
@@ -66,7 +67,9 @@ export function createReengagementPackage(options = {}) {
     // approval-shaped proposals, no records of its own.
     // 2: fd36da512b0e — proposals travel as teammate-run rows («Da fare»)
     // through the run-due executor, never as space-ai-proposal rows.
-    version: 2,
+    // 3: 22614551 — fallback only over message channels, cause beside
+    // no-draft, no-inbound removed from the documented skip reasons.
+    version: 3,
     label: 'Re-engagement agent',
     description:
       'The teammate agent that re-contacts silent customers: selects who arrived from WhatsApp, Instagram '
@@ -119,6 +122,7 @@ export function createReengagementPackage(options = {}) {
         approvalQueue: 'teammate-run',
         inboundChannels: [...REENGAGEMENT_INBOUND_CHANNELS],
         windowedChannels: [...REENGAGEMENT_WINDOW_CHANNELS],
+        fallbackChannels: [...REENGAGEMENT_FREETEXT_CHANNELS],
         defaultQuietDays: REENGAGEMENT_DEFAULT_QUIET_DAYS,
         actionKind: REENGAGEMENT_ACTION_KIND,
         permission: REENGAGEMENT_PERMISSION,
@@ -141,11 +145,14 @@ export {
   REENGAGEMENT_ACTION_KIND,
   REENGAGEMENT_CONSENTS,
   REENGAGEMENT_DEFAULT_QUIET_DAYS,
+  REENGAGEMENT_FREETEXT_CHANNELS,
   REENGAGEMENT_INBOUND_CHANNELS,
   REENGAGEMENT_PACKAGE,
   REENGAGEMENT_PERMISSION,
+  REENGAGEMENT_MAX_CAUSE_CHARS,
   REENGAGEMENT_MAX_PAYLOAD_CHARS,
   REENGAGEMENT_MAX_PROPOSALS_PER_RUN,
+  REENGAGEMENT_SKIP_REASONS,
   REENGAGEMENT_WINDOW_CHANNELS,
   createReengagementExecutor,
   scanReengagement,

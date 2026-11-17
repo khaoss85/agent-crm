@@ -67,14 +67,28 @@ test('aggregateChannelOrigins counts per system and week, undated stay out of ba
   assert.ok(Object.isFrozen(origins), 'the aggregate travels frozen');
 });
 
+test('4d5ae183: one customer on two channels counts once, in the first-contact channel', () => {
+  const { origins, undated } = aggregateChannelOrigins([
+    { system: 'instagram', firstObservedAt: '2026-10-14T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { system: 'whatsapp', firstObservedAt: '2026-10-12T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { system: 'whatsapp', firstObservedAt: '2026-10-18T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    { system: 'email', firstObservedAt: '2026-10-13T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c2' },
+  ]);
+  assert.deepEqual(origins, [
+    { system: 'email', week: '2026-10-12', count: 1 },
+    { system: 'whatsapp', week: '2026-10-12', count: 1 },
+  ]);
+  assert.equal(undated, 0);
+  const total = origins.reduce((sum, entry) => sum + entry.count, 0);
+  assert.equal(total, 2, 'the card total never exceeds the new customers of the period');
+});
+
 test('two handles of one customer on one channel count once in the earliest week', () => {
   const { origins, undated } = aggregateChannelOrigins([
     { system: 'whatsapp', firstObservedAt: '2026-10-14T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
     { system: 'whatsapp', firstObservedAt: '2026-10-12T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
-    { system: 'instagram', firstObservedAt: '2026-10-12T09:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
   ]);
   assert.deepEqual(origins, [
-    { system: 'instagram', week: '2026-10-12', count: 1 },
     { system: 'whatsapp', week: '2026-10-12', count: 1 },
   ]);
   assert.equal(undated, 0);
@@ -106,9 +120,14 @@ test('the capability counts identities per channel from the composed package', a
   });
 
   const capability = createChannelOriginsCapability().create({ modules: app.modules });
-  const { origins } = await capability.countOrigins();
+  const { origins, undated } = await capability.countOrigins();
+  // Luca wrote on whatsapp first and instagram later: one customer counts
+  // once, in the first-contact channel — never once per channel.
   const systems = origins.map((entry) => entry.system).sort();
-  assert.deepEqual(systems, ['email', 'instagram', 'whatsapp']);
+  assert.deepEqual(systems, ['email', 'whatsapp']);
+  const total = origins.reduce((sum, entry) => sum + entry.count, 0);
+  assert.equal(total, 2, 'two customers, two counts — the card total cannot exceed them');
+  assert.equal(undated, 0);
   for (const entry of origins) {
     assert.equal(entry.count, 1);
     assert.match(entry.week ?? '', /^\d{4}-\d{2}-\d{2}$/, 'dated identities join a weekly bar');

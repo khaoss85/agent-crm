@@ -7,6 +7,7 @@ import {
   SHELL_GROUPS,
   SETTINGS_AREAS,
   AI_ENTRY_FALLBACK,
+  AI_SPACE_OFF_PLACEHOLDER,
   aiPlaceholder,
   crumb,
   clientBadge,
@@ -24,6 +25,9 @@ import {
   resolveSpaceShortcut,
   spaceInitialsFor,
   spaceBadgeColor,
+  spaceBadgeClass,
+  spaceBadgeHue,
+  spaceBadgeIndex,
   spaceSwitcherLabel,
   spaceMenuItems,
   buildShellNav,
@@ -317,9 +321,105 @@ test('backlog:ecb26347d12c — the «Cambia spazio» button names only the short
   const rowBadges = badges.slice(1).map((badge) => badge.textContent);
   assert.notEqual(rowBadges[0], rowBadges[1]);
   assert.equal(badges[0].textContent, rowBadges[0]);
-  const styles = badges.map((badge) => badge.getAttribute('style'));
-  assert.ok(styles.every((style) => typeof style === 'string' && style.includes('background:')), 'every badge carries its space color');
-  assert.ok(new Set(styles).size > 1, 'the two spaces have different colors');
+  // backlog:b545aca18b8f: the color lives in the stylesheet class, never
+  // in an inline style, so a pilot CSP refusing inline styles cannot
+  // strip it. Each badge names its hue class AND the stylesheet maps that
+  // class to the same hsl the helper computes.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  for (const badge of badges) assert.equal(badge.getAttribute('style'), null, 'no inline style on a space badge');
+  const slots = badges.map((badge) => {
+    const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+    assert.ok(cls, 'badge carries its palette class');
+    return cls;
+  });
+  assert.ok(new Set(slots).size > 1, 'the two spaces have different colors');
+  for (const id of ['b1', 'presti-group']) {
+    const cls = spaceBadgeClass(id);
+    assert.ok(slots.includes(cls), `badge list carries ${cls} for space ${id}`);
+    assert.ok(
+      css.includes(`.${cls} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${cls} to the helper color`,
+    );
+  }
+});
+
+test('backlog:b545aca18b8f — sidebar draws with empty spaces and badge color without inline style', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // Empty or missing lists never reach the renderers: the constructor
+  // normalizes to the single local space, and setSpaces ignores empties —
+  // those are the load-bearing invariants, so the test pins them.
+  for (const spaces of [[], null, undefined]) {
+    const { sidebar, topbar } = renderShell({ spaces });
+    const text = sidebar.textContent;
+    assert.ok(text.includes('Moduli nativi'), 'empty list still draws the native group');
+    assert.ok(text.includes('Spazio locale'), 'empty list falls back to the local space');
+    const badges = [...sidebar.findAll('span'), ...topbar.findAll('span')]
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+    assert.ok(badges.length >= 2, 'switcher and phone badges draw without spaces');
+    for (const badge of badges) {
+      assert.equal(badge.getAttribute('style'), null, 'no inline style (pilot CSP refuses inline styles)');
+      const cls = (badge.getAttribute('class') ?? '').split(/\s+/).find((name) => name.startsWith('bo-space-badge--p'));
+      assert.ok(cls, 'fallback badge carries its palette class');
+      assert.equal(cls, spaceBadgeClass('locale'), 'fallback badge uses the local-space slot');
+      assert.ok(
+        css.includes(`.${cls} { background-color: ${spaceBadgeColor('locale')}; }`),
+        'stylesheet maps the fallback slot to the helper color',
+      );
+    }
+  }
+  // The class and the color string always agree on the palette slot.
+  for (const id of ['locale', 'aurora', 'presti-group', '']) {
+    assert.equal(spaceBadgeClass(id), `bo-space-badge--p${spaceBadgeIndex(id)}`);
+    assert.equal(spaceBadgeColor(id), spaceBadgeColor(id));
+    assert.ok(
+      css.includes(`.${spaceBadgeClass(id)} { background-color: ${spaceBadgeColor(id)}; }`),
+      `stylesheet maps ${spaceBadgeClass(id)} to the helper color`,
+    );
+  }
+});
+
+// backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
+// a space switch drops it, so the bar never names the previous space's
+// agent before the new space's own read lands.
+test('f6ad46980054 switching space drops the previous space agent name from the AI bar', () => {
+  const spaces = [
+    { id: 'aurora', name: 'Studio Aurora', initials: 'SA' },
+    { id: 'outlet', name: 'Aurora Outlet', initials: 'AO' },
+    { id: 'verde', name: 'Casa Verde', initials: 'CV' },
+  ];
+  const { view, sidebar, topbar, seen } = renderShell({ spaces });
+  const input = () => topbar.findAll('input')[0];
+  view.update({ aiScreenId: 'agenti', aiAgentName: 'Mano' });
+  assert.ok(input().getAttribute('placeholder').includes('Mano'), 'the bar names this space agent');
+  // The sidebar menu pick clears it at once, before the host calls back.
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  const other = picks.find((node) => !((node.className ?? '').includes('active')));
+  other.dispatch('click', {});
+  assert.deepEqual(seen.picked, ['outlet']);
+  assert.ok(!input().getAttribute('placeholder').includes('Mano'), 'no previous-space agent after the menu pick');
+  assert.equal(input().getAttribute('placeholder'), aiPlaceholder('agenti'));
+  // The host funnel clears it too: a new name lands, then setSpaces moves on.
+  view.update({ aiAgentName: 'Mano' });
+  assert.ok(input().getAttribute('placeholder').includes('Mano'), 'the new space names its own agent');
+  view.setSpaces(spaces, 'verde');
+  assert.ok(!input().getAttribute('placeholder').includes('Mano'), 'no previous-space agent after setSpaces');
+  assert.equal(input().getAttribute('placeholder'), aiPlaceholder('agenti'));
+  // A same-space refresh keeps the freshly read name.
+  view.update({ aiAgentName: 'Guido' });
+  view.setSpaces(spaces, 'verde');
+  assert.ok(input().getAttribute('placeholder').includes('Guido'), 'same-space refresh keeps the name');
+});
+
+test('backlog:b545aca18b8f — setSpaces ignores an empty list and keeps the open space', () => {
+  const { sidebar, view } = renderShell();
+  assert.ok(sidebar.textContent.includes('Studio Aurora'));
+  view.setSpaces([], 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'empty setSpaces keeps the previous spaces');
+  view.setSpaces(null, 'aurora');
+  assert.ok(sidebar.textContent.includes('Studio Aurora'), 'null setSpaces keeps the previous spaces');
+  view.setSpaces([{ id: 'verde', name: 'Casa Verde', initials: 'CV' }], 'verde');
+  assert.ok(sidebar.textContent.includes('Casa Verde'), 'a real list still replaces the spaces');
+  assert.ok(!sidebar.textContent.includes('Studio Aurora'), 'the old space leaves the switcher');
 });
 
 test('buildShellNav resolves Pipeline from the schema and leaves future screens disabled', () => {
@@ -430,6 +530,44 @@ test('AI entry placeholder is per screen, in Italian, with a fallback', () => {
   assert.equal(aiPlaceholder(null), AI_ENTRY_FALLBACK);
 });
 
+// backlog 3136d15da7bd: with the space AI off the bar says so instead of
+// inviting a question the AI would not answer.
+test('AI entry placeholder names the off space AI on every screen', () => {
+  assert.equal(aiPlaceholder('oggi', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('calendario', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('agenti', 'Mano', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.equal(aiPlaceholder('unknown-screen', '', true), AI_SPACE_OFF_PLACEHOLDER);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /spenta/);
+  assert.match(AI_SPACE_OFF_PLACEHOLDER, /Spazi e accessi/);
+});
+
+test('shell update({ aiSpaceOff }) swaps the top bar words, never its search', () => {
+  const { view, topbar } = renderShell();
+  const input = () => topbar.findAll('input')[0];
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+  view.update({ aiSpaceOff: true });
+  assert.equal(input().getAttribute('placeholder'), AI_SPACE_OFF_PLACEHOLDER);
+  assert.ok(!/Chiedi: «cosa/.test(input().getAttribute('placeholder')), 'no inviting question while off');
+  view.update({ aiSpaceOff: false });
+  assert.equal(input().getAttribute('placeholder'), 'Chiedi: «cosa è più urgente oggi?»');
+});
+
+// backlog 3136d15da7bd: pickSpace paints no optimistic aiSpaceOff — the bar
+// keeps the last words until the new space's own master read lands, so it
+// never flashes an inviting question for a space whose AI is off.
+test('3136d15da7bd pickSpace never resets the AI bar before the master read', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /update\(\{\s*aiSpaceOff:\s*false\s*\}\)/);
+});
+
+// backlog 3136d15da7bd: a failed space master read logs its cause with the
+// space, never the token or the body, and keeps the last words.
+test('3136d15da7bd a failed AI master read logs cause and space', () => {
+  const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
+  assert.match(app, /bo-ai space master unreadable/);
+  assert.match(app, /spaceId=\$\{spaceId\}/);
+});
+
 test('settings tabs list the four areas with the open one underlined', () => {
   const doc = createFakeDocument();
   const navigated = [];
@@ -532,8 +670,12 @@ test('shell renders sidebar voices, groups, add-module entry and logout', () => 
   assert.ok(topbar.textContent.includes('Studio Aurora / Oggi'));
   assert.ok(topbar.textContent.includes('⌘K'));
   assert.ok(topbar.textContent.includes('✦'), 'the AI bar opens with the spark');
-  // No badge at zero fixes.
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  // No lit badge at zero fixes: its room stays reserved as a hidden
+  // placeholder (backlog:b76770f82fe9), so the rows below never move.
+  const badges = sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
+  assert.equal(badges.length, 1);
+  assert.ok(badges[0].className.split(/\s+/).includes('is-empty'));
+  assert.equal(badges[0].getAttribute('aria-hidden'), 'true');
 });
 
 test('Clienti badge lights only from a real count, grey like the prototype (BO-F6-01)', () => {
@@ -585,14 +727,55 @@ test('loadClientCount requests a supported page size on the real list path (BO-F
 test('shell shows the Clienti count pill after a real count arrives (BO-F6-01)', () => {
   const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
   const pills = () => sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'));
-  assert.equal(pills().length, 0);
+  const lit = () => pills().filter((node) => !((node.getAttribute('class') ?? '').split(/\s+/).includes('is-empty')));
+  // backlog:b76770f82fe9: an unknown count keeps a hidden placeholder, so
+  // the row keeps its height before the number lights up.
+  assert.equal(lit().length, 0);
+  assert.equal(pills().length, 1);
+  assert.equal(pills()[0].getAttribute('aria-hidden'), 'true');
   view.update({ clientCount: null });
-  assert.equal(pills().length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(pills().length, 1);
   view.update({ clientCount: 3, clientCountExact: true });
   assert.equal(pills().length, 1);
   assert.equal(pills()[0].textContent, '3');
+  assert.equal(pills()[0].getAttribute('aria-hidden'), null);
   view.update({ clientCount: 3, clientCountExact: false });
   assert.equal(pills()[0].textContent, '3+');
+});
+
+test('menu badges reserve their room: the row keeps its height when the number lights (backlog:b76770f82fe9)', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // The placeholder must stay laid out while hidden: parse the rule that
+  // covers both empty badges, not the selector text alone. A `display: none`
+  // (or emptied) rule would pass a mere includes() check while rows move again.
+  const rules = css.match(/[^{}]+{[^{}]*}/g) ?? [];
+  const reserved = rules.find((rule) => rule.includes('.bo-count.is-empty') && rule.includes('.bo-badge.is-empty'));
+  assert.ok(reserved, 'shared hidden placeholder rule for both badges exists');
+  const body = reserved.slice(reserved.indexOf('{') + 1, reserved.lastIndexOf('}')).toLowerCase();
+  assert.match(body, /visibility\s*:\s*hidden/, 'empty badges stay laid out but invisible');
+  assert.doesNotMatch(body, /display\s*:\s*none/, 'empty badges must not leave the layout');
+  const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const pillClasses = () => sidebar.findAll('span')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'))
+    .map((node) => node.getAttribute('class'));
+  const badgeClasses = () => sidebar.findAll('span')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'))
+    .map((node) => node.getAttribute('class'));
+  // One pill slot per badged voice, before and after the numbers arrive:
+  // the row's box never changes, only the placeholder fills in.
+  assert.deepEqual(pillClasses(), ['bo-count is-empty']);
+  assert.deepEqual(badgeClasses(), ['bo-badge is-empty']);
+  const empties = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('is-empty'));
+  assert.equal(empties.length, 2);
+  for (const node of empties) {
+    assert.equal(node.textContent, '0');
+    assert.equal(node.getAttribute('aria-hidden'), 'true');
+  }
+  view.update({ clientCount: 12, clientCountExact: true, fixCount: 2 });
+  assert.deepEqual(pillClasses(), ['bo-count']);
+  assert.deepEqual(badgeClasses(), ['bo-badge']);
+  assert.equal(sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '') === 'bo-count')[0].textContent, '12');
 });
 
 test('space switcher shows the member role under the space name (BO-F6-01)', () => {
@@ -609,14 +792,19 @@ test('space switcher shows the member role under the space name (BO-F6-01)', () 
 
 test('shell shows the badge only after a real count arrives', () => {
   const { sidebar, view } = renderShell();
+  const badges = () => sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
+  const lit = () => badges().filter((node) => !node.className.split(/\s+/).includes('is-empty'));
+  // backlog:b76770f82fe9: zero or unknown keeps the hidden placeholder.
   view.update({ fixCount: 0 });
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(badges().length, 1);
   view.update({ fixCount: null });
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(badges().length, 1);
   view.update({ fixCount: 2 });
-  const badges = sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
-  assert.equal(badges.length, 1);
-  assert.equal(badges[0].textContent, '2');
+  assert.equal(badges().length, 1);
+  assert.equal(badges()[0].textContent, '2');
+  assert.ok(!badges()[0].className.split(/\s+/).includes('is-empty'));
 });
 
 test('hostile space and user names render as text, never markup', () => {
@@ -687,6 +875,27 @@ test('settings panel lists the four areas with honest availability', () => {
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+test('backlog:2302655b1fcf — Impostazioni header matches Personalizzazione, no BACKOFFICE kicker', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 0, customerDataAvailable: true });
+  const titles = mount.findAll('h2');
+  assert.equal(titles.length, 1);
+  assert.equal(titles[0].textContent, 'Impostazioni');
+  assert.ok((titles[0].getAttribute('class') ?? '').split(/\s+/).includes('panel-title'), 'same title class as Personalizzazione');
+  assert.ok(!mount.textContent.includes('Backoffice'), 'no BACKOFFICE kicker');
+  const subtitles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('muted'));
+  assert.ok(subtitles.length >= 1, 'a subtitle like Personalizzazione');
+});
+
+test('backlog:2302655b1fcf — «Gestisci spazi e accessi» opens Spazi e accessi directly', () => {
+  const { sidebar, seen } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const manage = sidebar.findAll('button').find((node) => node.textContent === 'Gestisci spazi e accessi');
+  assert.ok(manage, 'the space menu carries the entry');
+  manage.dispatch('click', {});
+  assert.deepEqual(seen.navigated, ['#/spazi-accessi']);
 });
 
 // backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non

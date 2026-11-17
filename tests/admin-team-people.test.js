@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { auditActorLabel, memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
 import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
-import { buildTeamRows } from '../apps/admin/public/admin-spazi-accessi.js';
+import { buildTeamRows, duplicateTeamHints } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
 import { createOfferDetail } from '../apps/admin/public/admin-offer.js';
 import { createPipelineBoard } from '../apps/admin/public/admin-pipeline.js';
@@ -401,5 +401,81 @@ test('review follow-up (backlog:e52c5e0dd49f): auditActorLabel corroboration pai
     auditActorLabel({ actorId: 'mario.rossi@esempio.it' }, ['mario.rossi@esempio.it'], []),
     'mario.rossi@esempio.it',
   );
-  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), 'utente');
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), '—');
+});
+
+test('backlog:3f3c143b: auditActorLabel never reads «utente» — a mailbox reads, the rest stay hidden', () => {
+  // A team member known only by mailbox reads the mailbox (the honest form).
+  const emailOnly = [{ subjects: ['google|777'], keys: [], name: null, email: 'daniele@example.com', known: true, label: 'daniele@example.com' }];
+  assert.equal(auditActorLabel({ actorId: 'google|777' }, [], emailOnly), 'daniele@example.com');
+  // A real mailbox with no roster still reads as itself.
+  assert.equal(auditActorLabel({ actorId: 'daniele@example.com' }, [], []), 'daniele@example.com');
+  // Technical ids, UUIDs and service handles stay hidden behind the dash.
+  assert.equal(auditActorLabel({ actorId: 'google|118' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: '123e4567-e89b-12d3-a456-426614174000' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'admin-ui' }, [], []), '—');
+  // A bare handle or slug names nobody and reads as unknown, never «utente».
+  assert.equal(auditActorLabel({ actorId: 'sconosciuto' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'stranger-handle' }, [], []), '—');
+  assert.equal(auditActorLabel({ actorId: 'user-12345' }, [], []), '—');
+  // The system and the empty actor keep their own words.
+  assert.equal(auditActorLabel({ actorType: 'system', actorId: 'x' }, [], []), 'sistema');
+  assert.equal(auditActorLabel({ actorId: '' }, [], []), '—');
+});
+
+test('backlog:6563edf41aab: «Daniele Pelleri» e «daniele pelleri» non fanno due righe identiche', () => {
+  // Stessa persona letta due volte (filtro digitato + roster, maiuscole
+  // diverse): una riga sola, non due interruttori uguali con avatar DA.
+  const typed = personRows(['Daniele Pelleri'], [], [{ subject: 'daniele pelleri', displayName: 'daniele pelleri' }]);
+  assert.equal(typed.length, 1, 'typed filter joins the roster person whatever the case');
+  assert.deepEqual([...typed[0].ids].sort(), ['Daniele Pelleri', 'daniele pelleri'], 'the typed identity stays on the row');
+  // Due righe roster distinte con lo stesso nome a meno delle maiuscole
+  // restano due persone (nome da solo non fonde mai: agent-crm#644/#742),
+  // ma numerate come gli omonimi, mai due righe indistinguibili.
+  const both = personRows([], [], [
+    { subject: 'daniele-a', displayName: 'Daniele Pelleri' },
+    { subject: 'daniele-b', displayName: 'daniele pelleri' },
+  ]);
+  assert.deepEqual(both.map((row) => row.label), ['Daniele Pelleri (1)', 'daniele pelleri (2)']);
+  assert.deepEqual(both.map((row) => row.ids), [['daniele-a'], ['daniele-b']], 'distinct booking identities kept');
+  // teamPeople numera allo stesso modo su ogni schermata che lo legge.
+  assert.deepEqual(
+    teamPeople([
+      { subject: 'daniele-a', displayName: 'Daniele Pelleri' },
+      { subject: 'daniele-b', displayName: 'daniele pelleri' },
+    ]).map((row) => row.label),
+    ['Daniele Pelleri (1)', 'daniele pelleri (2)'],
+  );
+  // Nascondere con gli id della riga (come fa l'interruttore vero) spegne
+  // la riga: settimana, interruttore e griglia nascondono le stesse
+  // identità (review #960 giro 1, P2).
+  const hidden = personRows(['Daniele Pelleri'], typed[0].ids, [{ subject: 'daniele pelleri', displayName: 'daniele pelleri' }]);
+  assert.equal(hidden[0].active, false, 'hiding the row ids switches the row off');
+  // Due identità roster distinte restano indipendenti (review #960 giro 1,
+  // P2): nasconderne una non spegne l'altra.
+  const distinct = personRows(['Alice', 'alice'], ['Alice'], [{ subject: 'Alice' }, { subject: 'alice' }]);
+  assert.equal(distinct.length, 2, 'two distinct roster identities stay two rows');
+  assert.equal(distinct[0].active, false, 'the hidden identity reads off');
+  assert.equal(distinct[1].active, true, 'the other identity stays on');
+});
+
+test('backlog:6563edf41aab: Impostazioni segnala i possibili doppioni del team', () => {
+  const dupes = duplicateTeamHints(buildTeamRows([
+    { subject: 'daniele-a', displayName: 'Daniele Pelleri', role: 'operator', status: 'active' },
+    { subject: 'daniele-b', displayName: 'daniele pelleri', role: 'operator', status: 'active' },
+  ]));
+  assert.equal(dupes.length, 1, 'same painted name twice is one hint');
+  assert.match(dupes[0].text, /daniele pelleri/i, 'the hint names the person');
+  // Una persona sola non segnala; due omonimi sono candidati doppioni
+  // come le schede: li decide l'operatore, come in «Possibili doppioni».
+  assert.equal(duplicateTeamHints(buildTeamRows(ROSTER)).length, 1, 'the two Marco Rossi stay one candidate');
+  assert.deepEqual(
+    duplicateTeamHints(buildTeamRows([{ subject: 'solo', displayName: 'Daniele Pelleri', role: 'owner', status: 'active' }])),
+    [],
+    'one person stays silent',
+  );
+  assert.deepEqual(duplicateTeamHints(buildTeamRows([
+    { subject: 'a', displayName: 'Sara Neri', role: 'operator', status: 'active' },
+    { subject: 'b', displayName: 'Luca Blu', role: 'operator', status: 'active' },
+  ])), [], 'distinct names stay silent');
 });

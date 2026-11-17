@@ -39,7 +39,7 @@ test('the person heads the screen: initials, name, email and the Italian role', 
   const mount = await render({ member: { name: 'Elena Rinaldi', email: 'elena@studioaurora.it', role: 'owner' },
     connections: { available: true, reason: null, items: [] } });
   assert.equal(byClass(mount, 'span', 'bo-profilo-avatar')[0].textContent, 'ER');
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Rinaldi');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Rinaldi');
   assert.equal(byClass(mount, 'span', 'bo-profilo-email')[0].textContent, 'elena@studioaurora.it');
   assert.equal(byClass(mount, 'span', 'bo-profilo-pill-role')[0].textContent, 'Titolare');
 });
@@ -75,7 +75,7 @@ test('unreadable connections say so in Italian, offer no action and invent no st
     const note = byClass(mount, 'p', 'bo-profilo-note')[0];
     assert.match(note.textContent, /non si può leggere/);
     assert.ok(!mount.textContent.includes('RUNTIME_ROLE_ROUTE_REFUSED'), 'no code on screen');
-    assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Rinaldi', 'the session person stays');
+    assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Rinaldi', 'the session person stays');
   }
 });
 
@@ -84,7 +84,7 @@ test('hostile values stay text and an unknown connector status reads as to conne
     { connector: 'calendar', status: 'weird', account: '<b>x</b>' },
   ] } });
   assert.deepEqual(mount.findAll('img'), []);
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, '<img src=x onerror=alert(1)>');
   const calendar = byClass(mount, 'div', 'bo-profilo-conn')[0];
   assert.ok(calendar.textContent.includes('Da collegare'));
   assert.deepEqual(mount.findAll('b'), []);
@@ -111,7 +111,7 @@ test('initials come from the name, else from the email', () => {
 test('a provider subject is never shown as the name or the email', async () => {
   const mount = await render({ member: { name: 'google|104938793743317800292', email: 'google|104938793743317800292', role: null },
     connections: { available: true, reason: null, items: [] } }, { name: 'google|104938793743317800292', email: null, role: 'owner' });
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Il tuo profilo');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Il tuo profilo');
   assert.equal(byClass(mount, 'span', 'bo-profilo-email').length, 0);
   assert.ok(!mount.textContent.includes('google|'));
   assert.equal(byClass(mount, 'span', 'bo-profilo-pill-role')[0].textContent, 'Titolare', 'the session role survives a null server role');
@@ -121,7 +121,7 @@ test('without a readable email the connected Google account names the person', a
   const mount = await render({ member: { name: 'google|1049', email: 'google|1049', role: null },
     connections: { available: true, reason: null, items: [{ connector: 'calendar', status: 'connected', account: 'dan@presti.it' }] } },
   { name: 'google|1049', email: null, role: null });
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'dan@presti.it');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'dan@presti.it');
   assert.equal(byClass(mount, 'span', 'bo-profilo-avatar')[0].textContent, 'DA');
 });
 
@@ -223,7 +223,7 @@ test('backlog:1cfc68175ab7 the profile name is editable: Modifica opens a form, 
   assert.equal(patch.path, '/api/profile');
   const sent = typeof patch.body === 'string' ? JSON.parse(patch.body) : patch.body;
   assert.deepEqual(sent, { name: 'Elena Presti' });
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Presti');
 });
 
 test('backlog:1cfc68175ab7 a provider-subject name gets the invalid-name error, not the too-long one', async () => {
@@ -367,7 +367,7 @@ test('backlog:1cfc68175ab7 Salva shows «Salvo…» and locks the form while the
   assert.equal(patches.length, 1, 'one write, whatever the clicks');
   releasePatch();
   await flush(20);
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
 });
 
 // Muse P2 on #849: after the PATCH succeeds the reread is still in flight;
@@ -406,7 +406,7 @@ test('backlog:1cfc68175ab7 a click or Enter during the reread after Salva writes
   assert.equal(patches.length, 1, 'no second write while the reread runs');
   releaseRead();
   await flush(20);
-  assert.equal(byClass(mount, 'h2', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
+  assert.equal(byClass(mount, 'h1', 'bo-profilo-name')[0].textContent, 'Elena Presti', 'the new name paints');
 });
 
 // PROFILO item 34f7fb85ad8b: opening Modifica hands the Nome field over ready

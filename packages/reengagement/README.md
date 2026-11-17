@@ -12,12 +12,18 @@ not contacted for N days — and prepares one message each.
 - one proposal per silent customer, with the sendable route and the drafted
   knock;
 - one skip reason per other customer (`replied`, `recent`, `opted-out`,
-  `consent-unknown`, `no-inbound`, `unsupported-channel`,
-  `no-sendable-route`, `no-draft` — the last when the wording edge
-  returns no usable text for a free-text route).
+  `consent-unknown`, `unsupported-channel`, `no-sendable-route`,
+  `no-draft` — the last with a `cause`: the error the wording edge threw,
+  or `empty-text` when it returned no usable text for a free-text route).
+  There is no `no-inbound`: a missing `lastInboundAt` is refused before the
+  scan, so the scan never meets a customer without inbound.
 
 Outside the 24-hour Meta window a proposal is an approved template or
-another connected channel — never free text. The window itself is observed
+another connected message channel — never free text. The fallback only
+uses channels that send free text with no window observation (`email`,
+`telegram`): a connected slug that carries no message (stripe, calendar,
+site-form) is never a route, the customer is skipped as
+`no-sendable-route`. The window itself is observed
 by the caller from the channels inbox (`windowState` per customer); the rule
 stays in `packages/channels` and is never re-declared here.
 

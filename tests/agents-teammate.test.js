@@ -284,6 +284,125 @@ test('the spending cap stops executions over the threshold and says so', async (
   assert.match(capped.note, /cap/i);
 });
 
+test('approval refuses when the agent already spent over its cap', async () => {
+  const { ops, modules } = compose();
+  await makeAgent(ops, { sourceKey: 'custom-agent:tight', spendingCapCents: 1000 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-tight',
+    agentSourceKey: 'custom-agent:tight',
+    phrase: 'ogni lunedì il report vendite',
+    plan: { cadence: 'weekly', weekday: 1, timeOfDay: '08:00' },
+    costPerRunCents: 10,
+  });
+  await ops.runDue({
+    actor: SYSTEM,
+    at: MON_0801,
+    execute: async () => ({
+      kind: 'proposals', costCents: 12, proposals: [{ action: 'draft-report', payload: { title: 'Report' } }],
+    }),
+  });
+  // The owner tightens the cap after the proposal: approving now would
+  // bless overspend (spent 12c of 10c).
+  await ops.updateAgent({ actor: USER, spaceId: SPACE, agentSourceKey: 'custom-agent:tight', spendingCapCents: 10 });
+  let applied = 0;
+  await assert.rejects(
+    () => ops.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: 'run:as-tight:2026-11-02T08:00:00.000Z',
+      applyAction: async () => { applied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+  );
+  assert.equal(applied, 0, 'nothing is applied over the cap');
+  const rows = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: 'run:as-tight:2026-11-02T08:00:00.000Z' });
+  assert.equal(rows[0].outcome, 'proposed', 'the run stays proposed: raise the cap and retry');
+});
+
+test("approval checks the run's execution month, not the wall clock", async () => {
+  // Review agent-crm#940 P1: approveRun read the approval ledger window
+  // from now(), so a cross-month approval checked the wrong month's spend.
+  const OCT_EARLY = '2026-10-31T07:00:00.000Z';
+  const OCT_31 = '2026-10-31T08:01:00.000Z';
+  const NOV_02 = '2026-11-02T08:01:00.000Z';
+  const { modules, ops } = compose(OCT_EARLY);
+  const nov = createAgentOperations({ modules, now: () => NOV_02 });
+  const propose12 = async () => ({
+    kind: 'proposals',
+    costCents: 12,
+    proposals: [{ action: 'draft-report', payload: { title: 'Report' } }],
+  });
+  await makeAgent(ops, { sourceKey: 'custom-agent:oct-tight', name: 'Ottobre', spendingCapCents: 1000 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-oct-tight',
+    agentSourceKey: 'custom-agent:oct-tight',
+    phrase: 'ogni giorno il report vendite',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 12,
+  });
+  await makeAgent(nov, { sourceKey: 'ag-nov-spent', name: 'Novembre', spendingCapCents: 100 });
+  await ops.createAssignment({
+    actor: USER,
+    spaceId: SPACE,
+    sourceKey: 'as-nov-spent',
+    agentSourceKey: 'ag-nov-spent',
+    phrase: 'ogni giorno il report vendite',
+    plan: { cadence: 'daily', timeOfDay: '08:00' },
+    costPerRunCents: 10,
+  });
+  const october = await ops.runDue({ actor: SYSTEM, at: OCT_31, execute: propose12 });
+  assert.equal(october.proposed, 2, 'both October runs are proposed');
+  // The owner tightens the first cap after the proposal: October spent
+  // 12c of 10c, so approving in November must still refuse.
+  await ops.updateAgent({ actor: USER, spaceId: SPACE, agentSourceKey: 'custom-agent:oct-tight', spendingCapCents: 10 });
+  // November spends 120c of the second agent's 100c cap (kept on the
+  // ledger as a capped run): the October proposal inside its cap must
+  // still be approvable in November.
+  const november = await nov.runDue({
+    actor: SYSTEM,
+    at: NOV_02,
+    execute: async () => ({
+      kind: 'proposals',
+      costCents: 120,
+      proposals: [{ action: 'draft-report', payload: { title: 'November' } }],
+    }),
+  });
+  assert.equal(november.capped, 2, 'both November sweeps cap: the tightened estimate and the overspend');
+  const ledger = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, agentSourceKey: 'ag-nov-spent' });
+  const novemberSpend = ledger
+    .filter((row) => typeof row.decidedAt === 'string' && row.decidedAt >= '2026-11-01T00:00:00.000Z')
+    .reduce((sum, row) => sum + (typeof row.costCents === 'number' ? row.costCents : 0), 0);
+  assert.equal(novemberSpend, 120, 'the November overspend is recorded on the ledger');
+  let applied = 0;
+  await assert.rejects(
+    () => nov.approveRun({
+      actor: USER,
+      spaceId: SPACE,
+      runSourceKey: 'run:as-oct-tight:2026-10-31T08:00:00.000Z',
+      applyAction: async () => { applied += 1; return { ok: true }; },
+    }),
+    (error) => error.code === 'AGENT_APPROVAL_OVER_CAP',
+  );
+  assert.equal(applied, 0, 'the over-cap October run is not applied in November');
+  const kept = await modules.get('teammate-run').service
+    .listWhere({ spaceId: SPACE, sourceKey: 'run:as-oct-tight:2026-10-31T08:00:00.000Z' });
+  assert.equal(kept[0].outcome, 'proposed', 'the refused run stays proposed');
+  const { run } = await nov.approveRun({
+    actor: USER,
+    spaceId: SPACE,
+    runSourceKey: 'run:as-nov-spent:2026-10-31T08:00:00.000Z',
+    applyAction: async () => { applied += 1; return { ok: true }; },
+  });
+  assert.equal(run.outcome, 'applied', 'the in-cap October run applies despite November spend');
+  assert.equal(applied, 1, 'only the in-cap run applied');
+});
+
 test('every execution is recorded with agent, assignment, cost and outcome', async () => {
   const { ops, modules } = compose();
   await makeAgent(ops, { sourceKey: 'ag-log', spendingCapCents: 1000 });

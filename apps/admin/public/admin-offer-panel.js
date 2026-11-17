@@ -68,8 +68,15 @@ export function offerSharePath(token) {
  */
 export function offerShareUrl(origin, token) {
   const path = offerSharePath(token);
-  const base = typeof origin === 'string' ? origin.trim().replace(/\/+$/, '') : '';
-  if (path === null || base === '' || !/^https?:\/\//.test(base)) return null;
+  // backlog:b545aca18b8f: no regex literal with `//` in this client file.
+  // The pilot serves the /bo client through a pass that cuts `//` as a
+  // comment, so `/^https?:\/\//` truncated the module («Invalid regular
+  // expression: missing /») and the whole shell lost its sidebar. Plain
+  // string checks keep the exact same accept/reject behavior, case included.
+  let base = typeof origin === 'string' ? origin.trim() : '';
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  if (path === null || base === '') return null;
+  if (!base.startsWith('http://') && !base.startsWith('https://')) return null;
   return `${base}${path}`;
 }
 

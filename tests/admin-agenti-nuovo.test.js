@@ -197,7 +197,8 @@ test('Crea l’agente: una sola POST con la chiave del pannello anche col doppio
   assert.equal(status.textContent, AGENT_NO_ENGINE_LABEL);
   assert.ok(status.classList.contains('bo-agent-status-waiting'));
   assert.ok(card.textContent.includes(AGENT_NO_ENGINE_NOTE));
-  assert.ok(card.textContent.includes('10,00 €') || card.textContent.includes('10 €'), 'il tetto si legge sulla card');
+  assert.ok(card.textContent.includes('10 €'), 'il tetto si legge sulla card nella forma unica (backlog:93e26f3d2cdc)');
+  assert.ok(!card.textContent.includes('10,00 €'), 'mai la forma con i centesimi quando sono zero');
   const catalogCard = mount.querySelector(`article[data-agent="${RIAGGANCIO.sourceKey}"]`);
   assert.equal(catalogCard.querySelector('.bo-agent-status').textContent, 'Attivo', 'un agente del catalogo resta «Attivo»');
   assert.ok(button(mount, 'new-agent').__focused, 'il fuoco torna su «Nuovo agente»');
@@ -324,4 +325,32 @@ test('guardia dell’attesa: Affida e Crea l’agente dicono «Invio…»/«Creo
   const again = button(mount, 'create-agent');
   assert.equal(again.textContent, 'Crea l’agente', 'il pulsante ridipinto è libero');
   assert.equal(again.disabled, false);
+});
+
+test('92829060f8ff: dopo Crea la nota resta in vista, sotto la barra', async () => {
+  // La nota atterra in cima alla pagina, lontano dalla casella nuova — a
+  // 500 px è fuori vista e sembra persa. Lo scroll la porta sotto la barra.
+  const doc = createFakeDocument();
+  const scrolled = [];
+  const make = doc.createElement;
+  doc.createElement = (tag) => {
+    const node = make(tag);
+    node.scrollIntoView = (options) => { scrolled.push(options ?? null); };
+    return node;
+  };
+  const mount = createMount();
+  const client = driveClient();
+  const view = createAgentiView({ doc, mount, client, spaceId: () => 'presti', now: () => NOW, setTimer: () => null, clearTimer: () => {} });
+  await view.render();
+  await flush();
+  button(mount, 'new-agent').dispatch('click', {});
+  fillPanel(mount, {});
+  button(mount, 'create-agent').dispatch('click', {});
+  await flush();
+  const note = mount.querySelector('.bo-agent-done');
+  assert.ok(note, 'la nota di conferma');
+  assert.equal(note.textContent, 'Auguri è entrato nel tuo team.');
+  assert.equal(note.getAttribute('role'), 'status', 'è un avviso');
+  assert.match(note.getAttribute('style') ?? '', /scroll-margin-top: 12px/, 'resta sotto la barra');
+  assert.ok(scrolled.some((options) => options && options.block === 'nearest'), 'scorre in vista');
 });

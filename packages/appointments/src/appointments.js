@@ -77,12 +77,15 @@ const MAX_SOURCE_KEY = 200;
 const MAX_ID = 200;
 const MAX_LABEL = 200;
 const MAX_NOTES = 2000;
+const MAX_LOCATION = 300;
+const MAX_LOCATION_URL = 2000;
 const MAX_REASON = 300;
 const MAX_FOLLOW_UP_TITLE = 200;
 const MAX_SLOT_MS = 24 * 60 * 60 * 1000;
 
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 const RESOURCE_RE = /^[a-z][a-z0-9-]*$/;
+const LOCATION_URL_RE = /^https?:\/\/[^\s]+$/i;
 const PACKAGE_RE = /^[a-z][a-z0-9-]*$/;
 const SOURCE_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9:._@/-]*$/;
 const SERVICE_KEY_RE = /^[a-z][a-z0-9-]{0,47}$/;
@@ -249,6 +252,45 @@ function realIsoInstant(value, field) {
   return { iso: normalized, ms };
 }
 
+/**
+ * The meeting place (backlog:9ff9a9ee1fea, like the Google Calendar event
+ * form): a free address, or «Online» with the meeting link. Both ride the
+ * booking as evidence — the popover and the scheda read them, the reminder
+ * names them, the Google export fills the event location with them.
+ *
+ * A link without a label is refused: the popover and the history render the
+ * label and hang the link on it, so a bare URL would paint as an unlabeled
+ * link nobody can read aloud. A label without a link is a plain address.
+ */
+function validateLocation(value) {
+  return optionalSafeText(value, 'location', MAX_LOCATION);
+}
+
+/** @param {unknown} value @param {string|null} location */
+function validateLocationUrl(value, location) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') {
+    throw new ValidationError('locationUrl must be a meeting link', { field: 'locationUrl' });
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (trimmed.length > MAX_LOCATION_URL) {
+    throw new ValidationError(`locationUrl must be at most ${MAX_LOCATION_URL} characters`, { field: 'locationUrl' });
+  }
+  if (CONTROL_RE.test(trimmed) || /\s/.test(trimmed)) {
+    throw new ValidationError('locationUrl must be a single link with no spaces or line breaks', { field: 'locationUrl' });
+  }
+  if (!LOCATION_URL_RE.test(trimmed)) {
+    throw new ValidationError('locationUrl must be an http(s) link to the online meeting', { field: 'locationUrl' });
+  }
+  if (location === null) {
+    throw new ValidationError('locationUrl needs a location label: name the place («Online») beside the link', {
+      field: 'locationUrl',
+    });
+  }
+  return trimmed;
+}
+
 /** @param {unknown} value @param {string} field */
 function validateSourceKey(value, field) {
   const key = safeText(value, field, MAX_SOURCE_KEY);
@@ -388,6 +430,8 @@ export function validateAppointmentRequest(request) {
   // si ripete». Anything else is normalized here, so every booking path
   // below (book, propose, confirm) expands the same validated rule.
   const recurrence = validateRecurrence(value.recurrence ?? null);
+  const location = validateLocation(value.location);
+  const locationUrl = validateLocationUrl(value.locationUrl, location);
   const reminderChannel = validateReminderChannel(value.reminderChannel, remindAt);
   if (reminderChannel !== null) {
     // One bound, one place: the derivation throws naming it when the
@@ -414,6 +458,8 @@ export function validateAppointmentRequest(request) {
     startMs: startsAt.ms,
     endMs: endsAt.ms,
     notes: optionalSafeText(value.notes, 'notes', MAX_NOTES),
+    location,
+    locationUrl,
     remindAt,
     reminderChannel,
     source: validateSource(value.source),
@@ -1057,6 +1103,8 @@ function submittedBooking(input, source, reminderKey, series) {
     startsAt: input.startsAt,
     endsAt: input.endsAt,
     notes: input.notes,
+    location: input.location,
+    locationUrl: input.locationUrl,
     // The reminder intent IS the booking's identity: the same source key with
     // a different reminder (added, removed or moved) is a different claim
     // behind the same key and is refused 409 rather than replayed into a
@@ -1721,13 +1769,19 @@ export async function rescheduleAppointment(context, request) {
  * double click, or a cancel racing another cancel never errors on the
  * winner's row.
  *
- * Google Calendar follows calendar-sync's rule «cancellation wins»: when
+ * Google Calendar follows calendar-sync's rule «cancellation wins». When
  * the request names `calendar` (and the `spaceId` the push is gated on),
  * the linked Google event is cancelled through the injected
  * `calendarSync.pushAppointment` handle after the commit, exactly like the
  * reschedule path — validated before any write, answered as data (`push` /
- * `pushError`), never a throw past the commit. Without `calendar` the next
- * two-way sync converges the linked event the same way.
+ * `pushError`), never a throw past the commit. Without `calendar` the
+ * cancel carries its own convergence (backlog:27923678): the appointment's
+ * sync link names the calendar, resolved server-side through
+ * `calendarSync.readAppointmentDetail` after the commit, and the linked
+ * Google event is cancelled through the same push handle with the request's
+ * `spaceId` when given. Without a link (a booking made here, never synced)
+ * nothing is pushed; a push the link cannot reach rides as data
+ * (`pushError`), never a throw past the commit.
  */
 export async function cancelAppointment(context, request) {
   const names = resolvedNames(context.moduleNames);
@@ -1744,6 +1798,7 @@ export async function cancelAppointment(context, request) {
     });
   }
   const reason = safeText(record.reason, 'reason', MAX_REASON);
+  const calendarSync = context?.calendarSync ?? null;
   let calendarId = null;
   let spaceId = null;
   let calendarPush = null;
@@ -1753,7 +1808,6 @@ export async function cancelAppointment(context, request) {
     }
     spaceId = record.spaceId;
     calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
-    const calendarSync = context?.calendarSync ?? null;
     if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
       throw new AppError(
         'The cancellation names a calendar but the appointments package is composed without a calendar-sync push handle, '
@@ -1817,6 +1871,34 @@ export async function cancelAppointment(context, request) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code
         : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
+  } else if (typeof calendarSync?.readAppointmentDetail === 'function'
+    && typeof calendarSync?.pushAppointment === 'function') {
+    // backlog:27923678 — no calendar named: the appointment's own sync
+    // link names it. Resolved server-side after the commit, never from
+    // caller input, so a forged calendarId cannot steer the push; the
+    // grant gate inside the push still enforces the owning space. A link
+    // the push cannot reach rides as data, never a throw past the commit.
+    try {
+      const detail = await calendarSync.readAppointmentDetail({ id: appointment.id, actor: who });
+      const linked = detail?.sync?.calendarId;
+      if (typeof linked === 'string' && linked.trim() !== '') {
+        const autoSpace = typeof record.spaceId === 'string' && record.spaceId.trim() !== ''
+          ? record.spaceId
+          : undefined;
+        push = await calendarSync.pushAppointment(linked, appointment.sourceKey, { spaceId: autoSpace, actor: who });
+      }
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      // The cancellation stands and the cause rides as data, so name it here:
+      // space and code only, never the appointment, the actor or the reason.
+      console.error(
+        `[accordo] appointments cancel auto-push detail unreadable: code=${code} `
+        + `spaceId=${typeof record.spaceId === 'string' && record.spaceId.trim() !== '' ? record.spaceId : 'none'}`,
+      );
       pushError = Object.freeze({ code });
     }
   }
@@ -2278,6 +2360,8 @@ function publicDraft(input) {
     endsAt: input.endsAt,
     notes: input.notes,
     recurrence: input.recurrence,
+    location: input.location,
+    locationUrl: input.locationUrl,
     remindAt: input.remindAt,
     reminderChannel: input.reminderChannel === null ? null : Object.freeze({
       spaceId: input.reminderChannel.spaceId,
@@ -2291,6 +2375,36 @@ function publicDraft(input) {
     }),
     source: Object.freeze({ ...input.source }),
   });
+}
+
+/**
+ * The booking claim the proposal dedup binds: the same validated fields the
+ * booking idempotency counts (`submitted` in bookAppointment: customer,
+ * member, service, price, slot, notes, place, reminder, provenance) and the
+ * confirm-required draft round-trips (publicDraft). This list is the single
+ * source of truth for that identity — proposalActionKey hashes exactly these
+ * parts, so a new validated field belongs here first and no mirror can
+ * silently drop it again (backlog:9ff9a9ee1fea: location/locationUrl reached
+ * the booking and then the draft while the key still missed them — two P1s
+ * with that one root cause).
+ *
+ * The label is deliberately not identity: it is a display snapshot, like the
+ * booking replay treats it.
+ *
+ * @param {ReturnType<typeof validateAppointmentRequest>} input
+ */
+function bookingClaimKeyParts(input) {
+  const subject = input.subject;
+  return Object.freeze([
+    input.sourceKey,
+    subject.resource, subject.id, subject.owner, subject.ownerPackage,
+    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
+    input.startsAt, input.endsAt, input.notes,
+    input.location, input.locationUrl,
+    input.remindAt, input.reminderChannel,
+    input.source.package, input.source.action,
+    JSON.stringify(input.recurrence),
+  ]);
 }
 
 /** The gate replays an open proposal for one action key: bind that key to
@@ -2309,16 +2423,7 @@ function publicDraft(input) {
  * @param {ReturnType<typeof validateAppointmentRequest>} input
  */
 function proposalActionKey(input) {
-  const subject = input.subject;
-  const claim = JSON.stringify([
-    input.sourceKey,
-    subject.resource, subject.id, subject.owner, subject.ownerPackage,
-    input.teamMemberId, input.serviceKey, input.priceCents, input.currency,
-    input.startsAt, input.endsAt, input.notes,
-    input.remindAt, input.reminderChannel,
-    input.source.package, input.source.action,
-    JSON.stringify(input.recurrence),
-  ]);
+  const claim = JSON.stringify(bookingClaimKeyParts(input));
   const digest = createHash('sha256').update(claim, 'utf8').digest('hex').slice(0, 32);
   return 'book-appointment:' + input.sourceKey + ':claim-' + digest;
 }
@@ -3080,8 +3185,10 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
- * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?}` (per opener; optional):
- *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path
+ * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?, readAppointmentDetail?}` (per opener; optional):
+ *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path,
+ *   and the detail read lets a cancellation auto-push through its own sync link (backlog:27923678) when the
+ *   request names no calendar
  */
 export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);

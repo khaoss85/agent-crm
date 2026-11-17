@@ -19,6 +19,7 @@ import {
   PERSONALIZZAZIONE_TABS,
   activeByUnit,
   bannerFor,
+  connettoriCardState,
   createPersonalizzazioneView,
   filterUnits,
   isPersonalizzazioneTab,
@@ -1046,9 +1047,10 @@ test('Connettori shows no line under the toolbar; Skill and Pacchetti speak plai
 });
 
 // Owner decision 08/11 on #680: Stripe has no real connect flow, so its
-// card shows what Stato sync shows — «Non disponibile», no «+», no link,
-// no keyboard activation — never a button that connects nothing.
-test('#680: the Stripe card reads Non disponibile and carries no action', async () => {
+// card shows what the Connettori list shows — «Non ancora disponibile»,
+// no «+», no link, no keyboard activation — never a button that connects
+// nothing.
+test('#680: the Stripe card reads Non ancora disponibile and carries no action', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const seen = [];
@@ -1061,7 +1063,7 @@ test('#680: the Stripe card reads Non disponibile and carries no action', async 
   await flush();
   const stripe = mount.findAll('article').find((node) => node.textContent.includes('Stripe'));
   assert.ok(stripe, 'the Stripe card is listed');
-  assert.ok(stripe.textContent.includes('Non disponibile'), 'it says Non disponibile, like Stato sync');
+  assert.ok(stripe.textContent.includes('Non ancora disponibile'), 'it says Non ancora disponibile, like the Connettori list');
   assert.equal(stripe.findAll('button').length, 0, 'no «+» button');
   assert.equal(stripe.getAttribute('role'), null, 'not a link');
   assert.equal(stripe.getAttribute('tabindex'), null, 'not focusable as an action');
@@ -1071,4 +1073,27 @@ test('#680: the Stripe card reads Non disponibile and carries no action', async 
   const calendar = mount.findAll('article').find((node) => node.textContent.includes('Google Calendar'));
   assert.ok(calendar.findAll('button').some((node) => node.getAttribute('aria-label') === 'Collega Google Calendar'),
     'Google Calendar keeps its «+» towards Profilo');
+});
+
+// Backlog 6d0df351: the pilot shape — the schema serves only WhatsApp and
+// Telegram. Connettori offers Collega exactly there, like Stato sync; what
+// no adapter serves reads «non ancora disponibile». Unknown adapters (null)
+// keep the previous answer.
+test('6d0df351: with the pilot adapters Connettori offers Collega only where served', () => {
+  const onlyWa = [{ channel: 'whatsapp', name: 'whatsapp-adapter', version: 1 }];
+  assert.equal(connettoriCardState({ channel: 'whatsapp' }, [], null, onlyWa), 'da-collegare',
+    'WhatsApp served: Collega');
+  assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, onlyWa), 'non-disponibile',
+    'TikTok unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'voice' }, [], null, onlyWa), 'non-disponibile',
+    'Telefono unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'site-form' }, [], null, onlyWa), 'non-disponibile',
+    'Form sito unserved: no Collega');
+  assert.equal(connettoriCardState({ channel: 'telegram' }, [], null, onlyWa), 'non-disponibile',
+    'Telegram unserved: no Collega');
+  const withTelegram = [...onlyWa, { channel: 'telegram', name: 'telegram-adapter', version: 1 }];
+  assert.equal(connettoriCardState({ channel: 'telegram' }, [], null, withTelegram), 'da-collegare',
+    'Telegram served: Collega, coherent with Stato sync');
+  assert.equal(connettoriCardState({ channel: 'tiktok' }, [], null, null), 'da-collegare',
+    'unknown adapters: the previous answer stays');
 });

@@ -30,16 +30,24 @@ approval — or a versioned artifact that needs none.
 - Every run — due, capped, failed, proposed, applied, artifact — is a row
   with agent, assignment, cost and outcome.
 - Squadre (backlog:`0d2d8f2e`): a team from a ready-made template
-  (lead-generation, social-posting, sales-outreach, discovery, contenuti),
-  from a free-text brief matched to a template by keywords (`brief`, refuses
-  with `SQUAD_BRIEF_UNCLEAR` instead of guessing), or from an explicit
-  `plan`. Members and routines are created through the existing agent
-  operations — no second engine. The per-squad view reads backlog A, routines,
-  backlog B (proposed runs the owner approves through the existing
+  (lead-generation, social-posting, sales-outreach, outreach, discovery,
+  contenuti), from a free-text brief matched to a template by keywords
+  (`brief`, refuses with `SQUAD_BRIEF_UNCLEAR` instead of guessing), or from
+  an explicit `plan`. Members and routines are created through the existing
+  agent operations — no second engine. The per-squad view reads backlog A,
+  routines, backlog B (proposed runs the owner approves through the existing
   approve/reject/revise seams) and the advisor metric against the objective,
   counted from production rows. Stated limits: the squad cap is counted in the
   overview, stopping the sweep over the cap ships later; the advisor `actual`
   stays null until the engine's native advisor feeds it.
+- Outreach (backlog:`a9306c5f`): trova, valuta, scrive; la persona approva
+  l'invio. `packages/agents/src/outreach.js` is the pure run model: every
+  candidate carries provenance (channel, reference) and reason; a dismissal
+  records its reason and the next run excludes it; an opt-out, a reply, data
+  without provenance or the reached weekly cap halt the run and say why; page,
+  contact or reply content carrying instructions stays data and is flagged.
+  The `outreach` squad template wires it: objective, a weekly routine naming
+  the weekly cap, an owner gate on the send phase, and the advisor metric.
 
 ## What it does not cover (follow-ups)
 

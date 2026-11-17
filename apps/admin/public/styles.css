@@ -448,6 +448,9 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-back + .quote-offer-link { margin-left: 16px; }
 .quote-offer-link { display: inline-block; margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
 .quote-offer-link:hover { text-decoration: underline; }
+/* Voce 47b89e19: the version history link, same accent treatment as the offer link. */
+.quote-version-open { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.quote-version-open:hover { text-decoration: underline; }
 .bo-quote { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 20px; align-items: start; margin-top: 4px; }
 .bo-quote-sheet { position: relative; background: var(--surface); border: 1px solid var(--line-soft); border-radius: 20px; padding: 28px 30px 24px; box-shadow: var(--shadow-pop); overflow: hidden; }
 .bo-quote-sheet::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 5px; background: var(--accent); }
@@ -463,7 +466,7 @@ button[aria-busy="true"] { opacity: .6; }
 .quote-status-pending_approval { background: var(--pending-soft); color: var(--pending-ink); }
 .quote-status-rejected { background: var(--human-soft); color: var(--human-ink); }
 .bo-quote-hero-total { display: flex; flex-direction: column; align-items: flex-end; text-align: right; flex: none; }
-.bo-quote-amount { font-size: 40px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-quote-amount { font-size: 40px; line-height: 1; font-weight: 800; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bo-quote-amount-note { margin-top: 6px; font-size: 12.5px; color: var(--muted); }
 .bo-quote .quote-lines { margin-top: 18px; }
 .bo-quote .quote-lines h3, .bo-quote .quote-versions h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); width: auto; }
@@ -471,7 +474,7 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-quote .quote-line-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name amount" "meta amount"; column-gap: 16px; align-items: center; }
 .bo-quote .quote-line-name { grid-area: name; font-size: 15.5px; font-weight: 700; color: var(--ink); }
 .bo-quote .quote-line-meta { grid-area: meta; font-size: 12.5px; color: var(--muted); }
-.bo-quote .quote-line-amount { grid-area: amount; font-size: 16px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bo-quote .quote-line-amount { grid-area: amount; font-size: 16px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bo-quote .quote-components { margin-top: 6px; padding-left: 12px; border-left: 2px solid var(--line-soft); }
 .bo-quote .quote-components[hidden] { display: none; }
 .bo-quote .quote-component, .bo-quote .quote-tier { margin: 2px 0; font-size: 12.5px; color: var(--muted); }
@@ -481,7 +484,7 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-quote .quote-total-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 6px 0; font-size: 14px; }
 .bo-quote .quote-total-label { color: var(--ink); font-weight: 600; }
 .bo-quote .quote-total-value { text-align: right; font-variant-numeric: tabular-nums; }
-.bo-quote .quote-total-value strong { font-size: 18px; }
+.bo-quote .quote-total-value strong { font-size: 18px; white-space: nowrap; }
 .bo-quote .quote-total-detail { display: block; font-size: 12px; color: var(--muted); }
 .bo-quote .quote-totals-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--dim); }
 .bo-quote-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
@@ -549,6 +552,31 @@ button[aria-busy="true"] { opacity: .6; }
   width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
   font-size: 11px; font-weight: 800; flex: none; background: var(--accent); color: var(--paper);
 }
+/* backlog:c4127dcbb7f1: badge palette of 16 distinct colors (p0-p15).
+ * The badge color lives in this stylesheet, never in an inline style, so a
+ * pilot CSP that refuses inline styles cannot strip it. Same hsl values as
+ * spaceBadgeColor/spaceBadgeClass in admin-shell.js: class pN always carries
+ * palette entry N. White badge text on every entry passes WCAG AA (>= 4.5):
+ * p0 6.75 | p1 4.89 | p2 4.68 | p3 4.70 | p4 4.54 | p5 4.56 | p6 4.57
+ * p7 4.69 | p8 4.53 | p9 4.69 | p10 7.79 | p11 9.88 | p12 8.21
+ * p13 6.27 | p14 6.09 | p15 6.51 */
+.bo-space-badge--p0 { background-color: hsl(0 60% 42%); }
+.bo-space-badge--p1 { background-color: hsl(23 60% 42%); }
+.bo-space-badge--p2 { background-color: hsl(45 60% 34%); }
+.bo-space-badge--p3 { background-color: hsl(68 60% 30%); }
+.bo-space-badge--p4 { background-color: hsl(90 60% 32%); }
+.bo-space-badge--p5 { background-color: hsl(113 60% 33%); }
+.bo-space-badge--p6 { background-color: hsl(135 60% 33%); }
+.bo-space-badge--p7 { background-color: hsl(158 60% 32%); }
+.bo-space-badge--p8 { background-color: hsl(180 60% 32%); }
+.bo-space-badge--p9 { background-color: hsl(203 60% 42%); }
+.bo-space-badge--p10 { background-color: hsl(225 60% 42%); }
+.bo-space-badge--p11 { background-color: hsl(248 60% 42%); }
+.bo-space-badge--p12 { background-color: hsl(270 60% 42%); }
+.bo-space-badge--p13 { background-color: hsl(293 60% 42%); }
+.bo-space-badge--p14 { background-color: hsl(315 60% 42%); }
+.bo-space-badge--p15 { background-color: hsl(338 60% 42%); }
+
 .bo-space-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bo-space-menu, .bo-add-menu {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
@@ -592,6 +620,13 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px;
   display: grid; place-items: center; font-size: 11px; font-weight: 700;
   background: var(--surface-soft); color: var(--muted);
+}
+/* backlog:b76770f82fe9: the pill's room stays reserved while its count is
+ * unknown (hidden, never removed), so the rows below never move when the
+ * number lights up next to Clienti or Impostazioni. */
+.bo-count.is-empty,
+.bo-badge.is-empty {
+  visibility: hidden;
 }
 .bo-add { margin-top: 6px; }
 .bo-add-button {
@@ -693,14 +728,25 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 14px 12px 0; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 8px 12px 8px; }
+  /* backlog:dd6a01de569b: the AI bar touched the bar's bottom edge (0px) —
+   * the 8px bottom inset is its margin, funded by the top inset (14→8) and
+   * the tighter space row, so the 120px phone budget still holds. */
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; font-size: 14px; font-weight: 750; }
   .bo-topbar .bo-phonebar-space .bo-space-badge { width: 28px; height: 28px; font-size: 11px; }
   .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 14px; line-height: 1.2; }
   .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
   .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  /* backlog:dd6a01de569b: on a phone the bar above already names the space,
+   * so the path keeps the screen only; and ⌘K needs a keyboard — without
+   * one the hint only eats bar room. Both stay on desktop. */
+  .bo-crumb .bo-crumb-space { display: none; }
+  .bo-ai .bo-ai-key { display: none; }
+  /* backlog:dd6a01de569b: once the page slides under the sticky bar, an
+   * edge — shadow only, never a border, so the 120px budget cannot move. */
+  .bo-topbar.bo-topbar-scrolled { box-shadow: var(--shadow-pop); }
   .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
@@ -833,6 +879,15 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-note-form input, .bo-scheda-note-form textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); }
 .bo-scheda-note-form textarea, .bo-scheda-note-form textarea.ui-field { display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; field-sizing: content; }
 .bo-scheda-note-form button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+/* Voce 5036bc435465: the post-call voice note reads like the note form. */
+.bo-scheda-voice-note { display: flex; flex-direction: column; align-items: stretch; gap: 8px; margin: 0; padding: 0 20px 20px; }
+.bo-scheda-voice-note > button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-panel { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-panel:empty { display: none; }
+.bo-scheda-voice-panel textarea { width: 100%; box-sizing: border-box; padding: 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; font: inherit; font-size: 14px; color: var(--ink); display: block; min-height: 46px; max-height: 220px; resize: vertical; line-height: 1.45; }
+.bo-scheda-voice-panel button { align-self: flex-start; max-width: 100%; overflow-wrap: break-word; }
+.bo-scheda-voice-draft { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.bo-scheda-voice-draft:empty { display: none; }
 /* Voce c2793930850a: the ✦ union note reads at card text size. */
 .bo-scheda-union-note { margin: 0; font-size: 14px; line-height: 1.5; }
 .bo-scheda-refresh.ui-btn { align-self: flex-start; height: 30px; padding: 0 10px; border-radius: 8px; font-size: 12px; font-weight: 700; }
@@ -1236,6 +1291,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-toggle[data-on="true"] { background: var(--accent); }
 /* backlog:8618ad3f72db: a child switch paused by the space AI is off, not busy: not-allowed, never the wait cursor. */
 .bo-spazi-toggle[data-paused="true"]:disabled { cursor: not-allowed; }
+/* backlog:3136d15da7bd: no broad :disabled rule here on purpose — a switch
+ * disabled by busy keeps the wait cursor, only [data-paused="true"] reads
+ * not-allowed (rule above). */
 /* backlog:1a96094db71d: the skeleton rows of the team and AI panels. */
 .bo-spazi-skeleton-row { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 .bo-spazi-knob {
@@ -1387,8 +1445,9 @@ select.bo-spazi-input { flex: none; }
 /*
  * Customer list (BO-F1-05): quick views, search, grouped filters with the AI
  * entry point, removable chips, sorting, configurable columns and server
- * pagination with ellipses. Cards stack in one column, so the list is fluid
- * under 700px once the toolbar and the pager wrap instead of overflowing.
+ * pagination with ellipses. Under 700px the rows read as one-column cards
+ * (head hidden, each fact with its own label), so the list never scrolls
+ * sideways on a 390px phone.
  */
 .bo-clienti { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .bo-clienti-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
@@ -1479,6 +1538,19 @@ select.bo-spazi-input { flex: none; }
   .bo-clienti-search { flex: none; height: 48px; }
   .bo-clienti-menu { position: static; margin-top: 8px; max-width: none; box-shadow: none; }
   .bo-clienti-pager { row-gap: 8px; }
+  /* backlog:92d9c5456ca6: on a phone the list reads as cards, never as the
+   * 760px table with an inner sideways scroll. The head hides (every fact
+   * carries its own label, revealed below), the inline desktop floor and
+   * tracks give way (`!important` beats the inline style, like the stacked
+   * calendar week), and every filter, sort, column, search and pager control
+   * stays the same DOM with the same actions. */
+  .bo-clienti-table { overflow-x: visible; padding: 12px; }
+  .bo-clienti-thead { display: none; }
+  .bo-clienti-list { gap: 12px; }
+  .bo-clienti-row { grid-template-columns: minmax(0, 1fr) !important; min-width: 0 !important; gap: 10px; align-items: start; padding: 14px 16px; border: 1px solid var(--line-faint); border-radius: 14px; background: var(--paper); }
+  .bo-clienti-chevron { display: none; }
+  .bo-clienti-fact { overflow: visible; overflow-wrap: anywhere; }
+  .bo-clienti-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; display: block; margin: 0 0 2px; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 }
 
 /* Team calendar (BO-F3 \"07 Calendario\"): the week grid, the phrase draft,
@@ -1556,6 +1628,11 @@ select.bo-spazi-input { flex: none; }
 /* backlog:930b3bc9ba24: un titolo che non sta su una riga va a capo (due righe al massimo) invece di «Barba · Bo…». */
 .cal-grid .cal-event strong { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .cal-grid .cal-event .cal-time { font-family: var(--mono); font-size: 10px; color: var(--dim); }
+/* backlog:667f1f1c: content reads from the top, never halfway down a long
+ * block; short blocks read on one dotted line; no line ever paints half-cut. */
+.cal-grid .cal-event { align-content: start; }
+.cal-grid .cal-event .cal-compact { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-grid .cal-event.is-medium strong { display: block; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; overflow-wrap: anywhere; }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }
 .cal-m2 { background: var(--accent-soft); color: var(--ink); }
@@ -1663,6 +1740,9 @@ select.bo-spazi-input { flex: none; }
 .cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
 .cal-form .cal-field-wide { flex-basis: 100%; }
 .cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+/* backlog:b0788e62ace6: the picked customer under its «Cliente» label. */
+.cal-customer-picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-customer-picked p { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
@@ -2614,6 +2694,9 @@ a.ui-connect, a.ui-connect:hover { text-decoration: none; }
 .bo-scheda-composer-channel:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bo-composer-off { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
 .bo-composer-off a { color: var(--accent); font-weight: 600; }
+/* Voce 14d999de: the device-dial fallback in «Chiama dal CRM» reads as a /bo
+   link (accent, semibold), never the browser-default blue underline. */
+.bo-call-fallback { color: var(--accent); font-weight: 600; }
 .bo-composer-row { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-faint); font-size: 14px; min-width: 0; }
 .bo-composer-row[data-empty="true"] { display: none; }
 .bo-composer-label { flex: 0 0 22px; color: var(--muted); font-size: 13px; }

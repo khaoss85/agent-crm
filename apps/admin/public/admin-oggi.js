@@ -20,8 +20,9 @@
 // What it reuses, never duplicates (MEM_ACC_REUSE):
 // - reads: the generic /api/modules/:module/records surface over the native
 //   record modules of packages/work (work-task), packages/appointments
-//   (appointment), packages/channels (channel-connection) and
-//   packages/interactions (interaction-message, interaction-call);
+//   (appointment), packages/channels (channel-connection),
+//   packages/interactions (interaction-message, interaction-call) and
+//   packages/site-forms (site-form-submission);
 // - writes: the work-task `complete` module action, the same server path the
 //   Work section uses — executing from Oggi re-reads the cited record first
 //   and refuses on drift, so no action ever runs on stale data;
@@ -30,14 +31,14 @@
 // - the backoffice tokens and rows of styles.css (bo-*), single column under
 //   700px like every other backoffice screen.
 
-import { CONNECTOR_CATALOG } from './admin-connectors.js';
+import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
-import { messagePreview } from './admin-message-preview.js';
-import { writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
+import { MESSAGE_NO_TEXT, messagePreview } from './admin-message-preview.js';
+import { clientiViewHash, writePendingCalendarEvent, writePendingClientiView } from './admin-prefill.js';
 
 /**
  * Framework demo strings. None of them may reach a space user: the mount
@@ -245,18 +246,21 @@ export function isTodayInRome(value, now = new Date()) {
 }
 
 /**
- * Whether an appointment start still lies ahead (backlog:57e3d1685e58):
- * a slot already behind us today is done showing up in «Ti resta» and
- * never offers «Prepara». Same mark rule as nextAppointment: without a
- * real `now` nothing is filtered.
- * @param {unknown} startsAt
+ * Whether an appointment still lies ahead (backlog:5e703a7bb397): its end
+ * is after `now` — a slot already over leaves «Ti resta» and never offers
+ * «Prepara», while a call in progress still counts. Rows with no readable
+ * `endsAt` keep the start rule, so a missing end never hides a call. Same
+ * mark rule as nextAppointment: without a real `now` nothing is filtered.
+ * @param {Record<string, any>} row
  * @param {Date} [now]
  */
-function startsAtOrAfterNow(startsAt, now) {
-  const start = toInstant(startsAt);
+function endsAfterNow(row, now) {
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return true;
+  const end = toInstant(row?.endsAt);
+  if (end !== null) return end.getTime() > now.getTime();
+  const start = toInstant(row?.startsAt);
   if (start === null) return false;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  return Number.isNaN(mark) || start.getTime() >= mark;
+  return start.getTime() >= now.getTime();
 }
 
 // ---------------------------------------------------------------------------
@@ -509,15 +513,266 @@ function appointmentPrepAction(appointment, names = {}, pendingNames = false) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Signals (backlog:d08331558c50). A signal is never a page: an internal fact
+// — a missed appointment, a thread waiting days for an answer, a website
+// form with no answer yet — surfaces in Oggi as the motive of one proposed
+// action, each row citing the record the signal was read from. Handled
+// means resolved at the record: a recompute drops every signal whose record
+// moved on (the appointment rebooked, the thread answered or closed, the
+// form decided) — the same contract the follow-up rows keep. Triage only
+// attenuates the paint; it never invents domain state.
+// ---------------------------------------------------------------------------
+
+/** Days of customer silence before Oggi proposes a follow-up. */
+export const SIGNAL_SILENCE_DAYS = 3;
+
 /**
- * Deterministic advisor list: open follow-ups due (overdue first), then the
+ * Submission states still waiting for the team's answer. `accepted` is the
+ * successfully-ingested request (inbound message logged, reply channels
+ * known) — it waits like `pending`/`needs-review` until the team answers in
+ * its conversation. Only `rejected` (spam) never signals.
+ */
+const OPEN_FORM_STATUSES = Object.freeze(['pending', 'needs-review', 'accepted']);
+
+/**
+ * Whether the team already answered an accepted website-form request: its
+ * conversation is closed, or it holds a non-inbound message newer than the
+ * request itself (same contract as silent threads: the latest word is ours).
+ * Without a linked conversation, or without a readable request date, the
+ * request still waits — the row stays rather than hiding work.
+ * @param {Record<string, any>} submission an accepted site-form-submission row
+ * @param {Array<Record<string, any>>} messages inbox message rows
+ * @param {Array<Record<string, any>>} conversations inbox conversation rows
+ */
+function formConversationAnswered(submission, messages, conversations) {
+  const conversationId = nonEmptyText(submission?.conversationId);
+  if (!conversationId) return false;
+  const conversation = (Array.isArray(conversations) ? conversations : [])
+    .find((entry) => nonEmptyText(entry?.id) === conversationId) ?? null;
+  if (conversation != null && conversation?.status === 'closed') return true;
+  const since = Date.parse(String(submission?.occurredAt ?? ''));
+  if (!Number.isFinite(since)) return false;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message == null) continue;
+    if (nonEmptyText(message?.conversationId) !== conversationId) continue;
+    if (message?.direction === 'inbound') continue;
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (Number.isFinite(at) && at > since) return true;
+  }
+  return false;
+}
+
+/**
+ * One signal action for an appointment the customer missed: rebook it.
+ * Anything but `no-show` (done, cancelled, rebooked) drops the row on the
+ * next recompute — that is the handled state, no extra flag.
+ * @param {Record<string, any>} appointment a no-show appointment row
+ * @param {Date} [now]
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+export function missedAppointmentSignal(appointment, now = new Date(), names = {}) {
+  const id = nonEmptyText(appointment?.id);
+  if (!id) return null;
+  if (appointment?.status !== 'no-show') return null;
+  const time = romeTime(appointment?.startsAt);
+  const day = romeDayPhrase(appointment?.startsAt, now, 'del');
+  if (!time || !day) return null;
+  const label = subjectDisplayLabel(appointment, names);
+  const card = cardHrefForSubject(appointment);
+  const calendarEvent = card === null ? calendarEventOf(appointment) : null;
+  const href = card ?? CALENDAR_ROUTE;
+  return Object.freeze({
+    id: `bo04:signal:missed-appointment:${id}`,
+    kind: 'signal',
+    mono: 'CAL',
+    channel: 'calendar',
+    title: `Riprogramma con ${label}`,
+    why: `Ha saltato l'appuntamento ${day} alle ${time}: richiamalo per fissarne un altro.`,
+    cta: 'Riprogramma',
+    run: 'open',
+    href,
+    calendarEvent,
+    record: Object.freeze({
+      module: 'appointment', id, label: `Appuntamento delle ${time} con ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      status: 'no-show',
+      startsAt: appointment?.startsAt ?? null,
+    }),
+  });
+}
+
+/**
+ * One signal action for a thread whose latest message is the customer's and
+ * is older than SIGNAL_SILENCE_DAYS: send a follow-up. Automated mail is
+ * never a waiting person — the same notification rule as «Da rispondere»
+ * (`isNotificationMessage` over the page base) filters it here too. An
+ * answered or closed thread drops the row on the next recompute.
+ * @param {Record<string, any>} message the thread's latest inbound message row
+ * @param {{ conversation?: Record<string, any> | null, now?: Date, names?: Record<string, string|null>, ownAddresses?: Array<string>, correspondents?: { conversations: Set<string>, addresses: Set<string> } | null }} [options]
+ */
+export function silentThreadSignal(message, { conversation = null, now = new Date(), names = {}, ownAddresses = [], correspondents = null } = {}) {
+  const id = nonEmptyText(message?.id);
+  if (!id) return null;
+  if (message?.direction !== 'inbound') return null;
+  const at = Date.parse(String(message?.occurredAt ?? ''));
+  if (!Number.isFinite(at)) return null;
+  if (now.getTime() - at < SIGNAL_SILENCE_DAYS * 24 * 60 * 60 * 1000) return null;
+  if (conversation != null && conversation?.status === 'closed') return null;
+  const channel = String(message?.channel ?? conversation?.channel ?? '').toLowerCase();
+  const subject = {
+    subjectOwner: message?.subjectOwner ?? conversation?.subjectOwner,
+    subjectResource: message?.subjectResource ?? conversation?.subjectResource,
+    subjectId: message?.subjectId ?? conversation?.subjectId,
+  };
+  const handle = nonEmptyText(message?.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
+  const machine = isNotificationMessage(
+    { ...message, channel, remoteHandle: handle },
+    {
+      ownAddresses,
+      labels: [conversation?.subjectLabel],
+      weWrote: correspondents != null
+        ? teamWroteTo(correspondents, { ...message, remoteHandle: handle })
+        : false,
+    },
+  );
+  if (machine) return null;
+  const key = inboxSubjectKey(subject);
+  const label = (key && names != null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null)
+    ?? realLabel(conversation?.subjectLabel)
+    ?? realLabel(message?.subjectLabel)
+    ?? handle
+    ?? 'Contatto senza nome';
+  const waited = waitedFor(message?.occurredAt, now);
+  const channelName = OGGI_CHANNEL_NAMES[channel] ?? null;
+  const card = cardHrefForSubject(subject);
+  const href = card ?? recordDetailHref('conversation', nonEmptyText(message?.conversationId) ?? id);
+  return Object.freeze({
+    id: `bo04:signal:silent-thread:${id}`,
+    kind: 'signal',
+    mono: channelTile(channel) ?? badgeInitials(label),
+    channel: channel === '' ? null : channel,
+    title: `Manda un follow-up a ${label}`,
+    why: `Nessuna risposta ${waited}${channelName ? ` su ${channelName}` : ''}: l'ultimo messaggio è del cliente.`,
+    cta: channelCta(channel) ?? 'Rispondi',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: 'interaction-message', id, label: `Messaggio di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      direction: 'inbound',
+      occurredAt: message?.occurredAt ?? null,
+    }),
+  });
+}
+
+/**
+ * One signal action for a website-form request still waiting for the team's
+ * answer: answer on the channel the visitor can read (MEM_ACC_GOAL: WhatsApp
+ * when there is a phone number, email when there is only an email, both when
+ * there are both). `rejected` (spam) never signals; an `accepted` request
+ * drops the row on the next recompute only when its conversation shows the
+ * team's answer (a newer non-inbound message) or is closed.
+ * @param {Record<string, any>} submission a site-form-submission row
+ * @param {{ messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>> }} [context] inbox rows to tell an answered form apart
+ */
+export function siteFormSignal(submission, { messages = [], conversations = [] } = {}) {
+  const id = nonEmptyText(submission?.id);
+  if (!id) return null;
+  if (!OPEN_FORM_STATUSES.includes(submission?.status)) return null;
+  if (submission?.status === 'accepted' && formConversationAnswered(submission, messages, conversations)) return null;
+  const fullName = [nonEmptyText(submission?.firstName), nonEmptyText(submission?.lastName)]
+    .filter((part) => part !== null).join(' ');
+  const label = fullName !== '' ? fullName
+    : readableName(nonEmptyText(submission?.subjectLabel)) ?? 'un nuovo contatto';
+  const waited = waitedFor(submission?.occurredAt);
+  const wantsWhatsapp = submission?.replyWhatsapp === true;
+  const wantsEmail = submission?.replyEmail === true;
+  const channels = wantsWhatsapp && wantsEmail ? 'su WhatsApp e via email'
+    : wantsWhatsapp ? 'su WhatsApp'
+    : wantsEmail ? 'via email'
+    : 'ai recapiti lasciati';
+  const subjectResource = nonEmptyText(submission?.subjectResource);
+  const subjectId = nonEmptyText(submission?.subjectId);
+  const card = subjectResource && subjectId
+    ? cardHrefForSubject({ subjectOwner: 'host', subjectResource, subjectId })
+    : null;
+  const href = card ?? recordDetailHref('site-form-submission', id);
+  return Object.freeze({
+    id: `bo04:signal:site-form:${id}`,
+    kind: 'signal',
+    mono: channelTile('web'),
+    channel: 'web',
+    title: `Rispondi a ${label}`,
+    why: `Richiesta dal sito di ${label}${waited !== '' ? `, ${waited}` : ''}: rispondi ${channels}.`,
+    cta: 'Rispondi',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: 'site-form-submission', id, label: `Richiesta dal sito di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      status: submission?.status ?? null,
+      occurredAt: submission?.occurredAt ?? null,
+    }),
+  });
+}
+
+/**
+ * The deterministic signal list: missed appointments, threads silent past
+ * SIGNAL_SILENCE_DAYS, open website forms — in that order. Malformed rows
+ * (no id, unreadable date, unknown status) contribute nothing, never a
+ * crash. Threads group by conversation like «Da rispondere»: only the
+ * latest message of a thread decides, and a thread the team answered last
+ * is not silent.
+ * @param {{ appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, ownAddresses?: Array<string> }} input
+ */
+export function buildSignalActions({ appointments = [], messages = [], conversations = [], submissions = [], now = new Date(), names = {}, ownAddresses = [] } = {}) {
+  const actions = [];
+  for (const appointment of Array.isArray(appointments) ? appointments : []) {
+    const signal = appointment == null ? null : missedAppointmentSignal(appointment, now, names);
+    if (signal) actions.push(signal);
+  }
+  const byId = new Map();
+  for (const conversation of Array.isArray(conversations) ? conversations : []) {
+    if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
+  }
+  const latest = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message == null) continue;
+    const key = nonEmptyText(message?.conversationId)
+      ?? (nonEmptyText(message?.subjectId) ? `${message.subjectResource ?? ''}:${message.subjectId}:${message.channel ?? ''}` : null);
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (!key || !Number.isFinite(at)) continue;
+    const seen = latest.get(key);
+    if (!seen || at > seen.at) latest.set(key, { at, message });
+  }
+  const correspondents = teamCorrespondents(Array.isArray(messages) ? messages : []);
+  for (const [key, { message }] of latest) {
+    const conversation = byId.get(key) ?? null;
+    const signal = silentThreadSignal(message, { conversation, now, names, ownAddresses, correspondents });
+    if (signal) actions.push(signal);
+  }
+  for (const submission of Array.isArray(submissions) ? submissions : []) {
+    const signal = submission == null ? null : siteFormSignal(submission, { messages, conversations });
+    if (signal) actions.push(signal);
+  }
+  return Object.freeze(actions);
+}
+
+/**
+ * Deterministic advisor list: open follow-ups due (overdue first), the
+ * signals (missed appointments, silent threads, open forms), then the
  * preparation of today's next appointment. Capped — the screen says so when
  * the cap hides actions.
  * `pendingNames` (backlog:bd5e84545021): the profile names are still being
  * read — a card whose words depend on them says so (`namePending`).
- * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
+ * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, ownAddresses?: Array<string>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {}, pendingNames = false } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -533,8 +788,14 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
     const action = followupAction(task, now);
     if (action) actions.push(action);
   }
-  // backlog:57e3d1685e58: the prep reads the next call still ahead, never an
-  // appointment already behind us today — a past slot must not offer «Prepara».
+  // backlog:d08331558c50: the signals read their own records — a missed
+  // appointment, a thread silent past SIGNAL_SILENCE_DAYS, an open website
+  // form — each as the motive of one proposed action.
+  for (const signal of buildSignalActions({ appointments, messages, conversations, submissions, now, names, ownAddresses })) {
+    actions.push(signal);
+  }
+  // backlog:5e703a7bb397: the prep reads the next call still ahead, never
+  // an appointment already over — an ended slot must not offer «Prepara».
   const next = nextAppointment(appointments, now);
   if (next !== null) {
     const prep = appointmentPrepAction(next, names, pendingNames === true);
@@ -696,16 +957,20 @@ export async function executeAdvisorAction(client, action, run) {
  * The conversations waiting in «Da rispondere» count too (production
  * 11/11: «Niente in sospeso» over «Da rispondere: 32 in attesa»): the line
  * names them, and «Niente in sospeso» is said only when nothing waits.
- * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number }} input
+ * «Da leggere» is its own wait (backlog:5cf918c2246e, production 13/11:
+ * Clienti read «4 da leggere» while Oggi read «nothing waits»): «Niente in
+ * sospeso» never covers messages still to be read, so the recap names them.
+ * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true } = {}) {
-  // backlog:57e3d1685e58: «Ti resta» counts what is still ahead today —
-  // a past slot stays in the agenda (grey) but leaves the count.
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0 } = {}) {
+  // backlog:5e703a7bb397: «Ti resta» counts what is still ahead today —
+  // only appointments ending after now; an ended slot stays in the
+  // agenda (grey) but leaves the count.
   const today = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
-      && startsAtOrAfterNow(row.startsAt, now));
+      && endsAfterNow(row, now));
   today.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   const tasks = Array.isArray(openTasks)
     ? openTasks.filter((row) => row != null && row.status === 'open')
@@ -713,6 +978,7 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // backlog:7d30fb517785 (production 10/11: «Ti restano 1 appuntamento.»):
   // the verb agrees with the count, and zero reads as a person says it.
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
+  const unreadN = Number.isSafeInteger(unread) && unread > 0 ? unread : 0;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
   const floor = waitingExact === false || waiting === null;
@@ -732,14 +998,21 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
       if (today.length === 0) return `${waitingLine(false)} e nessun appuntamento per oggi.`;
       return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
-    if (today.length === 0) return 'Niente in sospeso e nessun appuntamento per oggi.';
-    return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
+    if (today.length === 0) {
+      return unreadN === 0
+        ? 'Niente in sospeso e nessun appuntamento per oggi.'
+        : `Solo ${plural(unreadN, 'messaggio da leggere', 'messaggi da leggere')} e nessun appuntamento per oggi.`;
+    }
+    return unreadN === 0
+      ? `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`
+      : `Ti restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere e ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
   const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
   const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
-  return unanswered > 0 || floor ? `${recap} ${waitingLine(true)}.` : recap;
+  if (unanswered > 0 || floor) return `${recap} ${waitingLine(true)}.`;
+  return unreadN === 0 ? recap : `${recap} Restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere.`;
 }
 
 /**
@@ -800,7 +1073,14 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
       titlePending: pendingNames === true && inboxSubjectKey(row) !== null,
       whoPending: pendingNames === true && nonEmptyText(row?.teamMemberId) !== null,
       status: row.status,
-      past: now instanceof Date && start !== null && start.getTime() < now.getTime(),
+      // backlog:5e703a7bb397: a slot reads as past only once it is over
+      // (end at or before now); a call in progress stays lit. Rows with
+      // no readable end keep the start rule.
+      past: (() => {
+        if (!(now instanceof Date) || Number.isNaN(now.getTime()) || start === null) return false;
+        const end = toInstant(row.endsAt);
+        return end !== null ? end.getTime() <= now.getTime() : start.getTime() < now.getTime();
+      })(),
       href: card ?? (calendarEvent !== null ? CALENDAR_ROUTE : null),
       calendarEvent,
     });
@@ -808,19 +1088,18 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
 }
 
 /**
- * The next upcoming appointment today (booked/confirmed, startsAt >= now),
- * null when the day holds nothing else.
+ * The next upcoming appointment today (booked/confirmed, ending after
+ * now — backlog:5e703a7bb397), null when the day holds nothing else.
  * @param {Array<Record<string, any>>} [appointments]
  * @param {Date} [now]
  */
 export function nextAppointment(appointments = [], now = new Date()) {
-  const mark = now instanceof Date ? now.getTime() : NaN;
   const upcoming = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && isTodayInRome(row.startsAt, now)
       && toInstant(row.startsAt) !== null
-      && (Number.isNaN(mark) || toInstant(row.startsAt).getTime() >= mark));
+      && endsAfterNow(row, now));
   upcoming.sort((a, b) => (String(a.startsAt) < String(b.startsAt) ? -1 : String(a.startsAt) > String(b.startsAt) ? 1 : 0));
   return upcoming.length > 0 ? upcoming[0] : null;
 }
@@ -837,13 +1116,12 @@ export function nextAppointment(appointments = [], now = new Date()) {
 export function upcomingAppointment(appointments = [], now = new Date()) {
   const today = nextAppointment(appointments, now);
   if (today !== null) return today;
-  const mark = now instanceof Date ? now.getTime() : NaN;
-  if (Number.isNaN(mark)) return null;
+  if (!(now instanceof Date) || Number.isNaN(now.getTime())) return null;
   const ahead = (Array.isArray(appointments) ? appointments : [])
     .filter((row) => row != null
       && (row.status === 'booked' || row.status === 'confirmed')
       && toInstant(row.startsAt) !== null
-      && toInstant(row.startsAt).getTime() >= mark);
+      && endsAfterNow(row, now));
   ahead.sort((a, b) => toInstant(a.startsAt).getTime() - toInstant(b.startsAt).getTime());
   return ahead.length > 0 ? ahead[0] : null;
 }
@@ -1042,7 +1320,7 @@ export function buildServerReplies(answer, now = new Date()) {
       // resta in `channel` e nella riga «da … · Email».
       mono: badgeInitials(name),
       name,
-      preview: nonEmptyText(item?.awaitingText) ?? 'Messaggio senza testo',
+      preview: nonEmptyText(item?.awaitingText) ?? MESSAGE_NO_TEXT,
       when: [waitedFor(item?.lastAwaitingAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject({ subjectOwner: 'host', subjectResource: resource, subjectId: id }),
     });
@@ -1179,9 +1457,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)
       ?? realLabel(message.subjectLabel)
-      // A notification names its sender like Clienti does — the brand of
-      // its domain («Namecheap»), never the bare address (backlog:bab63e32acdb,
-      // verification 12/11): its profile name is never read.
+      // A notification without a customer subject names its sender like
+      // Clienti does — the brand of its domain («Namecheap»), never the
+      // bare address (backlog:bab63e32acdb, verification 12/11); with a
+      // subject the profile name above already won (backlog:971b3e0e).
       ?? (machine ? labelFromEmail(senderAddress(handle)) : null)
       ?? handle
       ?? 'Contatto senza nome';
@@ -1190,8 +1469,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       at,
       channel,
       subjectKey,
-      // Only the waiting rows read profile names (readInboxNames): a
-      // notification keeps its stored label, never a grey bar for good.
+      // Waiting rows and notifications with a subject read profile names
+      // (readInboxNames, readNotificationNames — backlog:971b3e0e); a
+      // notification still never waits in grey for its name.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
       // backlog:0f78353438c5: le righe Da rispondere mostrano le
@@ -1201,7 +1481,7 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       name,
       // «Oggetto — estratto pulito», like Gmail (Dan 10/11): no URLs, HTML
       // residue or hidden preheaders; the subject alone when the body cleans away.
-      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : 'Messaggio senza testo'),
+      preview: messagePreview(message.body, { subject: message.mailSubject, max: 110 }) || (message.attachmentKind ? 'Allegato' : MESSAGE_NO_TEXT),
       when: [waitedFor(message.occurredAt, now), OGGI_CHANNEL_NAMES[channel] ?? null].filter(Boolean).join(' · '),
       href: cardHrefForSubject(subject),
     });
@@ -1307,19 +1587,32 @@ export function countConnectedNine(connections = [], profile = null) {
  * Lead channels with no active connection, in catalog order with catalog
  * labels. `calendar` and `stripe` are not lead channels and stay out of the
  * invite: connecting them loses no lead. A connected Gmail removes Email
- * from the invite, like an active Email row does.
+ * from the invite, like an active Email row does. With the schema adapters
+ * known the invite offers only what the shared channel state can connect
+ * (a channel no adapter serves is not a lead, like on Stato sync); without
+ * them the screen cannot know and keeps the previous answer.
  * @param {Array<Record<string, any>>} [connections]
  * @param {unknown} [profile] the /api/profile payload, null when unreadable
+ * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
  */
-export function missingLeadChannels(connections = [], profile = null) {
+export function missingLeadChannels(connections = [], profile = null, adapters = null) {
+  const rows = Array.isArray(connections) ? connections : [];
   const active = new Set(
-    (Array.isArray(connections) ? connections : [])
+    rows
       .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
       .map((row) => row.channel),
   );
   for (const channel of googleNineChannels(profile)) active.add(channel);
+  const guided = CONNECTOR_CATALOG.map((entry) => entry?.channel);
   return CONNECTOR_CATALOG
     .filter((entry) => entry != null && !active.has(entry.channel))
+    .filter((entry) => {
+      if (!Array.isArray(adapters)) return true;
+      const shared = channelState(entry.channel, {
+        rows, profile, adapters: matchAdapters(entry.channel, adapters), guided,
+      });
+      return shared.state === 'da-collegare' || shared.state === 'da-completare';
+    })
     .map((entry) => Object.freeze({ channel: entry.channel, label: entry.label }));
 }
 
@@ -1328,27 +1621,66 @@ export function missingLeadChannels(connections = [], profile = null) {
  * connectable lead channels missing (the names after «Collega»), and an
  * aside for the missing channels that are not leads to connect here —
  * Google Calendar «dal Profilo» when the profile offers it, else «non
- * ancora disponibile» like Stripe — so connected + named = 9.
- * @param {{ connections?: Array<any>, profile?: unknown }} input
+ * ancora disponibile» like Stripe. With the schema adapters known the
+ * leads are the shared channel state answer, the same one Connettori and
+ * Stato sync show: a channel no adapter serves reads «non ancora
+ * disponibile» instead of «Collega», and a connectable channel outside
+ * the nine (Telegram) joins the leads while the count stays on the nine.
+ * Without the adapters the screen cannot know and keeps the previous
+ * answer.
+ * @param {{ connections?: Array<any>, profile?: unknown, adapters?: unknown }} input
  * @returns {{ connected: number, total: number, leads: Array<string>, aside: string | null }}
  */
-export function buildChannelInvite({ connections = [], profile = null } = {}) {
-  const count = channelConnectionCount(mergeProfileConnections(connections, profile));
+export function buildChannelInvite({ connections = [], profile = null, adapters = null } = {}) {
+  const rows = Array.isArray(connections) ? connections : [];
+  const count = channelConnectionCount(mergeProfileConnections(rows, profile));
   const guided = CONNECTOR_CATALOG.map((entry) => entry.channel);
   const leads = [];
   const fromProfile = [];
   const unavailable = [];
   for (const entry of count.missing) {
-    if (guided.includes(entry.channel)) {
-      leads.push(entry.label);
+    if (!Array.isArray(adapters)) {
+      if (guided.includes(entry.channel)) {
+        leads.push(entry.label);
+        continue;
+      }
+      // Outside the guided flow only Google Calendar has a destination
+      // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
+      if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
+        fromProfile.push(`${entry.label} dal Profilo`);
+      } else {
+        unavailable.push(entry.label);
+      }
       continue;
     }
-    // Outside the guided flow only Google Calendar has a destination
-    // (CHANNEL_CONNECT_ROUTES: Profilo, when the profile offers Google).
-    if (channelConnectRoute(entry.channel, { guided, profile }) !== null) {
+    const shared = channelState(entry.channel, {
+      rows, profile, adapters: matchAdapters(entry.channel, adapters), guided,
+    });
+    // A channel Profilo connects (WhatsApp on a configured Meta app, Email
+    // on Gmail, Calendar on Google) is named apart, like before: its
+    // Collega lives there, not in the guided flow.
+    if (shared.state === 'da-collegare' && shared.connectRoute === '#/profilo') {
       fromProfile.push(`${entry.label} dal Profilo`);
+    } else if (shared.state === 'da-collegare' || shared.state === 'da-completare') {
+      leads.push(entry.label);
     } else {
       unavailable.push(entry.label);
+    }
+  }
+  // A connectable channel outside the nine (Telegram, SMS) loses leads
+  // like a missing nine channel: the invite names it too, while the count
+  // stays on the spec's nine (review #692). One with no adapter stays
+  // silent here — Stato sync still lists its row — and a linked one needs
+  // no invite. Without the adapters the screen cannot know, so this stays
+  // off like the per-channel answer above.
+  if (Array.isArray(adapters)) {
+    for (const item of CONNECTOR_CATALOG) {
+      if (item == null || typeof item.channel !== 'string' || item.channel === '') continue;
+      if (NINE_CHANNEL_IDS.includes(item.channel)) continue;
+      const extra = channelState(item.channel, {
+        rows, profile, adapters: matchAdapters(item.channel, adapters), guided,
+      });
+      if (extra.state === 'da-collegare' || extra.state === 'da-completare') leads.push(item.label);
     }
   }
   const notes = [...fromProfile];
@@ -1452,18 +1784,15 @@ async function readSpaceConnections(client, space) {
 }
 
 /**
- * The customer name of every shown «Da rispondere» row (production 07/11:
- * the channel syncs store no subject label, so every row read «Cliente»).
- * One read-only profile per shown subject — at most the inbox limit —
- * settled together; a refused or unknown profile leaves the row on its
- * stored label or sender handle, never an error on Oggi.
+ * One read-only profile per subject — settled together; a refused or
+ * unknown profile leaves the row on its stored label, brand or sender
+ * handle, never an error on Oggi. The one name rule every screen reads
+ * (`nameFromProfile`, the same function Clienti reads).
  * @param {{ request: (path: string) => Promise<any> }} client
- * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @param {Array<string>} keys `resource:id` subjects to name
  * @returns {Promise<Record<string, string>>}
  */
-export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
-  const { rows } = buildInbox({ messages, conversations, now, ownAddresses });
-  const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+async function readProfileNames(client, keys) {
   /** @type {Record<string, string>} */
   const names = {};
   const settled = await Promise.allSettled(keys.map(async (key) => {
@@ -1477,6 +1806,43 @@ export async function readInboxNames(client, messages, conversations, now, { own
     if (result.status === 'fulfilled' && result.value.name) names[result.value.key] = result.value.name;
   }
   return names;
+}
+
+/**
+ * The customer name of every shown inbox row — «Da rispondere» and
+ * «Notifiche automatiche» (production 07/11: the channel syncs store no
+ * subject label, so every row read «Cliente»; backlog:971b3e0e: a
+ * notification with a customer subject read the brand of their domain
+ * while Clienti showed their profile name). One read-only profile per
+ * shown subject — at most twice the inbox limit — settled together; a
+ * refused or unknown profile leaves the row on its stored label, brand
+ * or sender handle, never an error on Oggi.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses });
+  const keys = [...new Set([...built.rows, ...built.notifications.rows]
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
+}
+
+/**
+ * The customer name of every shown «Notifiche automatiche» row with a
+ * subject (backlog:971b3e0e): the branch the server «Da rispondere» view
+ * names itself, so it reads only what the view cannot name. Same function,
+ * same fail-soft rule as `readInboxNames`; a notification still never
+ * waits in grey for its name.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readNotificationNames(client, messages, conversations, now, { ownAddresses = [], correspondents = null } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses, correspondents });
+  const keys = [...new Set(built.notifications.rows
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
 }
 
 /** Profile reads for appointment names, at most: the agenda never has more on one screen. */
@@ -1534,11 +1900,16 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     tasksPartial: false,
     appointmentsPartial: false,
     inboxPartial: false,
+    submissionsPartial: false,
     interactionsAvailable: false,
     tasks: [],
     appointments: [],
     connections: [],
+    submissions: [],
     profile: null,
+    // The schema's composed channel adapters: the strip's Collega follows
+    // the shared channel state, like Stato sync. Null while unread.
+    channelAdapters: null,
     briefMessages: [],
     briefCalls: [],
     inboxComposed: false,
@@ -1590,6 +1961,14 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   try {
     const schema = await timed('schema', client.request('/api/schema'));
     domains = schema?.domains ?? {};
+    // The strip's Collega reads the shared channel state, like Stato sync
+    // and #/connettori: without the composed adapters a channel nothing
+    // serves would still be invited.
+    const channelsMeta = domains?.channels?.metadata ?? domains?.channels;
+    // No adapters metadata means unknown, not "nothing serves it": only a
+    // read adapters list filters the invite (backlog:803d127c4458 keeps its
+    // invite when the schema names no adapters).
+    outcome.channelAdapters = Array.isArray(channelsMeta?.adapters) ? channelsMeta.adapters : null;
   } catch (error) {
     noteReadFailure('schema', error);
     // The profile read started already: nothing waits on it.
@@ -1622,7 +2001,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('da-rispondere', error); return null; },
     )
     : Promise.resolve(null);
-  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage] = await Promise.all([
+  // backlog:d08331558c50: the website forms feed the signal list — one
+  // fail-soft read like the rest, gated on the composed domain.
+  const submissionsRead = domains['site-forms'] != null
+    ? page('site-form-submission', 'site-form-submission')
+    : skip;
+  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -1633,6 +2017,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // waiting. A failed read keeps the section honest (unavailable).
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
+    submissionsRead,
   ]);
   // backlog:c2bf6b206d96: «Da rispondere» from the Clienti view, one source
   // for Oggi and Clienti; fail-soft to the messages read below.
@@ -1647,6 +2032,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.appointments = appointmentsPage.rows;
     outcome.appointmentsPartial = appointmentsPage.capped === true;
     outcome.appointmentsAvailable = true;
+  }
+  if (submissionsPage != null) {
+    outcome.submissions = submissionsPage.rows;
+    outcome.submissionsPartial = submissionsPage.capped === true;
   }
   if (connectionsPage != null) {
     outcome.connections = connectionsPage.rows;
@@ -1713,14 +2102,42 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // a slow view never holds the agenda names or the actions back.
   outcome.inboxNamesPending = true;
   let repliesSettled = false;
+  // backlog:971b3e0e (review Codex P2 on df720f0d): «Da rispondere» paints
+  // as soon as its own data is in — the notification profile names repaint
+  // after, without holding the ready rows or their count back.
+  let namesPublished = false;
+  const named = () => {
+    if (typeof onNames !== 'function') return;
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+    namesPublished = true;
+  };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
     outcome.repliesPending = false;
-    outcome.inboxNames = outcome.inboxAvailable && replies === null
-      ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
-      : {};
+    // The ready rows and their count paint now, even while a notification
+    // profile read is still flying.
+    if (namesPublished) named();
+    // backlog:971b3e0e: «Notifiche automatiche» always comes from the
+    // local messages read, so its subjects need profile names on both
+    // branches — the server view names «Da rispondere» itself, never the
+    // notifications. The server branch reads notification subjects only,
+    // with the same scan-wide base the render decides them from.
+    outcome.inboxNames = !outcome.inboxAvailable
+      ? {}
+      : replies === null
+        ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
+        : await readNotificationNames(client, outcome.inboxMessages, outcome.inboxConversations, now, {
+          ownAddresses: ownMailboxes(outcome.profile, outcome.connections),
+          correspondents: replies.correspondents ?? null,
+        });
     outcome.inboxNamesPending = false;
     repliesSettled = true;
+    // The notification names fill in after, in place.
+    if (namesPublished) named();
   });
   // Voce 785aeb28bd18: the roster already rides the first wave beside the
   // profile (see above) — joining it here only waits for what is still
@@ -1732,15 +2149,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
-  // the call recap and «Da rispondere» may still be reading.
-  const named = () => {
-    if (typeof onNames !== 'function') return;
-    try {
-      onNames({ ...outcome, pending: false, briefPending: true });
-    } catch (error) {
-      noteReadFailure('paint', error);
-    }
-  };
+  // the call recap and the notification names may still be reading (their
+  // branches repaint in place through named, backlog:971b3e0e).
   named();
   const answeredLate = !repliesSettled;
   await repliesBranch;
@@ -1948,6 +2358,7 @@ function renderAdvisorRow(doc, action, state, events = {}, disabled = false, pre
  *     brief?: { title: unknown, when: unknown, bullets: Array<string>, sources: Array<{ label: string, href: string }> } | null,
  *     missing?: Array<{ channel: unknown, label: unknown }>,
  *     connections?: Array<{ channel?: unknown, status?: unknown }>,
+ *     channelAdapters?: unknown,
  *     channelsPartial?: boolean,
  *     channelsUnknown?: boolean,
  *     tasksPartial?: boolean,
@@ -2084,6 +2495,13 @@ export function renderOggi({
   // Production 11/11: «Hai finito per oggi» over 32 messages waiting. The
   // day is done only when nothing waits in «Da rispondere» either.
   const waitingReplies = home.inbox != null && home.inbox.available !== false ? Number(home.inbox.total ?? 0) : 0;
+  // backlog:5cf918c2246e: «da leggere» is not «da rispondere» — a customer
+  // with unread messages nobody has to answer (a teammate already replied,
+  // a notification, a closed thread) still waits to be read. The day is done
+  // only when nothing waits to be read either.
+  const unreadWaiting = home.inbox != null && home.inbox.available !== false && Number.isSafeInteger(home.inbox.unread) && home.inbox.unread > 0
+    ? home.inbox.unread
+    : 0;
   // review Muse #795: a floor from a truncated scan never reads «finito».
   // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
   const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
@@ -2093,8 +2511,12 @@ export function renderOggi({
   done.setAttribute('data-oggi-done', 'true');
   if (!allDone || home.inbox?.pending === true) {
     // Nothing to say yet: the count of the messages waiting is still reading.
-  } else if (waitingReplies === 0 && !waitingFloor) {
+  } else if (waitingReplies === 0 && !waitingFloor && unreadWaiting === 0) {
     done.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
+  } else if (waitingReplies === 0 && !waitingFloor) {
+    done.appendChild(el(doc, 'p', 'bo-muted', unreadWaiting === 1
+      ? 'Hai risposto a tutto. Resta 1 messaggio da leggere, qui sotto.'
+      : `Hai risposto a tutto. Restano ${unreadWaiting} messaggi da leggere, qui sotto.`));
   } else if (waitingFloor) {
     done.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
   } else {
@@ -2158,6 +2580,7 @@ export function renderOggi({
       }
       return row;
     };
+    let unreadLinked = false;
     if (home.inbox.pending === true) {
       // backlog:bab63e32acdb: the server view is reading — no word that
       // could pass for «nobody waits». backlog:ee1244a145c9: the count is
@@ -2178,13 +2601,34 @@ export function renderOggi({
       const note = el(doc, 'p', 'bo-muted', 'Non riesco a contare tutti i messaggi da rispondere qui. ');
       if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
         const all = el(doc, 'a', 'bo-oggi-more', 'Guardali in Clienti →');
-        all.setAttribute('href', '#/customer-data');
+        all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
         all.setAttribute('data-action', 'inbox-all');
         all.addEventListener('click', (event) => {
           if (event && typeof event.preventDefault === 'function') event.preventDefault();
           events.openClientiView(REPLIES_VIEW);
         });
         note.appendChild(all);
+      }
+      inbox.appendChild(note);
+    } else if (inboxRows.length === 0 && unreadWaiting > 0) {
+      // backlog:5cf918c2246e: an empty «Da rispondere» with unread messages
+      // never reads «nobody waits» alone — the unread count names itself here
+      // (with its Clienti link when it can open it), and the trailing
+      // «da leggere» line stays silent.
+      const note = el(doc, 'p', 'bo-muted');
+      note.appendChild(el(doc, 'span', null, 'Nessun messaggio aspetta una risposta, ma '));
+      if (typeof events.openClientiView === 'function') {
+        const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadWaiting} da leggere in Clienti →`);
+        unreadLink.setAttribute('href', clientiViewHash(UNREAD_VIEW));
+        unreadLink.setAttribute('data-action', 'inbox-unread');
+        unreadLink.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView(UNREAD_VIEW);
+        });
+        note.appendChild(unreadLink);
+        unreadLinked = true;
+      } else {
+        note.appendChild(el(doc, 'span', null, `${unreadWaiting} da leggere.`));
       }
       inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
@@ -2200,7 +2644,7 @@ export function renderOggi({
         const more = el(doc, 'p', 'bo-muted', `Mostro le ${inboxRows.length} più recenti su ${home.inbox.totalIsExact === false ? 'almeno ' : ''}${waitingCount}. `);
         if (home.inbox.source === 'server' && typeof events.openClientiView === 'function') {
           const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutte →');
-          all.setAttribute('href', '#/customer-data');
+          all.setAttribute('href', clientiViewHash(REPLIES_VIEW));
           all.setAttribute('data-action', 'inbox-all');
           all.addEventListener('click', (event) => {
             if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2212,10 +2656,11 @@ export function renderOggi({
       }
     }
     // backlog:c2bf6b206d96: «Da leggere» stays its own count, named apart.
+    // backlog:5cf918c2246e: folded into the empty note above when it fired.
     const unread = home.inbox.available === false ? null : home.inbox.unread;
-    if (Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
+    if (!unreadLinked && Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
       const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
-      line.setAttribute('href', '#/customer-data');
+      line.setAttribute('href', clientiViewHash(UNREAD_VIEW));
       line.setAttribute('data-action', 'inbox-unread');
       line.addEventListener('click', (event) => {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
@@ -2224,9 +2669,21 @@ export function renderOggi({
       inbox.appendChild(line);
     }
     // Backlog 803d127c4458: past the messages page the count above
-    // undercounts — the cut is disclosed, never silent.
+    // undercounts — the cut is disclosed, never silent, with the way to
+    // see the rest (Clienti › Tutti, like the other inbox notes above).
     if (home.inbox.partial === true) {
-      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+      const note = el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci). `);
+      if (typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutti in Clienti →');
+        all.setAttribute('href', clientiViewHash('tutti'));
+        all.setAttribute('data-action', 'inbox-all-messages');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView('tutti');
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
@@ -2417,11 +2874,12 @@ export function renderOggi({
   } else {
     // The prototype strip (9c7d1477a8d4, production 08/11 after #687):
     // «x di 9 collegati», always the line «per non perdere nessun lead», and
-    // the names are the connectable lead channels missing. The missing
+    // the names are the connectable lead channels missing (a connectable
+    // Telegram joins them, the count stays on the nine). The missing
     // channels that are not leads to connect here (Google Calendar, Stripe)
     // are named apart, so what the text promises adds up with the count.
     const invite = Array.isArray(home.connections)
-      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null })
+      ? buildChannelInvite({ connections: home.connections, profile: home.profile ?? null, adapters: home.channelAdapters ?? null })
       : {
         connected: OGGI_TOTAL_CHANNELS - Math.min(missing.length, OGGI_TOTAL_CHANNELS),
         total: OGGI_TOTAL_CHANNELS,
@@ -2433,7 +2891,9 @@ export function renderOggi({
     // The note renders even with no leads left, so a capped read never
     // passes for a complete one.
     const partialChannels = home.channelsPartial === true && Array.isArray(home.connections);
-    if (invite.leads.length > 0 || partialChannels) {
+    // With the adapters known the strip can name only «non ancora
+    // disponibile» channels: the count still shows, without a Collega.
+    if (invite.leads.length > 0 || invite.aside !== null || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
@@ -2448,6 +2908,11 @@ export function renderOggi({
           navigate('#/connettori');
         });
         section.appendChild(anchor);
+      } else if (invite.aside !== null) {
+        const note = el(doc, 'p', 'bo-oggi-invite-note');
+        note.appendChild(el(doc, 'strong', undefined, `${invite.connected} di ${invite.total} collegati`));
+        note.appendChild(el(doc, 'span', undefined, ` (${invite.aside})`));
+        section.appendChild(note);
       }
       if (partialChannels) {
         section.appendChild(el(doc, 'p', 'bo-muted', `Mostro i primi ${home.connections.length} collegamenti (elenco parziale).`));
@@ -2609,12 +3074,14 @@ export function createOggiView(deps) {
   let notificationsOpen = false;
   /**
    * backlog:c2bf6b206d96: «Vedi tutte» and «N da leggere» open Clienti on
-   * that view, through the same one-time handoff as the calendar event.
+   * that view. backlog:7cf5c4931cfc: the view travels in the address
+   * (`#/customer-data?vista=...`), so the link saves and reopens it; the
+   * one-time handoff stays as the fallback when the query is lost.
    * @param {string} view
    */
   function openClientiView(view) {
     writePendingClientiView(deps.storage ?? null, view);
-    navigate('#/customer-data');
+    navigate(clientiViewHash(view));
   }
   /**
    * backlog:bd5e84545021: an appointment with no scheda opens in the
@@ -2634,7 +3101,19 @@ export function createOggiView(deps) {
     if (!last) return;
     // backlog:bd5e84545021: the essentials are on screen, the names not yet.
     const pendingNames = last.pending === true;
-    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames });
+    // backlog:d08331558c50: the signals read the inbox rows and the open
+    // website forms beside the follow-ups — same fail-soft rows, no new page.
+    const built = buildAdvisorActions({
+      tasks: last.tasks,
+      appointments: last.appointments,
+      messages: last.inboxMessages ?? [],
+      conversations: last.inboxConversations ?? [],
+      submissions: last.submissions ?? [],
+      ownAddresses: ownMailboxes(last.profile, last.connections),
+      now: lastMeta.now,
+      names: last.appointmentNames ?? {},
+      pendingNames,
+    });
     lastBuilt = built;
     const merged = [...built.actions];
     const today = romeDayKey(lastMeta.now);
@@ -2655,7 +3134,7 @@ export function createOggiView(deps) {
     const brief = last.next
       ? buildPreCallBrief({ appointment: last.next, messages: last.briefMessages, calls: last.briefCalls, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames })
       : null;
-    const missing = missingLeadChannels(last.connections, last.profile ?? null);
+    const missing = missingLeadChannels(last.connections, last.profile ?? null, last.channelAdapters ?? null);
     // backlog:095fb37de6bb: the «Notifiche automatiche» group decides from
     // the server's scan-wide base when it answered — per thread: the server
     // base for the threads it scanned, the page base for the rest (review
@@ -2685,7 +3164,11 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...serverInbox, notifications }
+        // Backlog 803d127c4458: the server view names «Da rispondere» but
+        // never reads the messages page — its cut still hides rows (the
+        // notifications group reads from that page), so the local capped
+        // flag rides along instead of dropping in silence.
+        ? { ...serverInbox, partial: serverInbox.partial === true || local?.partial === true, notifications }
         : local;
     renderOggi({
       doc,
@@ -2697,7 +3180,7 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       home: {
         recapPending: inbox?.pending === true,
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false) }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0 }),
         actions,
         triage,
         capped,
@@ -2707,6 +3190,7 @@ export function createOggiView(deps) {
         inbox,
         missing,
         connections: last.connections,
+        channelAdapters: last.channelAdapters ?? null,
         channelsPartial: last.channelsPartial === true,
         channelsUnknown: last.channelsUnknown === true,
         tasksPartial: last.tasksPartial === true,
@@ -2990,6 +3474,7 @@ export function createOggiView(deps) {
           profile: null,
           briefMessages: [], briefCalls: [], next: null, appointmentNames: {},
           inboxAvailable: false, inboxMessages: [], inboxConversations: [], inboxNames: {},
+          submissions: [],
         };
       }
       paint();

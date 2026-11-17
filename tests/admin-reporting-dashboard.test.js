@@ -25,11 +25,11 @@ import {
   dashboardPath,
   downloadCsv,
   forecastStatus,
-  formatMoney,
   isDashboardPayload,
   ownerSigla,
   periodOptions,
 } from '../apps/admin/public/admin-reporting.js';
+import { formatAmount } from '../apps/admin/public/admin-core.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { METRIC_DEFINITIONS } from '../packages/analytics/src/index.js';
 import { dashboardSpecs } from '../packages/analytics/src/dashboard.js';
@@ -44,11 +44,11 @@ const MODEL = {
   metrics: { modelVersion: 1 },
   truncated: false,
   kpis: [
-    { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000,00 €', sub: '6 preventivi aperti' },
-    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000,00 €' },
-    { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000,00 €', sub: '2 chiusure' },
+    { id: 'open-value', label: 'Valore pipeline aperto', display: '26.000 €', sub: '6 preventivi aperti' },
+    { id: 'open-count', label: 'Preventivi aperti', display: '6', sub: '26.000 €' },
+    { id: 'won-period', label: 'Vinte in ottobre 2026', display: '14.000 €', sub: '2 chiusure' },
     { id: 'win-rate', label: 'Tasso di chiusura', display: '67%', sub: '2 vinte, 1 persa' },
-    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000,00 €', sub: '2 preventivi' },
+    { id: 'closing-period', label: 'In chiusura in ottobre 2026', display: '14.000 €', sub: '2 preventivi' },
   ],
   funnel: [
     { stage: 'qualification', label: 'Qualifica', count: 3, minor: 14500 },
@@ -72,7 +72,7 @@ const MODEL = {
     currency: 'EUR', closedMinor: 14000, probableMinor: 9333, bestMinor: 14000, targetMinor: 2000000,
     heuristic: true, label: 'Stima',
     method: 'Le probabili usano il tasso di chiusura storico (vinte su vinte + perse); non è una promessa.',
-    note: 'Obiettivo 20.000,00 €.',
+    note: 'Obiettivo 20.000 €.',
   },
   channels: {
     weeks: [
@@ -158,10 +158,10 @@ test('period options, dashboard path and bar widths are pure and pinned', () => 
   assert.equal(barWidth(0, 0), '0%');
   assert.equal(barWidth(5, 0), '0%');
   assert.equal(barWidth(-3, 100), '0%');
-  assert.equal(formatMoney(26000, 'EUR'), '260,00 €');
-  assert.equal(formatMoney(0, 'USD'), '0,00 USD');
-  assert.equal(formatMoney(1.5, 'EUR'), 'n.d.');
-  assert.equal(formatMoney(NaN), 'n.d.');
+  assert.equal(formatAmount(26000, 'EUR'), '260 €');
+  assert.equal(formatAmount(0, 'USD'), '0 USD');
+  assert.equal(formatAmount(1.5, 'EUR'), '—');
+  assert.equal(formatAmount(NaN), '—');
 });
 
 test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', async () => {
@@ -172,7 +172,7 @@ test('dashboard renders 5 KPIs, 4 charts, forecast badge, team and insights', as
     ...mount.findAll('span'), ...mount.findAll('p'), ...mount.findAll('h3'), ...mount.findAll('td'),
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Valore pipeline aperto/);
-  assert.match(text, /26\.000,00 €/);
+  assert.match(text, /26\.000 €/);
   assert.match(text, /Preventivi/);
   assert.match(text, /Valore per fase/);
   assert.match(text, /Chiusure attese per mese/);
@@ -435,7 +435,7 @@ test('the channel card renders title, period total, week totals and legend (C6, 
   ].map((node) => node.textContent).join(' | ');
   assert.match(text, /Nuovi clienti per canale/, 'C6: card title');
   // backlog:48993bed7294: the total says what it counts and over which weeks.
-  assert.match(text, /28 primi contatti da un canale nelle 4 settimane dal 28 set al 25 ott · un cliente con più canali conta una volta per canale/, 'C6: what the total counts');
+  assert.match(text, /28 primi contatti da un canale nelle 4 settimane dal 28 set al 25 ott · ogni cliente conta una volta, nel canale del primo contatto/, 'C6: what the total counts');
   assert.match(text, /Instagram 18/, 'C7: legend <nome canale> <n>');
   assert.match(text, /WhatsApp 10/, 'C7: legend <nome canale> <n>');
   for (const label of ['28 set', '5 ott', '12 ott', '19 ott']) {
@@ -486,7 +486,7 @@ test('forecastStatus is on track at and past the obiettivo, honest below it (C13
   );
   assert.equal(
     forecastStatus({ closedMinor: 14000, probableMinor: 9333, targetMinor: 2000000 }, 'EUR'),
-    `✦ Ti mancano ${formatMoney(1976667, 'EUR')} per l\u2019obiettivo`,
+    `✦ Ti mancano ${formatAmount(1976667, 'EUR')} per l\u2019obiettivo`,
     'below target names the honest gap in Italian money',
   );
   assert.equal(forecastStatus({ closedMinor: 0, probableMinor: 0, targetMinor: 0 }, 'EUR'),
@@ -542,10 +542,10 @@ test('obiettivo 20.000 € renders as 20.000 € with the honest gap (backlog:1c
   const { mount, view } = harness();
   await view.renderReporting();
   const text = mount.findAll('p').map((node) => node.textContent).join(' | ');
-  assert.ok(text.includes(`Obiettivo ${formatMoney(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
+  assert.ok(text.includes(`Obiettivo ${formatAmount(2000000, 'EUR')}`), 'the obiettivo shows euros, never cents');
   assert.ok(!text.includes('2.000.000'), 'cents are never shown as euros');
   assert.ok(
-    text.includes(`✦ Ti mancano ${formatMoney(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
+    text.includes(`✦ Ti mancano ${formatAmount(2000000 - 14000 - 9333, 'EUR')} per l\u2019obiettivo`),
     'the gap is target minus reached, in Italian money',
   );
 });
@@ -683,7 +683,7 @@ test('c3e66b36ddb7: the funnel lists each stage with n · amount over a full bar
   const [funnel] = byClass(mount, 'section', 'bo-preventivi');
   assert.ok(funnel);
   const steps = byClass(funnel, 'div', 'bo-rep-step-line').map((node) => node.textContent);
-  const eur = (minor) => formatMoney(minor, 'EUR');
+  const eur = (minor) => formatAmount(minor, 'EUR');
   assert.deepEqual(steps, [`Qualifica3 · ${eur(14500)}`, `Trattativa2 · ${eur(10000)}`, `Vinte2 · ${eur(14000)}`]);
   assert.ok(!/%/.test(funnel.textContent), 'stage counts are a snapshot: no conversion percentage is claimed');
 });
@@ -693,9 +693,9 @@ test('c3e66b36ddb7: the forecast names its goal in the head, carries amounts in 
   await view.renderReporting();
   const forecast = mount.findAll('div').find((node) => classesOf(node).includes('pipeline-forecast'));
   const head = byClass(forecast, 'div', 'bo-rep-head')[0];
-  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatMoney(2000000, 'EUR')}`);
+  assert.equal(head.textContent, `Previsione di ottobre 2026Obiettivo ${formatAmount(2000000, 'EUR')}`);
   const amounts = byClass(forecast, 'strong', 'bo-rep-amount').map((node) => node.textContent);
-  assert.deepEqual(amounts, [formatMoney(14000, 'EUR'), `+${formatMoney(9333, 'EUR')}`, `+${formatMoney(14000, 'EUR')}`]);
+  assert.deepEqual(amounts, [formatAmount(14000, 'EUR'), `+${formatAmount(9333, 'EUR')}`, `+${formatAmount(14000, 'EUR')}`]);
   assert.match(forecast.textContent, /✦ Stima: .*non è una promessa/, 'the heuristic is labelled, never a promise');
   assert.equal((forecast.textContent.match(/Obiettivo/g) ?? []).length, 1, 'the goal is said once, in the head');
 });
@@ -782,7 +782,7 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
   }, []);
   assert.deepEqual(named.team.map((entry) => entry.owner).slice(1), ['Senza referente']);
   assert.equal(channelsLede({ total: 1, weeks: [{ week: '2026-10-26' }, { week: '2026-11-02' }, { week: '2026-11-09' }, { week: '2026-11-16' }] }),
-    '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · un cliente con più canali conta una volta per canale');
+    '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
 // 35c3c897d696: a malformed first or last week reads the count only, never throws.

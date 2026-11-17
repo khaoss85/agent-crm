@@ -1,7 +1,7 @@
 // @ts-check
 
 import { ValidationError } from '../../core/index.js';
-import { messagePreview } from '../../core/message-preview.js';
+import { MESSAGE_NO_TEXT, messagePreview } from '../../core/message-preview.js';
 import { isNotificationMessage, teamCorrespondents, teamWroteTo } from '../../core/sender-kind.js';
 import { CHANNEL_SYSTEMS } from './sender.js';
 import { companyDisplayName, contactDisplayName, shownCompanyOf } from './display-name.js';
@@ -79,6 +79,21 @@ export function previewLastContactText(value, subject = null) {
     max: LAST_CONTACT_PREVIEW_CHARS,
   });
   return preview === '' ? null : preview;
+}
+
+/**
+ * Whether a latest-contact activity reads as a message for the no-text
+ * fallback (backlog:1740985ba18c review). The isMessage flag operations.js
+ * threads is authoritative; without it (legacy or direct readers, pre-flag
+ * shape) the content decides — a body (even an empty one), a subject or an
+ * attachment reads as a message, while neither reads like a call, which
+ * carries no text — so no excerpt is ever invented for a call.
+ * @param {any} entry the activityBySubject entry, if any
+ */
+export function isMessageActivity(entry) {
+  if (entry == null || entry.isMessage === false) return false;
+  if (entry.isMessage === true || entry.hasAttachment === true) return true;
+  return entry.text != null || entry.subject != null;
 }
 
 /** Server page sizes from the approved prototype ("04 Clienti"). */
@@ -204,6 +219,7 @@ export const CUSTOMER_COLUMNS = Object.freeze([
   { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
   { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
   { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+  { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
   { id: 'email', label: 'Email', always: false, ai: false, def: false },
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
@@ -586,7 +602,7 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, appointmentBySubject?: Map<string, any>, appointmentsComplete?: boolean, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
  *   customFields entries are shaped `{ key, label, type, options, value, updatedAt, updatedBy }`
  *   (backlog:434cc39a): every defined field reads on every row — the list
  *   columns — with a null value when never set.
@@ -594,8 +610,17 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  *   message or call scan behind the observed channels was partial or
  *   unreadable — the row then reads channelsComplete:false instead of an
  *   exact union. Absent means exact, so hand-built reads stay honest.
- *   activity entries name `{ occurredAt, channel, text }`: `text` is the
- *   latest message body (a call carries none, so it stays null there).
+ *   activity entries name `{ occurredAt, channel, text, subject, isMessage,
+ *   hasAttachment }`: `text` is the latest message body (a call carries
+ *   none, so it stays null there), `subject` its mail subject, `isMessage`
+ *   false only for a call, and `hasAttachment` true when the latest message
+ *   carried a file (then an empty body previews as 'Allegato', like the Oggi
+ *   inbox). The flag is authoritative (see isMessageActivity): without it a
+ *   present body, subject or attachment still reads as a message, while
+ *   neither reads like a call — no excerpt is ever invented for a call.
+ *   appointment entries name `{ startsAt, endsAt, status }`: the next live
+ *   one shapes `nextAppointment`, with `appointmentsComplete` telling exact
+ *   from partial.
  *   observed channels name the message channels read for this customer in
  *   the same scan (backlog:826e377c), already on the canale-filter
  *   vocabulary (CUSTOMER_CHANNELS, see operations.js).
@@ -665,9 +690,11 @@ export function shapeCustomerRow(subject, reads = {}) {
     // and a placeholder such as `Unknown (assistenza@…)` reads as none too.
     // A company subject named by a placeholder (`Unknown (…)`) lists no
     // company line either: the row keeps its id, never the placeholder
-    // (review #739 giro 3).
+    // (review #739 giro 3). The line carries the display name, not the
+    // stored one (backlog:088b639d96a2): co-brands read by their brand,
+    // bare domains read united, placeholders read as none.
     company: shownCompany && companyDisplayName(shownCompany) !== null
-      ? Object.freeze({ id: shownCompany.id, name: shownCompany.name }) : null,
+      ? Object.freeze({ id: shownCompany.id, name: /** @type {string} */ (companyDisplayName(shownCompany)) }) : null,
     email: contact?.email ?? null,
     phone: phoneIdentity ? Object.freeze({ value: phoneIdentity.externalId ?? null, system: phoneIdentity.system ?? null }) : null,
     channels: Object.freeze(channels),
@@ -675,7 +702,18 @@ export function shapeCustomerRow(subject, reads = {}) {
     status: Object.freeze({ value: status.value ?? 'contatto', reason: status.reason ?? null }),
     lastContactAt: activity?.occurredAt ?? null,
     lastContactChannel: activity?.channel ?? null,
-    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null),
+    // backlog:1740985ba18c: an empty message reads the same fallback as Oggi
+    // (the subject when there is one, MESSAGE_NO_TEXT otherwise) instead of a
+    // blank cell. A latest call still previews as nothing — the fallback is
+    // for messages only. The isMessage flag is authoritative; without it
+    // (legacy or direct readers, pre-flag shape) the content decides: a body
+    // (even an empty one), a subject or an attachment reads as a message,
+    // while neither reads like a call, which carries no text. When the empty
+    // message carried a file, the row names it like the Oggi inbox does
+    // ('Allegato', see apps/admin/public/admin-oggi.js).
+    lastContactText: previewLastContactText(activity?.text ?? null, activity?.subject ?? null)
+      ?? (isMessageActivity(activity)
+        ? (activity.hasAttachment === true ? 'Allegato' : MESSAGE_NO_TEXT) : null),
     unreadCount: unread === null ? null : unread.unread,
     lastUnreadAt: unread === null ? null : (unread.lastUnreadAt ?? null),
     awaitingReplyCount: awaiting === null ? null : awaiting.count,
@@ -684,8 +722,24 @@ export function shapeCustomerRow(subject, reads = {}) {
     awaitingText: awaiting === null ? null : previewLastContactText(awaiting.text, awaiting.subject),
     offerValueCents: offer?.valueCents ?? null,
     offerCurrency: offer?.currency ?? null,
+    // backlog:1adf95307b31: valute miste — i subtotali per valuta, ognuno con
+    // il suo codice; null quando la riga ha una sola valuta (o nessuna).
+    offerParts: Array.isArray(offer?.parts)
+      ? Object.freeze(offer.parts.map((part) => Object.freeze({
+        valueCents: Number.isSafeInteger(part?.valueCents) ? part.valueCents : null,
+        currency: typeof part?.currency === 'string' ? part.currency : null,
+      })))
+      : null,
     nextStep: task ? Object.freeze({ title: task.title ?? null, dueAt: task.dueAt ?? null, overdue: task.overdue ?? false }) : null,
     renewalWithinDays: reads.renewalBySubject?.get(key) === true,
+    // backlog:2262771da550 — the row's calendar state: the next live
+    // appointment (soonest start at or after now, terminal states excluded),
+    // null when none is booked. calendarComplete is false when the
+    // appointment scan was unreadable or partial: without it the cell would
+    // read an exact «nessuno» over a hole.
+    nextAppointment: reads.appointmentBySubject?.get(key) ?? null,
+    calendarComplete: reads.appointmentBySubject !== undefined
+      && reads.appointmentsComplete !== false,
     budget: Object.freeze({
       available: budget.available === true,
       value: budget.available === true ? (budget.value ?? null) : null,

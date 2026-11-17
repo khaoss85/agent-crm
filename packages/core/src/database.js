@@ -631,7 +631,7 @@ function assertMigrationPlane(applied, expectedPlane) {
 }
 
 /**
- * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number, plane?: 'combined'|'data'|'control'}} [options]
+ * @param {{path?: string, moduleMigrations?: Array<{name: string, sql: string}>, busyTimeoutMs?: number, plane?: 'combined'|'data'|'control', synchronous?: 'FULL'|'NORMAL'|'OFF'}} [options]
  * @returns {AccordoDatabase}
  */
 export function createDatabase(options = {}) {
@@ -650,6 +650,17 @@ export function createDatabase(options = {}) {
   try {
     withStartupBusyRetry(() => raw.exec('PRAGMA foreign_keys = ON;'));
     withStartupBusyRetry(() => raw.exec(`PRAGMA busy_timeout = ${Number.isInteger(options.busyTimeoutMs) && /** @type {number} */ (options.busyTimeoutMs) >= 0 ? options.busyTimeoutMs : 5000};`));
+    // Scratch-database durability for tests (backlog:4635beb9): FULL is the
+    // default, unchanged; a test harness may pass NORMAL or OFF so thousands
+    // of throwaway commits do not each pay a slow-disk fsync. It changes no
+    // SQL, no transaction, no lock and no in-transaction rollback — only how
+    // much of a committed transaction survives an OS crash, which no test
+    // asserts. Anything else is refused loudly rather than misconfigured.
+    const synchronous = options.synchronous ?? 'FULL';
+    if (synchronous !== 'FULL' && synchronous !== 'NORMAL' && synchronous !== 'OFF') {
+      throw new Error(`Unknown synchronous mode "${synchronous}": expected FULL, NORMAL or OFF.`);
+    }
+    withStartupBusyRetry(() => raw.exec(`PRAGMA synchronous = ${synchronous};`));
     if (dbPath !== ':memory:') withStartupBusyRetry(() => raw.exec('PRAGMA journal_mode = WAL;'));
 
     withStartupBusyRetry(() => raw.exec(`

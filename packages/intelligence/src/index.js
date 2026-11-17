@@ -144,7 +144,7 @@ export function createIntelligenceDomain(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: INTELLIGENCE_DOMAIN,
-    version: 1,
+    version: 2,
     label: 'Lead Intelligence',
     description:
       'Enriches leads from declared providers, records behavioural signals, scores them with explainable versioned models and routes them to declared targets — every decision carrying the fingerprint of the definition that made it. Also holds call intelligence (BO-F1-08): start-of-call notices, transcripts with per-space retention, AI summaries and buying signals that cite their transcript.',
@@ -196,10 +196,27 @@ export function createIntelligenceDomain(options = {}) {
         input: [
           { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug — always explicit, never inferred.' },
           { name: 'callRef', type: 'string', required: true, hint: 'The interaction-call source key to summarize.' },
+          { name: 'organizationId', type: 'string', required: false, hint: 'Voce 5c9e006a: the caller organization, threaded by the route — never the body.' },
         ],
         create(runtime) {
           const ops = callOperations(runtime);
           return (params) => ops.summarizeCall(params);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'structure-voice-note',
+        label: 'Structure voice note',
+        appMethod: 'structureVoiceNote',
+        description: 'Structure a dictated post-call voice note into riassunto, decisioni and prossimi passi (voce 5036bc435465). Stateless: stores nothing, the audio never reaches the server; without a composed language model it refuses 409 VOICE_NOTE_UNAVAILABLE.',
+        input: [
+          { name: 'spaceId', type: 'string', required: true, hint: 'The Accordo space slug — always explicit, never inferred.' },
+          { name: 'text', type: 'string', required: true, hint: 'The dictated text, transcribed on the device. Plain text, 1-2000 characters.' },
+          { name: 'organizationId', type: 'string', required: false, hint: 'Voce 5c9e006a: the caller organization, threaded by the route — never the body.' },
+        ],
+        create(runtime) {
+          const ops = callOperations(runtime);
+          return (params) => ops.structureVoiceNote(params);
         },
       },
       {

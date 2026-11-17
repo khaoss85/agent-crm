@@ -498,21 +498,23 @@ test('3d0fbe7d: a second move while a reschedule is in flight names the wait (re
 });
 
 test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P2)', async () => {
-  const { mount, client, week, col } = await openPointerWeek();
+  const { mount, client, week, col, toasts } = await openPointerWeek();
   const { handle } = resizeHandleOf(mount);
   const before = { ...week.members[0].appointments[0] };
   const cols = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-day'));
   const neighbor = cols.find((node) => node !== col);
   assert.ok(neighbor, 'another day column paints beside the origin one');
   neighbor.getBoundingClientRect = () => ({ top: 0, height: 540 });
-  const ghostsIn = (node) => (node.childNodes ?? []).filter((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  const ghostsIn = (node) => (node.findAll?.('div') ?? []).filter((child) => (child.getAttribute?.('class') ?? '').includes('cal-drag-ghost'));
+  const originStyle = () => String(eventButton(mount, 'a9').getAttribute?.('style') ?? '');
+  const styleBefore = originStyle();
   col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
   col.dispatch('pointermove', { clientY: 390 });
-  assert.equal(ghostsIn(col).length, 1, 'the stretch ghost paints on the origin column');
+  assert.equal(ghostsIn(mount).length, 0, 'backlog:667f1f1c: no second block under the stretch preview');
+  assert.notEqual(originStyle(), styleBefore, 'backlog:667f1f1c: the block itself stretches live');
   // Sideways into the next day column: ignored, so preview and commit agree.
   neighbor.dispatch('pointermove', { clientY: 390 });
-  assert.equal(ghostsIn(neighbor).length, 0, 'sideways motion paints no ghost on the other day');
-  assert.equal(ghostsIn(col).length, 1, 'the ghost stays on the origin column');
+  assert.equal(ghostsIn(mount).length, 0, 'sideways motion paints no ghost on the other day');
   neighbor.dispatch('pointerup', {});
   await settle(15);
   const reschedule = client.calls.find((call) => call.path === '/api/appointments/reschedule');
@@ -521,6 +523,86 @@ test('3d0fbe7d: a resize dragged sideways stays on the origin day (review #757 P
   assert.equal(Date.parse(body.startsAt), Date.parse(before.startsAt), 'the start stays where it was');
   assert.ok(Date.parse(body.endsAt) > Date.parse(before.endsAt), 'the end moves later');
   assert.equal(String(body.endsAt).slice(0, 10), String(before.startsAt).slice(0, 10), 'the commit writes the new end on the origin day');
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungato a') && !toast.error), `the stretch confirms in Italian: ${JSON.stringify(toasts)}`);
+});
+
+test('backlog:667f1f1c (review P2): the stretch preview names the target end before release', async () => {
+  const { mount, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  // The a9 block is 14:00–15:00 Rome; pull the edge to 15:30 and hold it.
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  const timeLabel = eventButton(mount, 'a9').findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-time'));
+  assert.ok(timeLabel, 'the stretched block keeps its time span during the preview');
+  assert.equal(timeLabel.textContent, '14:00–15:45', 'the preview announces the target end before pointerup');
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
+test('backlog:667f1f1c (giro 3 P1): a short-block stretch rewrites the compact line live', async () => {
+  // A 30-min block (<45 min) renders no .cal-time, only the compact single
+  // line «Titolo, 14:00»: the live preview must still name the target end.
+  const { mount, col } = await openPointerWeek({ endsAt: '2026-10-22T12:30:00.000Z' });
+  const { handle } = resizeHandleOf(mount);
+  const compactOf = () => eventButton(mount, 'a9').findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-compact'));
+  const before = compactOf();
+  assert.ok(before, 'the short block renders its compact line');
+  assert.equal(before.textContent, 'Taglio · Bea, 14:00', 'the compact line starts start-only');
+  assert.equal(
+    eventButton(mount, 'a9').findAll('span')
+      .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('cal-time')).length,
+    0,
+    'a short block renders no .cal-time to update',
+  );
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  assert.equal(compactOf().textContent, 'Taglio · Bea, 14:00–15:45', 'the preview names the live end on the compact line');
+  col.dispatch('pointerup', {});
+  await settle(15);
+});
+
+test('backlog:667f1f1c (review P1): cancelling a live stretch repaints the origin block', async () => {
+  const { mount, client, col } = await openPointerWeek();
+  const { handle } = resizeHandleOf(mount);
+  const styleBefore = String(eventButton(mount, 'a9').getAttribute?.('style') ?? '');
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  assert.notEqual(String(eventButton(mount, 'a9').getAttribute?.('style') ?? ''), styleBefore, 'the preview stretches the block');
+  col.dispatch('pointercancel', {});
+  await settle(15);
+  assert.equal(String(eventButton(mount, 'a9').getAttribute?.('style') ?? ''), styleBefore, 'the aborted stretch leaves no stretched paint behind');
+  assert.ok(!client.calls.some((call) => call.path === '/api/appointments/reschedule'), 'an aborted stretch sends nothing');
+});
+
+test('backlog:667f1f1c (review P2): a queued stretch says Allungamento, never Spostamento', async () => {
+  const queued = Object.assign(new Error('pending'), { code: 'BO_CRM_PENDING', status: 504, requestId: 'req-2', claimId: 'c-2' });
+  let release = () => {};
+  const wait = () => new Promise((resolve) => { release = resolve; });
+  const { mount, col, toasts } = await openPointerWeek({ failRescheduleWith: queued, wait });
+  const { handle } = resizeHandleOf(mount);
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungamento in coda') && !toast.error), `the queued stretch says so: ${JSON.stringify(toasts)}`);
+  release();
+  await settle(10);
+});
+
+test('backlog:667f1f1c (review P2): the same start instant in another ISO spelling is still a stretch', async () => {
+  const { mount, week, col, toasts } = await openPointerWeek();
+  // The server may spell the same instant without millis; the drag commit
+  // always spells it with .000Z. Same instant, different string.
+  week.members[0].appointments[0].startsAt = '2026-10-22T12:00:00Z';
+  const { handle } = resizeHandleOf(mount);
+  col.dispatch('pointerdown', { target: handle, button: 0, clientY: 330 });
+  col.dispatch('pointermove', { clientY: 390 });
+  col.dispatch('pointerup', {});
+  await settle(15);
+  assert.ok(toasts.some((toast) => toast.message.startsWith('Allungato a') && !toast.error), `the same-instant stretch says Allungato: ${JSON.stringify(toasts)}`);
+  assert.ok(!toasts.some((toast) => toast.message.startsWith('Spostato a')), 'never Spostato for a pure end change');
 });
 
 test('3d0fbe7d: bad move fields fail closed in Italian before any request', async () => {
