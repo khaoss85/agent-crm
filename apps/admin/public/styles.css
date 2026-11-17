@@ -588,7 +588,10 @@ button[aria-busy="true"] { opacity: .6; }
   font-weight: 600; text-align: left;
 }
 .bo-space-pick:hover, .bo-add-option:hover, .bo-space-manage:hover { background: var(--surface-soft); }
-.bo-space-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:09644bb7e7e9: menu names read in full (they wrap onto more
+ * lines) instead of cutting at «Prova Valid…»; the pick keeps its title
+ * with the whole name for one-hover certainty. */
+.bo-space-pick-name { flex: 1; min-width: 0; overflow: visible; white-space: normal; }
 .bo-space-key { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .bo-space-check { color: var(--accent); font-weight: 800; }
 .bo-space-manage { color: var(--accent); }
@@ -627,6 +630,12 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-count.is-empty,
 .bo-badge.is-empty {
   visibility: hidden;
+}
+/* backlog:09644bb7e7e9: the neutral trailing slot for voices without a
+ * live badge — same 20px box as the pills, hidden but laid out, so every
+ * menu row measures the same as the badged ones. */
+.bo-pill-slot {
+  min-width: 20px; height: 20px; visibility: hidden;
 }
 .bo-add { margin-top: 6px; }
 .bo-add-button {

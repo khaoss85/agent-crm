@@ -1221,6 +1221,38 @@ test('Agenti link their screen only when the agents package publishes create-age
 // backlog:8618ad3f72db (verifica 13-14/11): on Catalogo prodotti the sidebar
 // «Impostazioni» lost its highlight. Every view under the Impostazioni tab
 // row keeps it, Profilo included.
+// backlog:09644bb7e7e9: i nomi degli spazi si leggono per intero (il menu
+// va a capo, ogni riga ha il nome intero nel title) e ogni riga del menu
+// finisce con lo stesso elemento da 20px (pill, placeholder pinnato
+// backlog:b76770f82fe9 o slot neutro), mai uno «0» visibile.
+test('09644bb7e7e9: space names read in full, every voice row ends alike', () => {
+  const long = 'Prova Validazione Molto Lunga Sede Secondaria';
+  const { sidebar } = renderShell({
+    spaces: [{ id: 'b1', name: long, initials: 'PR' }],
+    items: buildShellNav({ customerDataAvailable: true }),
+  });
+  const picks = sidebar.findAll('button').filter((node) => (node.className ?? '').includes('bo-space-pick'));
+  assert.ok(picks.length > 0);
+  for (const pick of picks) assert.equal(pick.getAttribute('title'), long);
+  const rows = [...sidebar.findAll('a'), ...sidebar.findAll('span')]
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-nav-item'));
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    const trailing = row.findAll('span').filter((node) => {
+      const c = (node.getAttribute('class') ?? '').split(/\s+/);
+      return c.includes('bo-count') || c.includes('bo-badge') || c.includes('bo-pill-slot');
+    });
+    assert.equal(trailing.length, 1, 'una sola coda da 20px per riga');
+  }
+  const zeros = sidebar.findAll('span').filter((node) => node.textContent === '0');
+  for (const node of zeros) {
+    assert.ok((node.getAttribute('class') ?? '').includes('is-empty'), 'uno «0» solo nel segnaposto nascosto');
+    assert.equal(node.getAttribute('aria-hidden'), 'true');
+  }
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.bo-pill-slot'), 'lo slot neutro sta nel foglio di stile');
+});
+
 test('8618ad3f72db: every Impostazioni tab keeps «Impostazioni» highlighted in the sidebar', () => {
   for (const [view, label] of [
     ['personalizzazione', 'Personalizzazione'], ['catalog', 'Catalogo prodotti'], ['sync', 'Stato sync'],
