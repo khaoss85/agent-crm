@@ -318,6 +318,10 @@ function accountOf(connection) {
 export function detailSections({ entry, connection, spaceId = null }) {
   const label = typeof entry?.label === 'string' && entry.label !== '' ? entry.label : 'Connettore';
   const channel = typeof entry?.channel === 'string' ? entry.channel : '';
+  // backlog:8c4a2ca5b5f5 — the detail once printed the raw channel id
+  // («Canale: telegram.»): it names the channel, or says none is linked
+  // when the entry has no name — never the id.
+  const channelLine = label !== 'Connettore' ? `Canale: ${label}.` : 'Canale: nessun canale collegato.';
   const connectionKey = connection !== null && typeof connection === 'object'
     && typeof connection.connectionKey === 'string' ? connection.connectionKey : null;
   const account = accountOf(connection);
@@ -379,13 +383,13 @@ export function detailSections({ entry, connection, spaceId = null }) {
 
   const dettagliTecniciLines = connection === null
     ? [
-        `Canale: ${channel === '' ? '—' : channel}.`,
+        channelLine,
         direction === null
           ? 'Direzione: non dichiarata nel matrix dei canali (nessun adattatore dedicato nel pacchetto).'
           : `Direzione: ${direction === 'in-out' ? 'entrata e uscita' : 'solo entrata'}.`,
       ]
     : [
-        `Canale: ${typeof connection.channel === 'string' ? connection.channel : channel}.`,
+        channelLine,
         `Adattatore: ${typeof connection.adapter === 'string' ? connection.adapter : '—'} v${Number.isSafeInteger(connection.adapterVersion) ? connection.adapterVersion : '—'}.`,
         `Chiave di collegamento: ${connectionKey ?? '—'}.`,
         `Stato: ${statusLabel(connection.status)}.`,

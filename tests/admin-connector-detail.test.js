@@ -757,6 +757,31 @@ test('cf365ada15b9: the detail says import and connection states in Italian', ()
   }
 });
 
+// backlog:8c4a2ca5b1f5 — Telegram showed the raw id («Canale: telegram.»):
+// the technical detail names the channel, or says none is linked when the
+// entry has no name — never the id.
+test('8c4a2ca5b1f5: the detail names the channel, never its id', () => {
+  const telegram = CONNECTOR_CATALOG.find((row) => row.channel === 'telegram');
+  assert.ok(telegram, 'the catalog names Telegram');
+  const linked = detailSections({
+    entry: telegram,
+    connection: { ...CONNECTION, channel: 'telegram', connectionKey: 'presti:telegram:bot' },
+  });
+  assert.ok(linked.dettagliTecnici.lines.includes('Canale: Telegram.'), 'the linked channel reads its name');
+  const unlinked = detailSections({ entry: telegram, connection: null });
+  assert.ok(unlinked.dettagliTecnici.lines.includes('Canale: Telegram.'), 'the unlinked channel still reads its name');
+  for (const sections of [linked, unlinked]) {
+    for (const line of sections.dettagliTecnici.lines.filter((row) => row.startsWith('Canale:'))) {
+      assert.ok(!line.includes('telegram'), `no raw id in «${line}»`);
+    }
+  }
+  const unknown = detailSections({ entry: null, connection: null });
+  assert.ok(
+    unknown.dettagliTecnici.lines.includes('Canale: nessun canale collegato.'),
+    'an entry without a name says none is linked',
+  );
+});
+
 test('24a57904a428: the detail read carries the live space, whatever storage says', async () => {
   for (const stored of ['', 'altro-spazio']) {
     const doc = createFakeDocument();
