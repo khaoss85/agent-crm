@@ -1752,10 +1752,14 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
-      // backlog:134f3ed7 — a reload that does not carry the just-booked id
-      // yet (read lag) still paints its block: the confirmed row rides the
-      // fresh week, so the pending handshake below selects it.
-      carryBookedRow();
+      // backlog:134f3ed7 (review Muse #1001 P1) — the confirmed row rides
+      // the fresh week only while the booking handshake is still open
+      // (pendingEventId set): a reload that does not carry the just-booked
+      // id yet (read lag) still paints its block, and the handshake below
+      // selects it. Once the post-booking reload settles, the server week
+      // is authoritative: carrying state.confirmed on every loadWeek would
+      // resurrect a cancelled or moved booking as a highlighted phantom.
+      if (state.pendingEventId !== null) carryBookedRow();
       state.weekError = null;
       state.unavailable = false;
       // backlog:bd5e84545021: the event Oggi asked for opens its detail
@@ -1764,6 +1768,11 @@ export function createCalendarioView(deps) {
         state.selectedId = state.pendingEventId;
         state.pendingEventId = null;
         state.pendingEventMember = null;
+        // backlog:134f3ed7 (review Muse #1001 P1) — the first reload after
+        // the booking reconciles the optimistic row: the server week owns
+        // the id from here, so the confirmed copy retires instead of riding
+        // every later reload as a phantom.
+        state.confirmed = null;
         const asked = selectedRow();
         if (asked === null) state.selectedId = null;
         // The explicit request beats a retained «hide this person»

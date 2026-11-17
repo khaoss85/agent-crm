@@ -183,6 +183,106 @@ function phraseClient() {
   };
 }
 
+/** P1 review Muse #1001: la riga ottimistica vive solo fino al primo reload dopo Conferma. */
+function retireClient(server) {
+  const calls = [];
+  return {
+    calls,
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push({ path, method: options.method ?? 'GET', body: options.body });
+      if (path === '/api/appointments/services') throw notFound();
+      if (path.startsWith('/api/catalog/products')) return CATALOG;
+      if (path.startsWith('/api/customer-data/profile/')) throw notFound();
+      if (path.startsWith('/api/customer-data/customers')) {
+        return customersOf([{ resource: 'contact', id: 'c1', name: 'Ada' }])(path);
+      }
+      if (path === '/api/spine/memberships') throw notFound();
+      if (path === '/api/profile') {
+        return { member: null, connections: { available: false, items: [] } };
+      }
+      if (path.startsWith('/api/appointments/team-week')) {
+        return {
+          from: '2026-10-19T00:00:00.000Z',
+          to: '2026-10-26T00:00:00.000Z',
+          members: [{ teamMemberId: 'marco', appointments: server.appointments }],
+        };
+      }
+      if (path === '/api/appointments/confirm') {
+        return {
+          decision: 'booked',
+          appointment: {
+            id: 'b1', status: 'booked',
+            startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:30:00.000Z',
+            teamMemberId: 'marco', serviceKey: 'taglio', priceCents: 4500,
+          },
+          replayed: false, spaceId: 'locale',
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+  };
+}
+
+test('Conferma poi annullo: nessun blocco fantasma al ricaricamento (backlog:134f3ed7)', async () => {
+  const server = { appointments: [] };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = retireClient(server);
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-21T06:00:00Z') });
+  await view.render();
+  await settle();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  const showWeek = () => mount.findAll('button').find((node) => node.textContent.includes('Mostra settimana')).dispatch('click');
+  showWeek();
+  await settle();
+  mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento')).dispatch('click');
+  mount.querySelector('.bo-clienti-menu').findAll('button').find((node) => node.textContent.includes('Compila manualmente')).dispatch('click');
+  const search = mount.querySelector('input[name="customerSearch"]');
+  search.value = 'Ada';
+  search.dispatch('input');
+  await settle(7);
+  mount.findAll('button').find((node) => node.textContent === 'Ada').dispatch('click');
+  await settle(2);
+  const byName = () => Object.fromEntries(
+    mount.findAll('input').map((node) => [node.getAttribute('name'), node])
+      .concat(mount.findAll('select').map((node) => [node.getAttribute('name'), node])),
+  );
+  const form = byName();
+  form.teamMemberId.value = 'marco';
+  form.teamMemberId.dispatch('change');
+  form.serviceKey.value = 'taglio';
+  form.serviceKey.dispatch('change');
+  form.price.value = '45.00';
+  form.date.value = '2026-10-22';
+  form.start.value = '10:00';
+  form.end.value = '10:30';
+  mount.querySelector('.cal-manual').findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await settle(14);
+  assert.equal(client.calls.filter((call) => call.path === '/api/appointments/confirm').length, 1, 'the booking is sent');
+  const blocks = () => mount.findAll('button').filter((node) => node.getAttribute('data-event-id') === 'b1');
+  assert.equal(blocks().length, 1, 'the new block paints optimistically');
+  assert.ok((blocks()[0].getAttribute('class') ?? '').split(' ').includes('cal-selected'), 'the new block reads highlighted');
+  // Il server ora ha l'id: il reload riconcilia, una sola riga, ancora evidenziata.
+  server.appointments = [{
+    id: 'b1', status: 'booked',
+    startsAt: '2026-10-22T08:00:00.000Z', endsAt: '2026-10-22T08:30:00.000Z',
+    teamMemberId: 'marco',
+  }];
+  showWeek();
+  await settle(14);
+  assert.equal(blocks().length, 1, 'the server row wins, no duplicate');
+  assert.ok((blocks()[0].getAttribute('class') ?? '').split(' ').includes('cal-selected'), 'the server row stays highlighted');
+  // L'appuntamento viene annullato altrove: il reload non resuscita nessun fantasma.
+  server.appointments = [];
+  showWeek();
+  await settle(14);
+  assert.equal(blocks().length, 0, 'the cancelled block leaves and never comes back');
+  assert.equal(mount.findAll('button').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-selected')).length, 0, 'nothing stays highlighted');
+  assert.equal(mount.querySelector('.cal-event-pop'), null, 'the detail popover closes with its block');
+});
+
 test('bozza giorno senza ora: propone il primo slot libero (backlog:134f3ed7)', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
