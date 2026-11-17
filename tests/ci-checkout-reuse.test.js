@@ -11,18 +11,26 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 // the runner workspace (clean: false, incremental fetch). The shared runner
 // also runs untrusted PR jobs before trusted main jobs in the same workspace,
 // so an untracked leftover (a planted `.npmrc`, `.env`, tool config, stale
-// node_modules) would poison the next job. This file locks the contract that
-// makes reuse safe:
+// node_modules) would poison the next job — and the checkout's own git would
+// run on that poisoned state (smudge filters from a planted `.gitattributes`,
+// `core.hooksPath`/`core.fsmonitor` hooks from the persisted `.git/config`)
+// BEFORE any post-checkout cleanup. This file locks the contract that makes
+// reuse safe:
 //   1. every checkout in scope declares `clean` explicitly;
-//   2. every `clean: false` checkout is paired with a `git clean -ffdx`
-//      step AFTER the checkout and BEFORE the first step that executes repo
-//      code, under the same `if:` condition (when the checkout is skipped,
-//      no code runs at all);
-//   3. bo-shots renders with no install step, so it keeps `clean: true`
+//   2. every `clean: false` checkout is preceded by an inline-shell sanitize
+//      step BEFORE the checkout (same job, same `if:` condition) that drops
+//      untracked leftovers AND unsets the `.git/config` keys git would act
+//      on during the checkout itself; no step that executes repo code runs
+//      before that sanitize step (when the checkout is skipped, no code
+//      runs at all);
+//   3. every `clean: false` checkout keeps a `git clean -ffdx` step AFTER
+//      the checkout as a second layer, still BEFORE the first step that
+//      executes repo code;
+//   4. bo-shots renders with no install step, so it keeps `clean: true`
 //      (deterministic render of exactly the checked-out ref);
-//   4. jobs that run code still reinstall from the lockfile;
-//   5. no npm Actions cache restore;
-//   6. the post-merge production measure has a numeric target and a revert
+//   5. jobs that run code still reinstall from the lockfile;
+//   6. no npm Actions cache restore;
+//   7. the post-merge production measure has a numeric target and a revert
 //      trigger, pinned here so they cannot drift silently.
 const FILES = [
   '.github/workflows/ci.yml',
@@ -96,7 +104,10 @@ function stepsOf(text) {
       cur.options[opt[1]] = opt[2];
       continue;
     }
-    if (/^          \S/.test(line)) {
+    // Any line indented past the step fields belongs to a multiline `run: |`
+    // body, however deeply the shell nests it: the contract must read the
+    // whole sanitize script, not just its first level.
+    if (/^          /.test(line)) {
       cur.runBody.push(line);
       withMode = false;
     }
@@ -156,6 +167,51 @@ test('history-free checkouts take a shallow fetch', () => {
       '1',
       `${name}:${found[0].line} needs fetch-depth 1: neither the render nor the matrix reads history`,
     );
+  }
+});
+
+// A step sanitizes the reused workspace when it is inline shell (no `uses:`,
+// so no repo code) that drops untracked leftovers AND unsets the
+// `.git/config` keys whose commands git would run during the checkout
+// itself (core.hooksPath, core.fsmonitor, smudge/clean filters).
+function sanitizesWorkspace(step) {
+  if (step.uses !== null) return false;
+  const body = runText(step);
+  return (
+    body.includes('git clean -ffdx') &&
+    body.includes('core.hooksPath') &&
+    body.includes('core.fsmonitor') &&
+    body.includes('config --get-regexp')
+  );
+}
+
+test('every clean:false checkout is sanitized BEFORE the checkout runs', () => {
+  for (const name of FILES) {
+    const steps = stepsOf(read(name));
+    for (const co of steps.filter((s) => s.uses !== null && /^actions\/checkout@/.test(s.uses))) {
+      if (co.options.clean !== 'false') continue;
+      const clean = steps.find(
+        (s) =>
+          s.job === co.job &&
+          s.uses === null &&
+          s.iff === co.iff &&
+          s.line < co.line &&
+          sanitizesWorkspace(s),
+      );
+      assert.ok(
+        clean,
+        `${name}:${co.line} reuses the workspace but no pre-checkout sanitize step precedes it ` +
+          `under the same condition: the checkout's own git would run on the previous job's ` +
+          `poisoned state before any cleanup`,
+      );
+      for (const code of steps.filter((s) => s.job === co.job && s.iff === co.iff && executesCode(s))) {
+        assert.ok(
+          code.line > clean.line,
+          `${name}:${code.line} executes repo code before the pre-checkout sanitize ` +
+            `(${name}:${clean.line}): no repo code may run on the reused space before it`,
+        );
+      }
+    }
   }
 });
 

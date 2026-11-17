@@ -87,18 +87,41 @@ jobs:
       # shared, so an untrusted PR job and a trusted main job can use the same
       # workspace one after the other — `clean: false` would also keep an
       # untracked poison file (a planted `.npmrc`, `.env`, tool config) that
-      # `npm ci` or later steps would honor. Tracked files are always reset to
-      # this job's ref by the checkout itself; the step below removes
-      # everything else BEFORE any code runs, and the unconditional `npm ci`
-      # after it rebuilds node_modules, so the fast gate only ever sees this
-      # ref plus a fresh install.
+      # `npm ci` or later steps would honor. Worse, the checkout's own git
+      # would run on that poisoned state (smudge filters from a planted
+      # `.gitattributes`, `core.hooksPath`/`core.fsmonitor` hooks from the
+      # persisted `.git/config`) BEFORE any post-checkout cleanup. So the
+      # workspace is sanitized BEFORE the checkout, by the inline-shell step
+      # below (git builtins only: no repo code runs before it). Tracked files
+      # are then reset to this job's ref by the checkout itself; the drop
+      # step after it is a second layer, and the unconditional `npm ci`
+      # rebuilds node_modules, so the fast gate only ever sees this ref plus
+      # a fresh install. NOT covered here (follow-up): state outside the
+      # workspace (`$HOME/.gitconfig`, `$HOME/.npmrc`, runner state files).
+      # Sanitizes the reused workspace BEFORE the checkout (contract:
+      # tests/ci-checkout-reuse.test.js): drops untracked leftovers from the
+      # previous job and unsets the `.git/config` keys whose commands git
+      # would run during the checkout itself. Skips cleanly on a fresh
+      # runner (no `.git` yet); any real failure stops the job before the
+      # checkout (fail-closed).
+      - name: Sanitize reused workspace before checkout
+        run: |
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            git config --unset core.hooksPath || true
+            git config --unset core.fsmonitor || true
+            for key in $(git config --get-regexp '^filter\.' 2>/dev/null | cut -d' ' -f1 || true); do
+              git config --unset "$key" || true
+            done
+            git clean -ffdx
+            git reset --quiet --hard HEAD
+          fi
       - uses: actions/checkout@v4
         with:
           clean: false
           fetch-depth: 0
       # Pairs every `clean: false` checkout in this repo (contract:
-      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
-      # space before this step.
+      # tests/ci-checkout-reuse.test.js): second layer after the pre-checkout
+      # sanitize above; no code below runs on the reused space before it.
       - name: Drop untracked files from the reused workspace
         run: git clean -ffdx && git reset --hard HEAD
       # Production measure (backlog:f16911e3): server disk written per job
@@ -228,19 +251,39 @@ jobs:
     steps:
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
       # `.git` between jobs, so each start fetches only the missing objects
-      # instead of rewriting ~1.2 GB from zero. Same threat model as `fast`:
-      # the guard step below runs repo code (`node scripts/...`) with no
-      # install before it by design (builtins only), so the untracked-file
-      # drop comes first and the guard only ever sees this ref. `npm ci`
-      # stays conditional on the guard (skip = no measure, no code runs).
+      # instead of rewriting ~1.2 GB from zero. Same threat model as `fast`,
+      # plus checkout-time execution: the checkout's own git would run on the
+      # previous job's poisoned state (smudge filters, `core.hooksPath` /
+      # `core.fsmonitor` from the persisted `.git/config`) BEFORE any
+      # post-checkout cleanup. So the inline-shell sanitize step below (git
+      # builtins only, no repo code) cleans the reused space BEFORE the
+      # checkout; the guard step further below runs repo code (`node
+      # scripts/...`) with no install before it by design (builtins only),
+      # so the untracked-file drop comes first and the guard only ever sees
+      # this ref. `npm ci` stays conditional on the guard (skip = no
+      # measure, no code runs).
+      # Sanitizes the reused workspace BEFORE the checkout (contract:
+      # tests/ci-checkout-reuse.test.js): same sanitize as `fast`. Skips
+      # cleanly on a fresh runner; any real failure stops the job fail-closed.
+      - name: Sanitize reused workspace before checkout
+        run: |
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            git config --unset core.hooksPath || true
+            git config --unset core.fsmonitor || true
+            for key in $(git config --get-regexp '^filter\.' 2>/dev/null | cut -d' ' -f1 || true); do
+              git config --unset "$key" || true
+            done
+            git clean -ffdx
+            git reset --quiet --hard HEAD
+          fi
       - uses: actions/checkout@v4
         with:
           # Full history: see the job-level comment above.
           clean: false
           fetch-depth: 0
       # Pairs every `clean: false` checkout in this repo (contract:
-      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
-      # space before this step.
+      # tests/ci-checkout-reuse.test.js): second layer after the pre-checkout
+      # sanitize above; no code below runs on the reused space before it.
       - name: Drop untracked files from the reused workspace
         run: git clean -ffdx && git reset --hard HEAD
       - uses: actions/setup-node@v4
@@ -432,9 +475,26 @@ jobs:
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
       # `.git` between jobs, so each start fetches only the missing objects
       # instead of rewriting ~1.2 GB from zero. Same threat model as `fast`
-      # (shared runner, untrusted PR job before trusted main job): the step
-      # below drops untracked files BEFORE the unconditional `npm ci`, so
-      # this job only ever sees this ref plus a fresh install.
+      # (shared runner, untrusted PR job before trusted main job), plus
+      # checkout-time execution: the sanitize step below (inline shell, git
+      # builtins only, no repo code) cleans the reused space BEFORE the
+      # checkout, so the checkout's own git never runs on the previous job's
+      # poisoned state; the drop step after it is a second layer BEFORE the
+      # unconditional `npm ci`, so this job only ever sees this ref plus a
+      # fresh install.
+      # Sanitizes the reused workspace BEFORE the checkout (contract:
+      # tests/ci-checkout-reuse.test.js): same sanitize as `fast`.
+      - name: Sanitize reused workspace before checkout
+        run: |
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            git config --unset core.hooksPath || true
+            git config --unset core.fsmonitor || true
+            for key in $(git config --get-regexp '^filter\.' 2>/dev/null | cut -d' ' -f1 || true); do
+              git config --unset "$key" || true
+            done
+            git clean -ffdx
+            git reset --quiet --hard HEAD
+          fi
       - uses: actions/checkout@v4
         with:
           clean: false
@@ -457,8 +517,8 @@ jobs:
           # with "history unavailable" instead.
           fetch-depth: 0
       # Pairs every `clean: false` checkout in this repo (contract:
-      # tests/ci-checkout-reuse.test.js): no code below runs on the reused
-      # space before this step.
+      # tests/ci-checkout-reuse.test.js): second layer after the pre-checkout
+      # sanitize above; no code below runs on the reused space before it.
       - name: Drop untracked files from the reused workspace
         run: git clean -ffdx && git reset --hard HEAD
       - uses: actions/setup-node@v4

@@ -81,17 +81,37 @@ jobs:
       # Reused workspace (backlog:f16911e3): `clean: false` keeps the runner's
       # `.git` between jobs, so each start fetches only the missing objects
       # instead of rewriting ~1.2 GB from zero. Same threat model as ci.yml
-      # `fast` (shared runner): the step below drops untracked files BEFORE
-      # the `npm ci` after it, under the same window condition, so the matrix
-      # only ever sees this ref plus a fresh install.
+      # `fast` (shared runner), plus checkout-time execution: the checkout's
+      # own git would run on the previous job's poisoned state BEFORE any
+      # post-checkout cleanup. So the inline-shell sanitize step below (git
+      # builtins only, no repo code) cleans the reused space BEFORE the
+      # checkout, under the same window condition; the drop step after the
+      # checkout is a second layer BEFORE the `npm ci`, so the matrix only
+      # ever sees this ref plus a fresh install.
+      # Sanitizes the reused workspace BEFORE the checkout (contract:
+      # tests/ci-checkout-reuse.test.js): same `if:` as the checkout — when
+      # the checkout is skipped no code runs at all, so the pairing holds.
+      - if: steps.window.outputs.run == 'true'
+        name: Sanitize reused workspace before checkout
+        run: |
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            git config --unset core.hooksPath || true
+            git config --unset core.fsmonitor || true
+            for key in $(git config --get-regexp '^filter\.' 2>/dev/null | cut -d' ' -f1 || true); do
+              git config --unset "$key" || true
+            done
+            git clean -ffdx
+            git reset --quiet --hard HEAD
+          fi
       - if: steps.window.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
           clean: false
           fetch-depth: 1
       # Pairs every `clean: false` checkout in this repo (contract:
-      # tests/ci-checkout-reuse.test.js): same `if:` as the checkout — when
-      # the checkout is skipped no code runs at all, so the pairing holds.
+      # tests/ci-checkout-reuse.test.js): second layer after the pre-checkout
+      # sanitize above; same `if:` as the checkout — when the checkout is
+      # skipped no code runs at all, so the pairing holds.
       - if: steps.window.outputs.run == 'true'
         name: Drop untracked files from the reused workspace
         run: git clean -ffdx && git reset --hard HEAD
