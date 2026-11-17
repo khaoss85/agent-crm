@@ -5377,9 +5377,11 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
-  // copy — with no open step left the empty azioni block hides like the prototype.
-  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
+  // Voce 2c1c0e149cf9 (seguito 17/11, verifier back AC-3): the card
+  // re-reads the server list, never an optimistic copy — with no open step
+  // left the azioni block stays with its honest empty state.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'with no open step left the azioni block stays');
+  assert.ok(mount.textContent.includes('Nessuna azione aperta.'), 'the empty azioni block says so');
   assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
     'no check without an open step');
 });
@@ -6582,4 +6584,63 @@ test('a060a4aa65b6: an offer outside any board reads its core stage like the Pip
   assert.equal(state?.textContent, 'Qualificazione');
   const { upperFirst, offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
   assert.equal(state.textContent, upperFirst(offerStageLabel([], { stage: 'qualification' })), 'the same words as the Pipeline off-board list');
+});
+
+// Voce 2c1c0e149cf9 (seguito 17/11, verifier back su 84ebe9e5: AC-2 il menu
+// Offerta si apre a sinistra sotto la sidebar — voci x=156 con sidebar a
+// x=264; AC-3 mancano «Prossime azioni» e «✦ suggeriti» nel Recap).
+// Repro: rosso sul codice prima della cura, verde dopo.
+test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, il Recap mostra Prossime azioni e suggeriti', async () => {
+  // AC-2: il menu condiviso (right:0, largo 290px) esce dal riquadro stretto
+  // e finisce sotto la barra laterale. La scheda lo apre a destra del
+  // bottone, dentro l'area visibile.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const offerRules = [...css.matchAll(/\.bo-scheda-offerwrap[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(offerRules.some((body) => /left\s*:\s*0/.test(body) && /right\s*:\s*auto/.test(body)),
+    'the scheda Offerta menu opens right (left:0, right:auto), never under the sidebar');
+  // Il menu si apre davvero dentro il suo wrap, non come finestra diretta.
+  const mount = await renderCard(stubClient());
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  assert.ok(offer, 'the Offerta tile exists');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const wrap = offer.parentNode;
+  assert.ok(wrap && (wrap.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-offerwrap'),
+    'the Offerta tile lives in its menu wrap');
+  const menu = (wrap?.childNodes ?? []).find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-menu'));
+  assert.ok(menu, 'the wrap holds the menu');
+  assert.ok(!(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible after the click');
+  // AC-3a: con zero passi aperti il titolo resta, con uno stato onesto.
+  const empty = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  assert.ok(empty.textContent.includes('Prossime azioni'), 'the recap keeps its Prossime azioni block with no open step');
+  // Un passo annullato non è una prossima azione.
+  const cancelled = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w8', status: 'cancelled', name: 'Richiamare per la prova' }],
+      },
+    },
+  }));
+  assert.ok(cancelled.textContent.includes('Prossime azioni'), 'the recap keeps its block with only a cancelled step');
+  assert.ok(!cancelled.findAll('button').some((node) => node.getAttribute('data-action') === 'complete-step'),
+    'a cancelled step carries no check');
+  // AC-3b: il passo aperto dall'AI porta il marchio del prototipo.
+  const suggested = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w9', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' }],
+      },
+    },
+  }));
+  assert.ok(suggested.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
 });
