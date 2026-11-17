@@ -113,6 +113,7 @@ export function createAgentsPackage(options = {}) {
           { name: 'sourceKey', type: 'string', hint: 'Caller-supplied idempotency identity for the assignment.' },
           { name: 'agentSourceKey', type: 'string', hint: 'The agent this assignment belongs to.' },
           { name: 'phrase', type: 'string', hint: 'The human phrase, e.g. ogni lunedi il report vendite.' },
+          { name: 'costPerRunCents', type: 'integer', hint: 'Cost of one run in cents — required when the agent has a monthly spending cap.' },
         ],
         create(runtime) {
           const ops = opsFor(runtime);
