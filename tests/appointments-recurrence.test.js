@@ -266,6 +266,44 @@ test('Conferma di una serie conferma tutte le occorrenze, non solo la testa', as
   assert.deepEqual(service.rows.map((row) => row.status), ['confirmed', 'confirmed', 'confirmed']);
 });
 
+test('con il calendario collegato la serie non si conferma: 400 prima di ogni scrittura (backlog:0f2ae629e09b)', async () => {
+  const service = fakeAppointments();
+  const pushes = [];
+  const context = {
+    ...contextFor(service),
+    permissionGate: allowGate(),
+    calendarSync: {
+      async pushAppointment(calendarId, sourceKey, options) {
+        pushes.push({ calendarId, sourceKey, options });
+        return { id: 'g1' };
+      },
+    },
+  };
+  await assert.rejects(
+    confirmBooking(context, {
+      ...booking({ recurrence: { kind: 'weekly', count: 3 } }),
+      spaceId: 'spazio-1',
+      confirmed: true,
+      calendar: { calendarId: 'cal-1' },
+    }),
+    (error) => {
+      assert.equal(error.code, 'APPOINTMENTS_SERIES_CALENDAR_PENDING');
+      assert.equal(error.status, 400);
+      assert.match(String(error.message), /ricorrenze arrivano presto/);
+      return true;
+    },
+  );
+  assert.equal(service.rows.length, 0, 'nessuna riga scritta quando la serie è collegata');
+  assert.equal(pushes.length, 0, 'nessuna spinta parziale su Google');
+  // Senza calendario la stessa serie si conferma come prima.
+  const plain = await confirmBooking(
+    { ...contextFor(service), permissionGate: allowGate() },
+    { ...booking({ recurrence: { kind: 'weekly', count: 3 } }), spaceId: 'spazio-1', confirmed: true },
+  );
+  assert.equal(plain.decision, 'booked');
+  assert.equal(plain.occurrences.length, 3);
+});
+
 test('singolo e serie sulla stessa testa hanno identità e bozze diverse', async () => {
   const service = fakeAppointments();
   const seen = [];

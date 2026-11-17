@@ -2562,6 +2562,16 @@ export async function confirmBooking(context, request) {
     }
     calendarPush = calendarSync.pushAppointment.bind(calendarSync);
   }
+  // ARBITRATO 17/11 (backlog:0f2ae629e09b): con il calendario collegato la
+  // serie non si conferma — la spinta coprirebbe solo la testa e la griglia
+  // mentirebbe su Google. Rifiuto 400 prima di ogni scrittura; la
+  // sincronizzazione delle serie è la voce di seguito, che spinge l'RRULE.
+  if (calendarPush !== null && input.recurrence !== null) {
+    throw new AppError(
+      'Con Google Calendar collegato le ricorrenze arrivano presto: conferma un appuntamento alla volta, senza ripetizione — niente è stato scritto',
+      { code: 'APPOINTMENTS_SERIES_CALENDAR_PENDING', status: 400, details: { field: 'recurrence' } },
+    );
+  }
   const gate = requireFlowPermissionGate(context);
   // P1 12/11 (production: every Conferma in a space with the AI off came
   // back «proposal» and no appointment existed anywhere): the switch

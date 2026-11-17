@@ -945,6 +945,11 @@ export function calendarRefusalText(error) {
   if (code === 'APPOINTMENTS_OVERLAP') {
     return 'Quella fascia è già occupata per questa persona: scegli un orario libero, l’appuntamento è rimasto dov’era.';
   }
+  // backlog:0f2ae629e09b — la serie non si conferma con il calendario
+  // collegato (la spinta coprirebbe solo la testa): niente è stato scritto.
+  if (code === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+    return 'Con Google Calendar collegato le ricorrenze arrivano presto: conferma un appuntamento alla volta, senza ripetizione.';
+  }
   if (code === 'APPOINTMENTS_REMINDER_AFTER_SLOT') {
     return 'Il promemoria scatterebbe dopo il nuovo orario: sposta più avanti nel tempo, l’appuntamento è rimasto dov’era.';
   }
@@ -5050,6 +5055,9 @@ export function createCalendarioView(deps) {
    * turns into a plain sentence, never a guessed rule.
    */
   function recurrenceRuleFromState() {
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // la serie non si conferma — il form non ne manda mai una.
+    if (state.calendar?.connected === true) return null;
     const rec = state.manualRecurrence;
     if (rec === null || rec === undefined || typeof rec !== 'object') return null;
     const kind = String(rec.kind ?? 'none');
@@ -5117,6 +5125,18 @@ export function createCalendarioView(deps) {
     select.addEventListener('input', trackKind);
     select.addEventListener('change', trackKind);
     form.appendChild(fieldBox('Si ripete', wrap, { wide: true }));
+    // ARBITRATO 17/11 (backlog:0f2ae629e09b): con Google Calendar collegato
+    // le ricorrenze arrivano presto — «Si ripete» resta su «Non si ripete»
+    // e disattivato, con la riga che dice perché.
+    if (state.calendar?.connected === true) {
+      state.manualRecurrence = { ...(state.manualRecurrence ?? {}), kind: 'none' };
+      select.value = 'none';
+      select.setAttribute('disabled', 'disabled');
+      const note = el(doc, 'div', { attrs: { 'data-role': 'recurrence-linked-note' } });
+      note.textContent = 'Con Google Calendar collegato le ricorrenze arrivano presto: per ora un appuntamento alla volta.';
+      form.appendChild(note);
+      return select;
+    }
     // The labels follow the chosen day: a day picked after the choice
     // renames «Ogni settimana di …» in place, without losing the choice.
     const dayInput = form.querySelector?.('input[name="date"]') ?? null;
@@ -5629,6 +5649,10 @@ export function createCalendarioView(deps) {
         console.warn('bo-calendario booking refused:', String(error?.code ?? 'unknown'), `spaceId=${readSpace()}`);
         state.serviceError = calendarRefusalText(error) ?? '';
         state.bookingNote = 'Prenotazione non riuscita: scegli un servizio dal listino.';
+      } else if (String(error?.code ?? '') === 'APPOINTMENTS_SERIES_CALENDAR_PENDING') {
+        // backlog:0f2ae629e09b — la serie non si conferma con Google
+        // collegato: il server non ha scritto niente, la frase dice cosa fare.
+        state.bookingNote = calendarRefusalText(error) ?? 'Con Google Calendar collegato le ricorrenze arrivano presto.';
       } else if (String(error?.code ?? '') === 'APPOINTMENTS_OVERLAP' && claim?.recurrence) {
         // backlog:0f2ae629e09b — a series is checked occurrence by
         // occurrence: the refusal names which one is busy, never a bare

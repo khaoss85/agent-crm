@@ -119,16 +119,31 @@ async function settle(rounds = 14) {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function openCalendar() {
+async function openCalendar(client = null) {
   const doc = createFakeDocument();
   const mount = createMount();
-  const client = stubClient();
+  const used = client ?? stubClient();
   const view = createCalendarioView({
-    searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-11-16T07:00:00Z'),
+    searchDelayMs: 0, doc, mount, client: used, now: () => new Date('2026-11-16T07:00:00Z'),
   });
   await view.render();
   await settle();
-  return { doc, mount, client };
+  return { doc, mount, client: used };
+}
+
+// Profilo con Google Calendar collegato: il form disattiva «Si ripete».
+function stubLinkedClient() {
+  const base = stubClient();
+  const inner = base.request.bind(base);
+  return {
+    calls: base.calls,
+    async request(path, options = {}) {
+      if (path === '/api/profile') {
+        return { member: null, connections: { available: true, items: [{ connector: 'calendar', status: 'connected' }] } };
+      }
+      return inner(path, options);
+    },
+  };
 }
 
 const byName = (root, name) => root.findAll('input').concat(root.findAll('select')).find((node) => node.getAttribute('name') === name) ?? null;
@@ -230,6 +245,34 @@ test('ricorrenza: senza scelta la claim non ha ricorrenza', async () => {
   assert.equal(confirms[0].body.recurrence, null, '«Non si ripete» manda null');
 });
 
+
+test('ricorrenza: con Google collegato «Si ripete» è disattivato e Conferma non manda serie', async () => {
+  const { mount, client } = await openCalendar(stubLinkedClient());
+  openManual(mount);
+  const select = byName(mount, 'recurrence');
+  assert.ok(select, 'la scelta «Si ripete» c’è anche con Google collegato');
+  assert.equal(select.value, 'none', 'resta su «Non si ripete»');
+  assert.equal(select.getAttribute('disabled'), 'disabled', 'le opzioni sono disattivate');
+  const note = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'recurrence-linked-note');
+  assert.ok(note, 'la riga dice perché');
+  assert.match(note.textContent, /ricorrenze arrivano presto/);
+  await pickCustomerByName(mount, 'Ada');
+  const fill = (name, value) => { byName(mount, name).value = value; byName(mount, name).dispatch('input'); };
+  fill('date', '2026-11-17');
+  fill('start', '17:00');
+  fill('end', '18:00');
+  const person = byName(mount, 'teamMemberId');
+  person.value = person.findAll('option').find((node) => node.getAttribute('value') !== '').getAttribute('value');
+  person.dispatch('change');
+  const service = byName(mount, 'serviceKey');
+  service.value = 'taglio';
+  service.dispatch('change');
+  mount.findAll('button').find((node) => node.textContent === 'Conferma').dispatch('click');
+  await settle();
+  const confirms = client.calls.filter((call) => call.path === '/api/appointments/confirm');
+  assert.equal(confirms.length, 1, 'Conferma scrive una volta');
+  assert.equal(confirms[0].body.recurrence, null, 'con Google collegato il form non manda mai una serie');
+});
 
 test('ricorrenza: annullare una riga singola non chiede lo scope e non lo manda', async () => {
   const { mount, client } = await openCalendar();
