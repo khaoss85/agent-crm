@@ -127,6 +127,7 @@ test('two share-link mints in separate processes leave one live link; the loser 
 
   const quote = await app.modules.get('quote').service.create({
     status: 'approved',
+    opportunityId: 'opp-race-1',
     currentVersionId: 'v-race-1',
     currentVersionNumber: 1,
     draftRevision: 1,

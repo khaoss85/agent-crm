@@ -407,6 +407,43 @@ function redactedShareResult(result) {
 }
 
 /**
+ * The operator's cronologia row for one link creation (backlog:bf1bc20a):
+ * the Cronologia reads `opportunity` audit, so every fresh mint and every
+ * regenerate records one `opportunity.quote_link_*` row — even when the
+ * answer to the browser is later lost, because the action writes the row
+ * before answering. A reuse writes nothing: the
+ * winner's call already wrote the row. The payload carries no bearer and
+ * no hash — only the quote, version and expiry the operator already sees.
+ *
+ * @param {any} shares the quote-share managed service
+ */
+async function recordOpportunityLinkRow(shares, quote, { action, share, actor }) {
+  if (!shares || typeof shares.audit?.record !== 'function') {
+    throw new AppError('quote-share storage cannot record the link history row', {
+      code: 'COMMERCIAL_STORAGE_INVALID', status: 500,
+    });
+  }
+  const opportunityId = quote?.opportunityId;
+  if (typeof opportunityId !== 'string' || opportunityId === '') {
+    throw new AppError('The quote names no offer for its link history row', {
+      code: 'COMMERCIAL_STATE_CORRUPT', status: 409,
+    });
+  }
+  await shares.audit.record({
+    actor,
+    action,
+    entityType: 'opportunity',
+    entityId: opportunityId,
+    data: {
+      quoteId: quote.id,
+      versionNumber: share.versionNumber,
+      shareId: share.id,
+      expiresAt: share.expiresAt ?? null,
+    },
+  });
+}
+
+/**
  * Mint one fresh bearer for the version, sharing share-link's exact conflict
  * discipline: a non-transient conflict re-reads and reuses the winner's link
  * instead of leaving a second live row, a transient serialization conflict is
@@ -587,6 +624,9 @@ export function buildShareLinkAction(config) {
         return { alreadyExisted: true, share: shareSummary(minted.reused), token: null };
       }
       step('quote.link-shared', { quoteId: quote.id, versionNumber: minted.share.versionNumber });
+      await recordOpportunityLinkRow(shares, quote, {
+        action: 'opportunity.quote_link_shared', share: minted.share, actor,
+      });
       // The only result that ever carries the raw bearer: the operator
       // copies it into the message once, then it lives only in the link.
       return { alreadyExisted: false, share: shareSummary(minted.share), token: minted.token };
@@ -657,9 +697,15 @@ export function buildRegenerateLinkAction(config) {
       });
       if (outcome.mintedFresh) {
         step('quote.link-shared', { quoteId: quote.id, versionNumber: outcome.share.versionNumber });
+        await recordOpportunityLinkRow(shares, quote, {
+          action: 'opportunity.quote_link_regenerated', share: outcome.share, actor,
+        });
         return { alreadyExisted: false, regenerated: false, share: shareSummary(outcome.share), token: outcome.token };
       }
       step('quote.link-regenerated', { quoteId: quote.id, versionNumber: outcome.share.versionNumber });
+      await recordOpportunityLinkRow(shares, quote, {
+        action: 'opportunity.quote_link_regenerated', share: outcome.share, actor,
+      });
       // Like a fresh share-link result, this is the only copy that ever
       // carries the raw bearer: the persisted trace holds the hash only.
       return { alreadyExisted: false, regenerated: true, share: shareSummary(outcome.share), token: outcome.token };

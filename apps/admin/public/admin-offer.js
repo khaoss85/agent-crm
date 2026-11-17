@@ -32,6 +32,10 @@ function auditActionLabel(action) {
   if (action === 'opportunity.created') return 'Creata';
   if (action === 'opportunity.updated') return 'Offerta aggiornata';
   if (action === 'opportunity.stage_changed') return 'Cambio di stato';
+  // backlog:bf1bc20a: one row per link creation — a mint, never a send
+  // (review Muse #905 P1 still holds: no «Offerta inviata» here).
+  if (action === 'opportunity.quote_link_shared') return 'Link creato';
+  if (action === 'opportunity.quote_link_regenerated') return 'Nuovo link creato';
   return 'Variazione registrata';
 }
 
@@ -1067,7 +1071,10 @@ export function createOfferDetail(deps) {
    * backlog:7fa422415232: «Invia offerta» on an approved quote — the /bo end
    * of the offer link. One press mints the public acceptance link through the
    * quote `share-link` action; the server reuses the live link of the same
-   * version, so a second press shows the same URL instead of a new one. The
+   * version, so a second press shows the same URL instead of a new one. When
+   * the live link is lost (backlog:bf1bc20a: its token left with the first
+   * answer), «Crea un nuovo link» revokes it and mints a fresh one through
+   * `regenerate-link`, with an inline confirm. The
    * ready Italian message stays on screen for the operator to send from the
    * scheda composer. Review Muse #905 (P1): a mint is never an «Offerta
    * inviata» row in the server-audit Cronologia — this button never sends,
@@ -1134,7 +1141,7 @@ export function createOfferDetail(deps) {
         if (url === null) {
           line.setAttribute('class', 'field-error offer-share-line');
           line.textContent = result.alreadyExisted === true
-            ? 'Il link esiste già ma non è più visibile qui: cercalo nella cronologia.'
+            ? 'Il link esiste già ma non è visibile qui. Premi «Crea un nuovo link»: il vecchio smetterà di funzionare.'
             : 'Link non creato: la risposta è senza link. Riprova più tardi.';
           return;
         }
@@ -1157,6 +1164,103 @@ export function createOfferDetail(deps) {
     box.appendChild(line);
     box.appendChild(state);
     box.__share = send;
+    // backlog:bf1bc20a: «Crea un nuovo link» when the live link is lost
+    // (its token left with the first answer): revokes the old link and mints
+    // a fresh one through the quote `regenerate-link` action, so the
+    // operator ends with one working link. Inline two-step, never a native
+    // dialog: the first press arms, the second press runs, «Annulla» disarms.
+    const regenButton = el('button', 'secondary', 'Crea un nuovo link');
+    regenButton.setAttribute('type', 'button');
+    regenButton.setAttribute('data-action', 'offer-share-regenerate');
+    const regenCancel = el('button', 'secondary', 'Annulla');
+    regenCancel.setAttribute('type', 'button');
+    regenCancel.setAttribute('data-action', 'offer-share-regenerate-cancel');
+    /** @type {null | {key: string}} */
+    let regenPending = null;
+    let regenArmed = false;
+    let regenBusy = false;
+    let regenCancelShown = false;
+    const disarmRegen = () => {
+      regenArmed = false;
+      regenButton.textContent = 'Crea un nuovo link';
+      regenButton.setAttribute('data-action', 'offer-share-regenerate');
+      if (regenCancelShown) {
+        box.removeChild(regenCancel);
+        regenCancelShown = false;
+      }
+    };
+    const runRegen = async () => {
+      if (regenBusy) return;
+      regenBusy = true;
+      // One key per link being minted: a double press mints one link,
+      // never two — the same rule as «Invia offerta» above.
+      if (regenPending === null) regenPending = { key: submissions.issueKey() };
+      regenButton.setAttribute('disabled', 'disabled');
+      regenButton.setAttribute('aria-busy', 'true');
+      line.setAttribute('class', 'bo-muted offer-share-line');
+      line.textContent = 'Creo il nuovo link…';
+      try {
+        const answer = await client.request(
+          `/api/modules/quote/records/${encodeURIComponent(quote.id)}/actions/regenerate-link`,
+          { method: 'POST', idempotencyKey: regenPending.key, body: JSON.stringify({}) },
+        );
+        regenPending = null;
+        if (token !== renderToken) return;
+        const result = answer?.result ?? answer ?? {};
+        const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
+        const expiresAt = typeof result.share?.expiresAt === 'string' ? result.share.expiresAt : null;
+        if (fresh === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        const url = offerShareUrl(spaceOrigin, fresh);
+        if (url === null) {
+          line.setAttribute('class', 'field-error offer-share-line');
+          line.textContent = 'Nuovo link non creato: la risposta è senza link. Riprova più tardi.';
+          return;
+        }
+        shareLinks.set(quote.id, { url, expiresAt });
+        disarmRegen();
+        showLink(url, expiresAt, false);
+        state.textContent = 'Nuovo link pronto: il vecchio non funziona più. Invialo dal composer della scheda.';
+        toast('Nuovo link pronto: il vecchio non funziona più.');
+      } catch (error) {
+        if (token !== renderToken) return;
+        const code = error?.code ?? null;
+        const status = typeof error?.status === 'number' ? error.status : 0;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) regenPending = null;
+        disarmRegen();
+        line.setAttribute('class', 'field-error offer-share-line');
+        if (code === 'QUOTE_LINK_ALREADY_ACCEPTED') {
+          line.textContent = 'Il link è già stato accettato: resta come ricevuta e non si può rinnovare.';
+          return;
+        }
+        line.textContent = humanWriteError(error, { failed: 'Nuovo link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
+      } finally {
+        regenBusy = false;
+        regenButton.removeAttribute('disabled');
+        regenButton.setAttribute('aria-busy', 'false');
+      }
+    };
+    regenButton.addEventListener('click', () => {
+      if (regenBusy) return;
+      if (!regenArmed) {
+        regenArmed = true;
+        regenButton.textContent = 'Sì, crea un nuovo link';
+        regenButton.setAttribute('data-action', 'offer-share-regenerate-confirm');
+        line.setAttribute('class', 'bo-muted offer-share-line');
+        line.textContent = 'Il vecchio link smetterà di funzionare. Continuare?';
+        box.appendChild(regenCancel);
+        regenCancelShown = true;
+        return;
+      }
+      void runRegen();
+    });
+    regenCancel.addEventListener('click', () => {
+      disarmRegen();
+    });
+    box.appendChild(regenButton);
     const known = shareLinks.get(quote.id);
     if (known) showLink(known.url, known.expiresAt, true);
     panel.appendChild(box);
