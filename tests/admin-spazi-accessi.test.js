@@ -1022,7 +1022,7 @@ test('Apri on another space picks it and goes back to Oggi; the active card neve
 test('the dashed new-space box stays last and opens the verbatim C20 menu', async () => {
   // specs/account.md C11 + C20 (fetta 5): riquadro after the cards, menu with
   // the two verbatim voices and subtitles. Picking a voice invents nothing:
-  // creation lives in the control plane, the page only says so.
+  // creation lives in the management console, the page only says so.
   const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
   const calls = [];
   const { mount, seen, view: v } = view({ client: stubClient({ members, calls }) });
@@ -1048,9 +1048,27 @@ test('the dashed new-space box stays last and opens the verbatim C20 menu', asyn
   assert.ok(manual, 'the manual voice is a menu item');
   await manual.listeners.click[0]();
   await flush();
-  assert.match(text(mount), /control plane/, 'manual is honest: no space is invented here');
+  assert.match(text(mount), /console di gestione/, 'manual is honest: no space is invented here');
+  assert.ok(!/control plane/i.test(text(mount)), 'no technical words on screen');
   assert.ok(!calls.some((call) => String(call.path).includes('space') && call.method === 'POST'), 'no space creation call exists');
   assert.ok(seen.toast.length >= 0, 'toast channel stays available');
+});
+
+test('new-space voices name the console, never technical words', async () => {
+  // backlog:67a1cb8d609b: nessuna parola tecnica a schermo.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const { mount, seen, view: v } = view({ client: stubClient({ members }) });
+  await v.render();
+  await flush();
+  const adderToggle = mount.findAll('button').find((node) => node.textContent === '+ Nuovo spazio di lavoro');
+  await adderToggle.listeners.click[0]();
+  await flush();
+  const ai = mount.findAll('button').find((node) => String(node.textContent).includes('Crea con l\u2019AI'));
+  assert.ok(ai, 'the AI voice is a menu item');
+  await ai.listeners.click[0]();
+  await flush();
+  assert.ok(seen.toast.some((row) => /console di gestione/.test(row.message)), 'AI voice points to the console');
+  assert.ok(!seen.toast.some((row) => /control plane/i.test(row.message)), 'AI toast has no technical words');
 });
 
 test('the invite menu shows the verbatim C21 voices; manual opens the spine form', async () => {
@@ -1593,7 +1611,7 @@ test('dd570f6d501e: picking a voice closes the menu and focus returns to the but
   await manual.listeners.click[0]();
   await flush();
   assert.equal(newSpaceMenus(mount).length, 0, 'picking a voice closes the menu');
-  assert.match(text(mount), /control plane/, 'manual stays honest: no space is invented here');
+  assert.match(text(mount), /console di gestione/, 'manual stays honest: no space is invented here');
   assert.equal(newSpaceToggle(mount).__focused, true, 'focus returns to the button');
 });
 

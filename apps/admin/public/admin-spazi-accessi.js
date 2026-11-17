@@ -1035,7 +1035,7 @@ export function createSpaziAccessiView(deps) {
       grid.appendChild(cell);
     }
     // C11: the dashed box stays last; its menu carries the verbatim C20
-    // voices. Creation itself lives in the control plane (no capability
+    // voices. Creation itself lives in the management console (no capability
     // here), so picking a voice never invents a space.
     // The new-space menu opens as a popover over the page (absolute on this
     // relative anchor), like the clienti and personalizzazione add menus:
@@ -1082,14 +1082,14 @@ export function createSpaziAccessiView(deps) {
       aiVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
         state.newSpaceNote = null;
-        say('La creazione con l\u2019AI non \u00E8 ancora disponibile: lo spazio si crea dal control plane.');
+        say('La creazione con l\u2019AI non \u00E8 ancora pronta: crea lo spazio dalla console di gestione, poi invita qui il team.');
         render();
         focusToggle(newSpaceToggleSelector);
       });
       const manualVoice = uiAddOption(doc, { kind: 'manual', title: 'Compila manualmente', line: 'Nome e settore' });
       manualVoice.addEventListener('click', () => {
         state.newSpaceMenuOpen = false;
-        state.newSpaceNote = 'La creazione di uno spazio vive nel control plane e non \u00E8 ancora esposta qui: nessuno spazio \u00E8 stato creato.';
+        state.newSpaceNote = 'I nuovi spazi si creano nella console di gestione: qui non \u00E8 stato creato nessuno spazio.';
         render();
         focusToggle(newSpaceToggleSelector);
       });
