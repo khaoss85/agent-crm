@@ -1101,6 +1101,11 @@ export function createOfferDetail(deps) {
     /** @type {null | {key: string}} */
     let pending = null;
     let busy = false;
+    // Codex review on #995 (P2): «Invia offerta» and «Crea un nuovo link»
+    // share one link, so they share one epoch: every link operation takes
+    // the next number, and only the newest one may paint. A mint answer
+    // that lands after a regeneration won is discarded, never painted.
+    let linkOp = 0;
     const showLink = (url, expiresAt, reused) => {
       line.setAttribute('class', 'bo-muted offer-share-line');
       line.textContent = offerShareMessage({ offerName: shareOfferName, url, expiresAt }) ?? url;
@@ -1118,6 +1123,7 @@ export function createOfferDetail(deps) {
     const send = async () => {
       if (busy) return;
       busy = true;
+      const myOp = ++linkOp;
       // One key per link being minted: a double press, a retry after an
       // uncertain failure or Enter+click mints one link, never two — the
       // same rule as «Crea preventivo» above.
@@ -1133,6 +1139,7 @@ export function createOfferDetail(deps) {
         );
         pending = null;
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         const result = answer?.result ?? answer ?? {};
         const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
         const share = result.share ?? null;
@@ -1157,6 +1164,7 @@ export function createOfferDetail(deps) {
         const status = typeof error?.status === 'number' ? error.status : 0;
         if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) pending = null;
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         line.setAttribute('class', 'field-error offer-share-line');
         line.textContent = humanWriteError(error, { failed: 'Link non creato. Riprova più tardi: non ne verrà creato un secondo.' });
       } finally {
@@ -1198,6 +1206,7 @@ export function createOfferDetail(deps) {
     const runRegen = async () => {
       if (regenBusy) return;
       regenBusy = true;
+      const myOp = ++linkOp;
       // One key per link being minted: a double press mints one link,
       // never two — the same rule as «Invia offerta» above.
       if (regenPending === null) regenPending = { key: submissions.issueKey() };
@@ -1212,6 +1221,7 @@ export function createOfferDetail(deps) {
         );
         regenPending = null;
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         const result = answer?.result ?? answer ?? {};
         const fresh = typeof result.token === 'string' && result.token !== '' ? result.token : null;
         const expiresAt = typeof result.share?.expiresAt === 'string' ? result.share.expiresAt : null;
@@ -1233,9 +1243,18 @@ export function createOfferDetail(deps) {
         toast('Nuovo link pronto: il vecchio non funziona più.');
       } catch (error) {
         if (token !== renderToken) return;
+        if (myOp !== linkOp) return;
         const code = error?.code ?? null;
         const status = typeof error?.status === 'number' ? error.status : 0;
-        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) regenPending = null;
+        if (status >= 400 && status < 500 && ![408, 425, 429].includes(status)) {
+          regenPending = null;
+        } else {
+          // Codex review on #995 (P2): this failure is uncertain — the new
+          // link may have committed while its answer was lost. The cached
+          // old URL may already be revoked, so forget it: only a fresh
+          // token may paint a ready link again.
+          shareLinks.delete(quote.id);
+        }
         disarmRegen();
         line.setAttribute('class', 'field-error offer-share-line');
         if (code === 'QUOTE_LINK_ALREADY_ACCEPTED') {

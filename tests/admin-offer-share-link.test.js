@@ -249,3 +249,99 @@ test('bf1bc20a: «Crea un nuovo link» arms, cancels, then revokes and mints one
     'the operator is told the old link is dead');
   assert.ok(toasts.some((toast) => /vecchio non funziona più/.test(toast.text)), 'toast says the same');
 });
+
+async function openOfferPageWith(request) {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const calls = [];
+  const client = {
+    calls,
+    request: (path, options = {}) => {
+      calls.push({ path, method: String(options.method ?? 'GET').toUpperCase() });
+      return request(path, options);
+    },
+  };
+  const toasts = [];
+  const view = createOfferDetail({
+    doc, mount, client, origin: ORIGIN,
+    toast: (text, error = false) => toasts.push({ text, error }),
+    navigate: () => {},
+  });
+  await view.renderOfferDetail('off1');
+  await flushAll();
+  return { mount, client, toasts };
+}
+
+function baseStaticRequest(request) {
+  return async (path, options = {}) => {
+    enforceAdminWriteGate(path, options);
+    const method = String(options.method ?? 'GET').toUpperCase();
+    if (path === '/api/schema') return SCHEMA;
+    if (/^\/api\/opportunities\/[^/?]+$/.test(path) && method === 'GET') return { ...RECORD };
+    const answer = await request(path, { ...options, method });
+    return answer;
+  };
+}
+
+test('bf1bc20a: a share answer landing after regeneration never paints the revoked link (Codex #995 P2)', async () => {
+  let releaseShare;
+  const shareWait = new Promise((resolve) => { releaseShare = resolve; });
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      await shareWait;
+      return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      return { result: { alreadyExisted: false, regenerated: true, token: TOKEN2, share: { expiresAt: EXPIRES } } };
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll(2);
+  regenButton(mount).dispatch('click');
+  await flushAll(2);
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL2), 'the regenerated link paints first');
+  releaseShare();
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL2), 'the regenerated link stays on screen');
+  assert.ok(!mount.textContent.includes(URL), 'the late revoked mint never comes back on screen');
+});
+
+test('bf1bc20a: an uncertain regeneration forgets the cached link — the next press asks for a new one (Codex #995 P2)', async () => {
+  let regens = 0;
+  const request = baseStaticRequest(async (path, { method }) => {
+    if (path === '/api/modules/quote/records/q1/actions/share-link' && method === 'POST') {
+      if (regens === 0) return { result: { alreadyExisted: false, token: TOKEN, share: { expiresAt: EXPIRES } } };
+      return { result: { alreadyExisted: true, token: null, share: { expiresAt: EXPIRES } } };
+    }
+    if (path === '/api/modules/quote/records/q1/actions/regenerate-link' && method === 'POST') {
+      regens += 1;
+      throw new Error('socket hang up');
+    }
+    if (path.startsWith('/api/modules/quote/records')) return { items: [approvedQuote()] };
+    if (path.startsWith('/api/modules/quote-line/records')) return { items: [] };
+    if (path.startsWith('/api/modules/quote-version/records')) return { items: [] };
+    if (path.startsWith('/api/audit')) return { items: [] };
+    return { items: [] };
+  });
+  const { mount } = await openOfferPageWith(request);
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(mount.textContent.includes(URL), 'the first mint caches its link');
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  regenButton(mount).dispatch('click');
+  await flushAll();
+  shareButton(mount).dispatch('click');
+  await flushAll();
+  assert.ok(!mount.textContent.includes(URL), 'no revoked link is ever offered as ready');
+  assert.ok(mount.textContent.includes('Crea un nuovo link'),
+    'after an uncertain regeneration the operator is sent back to a fresh link');
+});
