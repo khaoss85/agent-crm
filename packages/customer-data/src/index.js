@@ -504,11 +504,11 @@ export function createCustomerDataPackage(options = {}) {
           { name: 'q', type: 'string', hint: 'Free-text search over name, email, company and phone. Channel words act as a channel filter.' },
           { name: 'canale', type: 'string', hint: 'Channel system, e.g. "whatsapp", or "all".' },
           { name: 'stato', type: 'string', hint: '"cliente", "contatto" or "all".' },
-          { name: 'sort', type: 'string', hint: 'One of recent, name, value, status.' },
+          { name: 'sort', type: 'string', hint: 'One of recent, name, value, status. Plus fit when a playbook is on file.' },
           { name: 'vista', type: 'string', hint: 'One of tutti, ricontattare-oggi, nuovi-lead, clienti-attivi, rinnovi-30-giorni, da-leggere.' },
           { name: 'page', type: 'integer', hint: '1-based page. Absent means 1.' },
           { name: 'pageSize', type: 'integer', hint: '10, 25 or 50. Absent means 10.' },
-          { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals. Absent means the budget column reads unavailable.' },
+          { name: 'spaceId', type: 'string', hint: 'Space for the AI budget signals and the contact-fit score. Absent means both read unavailable.' },
         ],
         create(runtime) {
           const operations = createCustomerDataOperations({

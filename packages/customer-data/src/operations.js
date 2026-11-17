@@ -19,6 +19,13 @@ import { IMPORT_MAPPING, REASON, mappingFingerprint, resolveBatch } from './impo
 import { detectIssues } from './quality.js';
 import { belongsToCustomer, canonicalClusterFor, coalescedProfileFor } from './profile.js';
 import { createPolicyReader, createSubjectForRow, isNoCompany, isWinnerConflict, normalizeChannelHandle, recordCandidatePairs, recordExternalIdentityRow } from './sender.js';
+// backlog:e80c6aee42c5 — deliberate pure reuse (MEM_ACC_REUSE, DECISION in the
+// PR): the contact-fit scorer is owned by the intelligence package and
+// imported here as a pure function only — no record, no storage, no action of
+// that package is reached. A domain package reaches another only through
+// requires plus capability for its records; a pure scoring function is reused
+// like a core helper so the rule lives in exactly one place.
+import { scoreContactFit } from '../../intelligence/src/contact-fit.js';
 import {
   deciding, optional, orderedPair, resolvedNames, subjectFields, subjectKey, trusted,
 } from './store.js';
@@ -1071,6 +1078,12 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // filter) run after every read resolves, as before.
     customDefs,
     customValues,
+    // backlog:e80c6aee42c5 — the Punteggio column: the space's sales
+    // playbook, read straight at its record module like the reads above
+    // (never through another package's code). Without the module, without a
+    // space, or when the read fails, every row below reads unavailable —
+    // the column stays out of the answer instead of scoring against nothing.
+    playbook,
   ] = await Promise.all([
     batched(names.identity),
     batched('opportunity', [
@@ -1180,6 +1193,21 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       }));
       return { rows, failed };
     })(),
+    (async () => {
+      if (!query.spaceId) return null;
+      const service = optional(modules, 'sales-playbook');
+      if (!service || typeof service.getBySpace !== 'function') return null;
+      try {
+        return await service.getBySpace(query.spaceId);
+      } catch (error) {
+        // Degraded, never silent: the rows below read unavailable, and the
+        // cause is logged with the space, never data (AGENTS.md).
+        console.error(
+          `[accordo] customer playbook unreadable: ${error?.name ?? 'Error'} ${error?.code ?? ''} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+        );
+        return null;
+      }
+    })(),
   ]);
   const identitiesBySubject = new Map(subjectKeys.map((key) => [key, []]));
   for (const row of identities.rows) {
@@ -1250,6 +1278,30 @@ export async function listCustomerRecords({ modules, core, names, interactions =
       value: row?.value ?? null, updatedAt: row?.updatedAt ?? null, updatedBy: row?.updatedBy ?? null,
     };
   })]));
+
+  // backlog:e80c6aee42c5 — one fit per customer, computed on read from the
+  // playbook above and never stored: a rewritten ideal customer re-scores
+  // every row on the next read with no button and no stale row. The scorer
+  // is pure (no storage of its own), so the subject it scores is exactly
+  // the shaped row's subject. A scorer throw reads unavailable, never a
+  // zero that would read as «not a fit».
+  const fitBySubject = new Map(subjectKeys.map((key) => [key, null]));
+  for (const { contact, company } of subjects) {
+    const key = contact ? keyOf('contact', contact.id) : keyOf('company', company.id);
+    let fit = null;
+    try {
+      fit = scoreContactFit({ contact, company }, playbook);
+    } catch {
+      fit = null;
+    }
+    fitBySubject.set(key, fit !== null && typeof fit === 'object'
+      ? { available: fit.available === true, value: fit.value ?? null, reasons: Array.isArray(fit.reasons) ? [...fit.reasons] : [] }
+      : { available: false, value: null, reasons: [] });
+  }
+  // The column (and its sort) is answered only when at least one row scored:
+  // without a playbook, or with an ideal customer that carries no usable
+  // cue, the answer names no punteggio column instead of an empty one.
+  const fitAvailable = [...fitBySubject.values()].some((fit) => fit?.available === true);
 
   // Review giro-7 on 826e377c (P1 head 3c77ca1): the observed half of CANALI
   // is only exact when both the message and the call scans are readable and
@@ -1510,6 +1562,7 @@ export async function listCustomerRecords({ modules, core, names, interactions =
         value: typeof budgetSignal.excerpt === 'string' && budgetSignal.excerpt !== '' ? budgetSignal.excerpt : null,
         source: { resource, id },
       }]]),
+      fitBySubject: new Map([[key, fitBySubject.get(key) ?? null]]),
       customFieldsBySubject: new Map([[key, customFieldsBySubject.get(key) ?? []]]),
     });
   });
@@ -1548,8 +1601,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     complete,
     totalIsExact: complete,
     views,
-    sorts: CUSTOMER_SORTS.map((sort) => ({ ...sort })),
-    columns: CUSTOMER_COLUMNS.map((column) => ({ ...column })),
+    sorts: (fitAvailable ? CUSTOMER_SORTS : CUSTOMER_SORTS.filter((sort) => sort.id !== 'fit'))
+      .map((sort) => ({ ...sort })),
+    columns: (fitAvailable ? CUSTOMER_COLUMNS : CUSTOMER_COLUMNS.filter((column) => column.id !== 'punteggio'))
+      .map((column) => ({ ...column })),
     customColumns: Object.freeze(customDefs.map((def) => Object.freeze({
       key: def.key, label: def.label, type: def.type, options: Object.freeze([...def.options]),
     }))),

@@ -203,6 +203,7 @@ export const CUSTOMER_SORTS = Object.freeze([
   { id: 'name', label: 'Nome A–Z' },
   { id: 'value', label: 'Valore offerta' },
   { id: 'status', label: 'Stato' },
+  { id: 'fit', label: 'Punteggio' },
 ]);
 
 /** Prototype status order for the Stato sort. */
@@ -224,6 +225,7 @@ export const CUSTOMER_COLUMNS = Object.freeze([
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
+  { id: 'punteggio', label: 'Punteggio', always: false, ai: true, def: true },
 ]);
 
 /**
@@ -559,8 +561,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
     return Number.isFinite(time) ? time : -1;
   };
   const sorted = [...filtered];
+  const fitScoreOf = (row) => (row?.fit?.available === true && Number.isFinite(Number(row.fit.value)) ? Number(row.fit.value) : -1);
   if (query.sort === 'name') sorted.sort(byName);
   else if (query.sort === 'value') sorted.sort((a, b) => (Number(b?.offerValueCents ?? 0) - Number(a?.offerValueCents ?? 0)) || byName(a, b));
+  else if (query.sort === 'fit') sorted.sort((a, b) => (fitScoreOf(b) - fitScoreOf(a)) || byName(a, b));
   else if (query.sort === 'status') {
     sorted.sort((a, b) => (
       CUSTOMER_STATUS_ORDER.indexOf(a?.status?.value) - CUSTOMER_STATUS_ORDER.indexOf(b?.status?.value)
@@ -602,7 +606,10 @@ export function applyCustomerListQuery(rows, query, todayIso) {
  * number; the contact record carries no phone field) — shown as held, never
  * as a dialability verdict, which stays the scheda's.
  * @param {{contact?: any, company?: any}} subject
- * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, appointmentBySubject?: Map<string, any>, appointmentsComplete?: boolean, budgetBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ * @param {{identitiesBySubject?: Map<string, Array<any>>, observedChannelsBySubject?: Map<string, Array<string>>, observedComplete?: boolean, statusBySubject?: Map<string, any>, activityBySubject?: Map<string, any>, offerBySubject?: Map<string, any>, taskBySubject?: Map<string, any>, renewalBySubject?: Map<string, boolean>, appointmentBySubject?: Map<string, any>, appointmentsComplete?: boolean, budgetBySubject?: Map<string, any>, fitBySubject?: Map<string, any>, customFieldsBySubject?: Map<string, Array<any>>}} reads
+ *   fitBySubject entries name `{ available, value, reasons }` (backlog:e80c6aee42c5):
+ *   the contact-fit score against the space's ideal customer, computed on read
+ *   and never stored — absent reads as unavailable, never zero.
  *   customFields entries are shaped `{ key, label, type, options, value, updatedAt, updatedBy }`
  *   (backlog:434cc39a): every defined field reads on every row — the list
  *   columns — with a null value when never set.
@@ -681,6 +688,12 @@ export function shapeCustomerRow(subject, reads = {}) {
   const task = reads.taskBySubject?.get(key) ?? null;
   const budget = reads.budgetBySubject?.get(key)
     ?? { available: false, value: null, source: null, reason: 'nessun budget estratto dall\u2019AI per questo cliente' };
+  // backlog:e80c6aee42c5 — the contact-fit score against the space's ideal
+  // customer: computed on read from the playbook, never stored. Without a
+  // playbook (or without a usable ideal customer) the row carries the
+  // unavailable reason, never an invented zero.
+  const fit = reads.fitBySubject?.get(key)
+    ?? { available: false, value: null, reasons: ['il cliente ideale non è compilato: compila il playbook e il punteggio compare'] };
   return Object.freeze({
     customerListContract: CUSTOMER_LIST_CONTRACT,
     subject: Object.freeze({ resource, id }),
@@ -745,6 +758,12 @@ export function shapeCustomerRow(subject, reads = {}) {
       value: budget.available === true ? (budget.value ?? null) : null,
       source: budget.available === true ? (budget.source ?? null) : null,
       reason: budget.available === true ? null : (budget.reason ?? null),
+    }),
+    fit: Object.freeze({
+      available: fit.available === true,
+      value: fit.available === true ? (fit.value ?? null) : null,
+      reasons: Object.freeze(Array.isArray(fit.reasons) ? [...fit.reasons] : []),
+      reason: fit.available === true ? null : (fit.reason ?? fit.reasons?.[0] ?? null),
     }),
     customFields: Object.freeze((reads.customFieldsBySubject?.get(key) ?? []).map((entry) => Object.freeze({
       key: entry?.key ?? null,

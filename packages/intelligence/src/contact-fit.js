@@ -92,6 +92,7 @@ export const CONTACT_FIT_MODEL = {
  * purpose — every playbook names them, so they discriminate nothing.
  */
 const FIT_STOPWORDS = new Set([
+  'cliente', 'clienti', 'azienda', 'aziende', 'ideale', 'ideali',
   'alla', 'alle', 'allo', 'anche', 'ancora', 'altra', 'altre', 'altri', 'altro',
   'abbiamo', 'bene', 'cerca', 'cerchiamo', 'come', 'con', 'cui', 'che', 'chi',
   'dagli', 'dai', 'dal', 'dalla', 'dalle', 'dallo', 'degli', 'dei', 'del', 'della',

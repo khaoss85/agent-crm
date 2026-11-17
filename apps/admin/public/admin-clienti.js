@@ -119,6 +119,7 @@ const FALLBACK_SORTS = Object.freeze([
   { id: 'name', label: 'Nome A–Z' },
   { id: 'value', label: 'Valore offerta' },
   { id: 'status', label: 'Stato' },
+  { id: 'fit', label: 'Punteggio' },
 ]);
 const FALLBACK_COLUMNS = Object.freeze([
   { id: 'canali', label: 'Canali', always: false, ai: false, def: true },
@@ -130,6 +131,7 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
+  { id: 'punteggio', label: 'Punteggio', always: false, ai: true, def: true },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
 /** Quiet time after the last keystroke before the list searches (same as the Calendario). */
@@ -1126,6 +1128,20 @@ export function createCustomerListView(deps) {
         const source = link(`#/customer-card/${encodeURIComponent(row.resource)}/${encodeURIComponent(row.id)}`, 'fonte', 'open-budget-source');
         wrap.appendChild(source);
         return wrap;
+      }
+      case 'punteggio': {
+        // backlog:e80c6aee42c5 — the contact-fit score against the space's
+        // ideal customer, computed on read and never stored. The value reads
+        // with its reasons in the title — never a bare number. Without a
+        // playbook the server names no punteggio column, so this cell only
+        // renders for rows the server scored (or the stored fallback shapes
+        // tests hand in).
+        if (row.fit?.available !== true) {
+          return el('span', 'bo-muted', row.fit?.reason ?? row.fit?.reasons?.[0] ?? 'non disponibile');
+        }
+        const node = el('span', undefined, `✦ ${row.fit.value ?? ''}`);
+        node.setAttribute('title', (row.fit.reasons ?? []).join('\n'));
+        return node;
       }
       default: {
         // Custom fields (backlog:434cc39a): `campo:<key>` reads the row's
