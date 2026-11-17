@@ -795,8 +795,55 @@ test('forecast names the highest-value open offer when one currency is in play',
   const box = forecastBox(mount);
   assert.ok(box, 'a forecast section exists');
   assert.ok(
-    box.textContent.includes('Il rischio più alto è Alice.'),
-    `the risk names the owner of the highest-value open offer (${box.textContent})`,
+    box.textContent.includes("Il rischio più alto è l'offerta Deal a (Acme · 1.000 €), ancora in Discovery."),
+    `the risk names the highest-value open offer, its customer, value and stage (${box.textContent})`,
+  );
+});
+
+// backlog:df6b3ffb681e (prova del Mac 17/11: «Il rischio più alto è daniele
+// pelleri.»): the risk is the offer or its customer, never a team person.
+test('forecast risk line never names a team person as the risk', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { valueCents: 200_000, owner: 'daniele pelleri' }),
+      record('b', 'demo', { valueCents: 50_000, owner: 'bob' }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(
+    box.textContent.includes("Il rischio più alto è l'offerta Deal a (Acme · 2.000 €), ancora in Discovery."),
+    `the risk names the offer and why, not the owner (${box.textContent})`,
+  );
+  assert.ok(
+    !box.textContent.includes('daniele pelleri'),
+    `no team person is named as the risk (${box.textContent})`,
+  );
+});
+
+test('forecast risk line names the customer when the offer has no name', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const board = createPipelineBoard({
+    doc,
+    mount,
+    client: stubClient([
+      record('a', 'discovery', { name: '  ', valueCents: 200_000, owner: 'alice' }),
+    ]),
+  });
+  await board.renderBoard('b2b-sales');
+
+  const box = forecastBox(mount);
+  assert.ok(box, 'a forecast section exists');
+  assert.ok(
+    box.textContent.includes('Il rischio più alto è Acme (2.000 €), ancora in Discovery.'),
+    `the customer stands in for a nameless offer (${box.textContent})`,
   );
 });
 
