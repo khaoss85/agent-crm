@@ -1291,7 +1291,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     let fit = null;
     try {
       fit = scoreContactFit({ contact, company }, playbook);
-    } catch {
+    } catch (error) {
+      // A scorer throw is a bug in the new code, never a verdict on the row:
+      // the row reads unavailable, and the cause is logged with the space,
+      // never data (AGENTS.md review rules).
+      console.error(
+        `[accordo] contact-fit scorer threw: ${error?.name ?? 'Error'} (space ${(query.spaceId ?? 'unknown')})`.trim(),
+      );
       fit = null;
     }
     fitBySubject.set(key, fit !== null && typeof fit === 'object'
