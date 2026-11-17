@@ -436,7 +436,20 @@ export function personOf(id, rosterOrPeople) {
   const wanted = id.trim();
   const list = Array.isArray(rosterOrPeople) ? rosterOrPeople : [];
   const people = list.length > 0 && Array.isArray(list[0]?.subjects) ? list : teamPeople(list);
-  return people.find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+  const exact = people.find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+  if (exact !== null) return exact;
+  // backlog:3f3c143b (seguito di #918): an audit may record another
+  // identifier of the same person — their mailbox or display name — while
+  // the roster holds the opaque subject. The same resolution function
+  // matches the person's own mailbox or profile name, but only when a
+  // single row claims it: a shared mailbox or a homonym name never picks a
+  // person (agent-crm#644/#742).
+  const folded = wanted.toLowerCase();
+  const byMail = people.filter((row) => typeof row.email === 'string' && row.email.toLowerCase() === folded);
+  if (byMail.length === 1) return byMail[0];
+  const byName = people.filter((row) => typeof row.name === 'string' && row.name.toLowerCase() === folded);
+  if (byName.length === 1) return byName[0];
+  return null;
 }
 
 /**
@@ -714,18 +727,22 @@ export function auditActorLabel(entry, known = [], roster = []) {
   // else their mailbox, like personLabel does (backlog:3f3c143b).
   const person = personOf(id, roster);
   if (person !== null && person.known) return person.label;
+  // A technical or service id is never corroborated into a name: a record
+  // value that literally equals a provider subject stays hidden, like the
+  // old code hid technical ids first (review Muse rev-agent-crm-918 P2).
+  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   // A corroborated slug still paints as words, never the raw stored id
   // («coach-guido» reads «Coach Guido», a digit slug names nobody and
   // reads as unknown); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
   if (names.includes(id)) return SLUG_SHAPE.test(id) ? (subjectText(id) ?? '—') : id;
-  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
   // A real mailbox is self-describing and reads as itself even when no
-  // roster names it; any other uncorroborated id (a slug, a bare handle,
-  // a digit id) stays hidden behind the dash.
+  // roster names it; a lone or malformed '@' is no mailbox and stays
+  // hidden, like any other uncorroborated id (review Muse rev-agent-crm-918
+  // P2: ADDRESS_WORD, the same shape readableName trusts).
   const text = subjectText(id);
-  return text !== null && id.includes('@') ? text : '—';
+  return text !== null && ADDRESS_WORD.test(id) ? text : '—';
 }
 
 /**
