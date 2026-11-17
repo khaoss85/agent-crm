@@ -1054,7 +1054,14 @@ export function createShellView({
       else openDrawer();
     });
     topbar.appendChild(menuToggle);
-    const path = el(doc, 'div', 'bo-crumb', crumb(space.name, screenLabelFor(state.activeScreenId)));
+    // backlog:dd6a01de569b: the crumb keeps "<space> / <screen>" on desktop,
+    // but on a phone the bar above already names the space — the space part
+    // gets its own span so the ≤700px stylesheet can drop the repetition
+    // while desktop, textContent and screen readers keep the full path.
+    const screen = screenLabelFor(state.activeScreenId);
+    const path = el(doc, 'div', 'bo-crumb');
+    path.appendChild(el(doc, 'span', 'bo-crumb-space', crumb(space.name, '')));
+    path.appendChild(el(doc, 'span', 'bo-crumb-screen', screen));
     path.setAttribute('aria-label', 'Percorso');
     topbar.appendChild(path);
 
@@ -1162,6 +1169,17 @@ export function createShellView({
       if (typeof event?.stopPropagation === 'function') event.stopPropagation();
       closeDrawer();
     }, true);
+    // backlog:dd6a01de569b: the sticky bar needs an edge once the page
+    // slides under it — otherwise bar and content read as one surface.
+    // The stylesheet draws the edge (phone only); here only the flag.
+    const paintTopbarScrolled = () => {
+      const y = typeof win.scrollY === 'number' ? win.scrollY
+        : typeof win.pageYOffset === 'number' ? win.pageYOffset
+        : 0;
+      if (typeof topbar.classList?.toggle === 'function') topbar.classList.toggle('bo-topbar-scrolled', y > 0);
+    };
+    win.addEventListener('scroll', paintTopbarScrolled, { passive: true });
+    paintTopbarScrolled();
   }
 
   renderSidebar();
