@@ -40,6 +40,7 @@ import {
   SPACE_AI_PERMISSION_DEFAULTS,
 } from '../packages/space-permissions/src/index.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { spaceMenuItems } from '../apps/admin/public/admin-shell.js';
 
 const flush = async (rounds = 12) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
@@ -2089,4 +2090,44 @@ test('backlog:3136d15d only a paused child switch reads not-allowed, a busy one 
   const css = fs.readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.match(css, /\.bo-spazi-toggle\[data-paused="true"\]:disabled\s*\{[^}]*cursor:\s*not-allowed/);
   assert.doesNotMatch(css, /\.bo-spazi-toggle:disabled\s*,/);
+});
+
+// backlog:6b44b0e9fcdf (verifica 17/11, NON PASSA): the other spaces' cards
+// wear no counts, every badge reads «PR» black, and the calendar state does
+// not read like the prototype column «↔ Google Calendar»
+// (docs/backoffice/verifica-2026-10-29/CONFRONTO.md). Red on the code before
+// the cure, green after it.
+test('6b44b0e9fcdf: other space cards wear the menu badge, paint counts and read the calendar like the prototype', async () => {
+  // One function decides sigla and color (same cause as 56c9ec170eaa): two
+  // spaces arriving with the same stored «PR» read apart like the menu.
+  const spaces = [
+    { id: 'presti', name: 'Presti Group', initials: 'PR' },
+    { id: 'prova', name: 'Prova Validazione B1', initials: 'PR' },
+  ];
+  const cards = buildSpaziCards({ spaces, activeSpaceId: 'presti', role: 'owner' });
+  const menu = spaceMenuItems(spaces, 'presti');
+  assert.deepEqual(cards.map((card) => card.initials), menu.map((row) => row.initials), 'cards wear the menu sigla');
+  assert.deepEqual(cards.map((card) => card.badgeClass), menu.map((row) => row.badgeClass), 'cards wear the menu color');
+  assert.ok(cards.every((card) => /^bo-space-badge--p\d+$/.test(card.badgeClass ?? '')), 'never the black initials');
+  // Counts on every card, from what production produced.
+  const members = [{ subject: 'marco', role: 'operator', status: 'active' }];
+  const client = stubClient({
+    members,
+    connectorsBySpace: {
+      presti: [{ connectionKey: 'wa', channel: 'whatsapp', status: 'active' }],
+      prova: [{ connectionKey: 'ig', channel: 'instagram', status: 'active' }],
+    },
+    customersBySpace: {
+      presti: { total: 3, totalIsExact: true },
+      prova: { total: 5, totalIsExact: true },
+    },
+  });
+  const { mount, view: v } = view({ client, spaces, active: 'presti' });
+  await v.render();
+  await flush();
+  const rendered = text(mount);
+  assert.match(rendered, /1 canale · 1 persona · 3 clienti/, 'the open space paints its counts');
+  assert.match(rendered, /1 canale · 1 persona · 5 clienti/, 'the other space paints its own counts');
+  // The calendar state reads like the prototype column.
+  assert.equal(teamCalendarState([{ channel: 'calendar', status: 'active' }]), '↔ Google Calendar');
 });
