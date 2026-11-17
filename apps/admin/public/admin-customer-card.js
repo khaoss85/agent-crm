@@ -10,6 +10,7 @@ import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isT
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
+import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
@@ -626,6 +627,59 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
+
+/**
+ * The open «Chiama dal CRM» panel, if any (voce 14d999de): one live view at
+ * a time, like the calendar popover — set while the panel is painted,
+ * cleared when it closes or the view routes away. A click outside the panel
+ * closes it; Escape and Chiudi come from the shared window frame.
+ * @type {{ shut: () => void, gone: () => boolean } | null}
+ */
+let openCallPanelHandle = null;
+
+/** The document the single outside-click closer for «Chiama dal CRM» is installed on, if any. */
+let callOutsideInstalledOn = null;
+
+/**
+ * True when the click landed inside the «Chiama dal CRM» panel or on its
+ * opener tile. Matched by attribute, never by node identity: a click that
+ * repaints the view leaves its target in the detached old tree, which still
+ * carries the same markers.
+ * @param {any} target
+ */
+function insideCallPanel(target) {
+  let node = target ?? null;
+  while (node) {
+    const read = typeof node.getAttribute === 'function' ? (name) => node.getAttribute(name) : () => null;
+    if (read('data-call') === 'open' || read('data-action') === 'call-customer') return true;
+    node = node.parentNode ?? null;
+  }
+  return false;
+}
+
+/**
+ * Install once per document: a click outside the open «Chiama dal CRM»
+ * panel closes it. The containment walk uses parentNode, so the
+ * dependency-free fake DOM used by the unit tests behaves like a real
+ * Element. Documents without addEventListener (the fake document) skip the
+ * closer; Escape and Chiudi still work there.
+ * @param {any} doc
+ */
+function installCallOutsideCloser(doc) {
+  if (callOutsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
+  callOutsideInstalledOn = doc;
+  doc.addEventListener('click', (event) => {
+    const current = openCallPanelHandle;
+    if (!current) return;
+    if (current.gone()) {
+      if (openCallPanelHandle === current) openCallPanelHandle = null;
+      return;
+    }
+    if (insideCallPanel(event?.target)) return;
+    openCallPanelHandle = null;
+    current.shut();
+  });
+}
 /** What a passage reads when neither its text nor its subject says anything. */
 export const PASSAGE_NO_TEXT = '(nessun testo)';
 
@@ -1933,30 +1987,39 @@ export function createCustomerCardView(deps) {
   // failed (404 not composed or any other error).
   const appendDeviceDialFallback = (into, dialPhone) => {
     const dialable = dialPhone.replaceAll(/[^\d+]/g, '');
-    into.appendChild(link(
+    const dial = link(
       `tel:${dialable === '' ? dialPhone : dialable}`,
-      `Chiama ${dialPhone} (tel:)`, 'call-fallback'));
+      `Chiama ${dialPhone} (tel:)`, 'call-fallback');
+    // Voce 14d999de: a /bo link, never the browser-default blue underline.
+    dial.setAttribute('class', 'bo-call-fallback');
+    into.appendChild(dial);
   };
   function openCallPanel(box, card, navCtx, phone) {
-    const old = box.querySelector('div[data-call="open"]');
-    if (old) {
-      while (old.firstChild) old.removeChild(old.firstChild);
-    }
-    const panel = old ?? el('div', 'bo-scheda-composer');
-    panel.setAttribute('data-call', 'open');
-    if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Chiama dal CRM'));
+    // Voce 14d999de: the shared scheda window frame — the same dark head
+    // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
+    // so the panel reads as /bo and Escape/Chiudi close it. A click outside
+    // closes it too, through the document closer below.
+    installCallOutsideCloser(doc);
+    const win = openSchedaWindow({
+      doc, host: box, attr: 'data-call', action: 'call',
+      title: 'Chiama dal CRM',
+      customer: typeof card?.name === 'string' ? card.name : null,
+    });
+    if (openCallPanelHandle && !openCallPanelHandle.gone()) openCallPanelHandle.shut();
+    openCallPanelHandle = win;
+    const { body } = win;
     const spaceId = activeSpaceId();
     if (spaceId === null) {
-      panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
-      appendDeviceDialFallback(panel, phone);
+      body.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
+      appendDeviceDialFallback(body, phone);
       return;
     }
     const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
-    panel.appendChild(wait);
+    body.appendChild(wait);
     client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        panel.removeChild(wait);
+        if (win.gone()) return;
+        body.removeChild(wait);
         const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
         // The same gate the calls route enforces: active AND a non-empty
       // connectionKey. An entry without a key would be refused 409
@@ -1967,21 +2030,22 @@ export function createCustomerCardView(deps) {
         .find((entry) => entry.status === 'active'
           && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') ?? null;
         if (voice === null) {
-          panel.appendChild(el('p', 'bo-muted',
+          body.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
-          appendDeviceDialFallback(panel, phone);
+          appendDeviceDialFallback(body, phone);
           return;
         }
-        buildCallForm(panel, navCtx, spaceId, phone);
+        buildCallForm(body, navCtx, spaceId, phone);
       },
       (error) => {
-        panel.removeChild(wait);
-        panel.appendChild(el('p', 'bo-muted',
+        if (win.gone()) return;
+        body.removeChild(wait);
+        body.appendChild(el('p', 'bo-muted',
           'La chiamata dal CRM non è disponibile qui: chiama dal telefono.'));
-        panel.appendChild(el('p', 'field-error', humanReadError(error, {
+        body.appendChild(el('p', 'field-error', humanReadError(error, {
           failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
         })));
-        appendDeviceDialFallback(panel, phone);
+        appendDeviceDialFallback(body, phone);
       },
     );
   }
