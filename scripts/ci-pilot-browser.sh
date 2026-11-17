@@ -43,6 +43,9 @@
 #   PILOT_SKIP_INSTALL=1 ..... skip `npm ci` in the pilot checkout;
 #   PILOT_BROWSER_FORCE=1 .... run the browser proof even when the diff does
 #                              not touch the client (measures the green path);
+#   PILOT_BROWSER_IGNORE_SYSTEM=1  tests only: resolve browsers under $HOME
+#                              only, so the provisioning path is the same on
+#                              every runner;
 #   HEAD_SHA=<sha> ............ pin named in the log (default: `git rev-parse HEAD`);
 #   PILOT_GIT_URL=<url> ....... pilot remote (default: the github https URL);
 #   AGENT_CRM_DIR=<path> ...... the agent-crm checkout under test (default:
@@ -109,6 +112,13 @@ resolve_browser_bin() {
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
     "$home_dir/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell" \
     /usr/bin/chromium /usr/bin/chromium-browser /usr/bin/google-chrome /usr/bin/google-chrome-stable; do
+    # PILOT_BROWSER_IGNORE_SYSTEM=1 (tests only): skip the machine-wide
+    # binaries and look only under $HOME, so the provisioning path is
+    # deterministic on any runner (a runner with a system Chromium would
+    # otherwise never reach the install it is meant to prove).
+    if [ "${PILOT_BROWSER_IGNORE_SYSTEM:-0}" = "1" ]; then
+      case "$candidate" in "$home_dir"/*) ;; *) continue;; esac
+    fi
     if [ -x "$candidate" ]; then
       printf '%s' "$candidate"
       return 0

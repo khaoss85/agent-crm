@@ -15,12 +15,13 @@ import os from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execGit } from './helpers/isolated-git.js';
 
 const SCRIPT = new URL('../scripts/ci-pilot-browser.sh', import.meta.url).pathname;
 
 /** @param {string} dir */
 function git(dir, ...args) {
-  execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  execGit(args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 function throwawayRepo() {

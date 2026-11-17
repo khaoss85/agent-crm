@@ -16,12 +16,13 @@ import os from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execGit } from './helpers/isolated-git.js';
 
 const SCRIPT = new URL('../scripts/ci-pilot-browser.sh', import.meta.url).pathname;
 
 /** @param {string} dir */
 function git(dir, ...args) {
-  execFileSync('git', args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  execGit(args, { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /** A throwaway agent-crm repo whose PR diff touches the served client. */
@@ -116,6 +117,10 @@ function runGate(repo, pilot, home, extra) {
       PILOT_DIR: pilot,
       PILOT_SKIP_INSTALL: '1',
       PILOT_GIT_URL: 'file:///nonexistent-pilot-remote',
+      // Ignore the runner's machine-wide browsers: with a fresh HOME the
+      // resolve step would otherwise find the runner's own Chromium and
+      // never reach the install this file is meant to prove.
+      PILOT_BROWSER_IGNORE_SYSTEM: '1',
       ...extra,
     },
     encoding: 'utf8',
