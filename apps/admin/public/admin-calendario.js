@@ -3703,10 +3703,13 @@ export function createCalendarioView(deps) {
    * never the browser's confirm(). «No» takes the focus (Enter never cancels
    * by accident); the optional reason rides the cancellation, else «Annullato
    * dal calendario». An event imported from Google Calendar says plainly
-   * that the event stays on Google: the backoffice cancel names no calendar
-   * and nothing in this application runs the two-way sync that would carry
-   * the cancellation there (calendar-sync's push/sync operations are not
-   * wired to any route or job), so «cancellalo anche lì» is the truth.
+   * what happens there (backlog:27923678): with the calendar connected the
+   * question promises only the attempt on Google — a connected profile
+   * never proves the appointment itself pushes, so the popover no longer
+   * says the event stays there; without a connected calendar the honest
+   * line stays — «cancellalo anche lì» — because nothing would carry the
+   * cancellation there. The real outcome speaks after the write, through
+   * the toast.
    * @param {any} row
    */
   function renderCancelAsk(row) {
@@ -3716,10 +3719,19 @@ export function createCalendarioView(deps) {
     });
     box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
     if (originOf(row) === 'google') {
+      // backlog:27923678 — a connected calendar in /api/profile never proves
+      // the appointment itself pushes to Google (the sync link can be missing
+      // and the answer can carry push: null), so the question promises only
+      // the attempt: the real outcome speaks after the write, through the
+      // toast. Without a connected calendar nothing would carry the
+      // cancellation there, so the honest manual-removal line stays.
+      const connected = state.calendar?.connected === true;
       box.appendChild(el(doc, 'p', {
         className: 'cal-pop-hint',
         attrs: { 'data-role': 'cancel-google' },
-        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
+        text: connected
+          ? 'Arriva da Google Calendar: lo annullo qui in Accordo e provo ad annullarlo anche su Google Calendar; se non riesco, ti avviso di toglierlo a mano.'
+          : 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
     const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
@@ -3762,9 +3774,14 @@ export function createCalendarioView(deps) {
 
   /**
    * Cancels the booking through POST /api/appointments/cancel
-   * (backlog:5346ab531538). On success the row reads cancelled at once — it
-   * leaves the grid and the popover closes — and the week reloads; a refusal
-   * stays in the popover in Italian and the booking stays where it was.
+   * (backlog:5346ab531538, backlog:27923678). On success the row reads
+   * cancelled at once — it leaves the grid and the popover closes — and the
+   * week reloads; a refusal stays in the popover in Italian and the booking
+   * stays where it was. The space rides the write so the server-side
+   * auto-push converges the linked Google event under the owning space's
+   * grant; when Google was unreachable the cancellation still stands and
+   * the answer carries `pushError`, which the toast names as the manual
+   * removal on Google.
    * @param {any} row
    */
   async function submitCancel(row) {
@@ -3778,10 +3795,19 @@ export function createCalendarioView(deps) {
     renderAll();
     let ok = false;
     let failure = '';
+    let pushFailed = false;
+    let pushedToGoogle = false;
     try {
       const reason = cancelReasonFrom(state.cancelReason);
-      const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
-      await client.request('/api/appointments/cancel', { method: 'POST', body });
+      const spaceId = readSpace();
+      const body = id !== ''
+        ? { id: row.id, reason, spaceId }
+        : { sourceKey: row.sourceKey, reason, spaceId };
+      const answer = await client.request('/api/appointments/cancel', { method: 'POST', body });
+      pushFailed = answer?.pushError != null;
+      // backlog:27923678 — Google is named only on the real outcome: the
+      // answer carried a push. A push: null (no sync link) stays silent.
+      pushedToGoogle = !pushFailed && answer?.push != null;
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
           if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
@@ -3811,7 +3837,20 @@ export function createCalendarioView(deps) {
         state.moveNote = '';
       }
       renderAll();
-      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      // backlog:27923678 — the Accordo cancellation stands even when Google
+      // was unreachable: the toast then names the manual removal on Google,
+      // never a silent divergence. Google is named on success only when the
+      // answer proves the push landed there.
+      if (typeof deps.toast === 'function') {
+        deps.toast(
+          pushFailed
+            ? 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.'
+            : pushedToGoogle && originOf(row) === 'google'
+              ? 'Appuntamento annullato qui e su Google Calendar.'
+              : 'Appuntamento annullato.',
+          pushFailed,
+        );
+      }
       const members = parseMemberFilter(state.memberFilter);
       if (members.length > 0) void loadWeek(members);
       return;
