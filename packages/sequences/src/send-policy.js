@@ -2,8 +2,8 @@
 
 /**
  * Space send rules for every send agents or sequences propose
- * (backlog:b6f8a6504a24 — Kombo map 12/11, sections 8-9, «dopo il minimo
- * per Presti»).
+ * (backlog:b6f8a6504a24 — Kombo map 12/11, sections 8-9, per gli invii
+ * proposti dagli agenti dopo il minimo del pilota).
  *
  * Four rules, one per acceptance criterion, all pure and framework-side so
  * both the sequences sweep and any agent path decide the same way:
