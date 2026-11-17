@@ -169,7 +169,9 @@ export function createCustomerDataPackage(options = {}) {
     // old one. Version 5: the erasure reason is a code from a closed list.
     // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
     // declared surface (propose-field-from-question, fill-ai-field-values).
-    version: 6,
+    // Version 7 (backlog:e80c6aee42c5): the contact-fit score joined the
+    // list surface (punteggio column, fit sort, spaceId-scored reads).
+    version: 7,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '

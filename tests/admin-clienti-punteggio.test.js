@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomerListView } from '../apps/admin/public/admin-clienti.js';
+import { CLIENTI_COLUMNS_KEY, createCustomerListView } from '../apps/admin/public/admin-clienti.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -52,10 +52,12 @@ const stubClient = (answer) => ({
   },
 });
 
-const render = async (answer) => {
+const render = async (answer, visible = null) => {
   const doc = createFakeDocument();
   const mount = createMount();
   const store = { map: new Map(), getItem(k) { return this.map.get(k) ?? null; }, setItem(k, v) { this.map.set(k, v); } };
+  // The Punteggio column is opt-in like Budget: the operator turns it on.
+  if (visible) store.map.set(CLIENTI_COLUMNS_KEY, JSON.stringify(visible));
   const view = createCustomerListView({ doc, mount, client: stubClient(answer), storage: store, notify: () => {} });
   await view.render();
   return { mount };
@@ -67,7 +69,7 @@ const answerWith = (items, menus) => ({
 });
 
 test('the punteggio column shows the score with its reasons in the title', async () => {
-  const { mount } = await render(answerWith([ROW_SCORED, ROW_PLAIN], FIT_MENUS));
+  const { mount } = await render(answerWith([ROW_SCORED, ROW_PLAIN], FIT_MENUS), { punteggio: true });
   assert.ok(mount.textContent.includes('80'), 'the score value renders');
   const scored = mount.findAll('span').find((node) => node.textContent === '✦ 80');
   assert.ok(scored, 'the score reads with its mark');

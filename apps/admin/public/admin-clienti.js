@@ -131,7 +131,7 @@ const FALLBACK_COLUMNS = Object.freeze([
   { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
   { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
   { id: 'budget', label: 'Budget dichiarato', always: false, ai: true, def: false },
-  { id: 'punteggio', label: 'Punteggio', always: false, ai: true, def: true },
+  { id: 'punteggio', label: 'Punteggio', always: false, ai: true, def: false },
 ]);
 const FALLBACK_SIZES = Object.freeze([10, 25, 50]);
 /** Quiet time after the last keystroke before the list searches (same as the Calendario). */
