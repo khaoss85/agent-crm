@@ -1223,6 +1223,76 @@ export async function withWakeRetry(run, { waitMs = 1500, wait = unrefWait, meth
 }
 
 /**
+ * What a screen that polls while the space wakes shows
+ * (backlog:0d25ed7dc34f): Italian, a wait with nothing asked of the operator
+ * — the page reloads by itself when the space answers, like the pilot edge
+ * page (`renderWaitingPage` in accordo-arvo-pilot `src/shared/web.js`: a 503
+ * with `Retry-After` and a meta refresh). Never «rifiutata», never technical.
+ */
+export const SPACE_WAKING_TEXT = 'Lo spazio di lavoro si sta avviando: la pagina si ricarica da sola tra qualche secondo.';
+
+/**
+ * Poll `run` while it rejects with a waking service
+ * (backlog:0d25ed7dc34f): after a release the space answers 503 /
+ * WORKSPACE_STARTING (or the host is still waking: gateway 502/504, refused
+ * connection) for longer than one retry — the page reloads by itself when
+ * the space answers instead of stopping at the first refusal. The verdict
+ * is the shared one (isWakeTransient): reads poll on any waking signal, a
+ * write replays only on an explicit starting signal (pass its `method`), and
+ * an uncertain outcome or a lost session never polls. Bounded: at most
+ * `rounds` runs with `everyMs` between them; `stale()` aborts when the
+ * caller moved on (its screen is gone, no stray request). Answers
+ * `{ answer }` when a run resolves, `{ error }` on a final refusal or when
+ * the space never answered in time, `{ stale: true }` on abort. The notice
+ * opens on the first waking failure and closes at the end; a notifier that
+ * throws never masks the read.
+ * @param {() => Promise<any>} run
+ * @param {{ wait?: (ms: number) => Promise<unknown>, everyMs?: number, rounds?: number, method?: unknown, stale?: () => boolean, onWaking?: (waking: boolean) => void }} [options]
+ */
+export async function pollWhileWaking(run, { wait = unrefWait, everyMs = 3000, rounds = 20, method = 'GET', stale = () => false, onWaking = () => {} } = {}) {
+  const gap = Number.isInteger(everyMs) && everyMs > 0 ? everyMs : 3000;
+  const total = Number.isInteger(rounds) && rounds > 0 ? rounds : 20;
+  const notify = (waking) => {
+    try {
+      onWaking(waking);
+    } catch {
+      // The shell could not paint the notice; the poll goes on.
+    }
+  };
+  const movedOn = () => {
+    try {
+      return stale() === true;
+    } catch {
+      return false;
+    }
+  };
+  let waiting = false;
+  let lastError = null;
+  for (let round = 0; round < total; round += 1) {
+    if (round > 0) await wait(gap);
+    if (movedOn()) break;
+    try {
+      const answer = await run();
+      if (waiting) notify(false);
+      return movedOn() ? { stale: true } : { answer };
+    } catch (error) {
+      if (!isWakeTransient(error, { method })) {
+        if (waiting) notify(false);
+        return { error };
+      }
+      lastError = error;
+      if (!waiting) {
+        waiting = true;
+        notify(true);
+      }
+    }
+  }
+  if (waiting) notify(false);
+  if (movedOn()) return { stale: true };
+  return { error: lastError };
+}
+
+/**
  * Read a queued request back on its own path (`GET <path>?requestId=`), the
  * resume the pilot offers for its queued writes: never a second POST. Waits
  * `everyMs` before each read, up to `rounds` reads; a transient read

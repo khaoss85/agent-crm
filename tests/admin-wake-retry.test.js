@@ -92,7 +92,10 @@ test('a /bo screen whose first read hit the gateway page shows its data, not the
 
 test('the /bo client says the wake once per screen, on both the module and the dashboard reads', () => {
   const app = readFileSync(new URL('../apps/admin/public/app.js', import.meta.url), 'utf8');
-  assert.match(app, /return withWakeRetry\(once, \{ method, onWaking: wakingNotice \}\);/, 'module screens');
-  assert.match(app, /\}, \{ method, onWaking: wakingNotice \}\);\n\}/, 'dashboard api()');
+  assert.match(app, /if \(isMutation\(method\)\) return withWakeRetry\(once, \{ method, onWaking: wakingNotice \}\);/, 'module screens: writes keep the single retry');
+  assert.match(app, /return readWhileWaking\(once, \{ method \}\);/, 'module screens: reads poll until the space answers');
+  assert.match(app, /if \(isMutation\(method\)\) return withWakeRetry\(run, \{ method, onWaking: wakingNotice \}\);/, 'dashboard api(): writes keep the single retry');
+  assert.match(app, /return readWhileWaking\(run, \{ method \}\);/, 'dashboard api(): reads poll until the space answers');
   assert.match(app, /if \(wakingReads === 1 && elements\.toast\) toast\(WAKING_TEXT\)/, 'one notice for the parallel reads; no toast, no throw');
+  assert.match(app, /if \(spaceWakingReads === 1 && elements\.toast\) toast\(SPACE_WAKING_TEXT\)/, 'the long wait names itself once (backlog:0d25ed7dc34f)');
 });

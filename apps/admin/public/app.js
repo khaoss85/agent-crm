@@ -77,7 +77,7 @@ async function api(path, options = {}) {
   // The body is read as text first (review khaoss85/agent-crm#673): a waking
   // host may answer non-JSON (e.g. 503 HTML), and response.json() would throw
   // a bare SyntaxError the wake verdict never sees.
-  return withWakeRetry(async () => {
+  const run = async () => {
     const response = await fetch(`${ADMIN_BASE}${path}`, { ...options, headers: requestHeaders });
     const text = await response.text();
     let body;
@@ -93,7 +93,12 @@ async function api(path, options = {}) {
       throw Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE', status: response.status });
     }
     return body;
-  }, { method, onWaking: wakingNotice });
+  };
+  // backlog:0d25ed7dc34f: a write keeps the single retry, same key; a read
+  // polls past the first refusal while the space wakes, so the screen paints
+  // by itself when the space answers.
+  if (isMutation(method)) return withWakeRetry(run, { method, onWaking: wakingNotice });
+  return readWhileWaking(run, { method });
 }
 
 const submissions = createSubmissionController({
@@ -174,10 +179,11 @@ const moduleClient = {
       requestHeaders['Idempotency-Key'] = requireSubmissionContext(options);
     }
     // B4 wake-up (backlog:5a40c73e54aa): after the web slept the first
-    // answer may be a waking service — one retry, same key, while the
-    // screen still shows its loading state, instead of an error. A lost
-    // session is never a retry: it leaves for the login at once and only
-    // once (review #673 giro 3: isWakeTransient excludes it).
+    // answer may be a waking service — while the screen still shows its
+    // loading state, instead of an error. A lost session is never a retry:
+    // it leaves for the login at once and only once (review #673 giro 3:
+    // isWakeTransient excludes it). A write keeps the single retry, same
+    // key (backlog:0d25ed7dc34f); a read polls until the space answers.
     const once = async () => {
       const response = await fetch(`${ADMIN_BASE}${path}`, {
         ...options,
@@ -228,7 +234,8 @@ const moduleClient = {
       }
       return payload;
     };
-    return withWakeRetry(once, { method, onWaking: wakingNotice });
+    if (isMutation(method)) return withWakeRetry(once, { method, onWaking: wakingNotice });
+    return readWhileWaking(once, { method });
   },
 };
 // backlog:c048bf6f2dd3: the schema answers from the space's last copy and
@@ -264,6 +271,36 @@ function wakingNotice(waking) {
   }
   wakingReads += 1;
   if (wakingReads === 1 && elements.toast) toast(WAKING_TEXT);
+}
+
+/**
+ * backlog:0d25ed7dc34f: while a read waits for the space to wake past a
+ * single retry, the shell says so once — the waiting line, never a refusal
+ * — and the screen keeps its loading state until the space answers and
+ * paints. Writes keep the short notice above: a second write attempt may
+ * already have committed, so it never polls.
+ */
+let spaceWakingReads = 0;
+function spaceWakingNotice(waking) {
+  if (!waking) {
+    spaceWakingReads = Math.max(0, spaceWakingReads - 1);
+    return;
+  }
+  spaceWakingReads += 1;
+  if (spaceWakingReads === 1 && elements.toast) toast(SPACE_WAKING_TEXT);
+}
+
+/**
+ * Read through a waking space (backlog:0d25ed7dc34f): the same verdict as
+ * the single retry, but the read polls (bounded) while the failure says the
+ * service is waking — the screen paints by itself when the space answers
+ * instead of parking on a refusal with Riprova. A final refusal still throws,
+ * so the screen stays honest when the space never answers in time.
+ */
+async function readWhileWaking(run, { method }) {
+  const settled = await pollWhileWaking(run, { method, onWaking: spaceWakingNotice });
+  if (settled !== null && typeof settled === 'object' && 'answer' in settled) return settled.answer;
+  throw settled?.error ?? Object.assign(new Error('Invalid server response'), { code: 'INVALID_RESPONSE' });
 }
 
 async function refresh() {
@@ -555,7 +592,7 @@ import { createToastController } from './admin-ui.js';
 import { createSpaziAccessiView, masterEnabled } from './admin-spazi-accessi.js';
 import { createProfiloView } from './admin-profilo.js';
 import { createSpineView } from './admin-spine.js';
-import { WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
+import { SPACE_WAKING_TEXT, WAKING_TEXT, apiFailure, humanizeLabel, parseModuleRoute, pollWhileWaking, shellNavInput, tagRequestFailure, withWakeRetry } from './admin-core.js';
 
 const generatedNav = document.querySelector('#generatedNav');
 
