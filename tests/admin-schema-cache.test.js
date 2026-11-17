@@ -214,6 +214,29 @@ test('c048bf6f2dd3: a half-typed field survives a schema that changes behind the
   assert.equal(still.__editInputs.value.value, '12,5', 'the half-typed value is still there');
 });
 
+// backlog:c048bf6f2dd3 (ritorno 1, EVIDENCE_LINE_NOT_PASS 2026-11-17): the
+// background renewal and its version change were not observable from the
+// browser — no schema change can be provoked there, so criteria 2 and 3
+// stayed «non provabile». The shell now stamps the identity of the copy the
+// navigation was built from on the shell root, on every navigation build
+// (boot and background change share populateNav). Red before the cure: no
+// stamp helper exists.
+test('c048bf6f2dd3: a schema copy has an identity the shell can show', async () => {
+  const cache = await import('../apps/admin/public/admin-schema-cache.js');
+  assert.equal(typeof cache.schemaStampOf, 'function', 'the stamp helper exists');
+  const one = cache.schemaStampOf({ version: '1', pipelines: [] });
+  assert.equal(one.version, '1');
+  assert.match(one.digest, /^[0-9a-f]{8}$/, 'a short hex digest');
+  assert.deepEqual(cache.schemaStampOf({ version: '1', pipelines: [] }), one, 'the same content stamps the same identity');
+  assert.notDeepEqual(
+    cache.schemaStampOf({ version: '1', pipelines: [{ name: 'sales' }] }).digest,
+    one.digest,
+    'a content change without a version bump still moves the stamp',
+  );
+  assert.deepEqual(cache.schemaStampOf(null), { version: '', digest: '' }, 'a missing value stamps empty, never throws');
+  assert.equal(cache.schemaStampOf({ version: 2 }).version, '2', 'a numeric version stamps as text');
+});
+
 test('c048bf6f2dd3: a failed renewal, a refused copy and a failing change say why — once each — and never break the read', async () => {
   let clock = 0;
   let fail = false;

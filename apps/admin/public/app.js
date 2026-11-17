@@ -3,7 +3,7 @@ import { createAssistantPanel } from './admin-assistant.js';
 import { canonicalShellPath, resolveAdminBase } from './admin-base.js';
 import { sessionLostTarget } from './admin-session.js';
 import { startBundleWatch } from './admin-version.js';
-import { createShellSchemaClient } from './admin-schema-cache.js';
+import { createShellSchemaClient, schemaStampOf } from './admin-schema-cache.js';
 import { createKnownNames } from './admin-known-names.js';
 import { afterScreen, createMountGate, createOfferCrumbs, customerCrumbLabel, paintScreenFailure, paintScreenLoading, resetScreenScroll } from './admin-navigation.js';
 
@@ -1272,9 +1272,27 @@ async function refreshSpaceAi() {
  * @param {{ repaintScreen?: boolean }} [options] review Muse #898: a schema
  * renewed in the background refreshes the navigation only, never the screen.
  */
+// backlog:c048bf6f2dd3 (ritorno 1, EVIDENCE_LINE_NOT_PASS 2026-11-17): the
+// identity of the copy the navigation was built from, stamped on the shell
+// root where the supervisor's browser probe can read it. On a reload the
+// stamp is already there when the page paints (the copy answered, no wait);
+// a background renewal that differs moves the stamp while rebuilding the
+// nav. Stamping never breaks the shell.
+function stampSchemaIdentity(schema) {
+  try {
+    if (typeof document === 'undefined' || !document || !document.documentElement) return;
+    const stamp = schemaStampOf(schema);
+    document.documentElement.dataset.boSchemaVersion = stamp.version;
+    document.documentElement.dataset.boSchemaDigest = stamp.digest;
+  } catch {
+    // A stamp that fails never breaks the navigation.
+  }
+}
+
 async function populateNav({ repaintScreen = true } = {}) {
   try {
     const schema = await moduleClient.request('/api/schema');
+    stampSchemaIdentity(schema);
     // Backoffice shell (BO-F0-02): generated modules are the
     // "personalizzati" group; the first composed pipeline backs Pipeline.
     // The envelope-to-input reading lives in shellNavInput (admin-core.js),
