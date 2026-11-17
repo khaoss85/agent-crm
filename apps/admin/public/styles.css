@@ -1427,8 +1427,9 @@ select.bo-spazi-input { flex: none; }
 /*
  * Customer list (BO-F1-05): quick views, search, grouped filters with the AI
  * entry point, removable chips, sorting, configurable columns and server
- * pagination with ellipses. Cards stack in one column, so the list is fluid
- * under 700px once the toolbar and the pager wrap instead of overflowing.
+ * pagination with ellipses. Under 700px the rows read as one-column cards
+ * (head hidden, each fact with its own label), so the list never scrolls
+ * sideways on a 390px phone.
  */
 .bo-clienti { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .bo-clienti-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
@@ -1519,6 +1520,19 @@ select.bo-spazi-input { flex: none; }
   .bo-clienti-search { flex: none; height: 48px; }
   .bo-clienti-menu { position: static; margin-top: 8px; max-width: none; box-shadow: none; }
   .bo-clienti-pager { row-gap: 8px; }
+  /* backlog:92d9c5456ca6: on a phone the list reads as cards, never as the
+   * 760px table with an inner sideways scroll. The head hides (every fact
+   * carries its own label, revealed below), the inline desktop floor and
+   * tracks give way (`!important` beats the inline style, like the stacked
+   * calendar week), and every filter, sort, column, search and pager control
+   * stays the same DOM with the same actions. */
+  .bo-clienti-table { overflow-x: visible; padding: 12px; }
+  .bo-clienti-thead { display: none; }
+  .bo-clienti-list { gap: 12px; }
+  .bo-clienti-row { grid-template-columns: minmax(0, 1fr) !important; min-width: 0 !important; gap: 10px; align-items: start; padding: 14px 16px; border: 1px solid var(--line-faint); border-radius: 14px; background: var(--paper); }
+  .bo-clienti-chevron { display: none; }
+  .bo-clienti-fact { overflow: visible; overflow-wrap: anywhere; }
+  .bo-clienti-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; display: block; margin: 0 0 2px; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 }
 
 /* Team calendar (BO-F3 \"07 Calendario\"): the week grid, the phrase draft,
