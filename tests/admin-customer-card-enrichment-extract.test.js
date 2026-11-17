@@ -147,13 +147,14 @@ const flush = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => setImmediate(resolve));
 };
 
-async function open(client) {
+async function open(client, deps = {}) {
   const doc = createFakeDocument();
   const mount = createMount();
   const toasts = [];
   const view = createCustomerCardView({
     doc, mount, client, spaceId: 'presti',
     toast: (text) => { toasts.push(text); },
+    ...deps,
   });
   await view.renderCard('contact', 'c1');
   await flush();
@@ -320,6 +321,35 @@ test('e5e3e886 seguito 17/11: a run that answers nothing refuses in time instead
     'silence refuses with the timeout code instead of spinning forever',
   );
   assert.equal(await withExtractionTimeout(Promise.resolve('ok'), 1000), 'ok', 'an answer in time still lands');
+});
+
+test('e5e3e886 review #989 P2: a timeout with a repaint in flight clears the visible «Estraggo…»', async () => {
+  const waits = [];
+  const client = fakeClient();
+  const { mount, view, toasts } = await open(client, {
+    wait: (ms) => new Promise((resolve) => { waits.push({ ms, resolve }); }),
+  });
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  client.hold();
+  const running = refresh.listeners.click[0]();
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the run in flight reads «Estraggo…»');
+  // A repaint while the run flies (a note save repaints the card): the old
+  // box is detached and the new one shows the flying state.
+  await view.renderCard('contact', 'c1');
+  await flush();
+  assert.ok(byStatus(mount)?.textContent.includes('Estraggo'), 'the repaint keeps the flying «Estraggo…»');
+  assert.equal(waits.length, 1, 'the run waits on the injectable clock, not real time');
+  waits.forEach(({ resolve }) => resolve());
+  await running;
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'no visible «Estraggo…» survives the timeout');
+  assert.ok(toasts.some((text) => text.includes('Non ha risposto in tempo')), 'the timeout names the retry line');
+  client.release();
+  await flush();
+  assert.ok(!String(mount.textContent).includes('Estraggo'), 'the late answer never resurrects the wait');
+  assert.equal(client.writes.length, 1, 'exactly one run left');
 });
 
 test('e5e3e886: the run sources are messages only, capped, with channel and handle as detail', () => {

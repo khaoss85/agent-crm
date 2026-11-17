@@ -583,28 +583,25 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
   && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
     || /** @type {any} */ (error).status === 503);
 
+export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
 /**
  * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
  * spins without end — a run that answers nothing within the timeout refuses
  * with the retry code instead of hanging the section. The caller names the
- * wait in Italian («Non ha risposto in tempo: riprova.»).
- */
-export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
-/**
- * @param {Promise<any>} promise @param {number} [ms]
+ * wait in Italian («Non ha risposto in tempo: riprova.»). The clock is the
+ * view's injectable `wait` seam, so tests fire it without real time.
+ * @param {Promise<any>} promise @param {number} [ms] @param {(wms: number) => Promise<any>} [waitFn]
  * @returns {Promise<any>}
  */
-export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS) {
-  /** @type {any} */
-  let timer = null;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
-    }, ms);
+export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
+  const sleep = typeof waitFn === 'function' ? waitFn : (wms) => new Promise((resolve) => {
+    const timer = setTimeout(resolve, wms);
+    if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
   });
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer !== null) clearTimeout(timer);
+  const timeout = Promise.resolve(sleep(ms)).then(() => {
+    throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
   });
+  return Promise.race([promise, timeout]);
 }
 /** The Italian line for a run the timeout above refused. @param {any} error */
 const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
@@ -3779,7 +3776,7 @@ export function createCustomerCardView(deps) {
             try {
               let fresh;
               try {
-                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS);
+                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
               } catch (error) {
                 if (isExtractionTimeout(error)) {
                   toast('Non ha risposto in tempo: riprova.', true);
@@ -3821,12 +3818,20 @@ export function createCustomerCardView(deps) {
             // Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): a run
             // that answers nothing refuses in time with the retry line —
             // «Estraggo…» never spins without end.
-            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS);
+            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
             } else if (isExtractionTimeout(error)) {
               toast('Non ha risposto in tempo: riprova.', true);
+              // Review #989 (P2): a repaint may have detached this box while
+              // the run flew, and its replacement shows the flying
+              // «Estraggo…». The flight is over: release it before the
+              // repaint below, or the new paint shows it again.
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
