@@ -985,16 +985,9 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // «5 messaggi nuovi da 2 clienti» — with singular and plural. With no
   // message count only the customers read, never a message number.
   const unreadMessagesN = Number.isSafeInteger(unreadMessages) && unreadMessages > 0 ? unreadMessages : null;
-  const unreadText = (() => {
-    if (unreadMessagesN !== null) {
-      const least = unreadMessagesExact === false ? 'almeno ' : '';
-      const what = `${least}${unreadMessagesN} ${unreadMessagesN === 1 ? 'messaggio nuovo' : 'messaggi nuovi'}`;
-      if (unreadN <= 0) return `${what} da leggere`;
-      return `${what} da ${unreadN === 1 ? '1 cliente' : `${unreadN} clienti`}`;
-    }
-    if (unreadN <= 0) return null;
-    return unreadN === 1 ? '1 cliente con messaggi da leggere' : `${unreadN} clienti con messaggi da leggere`;
-  })();
+  // backlog:a03226f6a8c3: the recap reads the same «da leggere» words as
+  // the done box and the Clienti links (see unreadWords).
+  const unreadText = unreadWords({ customers: unreadN, messages: unreadMessagesN, exact: unreadMessagesExact });
   const unreadSingular = unreadMessagesN !== null ? unreadMessagesN === 1 && unreadMessagesExact !== false : unreadN === 1;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
@@ -1062,20 +1055,24 @@ export function buildTodayAgenda(appointments = [], now = new Date(), names = {}
   const today = buildTodayAgendaRows(appointments, now);
   return today.map((row) => {
     const id = nonEmptyText(row?.id) ?? '';
-    // The prototype's second line under each appointment ("chi"): who the
-    // appointment is with — the team member's name from the roster, else a
-    // short honest cue from the notes. Never invented when neither exists,
-    // and never the member's technical id (production 10/11 read
-    // «broker+…@accordo.invalid» and «google|…» here). A team mailbox is
-    // never a name either (backlog:57e3d1685e58: the operator's own
-    // address read under the contact): only a real name reads, then the
-    // contact's own address from the stored label (a synced invitee keeps
-    // its email there), then the notes cue.
+    // The prototype's second line under each appointment ("chi"): the
+    // contact's own channel or address, never the team person holding the
+    // slot (VERIFIER_BACK 2026-11-17 on backlog:57e3d1685e58: live «Prova
+    // verifica 40» read «daniele pelleri», the roster name of the
+    // operator, instead of the contact's email). The contact's own address
+    // from the stored label reads first (a synced invitee keeps its email
+    // there); the team member's real name is only the fallback when no
+    // contact address exists, then a short honest cue from the notes.
+    // Never invented when nothing exists, and never a technical id
+    // (production 10/11 read «broker+…@accordo.invalid» and «google|…»
+    // here). A team mailbox is never a name either (backlog:57e3d1685e58:
+    // the operator's own address read under the contact).
     const team = memberLabel(row?.teamMemberId, members);
     const teamName = team !== null && !team.includes('@') ? team : null;
     const labelMail = memberText(row?.subjectLabel);
-    const cue = teamName
-      ?? (labelMail !== null && labelMail.includes('@') ? labelMail : null)
+    const contactMail = labelMail !== null && labelMail.includes('@') ? labelMail : null;
+    const cue = contactMail
+      ?? teamName
       ?? (nonEmptyText(row?.notes) ? briefSnippet(row.notes, 80) : null);
     // The prototype attenuates an appointment already behind us today.
     const start = toInstant(row.startsAt);
@@ -1355,6 +1352,30 @@ export function buildServerReplies(answer, now = new Date()) {
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
     correspondents,
   };
+}
+
+/**
+ * The «da leggere» wait in words from the unread numbers
+ * (backlog:a03226f6a8c3): the view pill counts customers, never messages,
+ * so messages read apart — «5 messaggi nuovi da 2 clienti» when the row
+ * counts are known, «N clienti con messaggi da leggere» when only the
+ * customers are, null when nothing unread is known. The recap, the done
+ * box and the «da leggere» lines all read this one wording: the customer
+ * count never paints as a message count.
+ * @param {{ customers?: number | null, messages?: number | null, exact?: boolean }} input
+ * @returns {string | null}
+ */
+export function unreadWords({ customers = null, messages = null, exact = true } = {}) {
+  const n = Number.isSafeInteger(customers) && customers > 0 ? customers : 0;
+  const m = Number.isSafeInteger(messages) && messages > 0 ? messages : null;
+  if (m !== null) {
+    const least = exact === false ? 'almeno ' : '';
+    const what = `${least}${m} ${m === 1 ? 'messaggio nuovo' : 'messaggi nuovi'}`;
+    if (n <= 0) return `${what} da leggere`;
+    return `${what} da ${n === 1 ? '1 cliente' : `${n} clienti`}`;
+  }
+  if (n <= 0) return null;
+  return n === 1 ? '1 cliente con messaggi da leggere' : `${n} clienti con messaggi da leggere`;
 }
 
 /**
@@ -2062,11 +2083,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const submissionsRead = domains['site-forms'] != null
     ? page('site-form-submission', 'site-form-submission')
     : skip;
-  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
+  // backlog:ca53e443db44 (verifier 17/11: first round, /api/profile at 5,9 s):
+  // the profile still starts beside the first wave (see above) but no longer
+  // holds the essentials paint — it lands with the names below.
+  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
-    profileRead,
     // The «Da rispondere» inbox: the latest messages and their conversations.
     // Messages are the inbox; conversations only lend the name and the closed
     // state, so a space without the conversation module still lists who is
@@ -2108,7 +2131,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // consent, not through channel-connection rows: the same GET /api/profile
   // answer the Profilo screen reads. Unreadable stays null and contributes
   // no vote — an unknown state never poses as connected or missing.
-  outcome.profile = profile ?? null;
+  // backlog:ca53e443db44: the profile lands apart, in time for the names —
+  // the essentials above already painted without it (null reads unknown).
+  let essentialsPublished = false;
+  const profileLanded = profileRead.then(
+    (answer) => { outcome.profile = answer && typeof answer === 'object' ? answer : null; },
+    (error) => { noteReadFailure('profile', error); outcome.profile = null; },
+  );
   if (interactions) {
     outcome.inboxComposed = true;
     if (messagesPage != null) {
@@ -2131,6 +2160,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       noteReadFailure('paint', error);
     }
   }
+  // backlog:ca53e443db44: the day is on screen — late rows may join in place.
+  essentialsPublished = true;
   // Voce 785aeb28bd18: the essentials mark says where the first wave went.
   endStep('essentials', loadStartedAt);
   const subject = outcome.next != null && interactions
@@ -2163,14 +2194,16 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // as soon as its own data is in — the notification profile names repaint
   // after, without holding the ready rows or their count back.
   let namesPublished = false;
-  const named = () => {
+  // backlog:ca53e443db44: the rows publish as soon as their own read lands —
+  // `false` keeps the grey name bars until the names wave publishes `true`.
+  const named = (namesIn = true) => {
     if (typeof onNames !== 'function') return;
     try {
-      onNames({ ...outcome, pending: false, briefPending: true });
+      onNames({ ...outcome, pending: namesIn !== true, briefPending: true });
     } catch (error) {
       noteReadFailure('paint', error);
     }
-    namesPublished = true;
+    if (namesIn === true) namesPublished = true;
   };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
@@ -2178,6 +2211,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // The ready rows and their count paint now, even while a notification
     // profile read is still flying.
     if (namesPublished) named();
+    // backlog:ca53e443db44: the essentials are already on screen while the
+    // profile still flies — the rows join them now, the names after.
+    else if (essentialsPublished) named(false);
+    // The notification names read the profile's own mailboxes, so they wait
+    // for it, like before — the rows above no longer do.
+    await profileLanded;
     // backlog:971b3e0e: «Notifiche automatiche» always comes from the
     // local messages read, so its subjects need profile names on both
     // branches — the server view names «Da rispondere» itself, never the
@@ -2564,9 +2603,26 @@ export function renderOggi({
   // with unread messages nobody has to answer (a teammate already replied,
   // a notification, a closed thread) still waits to be read. The day is done
   // only when nothing waits to be read either.
-  const unreadWaiting = home.inbox != null && home.inbox.available !== false && Number.isSafeInteger(home.inbox.unread) && home.inbox.unread > 0
-    ? home.inbox.unread
-    : 0;
+  // backlog:a03226f6a8c3 (review Muse rev-agent-crm-988 testa fe04fb68):
+  // the customers pill (home.inbox.unread) is not a message count — the
+  // done box and the «da leggere» lines read the summary (customers +
+  // messages + exact) with the recap's clienti/messaggi wording.
+  const unreadSummary = home.inbox != null && home.inbox.unreadSummary != null && typeof home.inbox.unreadSummary === 'object'
+    ? home.inbox.unreadSummary
+    : null;
+  const unreadCustomers = Number.isSafeInteger(unreadSummary?.customers) && unreadSummary.customers > 0
+    ? unreadSummary.customers
+    : (home.inbox != null && home.inbox.available !== false && Number.isSafeInteger(home.inbox.unread) && home.inbox.unread > 0
+      ? home.inbox.unread
+      : 0);
+  const unreadSummaryMessages = Number.isSafeInteger(unreadSummary?.messages) && unreadSummary.messages > 0
+    ? unreadSummary.messages
+    : null;
+  const unreadSummaryExact = unreadSummary?.exact === true;
+  const unreadText = unreadWords({ customers: unreadCustomers, messages: unreadSummaryMessages, exact: unreadSummaryExact });
+  const unreadSingular = unreadSummaryMessages !== null
+    ? unreadSummaryMessages === 1 && unreadSummaryExact !== false
+    : unreadCustomers === 1;
   // review Muse #795: a floor from a truncated scan never reads «finito».
   // An unreadable inbox is unknown too (review Muse #795 giro 2): never «finito».
   const waitingFloor = home.inbox != null && (home.inbox.available === false || home.inbox.totalIsExact === false);
@@ -2576,12 +2632,10 @@ export function renderOggi({
   done.setAttribute('data-oggi-done', 'true');
   if (!allDone || home.inbox?.pending === true) {
     // Nothing to say yet: the count of the messages waiting is still reading.
-  } else if (waitingReplies === 0 && !waitingFloor && unreadWaiting === 0) {
+  } else if (waitingReplies === 0 && !waitingFloor && unreadText === null) {
     done.appendChild(el(doc, 'p', 'bo-oggi-empty', '✓ Hai finito per oggi. Ti scrivo io se arriva qualcosa di urgente.'));
   } else if (waitingReplies === 0 && !waitingFloor) {
-    done.appendChild(el(doc, 'p', 'bo-muted', unreadWaiting === 1
-      ? 'Hai risposto a tutto. Resta 1 messaggio da leggere, qui sotto.'
-      : `Hai risposto a tutto. Restano ${unreadWaiting} messaggi da leggere, qui sotto.`));
+    done.appendChild(el(doc, 'p', 'bo-muted', `Hai risposto a tutto. ${unreadSingular ? 'Resta' : 'Restano'} ${unreadText}, qui sotto.`));
   } else if (waitingFloor) {
     done.appendChild(el(doc, 'p', 'bo-muted', 'Nessun suggerimento aperto. Controlla i messaggi da rispondere qui sotto.'));
   } else {
@@ -2675,15 +2729,15 @@ export function renderOggi({
         note.appendChild(all);
       }
       inbox.appendChild(note);
-    } else if (inboxRows.length === 0 && unreadWaiting > 0) {
+    } else if (inboxRows.length === 0 && unreadText !== null) {
       // backlog:5cf918c2246e: an empty «Da rispondere» with unread messages
-      // never reads «nobody waits» alone — the unread count names itself here
+      // never reads «nobody waits» alone — the unread wait names itself here
       // (with its Clienti link when it can open it), and the trailing
       // «da leggere» line stays silent.
       const note = el(doc, 'p', 'bo-muted');
       note.appendChild(el(doc, 'span', null, 'Nessun messaggio aspetta una risposta, ma '));
       if (typeof events.openClientiView === 'function') {
-        const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadWaiting} da leggere in Clienti →`);
+        const unreadLink = el(doc, 'a', 'bo-oggi-more', `${unreadText} in Clienti →`);
         unreadLink.setAttribute('href', clientiViewHash(UNREAD_VIEW));
         unreadLink.setAttribute('data-action', 'inbox-unread');
         unreadLink.addEventListener('click', (event) => {
@@ -2693,7 +2747,7 @@ export function renderOggi({
         note.appendChild(unreadLink);
         unreadLinked = true;
       } else {
-        note.appendChild(el(doc, 'span', null, `${unreadWaiting} da leggere.`));
+        note.appendChild(el(doc, 'span', null, `${unreadText}.`));
       }
       inbox.appendChild(note);
     } else if (inboxRows.length === 0) {
@@ -2720,11 +2774,12 @@ export function renderOggi({
         inbox.appendChild(more);
       }
     }
-    // backlog:c2bf6b206d96: «Da leggere» stays its own count, named apart.
+    // backlog:c2bf6b206d96: «Da leggere» stays its own wait, named apart.
     // backlog:5cf918c2246e: folded into the empty note above when it fired.
-    const unread = home.inbox.available === false ? null : home.inbox.unread;
-    if (!unreadLinked && Number.isSafeInteger(unread) && unread > 0 && typeof events.openClientiView === 'function') {
-      const line = el(doc, 'a', 'bo-oggi-more', `${unread} da leggere in Clienti →`);
+    // backlog:a03226f6a8c3: the recap's clienti/messaggi words, never the
+    // customers pill as a message count.
+    if (!unreadLinked && unreadText !== null && typeof events.openClientiView === 'function') {
+      const line = el(doc, 'a', 'bo-oggi-more', `${unreadText} in Clienti →`);
       line.setAttribute('href', clientiViewHash(UNREAD_VIEW));
       line.setAttribute('data-action', 'inbox-unread');
       line.addEventListener('click', (event) => {
@@ -2734,9 +2789,21 @@ export function renderOggi({
       inbox.appendChild(line);
     }
     // Backlog 803d127c4458: past the messages page the count above
-    // undercounts — the cut is disclosed, never silent.
+    // undercounts — the cut is disclosed, never silent, with the way to
+    // see the rest (Clienti › Tutti, like the other inbox notes above).
     if (home.inbox.partial === true) {
-      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+      const note = el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci). `);
+      if (typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutti in Clienti →');
+        all.setAttribute('href', clientiViewHash('tutti'));
+        all.setAttribute('data-action', 'inbox-all-messages');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView('tutti');
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
@@ -2948,6 +3015,9 @@ export function renderOggi({
     // disponibile» channels: the count still shows, without a Collega.
     if (invite.leads.length > 0 || invite.aside !== null || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
+      // backlog:ca53e443db44: keyed so the late refill swaps it in place
+      // when the deferred profile lands — the strip is profile-dependent.
+      section.setAttribute('data-oggi-section', 'channels');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
       if (invite.leads.length > 0) {
@@ -3214,11 +3284,21 @@ export function createOggiView(deps) {
     // answered — total, rows and names — and the messages read only lends
     // the «Notifiche automatiche» group; without it, the messages read alone.
     const notifications = local?.available ? local.notifications : { total: 0, rows: [] };
+    // backlog:a03226f6a8c3: the «Da leggere» summary (customers +
+    // messages + exact) rides the inbox into renderOggi, so the done box
+    // and the «da leggere» lines read it with the recap's wording.
+    const unreadSummary = last.unreadSummary ?? null;
     const inbox = last.repliesPending === true
-      ? { available: true, pending: true, total: 0, rows: [], notifications }
+      ? { available: true, pending: true, total: 0, rows: [], notifications, unreadSummary }
       : last.replies != null
-        ? { ...serverInbox, notifications }
-        : local;
+        // Backlog 803d127c4458: the server view names «Da rispondere» but
+        // never reads the messages page — its cut still hides rows (the
+        // notifications group reads from that page), so the local capped
+        // flag rides along instead of dropping in silence.
+        ? { ...serverInbox, partial: serverInbox.partial === true || local?.partial === true, notifications, unreadSummary }
+        : local == null
+          ? null
+          : { ...local, unreadSummary };
     renderOggi({
       doc,
       mount: target,
@@ -3367,7 +3447,9 @@ export function createOggiView(deps) {
     paint(scratch);
     const section = (root, key) => root.querySelector(`section[data-oggi-section="${key}"]`);
     const pairs = [];
-    for (const key of ['inbox', 'agenda', 'brief']) {
+    // backlog:ca53e443db44: the channel strip is profile-dependent, so the
+    // late refill swaps it too — a deferred profile no longer strands it.
+    for (const key of ['inbox', 'agenda', 'brief', 'channels']) {
       const live = section(mount, key);
       const fresh = section(scratch, key);
       if ((live === null) !== (fresh === null)) {

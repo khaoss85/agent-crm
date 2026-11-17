@@ -571,7 +571,26 @@ test('57e3d1685e58: the chi line shows the contact address, never the user one',
     {},
     [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
   );
-  assert.equal(named[0].who, 'Marco Ferri', 'a real team name still reads first');
+  assert.equal(named[0].who, 'Marco Ferri', 'team name reads only without a contact address');
+});
+
+test('57e3d1685e58: the chi line prefers the contact address over a known team name', () => {
+  // VERIFIER_BACK 2026-11-17 (failed delivery 24d7bde1): live «Prova
+  // verifica 40» read «daniele pelleri» (the roster name of the operator
+  // holding the slot) in the grey line under the contact, instead of the
+  // contact's own channel/email. A synced invitee keeps its email in the
+  // stored subject label, so the contact address must win over the team
+  // name whenever both are known.
+  const roster = [{ subject: 'op-1', displayName: 'daniele pelleri', email: 'operatore@esempio.it' }];
+  const appt = {
+    ...APPT_TODAY, id: 'appt-live-40', teamMemberId: 'op-1',
+    subjectLabel: 'ospite@esempio.it', notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([appt], OGGI_NOW, {}, roster)[0].who,
+    'ospite@esempio.it',
+    'the contact email, never the known team name',
+  );
 });
 
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
@@ -781,7 +800,7 @@ test('agenda rows carry the chi line from the team member or the notes', () => {
   const withTeam = { ...APPT_TODAY, id: 'appt-team', teamMemberId: 'Marco' };
   const withNotesOnly = { ...APPT_TODAY, id: 'appt-notes' };
   const agenda = buildTodayAgenda([withTeam, withNotesOnly], OGGI_NOW);
-  assert.equal(agenda[0].who, 'Marco', 'team member first');
+  assert.equal(agenda[0].who, 'Marco', 'team member as fallback without a contact address');
   assert.ok(
     agenda[1].who.includes('Vuole la scheda'),
     'notes cue when no team member is stored',
