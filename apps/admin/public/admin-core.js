@@ -245,7 +245,11 @@ export function shellNavInput(envelope) {
   // operation, published in its domain block's operations list.
   const agentOps = envelope?.domains?.agents?.operations;
   const agentsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-agent');
-  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, modulesSupported };
+  // backlog:0d2d8f2e: Squadre ride the same agents package (the server
+  // answers /api/squads/* only when it is composed), so the voice follows
+  // it too — the same rule as Agenti, never a link to a blank screen.
+  const squadsAvailable = Array.isArray(agentOps) && agentOps.some((op) => op?.name === 'create-teammate-squad' || op?.name === 'create-agent');
+  return { pipelines, customModules, customerDataAvailable, sequencesAvailable, agentsAvailable, squadsAvailable, modulesSupported };
 }
 
 /**
@@ -414,6 +418,14 @@ export function parseModuleRoute(hash) {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };
     if (rawParts.length !== 1) return { view: 'invalid' };
     return { view: 'agenti' };
+  }
+  // Squads route: #/squadre (backlog:0d2d8f2e). One screen, same
+  // canonical discipline: anything under the prefix is invalid, so a
+  // hostile hash never becomes a request path.
+  if (rawParts.length && rawParts[0] === 'squadre') {
+    if (rawParts.some((part) => part === '')) return { view: 'invalid' };
+    if (rawParts.length !== 1) return { view: 'invalid' };
+    return { view: 'squadre' };
   }
   if (rawParts.length && rawParts[0] === 'sequenze') {
     if (rawParts.some((part) => part === '')) return { view: 'invalid' };

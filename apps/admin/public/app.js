@@ -546,6 +546,7 @@ import { createSyncView } from './admin-sync.js';
 import { createReportingView } from './admin-reporting.js';
 import { createSequenzeView } from './admin-sequenze.js';
 import { createAgentiView } from './admin-agenti.js';
+import { createSquadreView } from './admin-squadre.js';
 import { readCommandAgents } from './admin-cmdk.js';
 import { createCalendarioView } from './admin-calendario.js';
 import { createPersonalizzazioneView } from './admin-personalizzazione.js';
@@ -1191,6 +1192,8 @@ let lastRoutedView = null;
 const CLIENTI_PAIR = new Set(['customer-data', 'customer-new']);
 /** The Agenti screen (backlog:33782ba68747), created once per session. */
 let agentiView = null;
+/** The Squadre screen (backlog:0d2d8f2e), created once per session. */
+let squadreView = null;
 let shellFixCount = null;
 let shellCustomerData = false;
 /** The render of the screen opened at boot (backlog:94eabbd4762f). @type {Promise<unknown> | null} */
@@ -1433,6 +1436,7 @@ async function route() {
     if (oggiView) oggiView.invalidate();
     if (sequenzeView) sequenzeView.invalidate();
     if (agentiView) agentiView.invalidate();
+    if (squadreView) squadreView.invalidate();
     calendarioView.invalidate();
     dashboardView.classList.add('hidden');
     moduleView.classList.remove('hidden');
@@ -1504,6 +1508,7 @@ async function route() {
   if (target.view !== 'dashboard' && oggiView) oggiView.invalidate();
   if (target.view !== 'sequenze' && sequenzeView) sequenzeView.invalidate();
   if (target.view !== 'agenti' && agentiView) agentiView.invalidate();
+  if (target.view !== 'squadre' && squadreView) squadreView.invalidate();
   if (target.view !== 'calendario') calendarioView.invalidate();
   const onDashboard = target.view === 'dashboard';
   if (onDashboard && MOUNTED) {
@@ -1546,6 +1551,7 @@ async function route() {
       ((target.view === 'quotes' || target.view === 'quote-detail') && link.getAttribute('href') === '#/quotes') ||
       (target.view === 'catalog' && link.getAttribute('href') === '#/catalogo') ||
       (target.view === 'calendario' && link.getAttribute('href') === '#/calendario') ||
+      (target.view === 'squadre' && link.getAttribute('href') === '#/squadre') ||
       ((target.view === 'work' || target.view === 'work-task') && link.getAttribute('href') === '#/work') ||
       ((target.view === 'marketing' || target.view === 'marketing-proposal') && link.getAttribute('href') === '#/marketing') ||
       ((target.view === 'customer-data' || target.view === 'customer-card' || target.view === 'customer-import' || target.view === 'customer-new') && link.getAttribute('href') === '#/customer-data')
@@ -1612,6 +1618,21 @@ async function route() {
         });
       }
       await agentiView.render();
+    }
+    else if (target.view === 'squadre') {
+      if (!squadreView) {
+        squadreView = createSquadreView({
+          doc: document,
+          // backlog:0d2d8f2e: paint only while Squadre is the routed screen.
+          mount: mountGate.owned('squadre'),
+          client: moduleClient,
+          submissions,
+          storage: shellStorage,
+          spaceId: () => shellActiveSpace ?? shellSpaces[0]?.id ?? null,
+          navigate: (next) => { window.location.hash = next; },
+        });
+      }
+      await squadreView.render();
     }
     else if (target.view === 'calendario') await calendarioView.render();
     else if (target.view === 'nuovo-modulo') await reportingView.renderNuovoModulo();
