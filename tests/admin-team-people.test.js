@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { auditActorLabel, memberLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
+import { auditActorLabel, memberLabel, offerActorLabel, offerCreatorLabel, personLabel, teamPeople } from '../apps/admin/public/admin-labels.js';
 import { memberLabelFor, personRows, resolveMemberName } from '../apps/admin/public/admin-calendario.js';
 import { buildTeamRows, duplicateTeamHints } from '../apps/admin/public/admin-spazi-accessi.js';
 import { createReportingView, withPersonNames } from '../apps/admin/public/admin-reporting.js';
@@ -478,4 +478,27 @@ test('backlog:6563edf41aab: Impostazioni segnala i possibili doppioni del team',
     { subject: 'a', displayName: 'Sara Neri', role: 'operator', status: 'active' },
     { subject: 'b', displayName: 'Luca Blu', role: 'operator', status: 'active' },
   ])), [], 'distinct names stay silent');
+});
+
+test('backlog:54a83e2fd0d2: l\u2019autore in cronologia e \u00abCreata da\u00bb ha il nome di profilo, senza \u00ab(2)\u00bb', () => {
+  // Due soggetti della stessa persona letta con maiuscole diverse (mai
+  // fuse: il nome da solo non fonde mai, agent-crm#644/#742).
+  const roster = [
+    { subject: 'google|1', displayName: 'Daniele Pelleri', email: 'dan@example.com' },
+    { subject: 'github|2', displayName: 'daniele pelleri', email: 'dan.code@example.com' },
+  ];
+  // Le righe del Team restano due e numerate (backlog:6563edf41aab).
+  assert.deepEqual(teamPeople(roster).map((row) => row.label), ['Daniele Pelleri (1)', 'daniele pelleri (2)']);
+  // Ma l'autore è uno solo, senza suffisso, per entrambi i soggetti.
+  for (const subject of ['google|1', 'github|2']) {
+    assert.equal(personLabel(subject, roster), 'Daniele Pelleri', 'personLabel: un solo autore');
+    assert.equal(auditActorLabel({ actorId: subject }, [], roster), 'Daniele Pelleri', 'cronologia/Storico: un solo autore');
+  }
+  const record = { owner: 'github|2', contactName: 'Anna', companyName: 'Acme' };
+  assert.equal(offerActorLabel({ actorId: 'github|2' }, record, roster), 'Daniele Pelleri', 'stesso soggetto di owner e actor');
+  assert.equal(
+    offerCreatorLabel([{ action: 'opportunity.created', actorId: 'google|1' }], record, roster),
+    'Daniele Pelleri',
+    '\u00abCreata da\u00bb: l\u2019altro soggetto della stessa persona',
+  );
 });

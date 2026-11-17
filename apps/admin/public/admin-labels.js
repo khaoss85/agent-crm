@@ -426,6 +426,15 @@ export function teamPeople(roster) {
 }
 
 /**
+ * `teamPeople` rows for an id lookup: roster items or already-built rows.
+ * @param {unknown} rosterOrPeople roster items or `teamPeople` rows
+ */
+function rowsOf(rosterOrPeople) {
+  const list = Array.isArray(rosterOrPeople) ? rosterOrPeople : [];
+  return list.length > 0 && Array.isArray(list[0]?.subjects) ? list : teamPeople(list);
+}
+
+/**
  * The person row behind an id — a roster subject or a control-plane
  * person key (`operatorAccountId`, the actor of an audit entry) — or null.
  * @param {unknown} id
@@ -434,24 +443,64 @@ export function teamPeople(roster) {
 export function personOf(id, rosterOrPeople) {
   if (typeof id !== 'string' || id.trim() === '') return null;
   const wanted = id.trim();
-  const list = Array.isArray(rosterOrPeople) ? rosterOrPeople : [];
-  const people = list.length > 0 && Array.isArray(list[0]?.subjects) ? list : teamPeople(list);
-  return people.find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+  return rowsOf(rosterOrPeople).find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+}
+
+/**
+ * The painted person behind one team row modulo case: the profile name
+ * first, else the mailbox, else the first subject as words. Two rows of
+ * the same person written with different capitals share the key.
+ * @param {{ name?: string | null, email?: string | null, subjects?: Array<string> }} row
+ * @returns {string | null}
+ */
+function authorKeyOf(row) {
+  const plain = Array.isArray(row?.subjects)
+    ? row.subjects.map((subject) => subjectText(subject)).find((text) => text !== null) ?? null
+    : null;
+  const base = row?.name ?? row?.email ?? plain;
+  return typeof base === 'string' && base !== '' ? base.toLowerCase() : null;
+}
+
+/**
+ * backlog:54a83e2fd0d2 — the author's word in cronologia, «Creata da» and
+ * Storico: the profile name, never the Team ordinal («Rossi (2)»). Rows
+ * that paint the same person modulo case read one author: the best-cased
+ * profile name across them (a full name beats a handle, a capitalised one
+ * beats a lower-case copy).
+ * @param {{ name?: string | null, email?: string | null, subjects?: Array<string> }} row
+ * @param {Array<any>} rows `teamPeople` rows
+ * @returns {string | null}
+ */
+function authorName(row, rows) {
+  const key = authorKeyOf(row);
+  if (key !== null) {
+    const names = [];
+    for (const other of rows) {
+      if (authorKeyOf(other) === key && typeof other?.name === 'string') names.push(other.name);
+    }
+    if (names.length > 0) return profileName(names);
+  }
+  const plain = Array.isArray(row?.subjects)
+    ? row.subjects.map((subject) => subjectText(subject)).find((text) => text !== null) ?? null
+    : null;
+  return row?.name ?? row?.email ?? plain;
 }
 
 /**
  * The words a screen shows for a person id it stores (an offer referente,
- * a reporting owner, an audit actor): the person label from the team, else
- * the id as words (`subjectText`: a typed name or a real mailbox reads as
- * itself, a slug as words), else null — never a technical mailbox or a
- * provider id.
+ * a reporting owner, an audit actor): the profile name from the team,
+ * never the Team ordinal (backlog:54a83e2fd0d2: no «Rossi (2)» in
+ * cronologia, «Creata da» or Storico), else the id as words (`subjectText`:
+ * a typed name or a real mailbox reads as itself, a slug as words), else
+ * null — never a technical mailbox or a provider id.
  * @param {unknown} id
  * @param {unknown} rosterOrPeople
  * @returns {string | null}
  */
 export function personLabel(id, rosterOrPeople) {
-  const row = personOf(id, rosterOrPeople);
-  if (row !== null) return row.known ? row.label : null;
+  const rows = rowsOf(rosterOrPeople);
+  const row = personOf(id, rows);
+  if (row !== null) return row.known ? authorName(row, rows) : null;
   return subjectText(id);
 }
 
@@ -711,9 +760,11 @@ export function auditActorLabel(entry, known = [], roster = []) {
   const id = typeof entry?.actorId === 'string' ? entry.actorId.trim() : '';
   if (id === '') return '—';
   // A team member (by subject or person key) reads their profile name —
-  // else their mailbox, like personLabel does (backlog:3f3c143b).
-  const person = personOf(id, roster);
-  if (person !== null && person.known) return person.label;
+  // else their mailbox, like personLabel does (backlog:3f3c143b), never
+  // with the Team ordinal (backlog:54a83e2fd0d2).
+  const rows = rowsOf(roster);
+  const person = personOf(id, rows);
+  if (person !== null && person.known) return authorName(person, rows);
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   // A corroborated slug still paints as words, never the raw stored id
   // («coach-guido» reads «Coach Guido», a digit slug names nobody and
