@@ -37,7 +37,7 @@ function mountShell(overrides = {}) {
   view.update({ items: buildShellNav({ customerDataAvailable: true }), activeScreenId: 'oggi', screenLabel: 'Oggi' });
   const toggle = () => topbar.findAll('button').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-menu-toggle'));
   const isOpen = () => sidebar.classList.contains('bo-drawer-open');
-  return { doc, sidebar, topbar, navigated, fire, view, toggle, isOpen };
+  return { doc, sidebar, topbar, navigated, fire, view, toggle, isOpen, win };
 }
 
 test('the top bar carries one ☰ button that controls the sidebar, closed at start', () => {
@@ -254,7 +254,56 @@ test('the phone content starts within 120px at 390px, short and long names with 
       crumb.textContent.includes(spaces[0].name) && crumb.textContent.includes('Oggi'),
       `${label}: the rendered path still names the space and the screen`,
     );
+    // backlog:dd6a01de569b: at 390px the phone bar above already names the
+    // space, so the path must not repeat it — the space part lives in its
+    // own span and the phone stylesheet drops it, leaving the screen only.
+    const crumbParts = crumb.findAll('span');
+    const spacePart = crumbParts.find((node) => hasClass(node, 'bo-crumb-space'));
+    const screenPart = crumbParts.find((node) => hasClass(node, 'bo-crumb-screen'));
+    assert.ok(spacePart && spacePart.textContent.includes(spaces[0].name), `${label}: the space part carries the space name`);
+    assert.equal(screenPart?.textContent, 'Oggi', `${label}: the screen part carries the screen alone`);
+    assert.match(block, /\.bo-crumb \.bo-crumb-space \{[^}]*display: none;/, `${label}: the phone hides the repeated space part`);
     const total = barPadV + firstRow + rowGap + crumbLine + rowGap + aiH + contentGap;
     assert.ok(total <= 120, `${label}: the content starts at ${total.toFixed(1)}px, within the 120px budget`);
   }
+});
+
+function phoneBlock() {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const phone = css.indexOf('@media (max-width: 700px) {\n  /* design: shell telefono');
+  assert.ok(phone !== -1, 'the phone shell block exists');
+  return css.slice(phone, css.indexOf('\n}\n', phone));
+}
+
+test('backlog:dd6a01de569b: no ⌘K hint on a phone — it needs a keyboard', () => {
+  const { topbar } = mountShell();
+  const hint = topbar.findAll('kbd').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-ai-key'));
+  assert.ok(hint, 'the hint stays in the bar for desktop');
+  assert.equal(hint.textContent, '⌘K');
+  assert.match(phoneBlock(), /\.bo-ai \.bo-ai-key \{[^}]*display: none;/, 'up to 700px the hint is hidden');
+});
+
+test('backlog:dd6a01de569b: the AI bar keeps a margin from the bar bottom edge', () => {
+  const block = phoneBlock();
+  const barPad = block.match(/\.bo-topbar \{[^}]*padding: (\d+)px \d+px(?: (\d+)(?:px)?)?;/);
+  assert.ok(barPad, 'phone bar vertical padding is declared');
+  assert.ok(Number(barPad[1]) > 0 && Number(barPad[2] ?? barPad[1]) > 0, `the bar keeps air top and bottom, got ${barPad[0]}`);
+  assert.ok(Number(barPad[2] ?? barPad[1]) >= 8, 'the AI bar stands at least 8px off the bottom edge');
+});
+
+test('backlog:dd6a01de569b: a scrolled page gives the sticky bar an edge, shadow only', () => {
+  const { topbar, win, fire } = mountShell();
+  assert.equal(topbar.classList.contains('bo-topbar-scrolled'), false, 'a fresh bar has no edge');
+  fire('scroll', {});
+  assert.equal(topbar.classList.contains('bo-topbar-scrolled'), false, 'no scroll, no edge');
+  win.scrollY = 24;
+  fire('scroll', {});
+  assert.equal(topbar.classList.contains('bo-topbar-scrolled'), true, 'a scrolled page flags the bar');
+  win.scrollY = 0;
+  fire('scroll', {});
+  assert.equal(topbar.classList.contains('bo-topbar-scrolled'), false, 'back at the top the edge goes away');
+  const scrolled = phoneBlock().match(/\.bo-topbar\.bo-topbar-scrolled \{([^}]*)\}/);
+  assert.ok(scrolled, 'the phone draws the scrolled edge');
+  assert.match(scrolled[1], /box-shadow:/, 'the edge is a shadow');
+  assert.doesNotMatch(scrolled[1], /border/, 'never a border: the 120px budget cannot move');
 });

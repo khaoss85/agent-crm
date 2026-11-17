@@ -89,15 +89,15 @@
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract1",
-      "version": 5,
-      "fingerprint": "e81aa717df9d2481f4e5df7c54222719ed8c337289f782da2e9b1a95c02ce254"
+      "version": 6,
+      "fingerprint": "c0495259bc7963f1e58eb2dd0f8dfd73e29f8d91ff16d965fc5075cc36333dbf"
     },
     {
       "name": "customer-data",
       "dir": "customer-data",
       "graph": "contract2",
-      "version": 5,
-      "fingerprint": "da75e0d39f9934cd249de99521b3b292737612f2eb2faf3ad982447657d0ee08"
+      "version": 6,
+      "fingerprint": "276e8a6bb04d10d2570f19b61d2318955021ef336d8321ca0d10d063821503a2"
     },
     {
       "name": "customer-hub",
@@ -173,15 +173,15 @@
       "name": "llm",
       "dir": "llm",
       "graph": "contract1",
-      "version": 3,
-      "fingerprint": "eac16b0082a6bce19671af7a026eb1fe2d2176c56f50388ec3667080d1f3d574"
+      "version": 4,
+      "fingerprint": "0287b6a0fbc6e430783258bb43d9802b897494d09f44680ac92d25763528e7e3"
     },
     {
       "name": "llm",
       "dir": "llm",
       "graph": "contract2",
-      "version": 3,
-      "fingerprint": "463a5fbce02cb5a0ee1fd0668fd449cd8880bb83b320b3d9a4975bf83f709673"
+      "version": 4,
+      "fingerprint": "2a98d30054a3bc05f53d69720fe8e358e593f2ea9165b34f648346dcd1fd1a9e"
     },
     {
       "name": "magic-link",
@@ -236,15 +236,15 @@
       "name": "sequences",
       "dir": "sequences",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "83566240335ead906dd3b4f097402d474b06849683bd781e332820aad41a9882"
+      "version": 2,
+      "fingerprint": "2ff0b66cd70a71e1681b2f169514d4334acbfcbc2d3823249309056b80803e60"
     },
     {
       "name": "sequences",
       "dir": "sequences",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "c09afe7629a3aba887ad3b8a3856ac6b57903981d92c57f9fb535c8313750348"
+      "version": 2,
+      "fingerprint": "a6001fb8ddac8576ea742e2d2e7592a205a8131a7c8e913ad88dd8e9085ddaed"
     },
     {
       "name": "service",

@@ -657,7 +657,7 @@ test('the shipped example is current against this repository, and check says so'
   // makes about staleness, applied to the one plan this repository ships.
   const result = await solutionCommand({ planPath: EXAMPLE, mode: 'check', json: true, rootDir: ROOT });
   assert.deepEqual(result.problems, [],
-    'the canonical example is stale: re-run `crm solution check <plan> --json` and record its inspectionFingerprint');
+    'the canonical example is stale: run `npm run repin:example-pins` (scripts/repin-example-pins.js) and commit the rewritten files instead of hand-editing the pins');
   assert.equal(result.exitCode, 0);
 
   const pinned = JSON.parse(readFileSync(EXAMPLE, 'utf8')).application.inspectionFingerprint;

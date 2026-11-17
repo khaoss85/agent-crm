@@ -428,7 +428,7 @@ test('backlog:6563edf41aab: «Daniele Pelleri» e «daniele pelleri» non fanno 
   // diverse): una riga sola, non due interruttori uguali con avatar DA.
   const typed = personRows(['Daniele Pelleri'], [], [{ subject: 'daniele pelleri', displayName: 'daniele pelleri' }]);
   assert.equal(typed.length, 1, 'typed filter joins the roster person whatever the case');
-  assert.deepEqual(typed[0].ids, ['daniele pelleri'], 'one booking identity, never a ghost row');
+  assert.deepEqual([...typed[0].ids].sort(), ['Daniele Pelleri', 'daniele pelleri'], 'the typed identity stays on the row');
   // Due righe roster distinte con lo stesso nome a meno delle maiuscole
   // restano due persone (nome da solo non fonde mai: agent-crm#644/#742),
   // ma numerate come gli omonimi, mai due righe indistinguibili.
@@ -446,9 +446,17 @@ test('backlog:6563edf41aab: «Daniele Pelleri» e «daniele pelleri» non fanno 
     ]).map((row) => row.label),
     ['Daniele Pelleri (1)', 'daniele pelleri (2)'],
   );
-  // Nascondere con l'altra maiuscola spegne comunque la riga.
-  const hidden = personRows(['Daniele Pelleri'], ['daniele pelleri'], [{ subject: 'daniele pelleri', displayName: 'daniele pelleri' }]);
-  assert.equal(hidden[0].active, false, 'hide matches whatever the case');
+  // Nascondere con gli id della riga (come fa l'interruttore vero) spegne
+  // la riga: settimana, interruttore e griglia nascondono le stesse
+  // identità (review #960 giro 1, P2).
+  const hidden = personRows(['Daniele Pelleri'], typed[0].ids, [{ subject: 'daniele pelleri', displayName: 'daniele pelleri' }]);
+  assert.equal(hidden[0].active, false, 'hiding the row ids switches the row off');
+  // Due identità roster distinte restano indipendenti (review #960 giro 1,
+  // P2): nasconderne una non spegne l'altra.
+  const distinct = personRows(['Alice', 'alice'], ['Alice'], [{ subject: 'Alice' }, { subject: 'alice' }]);
+  assert.equal(distinct.length, 2, 'two distinct roster identities stay two rows');
+  assert.equal(distinct[0].active, false, 'the hidden identity reads off');
+  assert.equal(distinct[1].active, true, 'the other identity stays on');
 });
 
 test('backlog:6563edf41aab: Impostazioni segnala i possibili doppioni del team', () => {

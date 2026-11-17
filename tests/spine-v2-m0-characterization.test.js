@@ -20,9 +20,10 @@ const cli = join(root, 'packages/cli/bin/accordo.js');
 const mcpBin = join(root, 'packages/mcp/bin/server.js');
 const actor = { type: 'user', id: 'spine-v2-characterization' };
 const MCP_TOOL_NAMES = [
-  'crm_create_opportunity', 'crm_decide_approval', 'crm_doctor', 'crm_get_trace',
-  'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context',
-  'crm_request_stage_change', 'crm_scaffold_module',
+  'crm_create_assignment', 'crm_create_opportunity', 'crm_decide_approval',
+  'crm_decide_proposal', 'crm_doctor', 'crm_get_trace', 'crm_list_approvals',
+  'crm_list_opportunities', 'crm_list_proposals', 'crm_project_context',
+  'crm_read_playbook', 'crm_request_stage_change', 'crm_scaffold_module',
 ];
 const schemaSnapshotPath = join(root, 'tests/fixtures/spine-v2-m0-sqlite-schema.json');
 
@@ -267,7 +268,7 @@ test('M0 freezes current SQLite MCP discovery and mutation annotations', async (
   assert.equal(new Set(rawNames).size, rawNames.length, 'tool names are unique before dispatch lookup');
   const tools = new Map(listed.result.tools.map((tool) => [tool.name, tool]));
   for (const [name, tool] of tools) {
-    const readOnly = ['crm_doctor', 'crm_get_trace', 'crm_list_approvals', 'crm_list_opportunities', 'crm_project_context'].includes(name);
+    const readOnly = ['crm_doctor', 'crm_get_trace', 'crm_list_approvals', 'crm_list_opportunities', 'crm_list_proposals', 'crm_project_context', 'crm_read_playbook'].includes(name);
     assert.deepEqual(tool.annotations, {
       readOnlyHint: readOnly,
       destructiveHint: false,

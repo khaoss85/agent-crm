@@ -1352,7 +1352,7 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   // backlog:e381c48581fa: waiting is not a fix — grey «In attesa del primo
   // evento», never the yellow «Quasi tutto sincronizzato» over «Niente da
   // sistemare».
-  assert.equal(syncIndicator(quiet, NOW).title, 'In attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
+  assert.equal(syncIndicator(quiet, NOW).title, 'WhatsApp in attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
   assert.equal(syncIndicator(quiet, NOW).tone, 'wait');
   // C10: the subtitle keeps the prototype pattern «<aggiornamento> · <n> eventi … in tutto».
   assert.match(syncIndicator(quiet, NOW).detail, / · 0 eventi ricevuti in tutto\.$/);
@@ -1380,7 +1380,7 @@ test('e381c48581fa: a waiting space never pairs a yellow hero with «Niente da s
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('In attesa del primo evento'));
+  assert.ok(text.includes('in attesa del primo evento'));
   assert.ok(!text.includes('Quasi tutto sincronizzato'), 'nothing to fix: not the yellow headline');
   assert.ok(text.includes('Niente da sistemare'));
   const dot = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-dot'));

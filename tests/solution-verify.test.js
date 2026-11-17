@@ -896,7 +896,7 @@ test('the two checked-in evidence documents reference only observations their sc
 });
 
 test('every source artifact the checked-in documents cite is present with exactly that hash', () => {
-  for (const name of ['lead-to-won', 'activate-support-and-manage-cases', 'verifier-fixture-exit-zero']) {
+  for (const name of ['lead-to-won', 'activate-support-and-manage-cases', 'govern-customer-identity', 'verifier-fixture-exit-zero']) {
     const document = JSON.parse(readFileSync(
       join(repoRoot, 'examples/implementation-evidence', `${name}.evidence.json`), 'utf8',
     ));
@@ -904,7 +904,8 @@ test('every source artifact the checked-in documents cite is present with exactl
       for (const ref of requirement.evidence ?? []) {
         if (ref.kind !== 'source.artifact') continue;
         const actual = createHash('sha256').update(readFileSync(join(repoRoot, ref.path))).digest('hex');
-        assert.equal(actual, ref.sha256, `${name}: ${ref.path} has moved since the evidence was gathered`);
+        assert.equal(actual, ref.sha256,
+          `${name}: ${ref.path} has moved since the evidence was gathered: run \`npm run repin:example-pins\` (scripts/repin-example-pins.js) and commit the rewritten files instead of hand-editing the hash`);
       }
     }
   }

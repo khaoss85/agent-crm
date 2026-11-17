@@ -638,8 +638,12 @@ test('shell renders sidebar voices, groups, add-module entry and logout', () => 
   assert.ok(topbar.textContent.includes('Studio Aurora / Oggi'));
   assert.ok(topbar.textContent.includes('⌘K'));
   assert.ok(topbar.textContent.includes('✦'), 'the AI bar opens with the spark');
-  // No badge at zero fixes.
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  // No lit badge at zero fixes: its room stays reserved as a hidden
+  // placeholder (backlog:b76770f82fe9), so the rows below never move.
+  const badges = sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
+  assert.equal(badges.length, 1);
+  assert.ok(badges[0].className.split(/\s+/).includes('is-empty'));
+  assert.equal(badges[0].getAttribute('aria-hidden'), 'true');
 });
 
 test('Clienti badge lights only from a real count, grey like the prototype (BO-F6-01)', () => {
@@ -691,14 +695,55 @@ test('loadClientCount requests a supported page size on the real list path (BO-F
 test('shell shows the Clienti count pill after a real count arrives (BO-F6-01)', () => {
   const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
   const pills = () => sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'));
-  assert.equal(pills().length, 0);
+  const lit = () => pills().filter((node) => !((node.getAttribute('class') ?? '').split(/\s+/).includes('is-empty')));
+  // backlog:b76770f82fe9: an unknown count keeps a hidden placeholder, so
+  // the row keeps its height before the number lights up.
+  assert.equal(lit().length, 0);
+  assert.equal(pills().length, 1);
+  assert.equal(pills()[0].getAttribute('aria-hidden'), 'true');
   view.update({ clientCount: null });
-  assert.equal(pills().length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(pills().length, 1);
   view.update({ clientCount: 3, clientCountExact: true });
   assert.equal(pills().length, 1);
   assert.equal(pills()[0].textContent, '3');
+  assert.equal(pills()[0].getAttribute('aria-hidden'), null);
   view.update({ clientCount: 3, clientCountExact: false });
   assert.equal(pills()[0].textContent, '3+');
+});
+
+test('menu badges reserve their room: the row keeps its height when the number lights (backlog:b76770f82fe9)', () => {
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  // The placeholder must stay laid out while hidden: parse the rule that
+  // covers both empty badges, not the selector text alone. A `display: none`
+  // (or emptied) rule would pass a mere includes() check while rows move again.
+  const rules = css.match(/[^{}]+{[^{}]*}/g) ?? [];
+  const reserved = rules.find((rule) => rule.includes('.bo-count.is-empty') && rule.includes('.bo-badge.is-empty'));
+  assert.ok(reserved, 'shared hidden placeholder rule for both badges exists');
+  const body = reserved.slice(reserved.indexOf('{') + 1, reserved.lastIndexOf('}')).toLowerCase();
+  assert.match(body, /visibility\s*:\s*hidden/, 'empty badges stay laid out but invisible');
+  assert.doesNotMatch(body, /display\s*:\s*none/, 'empty badges must not leave the layout');
+  const { sidebar, view } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const pillClasses = () => sidebar.findAll('span')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-count'))
+    .map((node) => node.getAttribute('class'));
+  const badgeClasses = () => sidebar.findAll('span')
+    .filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-badge'))
+    .map((node) => node.getAttribute('class'));
+  // One pill slot per badged voice, before and after the numbers arrive:
+  // the row's box never changes, only the placeholder fills in.
+  assert.deepEqual(pillClasses(), ['bo-count is-empty']);
+  assert.deepEqual(badgeClasses(), ['bo-badge is-empty']);
+  const empties = sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('is-empty'));
+  assert.equal(empties.length, 2);
+  for (const node of empties) {
+    assert.equal(node.textContent, '0');
+    assert.equal(node.getAttribute('aria-hidden'), 'true');
+  }
+  view.update({ clientCount: 12, clientCountExact: true, fixCount: 2 });
+  assert.deepEqual(pillClasses(), ['bo-count']);
+  assert.deepEqual(badgeClasses(), ['bo-badge']);
+  assert.equal(sidebar.findAll('span').filter((node) => (node.getAttribute('class') ?? '') === 'bo-count')[0].textContent, '12');
 });
 
 test('space switcher shows the member role under the space name (BO-F6-01)', () => {
@@ -715,14 +760,19 @@ test('space switcher shows the member role under the space name (BO-F6-01)', () 
 
 test('shell shows the badge only after a real count arrives', () => {
   const { sidebar, view } = renderShell();
+  const badges = () => sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
+  const lit = () => badges().filter((node) => !node.className.split(/\s+/).includes('is-empty'));
+  // backlog:b76770f82fe9: zero or unknown keeps the hidden placeholder.
   view.update({ fixCount: 0 });
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(badges().length, 1);
   view.update({ fixCount: null });
-  assert.equal(sidebar.findAll('span').filter((node) => node.className.includes('bo-badge')).length, 0);
+  assert.equal(lit().length, 0);
+  assert.equal(badges().length, 1);
   view.update({ fixCount: 2 });
-  const badges = sidebar.findAll('span').filter((node) => node.className.includes('bo-badge'));
-  assert.equal(badges.length, 1);
-  assert.equal(badges[0].textContent, '2');
+  assert.equal(badges().length, 1);
+  assert.equal(badges()[0].textContent, '2');
+  assert.ok(!badges()[0].className.split(/\s+/).includes('is-empty'));
 });
 
 test('hostile space and user names render as text, never markup', () => {
@@ -793,6 +843,27 @@ test('settings panel lists the four areas with honest availability', () => {
   renderSettingsPanel({ doc, mount: unknown, fixCount: null });
   assert.ok(unknown.textContent.includes('Non sono riuscito a leggere le cose da sistemare'));
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
+});
+
+test('backlog:2302655b1fcf — Impostazioni header matches Personalizzazione, no BACKOFFICE kicker', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 0, customerDataAvailable: true });
+  const titles = mount.findAll('h2');
+  assert.equal(titles.length, 1);
+  assert.equal(titles[0].textContent, 'Impostazioni');
+  assert.ok((titles[0].getAttribute('class') ?? '').split(/\s+/).includes('panel-title'), 'same title class as Personalizzazione');
+  assert.ok(!mount.textContent.includes('Backoffice'), 'no BACKOFFICE kicker');
+  const subtitles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('muted'));
+  assert.ok(subtitles.length >= 1, 'a subtitle like Personalizzazione');
+});
+
+test('backlog:2302655b1fcf — «Gestisci spazi e accessi» opens Spazi e accessi directly', () => {
+  const { sidebar, seen } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const manage = sidebar.findAll('button').find((node) => node.textContent === 'Gestisci spazi e accessi');
+  assert.ok(manage, 'the space menu carries the entry');
+  manage.dispatch('click', {});
+  assert.deepEqual(seen.navigated, ['#/spazi-accessi']);
 });
 
 // backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non

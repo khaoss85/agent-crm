@@ -5129,6 +5129,102 @@ test('59def6cb805d review: on a truncated page a one-way sync line names itself 
   assert.ok(!complete.textContent.includes('in entrata (elenco parziale)'), 'a complete read keeps the exact line');
 });
 
+// backlog:a5fb0770 — TikTok receives only (matrix capability in-only), so
+// even with an outbound passage recorded it never reads outbound: at most
+// «← in entrata», never «↔ in entrata e in uscita».
+test('a5fb0770: TikTok never reads outbound, even with both directions observed', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 't-in', conversationId: 't3', channel: 'tiktok', direction: 'inbound',
+      sync: 'received', body: 'Ciao dal TikTok', teamAuthorId: null,
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 't-out', conversationId: 't3', channel: 'tiktok', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: '@guido.presti', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('tiktok'), '← in entrata', 'TikTok caps at inbound');
+  assert.equal(syncOf('phone'), '→ in uscita', 'voice keeps its real outbound call');
+});
+
+// backlog:a5fb0770 review #966 — the direction union is keyed by counted
+// channel plus handle: inbound on one mailbox plus outbound on another must
+// not read ↔ on both rows.
+test('a5fb0770 review: two mailboxes keep their own direction, no shared ↔', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'a@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'o-out', conversationId: 't5', channel: 'outlook', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'b@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '← in entrata', 'inbound-only mailbox reads inbound');
+  assert.equal(syncOf('outlook'), '→ in uscita', 'outbound-only mailbox reads outbound');
+});
+
+// backlog:a5fb0770 review #966 — the same mailbox under two spellings still
+// unions (case-insensitive): arrivals under Gmail plus replies under Email
+// read ↔ on both rows.
+test('a5fb0770 review: one mailbox under two spellings still unions', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'g-in', conversationId: 't4', channel: 'gmail', direction: 'inbound',
+      sync: 'received', body: 'Ciao', teamAuthorId: null,
+      remoteHandle: 'guido@prestigroup.it', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'message', id: 'e-out', conversationId: 't5', channel: 'email', direction: 'outbound',
+      sync: 'delivered', body: 'Risposta', teamAuthorId: 'elena',
+      remoteHandle: 'Guido@PrestiGroup.it', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('gmail'), '↔ in entrata e in uscita', 'same mailbox unions across spellings');
+  assert.equal(syncOf('email'), '↔ in entrata e in uscita', 'same mailbox unions across spellings');
+});
+
+// backlog:a5fb0770 review #966 — the outbound cap comes from the shared
+// matrix: site-form (in-only) never reads outbound, while voice keeps the
+// outbound of operator-placed calls even though the matrix calls it in-only.
+test('a5fb0770 review: site-form caps outbound from the matrix, voice is exempt', async () => {
+  const items = [
+    ...TIMELINE.entries.items,
+    { entry: 'message', id: 'w-out', conversationId: 't6', channel: 'web', direction: 'outbound',
+      sync: 'delivered', body: 'strano', teamAuthorId: 'elena',
+      remoteHandle: 'modulo-contatti', errorCode: null, occurredAt: '2026-10-20T13:00:00.000Z' },
+    { entry: 'call', id: 'c-in', conversationId: null, channel: 'phone', direction: 'inbound',
+      sync: 'received', durationSec: 60, teamAuthorId: null,
+      remoteHandle: '+39 333 1234567', errorCode: null, occurredAt: '2026-10-20T13:05:00.000Z' },
+  ];
+  const timeline = { ...TIMELINE, entries: { ...TIMELINE.entries, count: items.length, items } };
+  const mount = await renderCard(stubClient({ timeline }));
+  for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  const rows = mount.findAll('p').filter((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-identity')
+    && node.getAttribute('data-channel'));
+  const syncOf = (channel) => rows.find((node) => node.getAttribute('data-channel') === channel)
+    ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
+  assert.equal(syncOf('web'), null, 'in-only site-form never claims outbound');
+  assert.ok(rows.some((node) => node.getAttribute('data-channel') === 'web'), 'the site-form identity still reads');
+  assert.equal(syncOf('phone'), '↔ in entrata e in uscita', 'voice keeps operator-call outbound');
+});
+
 // backlog:e381c48581fa (verifica pilota 51ab9ca): on Ada Rossi's scheda
 // Instagram read «↔ sincronizzato» with Instagram not linked in the space.
 // The production shape: raw GET /api/connectors rows plus GET /api/profile.
@@ -5161,7 +5257,15 @@ test('e381c48581fa: the scheda claims «sincronizzato» only for a linked channe
     .find((node) => node.getAttribute('data-channel') === channel)
     ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
   assert.equal(syncOf('whatsapp'), '↔ sincronizzato', 'WhatsApp is linked (Profilo): the sync is real');
-  assert.equal(syncOf('instagram'), '↔ in entrata e in uscita · canale non collegato', 'Instagram is not linked: no sync claim');
+  // Review #966: the direction union is per counted channel plus handle —
+  // the guido.presti handle saw inbound only, the +39 handle both. Neither
+  // may claim a sync: Instagram is not linked.
+  const instagramSyncs = mount.findAll('p')
+    .filter((node) => node.getAttribute('data-channel') === 'instagram')
+    .map((node) => node.findAll('span').find((inner) => inner.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null);
+  assert.deepEqual(instagramSyncs,
+    ['← in entrata · canale non collegato', '↔ in entrata e in uscita · canale non collegato'],
+    'each Instagram handle reads its own direction, never a sync claim');
   assert.equal(requests.filter((path) => path === '/api/profile').length, 1, 'one channel-state read per space');
   // The same answer as the shared state the other screens read.
   const { channelState } = await import('../apps/admin/public/admin-channels-count.js');
@@ -5206,7 +5310,10 @@ test('e381c48581fa review: an unread profile never says «non collegato», failu
       .find((node) => node.getAttribute('data-channel') === channel)
       ?.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-identity-sync')?.textContent ?? null;
     assert.equal(syncOf('whatsapp'), '↔ in entrata e in uscita', 'profile unread: no sync claim, no «non collegato»');
-    assert.equal(syncOf('instagram'), '↔ in entrata e in uscita');
+    // Review #966: the direction union is per counted channel plus handle —
+    // the first Instagram row (guido.presti, inbound only) reads ←, the
+    // +39 row reads ↔. No «non collegato» while the profile is unread.
+    assert.equal(syncOf('instagram'), '← in entrata');
     assert.ok(warned.some((line) => line.includes('bo-scheda profile unreadable') && line.includes('spaceId=presti')),
       'the failed profile read is diagnosable');
     // A channels outage is logged with its code and the space, and the
