@@ -1112,6 +1112,30 @@ function customerHintCompany(item, sibs) {
 }
 
 /**
+ * backlog:f6b9d189 — the visible reason a customer suggestion is listed
+ * when the name itself does not explain it: the partial email when the
+ * email matched, else the phone tail when the held phone matched. Both
+ * reuse the homonym shapes (never the whole address or number), so the
+ * reason reads apart without publishing PII. Null when neither matched
+ * field can be shown — the row then leaves the suggestions, never
+ * unexplained. `match` is the item's `searchMatch` from the server.
+ * @param {any} item one `/api/customer-data/customers` item
+ * @param {unknown} match the explained fields, if the server sent them
+ */
+export function customerMatchReason(item, match) {
+  if (!Array.isArray(match)) return null;
+  if (match.includes('email')) {
+    const mail = customerHintEmail(item, []);
+    if (mail !== null) return mail;
+  }
+  if (match.includes('phone')) {
+    const phone = customerHintPhone(item, []);
+    if (phone !== null) return phone;
+  }
+  return null;
+}
+
+/**
  * Whether a booking row still moves: only held states (`booked`,
  * `confirmed`) drag. Terminal states never regress — a repeat visit is a
  * new booking, like everywhere else (backlog:3d0fbe7dc8d1). The same rows
@@ -4470,6 +4494,12 @@ export function createCalendarioView(deps) {
    * carrying the name and nothing else — ids and resources never reach the
    * screen. A click picks the customer and rebuilds the form around the
    * pick, so the claim below books exactly the shown name.
+   * backlog:f6b9d189: only results the form can explain stay listed —
+   * matches on the name, the email or the held phone, with the matching
+   * field printed beside the name. A match the form never shows (its
+   * company, a channel word) leaves the box: «anna» no longer lists a
+   * Massimiliano Magrini matched through his company. Without the
+   * server's reason (an older server) every row stays, as before.
    * @param {any} box
    */
   function paintCustomerResults(box) {
@@ -4480,7 +4510,14 @@ export function createCalendarioView(deps) {
       return;
     }
     if (String(state.customerQuery ?? '').trim().length < 2) return;
-    if (state.customerItems.length === 0) {
+    const explained = state.customerItems.filter((item) => {
+      const match = Array.isArray(item?.searchMatch) ? item.searchMatch : null;
+      if (match === null) return true;
+      if (!match.some((field) => field === 'name' || field === 'email' || field === 'phone')) return false;
+      if (match.includes('name')) return true;
+      return customerMatchReason(item, match) !== null;
+    });
+    if (explained.length === 0) {
       box.appendChild(el(doc, 'p', {
         className: 'empty',
         text: state.customerPartial
@@ -4503,11 +4540,15 @@ export function createCalendarioView(deps) {
     // a partial email or phone beside each homonym, never a guess.
     const nameOf = (item) => (typeof item?.name === 'string' && item.name !== '' ? item.name : 'Cliente senza nome');
     const seen = new Map();
-    for (const item of state.customerItems) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
-    for (const item of state.customerItems) {
+    for (const item of explained) seen.set(nameOf(item).toLowerCase(), (seen.get(nameOf(item).toLowerCase()) ?? 0) + 1);
+    for (const item of explained) {
       const name = nameOf(item);
       const pick = uiSecondaryButton(doc, name);
-      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1 ? customerHint(item, state.customerItems) : null;
+      const match = Array.isArray(item?.searchMatch) ? item.searchMatch : null;
+      const nameHit = match === null || match.includes('name');
+      const hint = (seen.get(name.toLowerCase()) ?? 0) > 1
+        ? customerHint(item, explained)
+        : (nameHit ? null : customerMatchReason(item, match));
       if (hint !== null) {
         pick.appendChild(el(doc, 'span', { className: 'cal-customer-hint', text: ` · ${hint}` }));
       }

@@ -461,6 +461,44 @@ function searchPartsOf(row) {
   return [row?.name, row?.email, row?.company?.name, row?.phone?.value];
 }
 
+/**
+ * Which fields of a shaped list row explain a text match (backlog:f6b9d189:
+ * the appointment form's «anna» listed Massimiliano Magrini with no visible
+ * reason — the match sat on a field the form never shows). A subset of
+ * `['name', 'email', 'company', 'phone']`, frozen, in that order; empty when
+ * the needle carries no text (a channel-only query matches on the channel,
+ * never on a visible field). The text words keep the `searchRank` word
+ * rules per field, so a word the row matches globally is always blamed on
+ * at least one field; the digits keep the held-phone rule with its floor.
+ * Pure, so the endpoint and the admin panel share it.
+ * @param {any} row a shaped list row
+ * @param {unknown} q the raw `q` query text
+ */
+export function searchMatchFields(row, q) {
+  const needle = searchNeedle(q ?? '');
+  if (needle.length === 0) return Object.freeze([]);
+  const phoneValue = typeof row?.phone?.value === 'string' ? row.phone.value : '';
+  const text = needle.filter((word) => !/^[0-9]+$/.test(word));
+  const digits = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
+  const hits = [];
+  if (text.length > 0) {
+    const fields = [
+      ['name', row?.name],
+      ['email', row?.email],
+      ['company', row?.company?.name],
+    ];
+    for (const [key, value] of fields) {
+      if (typeof value !== 'string' || value === '') continue;
+      if (searchRank([value], text, '') >= 0) hits.push(key);
+    }
+  }
+  if (digits !== '' && digits.length >= PHONE_SEARCH_MIN_DIGITS
+    && phoneDigitsOf(phoneValue).includes(digits)) {
+    hits.push('phone');
+  }
+  return Object.freeze(hits);
+}
+
 /** All the words (canonical + aliases) that name one channel. */
 function channelAliases(channel) {
   return {

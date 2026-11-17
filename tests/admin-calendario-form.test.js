@@ -1,7 +1,7 @@
 // @ts-check
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCalendarioView, customerHint } from '../apps/admin/public/admin-calendario.js';
+import { createCalendarioView, customerHint, customerMatchReason } from '../apps/admin/public/admin-calendario.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
@@ -268,6 +268,82 @@ test('form: two customers with the same name show a partial email or phone, a si
   // The pick still books the customer by id, with the bare name.
   results.findAll('button').find((node) => node.textContent.endsWith('tel. …4567')).dispatch('click');
   assert.ok(mount.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick' && node.textContent === 'Ada Rossi'), 'the pick names the customer');
+});
+
+// backlog:f6b9d189 (production: «anna» listed Massimiliano Magrini with no
+// visible reason — the match sat on his company, a field the form never
+// shows): the suggestions keep only matches on the name, the email or the
+// held phone, and a non-name match prints its field beside the name.
+test('form: «anna» drops the company-only match and explains the rest', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-magrini', name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it',
+      phone: null, company: { name: 'Pizzeria Anna' }, searchMatch: ['company'],
+    },
+    {
+      resource: 'contact', id: 'c-anna', name: 'Anna Bianchi', email: 'anna@example.it',
+      phone: null, company: null, searchMatch: ['name', 'email'],
+    },
+    {
+      resource: 'contact', id: 'c-mario', name: 'Mario Rossi', email: 'mario.rossi@example.it',
+      phone: null, company: null, searchMatch: ['email'],
+    },
+    {
+      resource: 'contact', id: 'c-ada', name: 'Ada Rossi', email: null,
+      phone: { value: '+393331234567', system: 'whatsapp' }, company: null, searchMatch: ['phone'],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'anna';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  const labels = results.findAll('button').map((node) => node.textContent);
+  assert.ok(!labels.some((text) => text.includes('Magrini')), `no company-only match: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Anna Bianchi'), `the name match stays bare: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Mario Rossi · ma…@example.it'), `the email match shows its field: ${labels.join(' | ')}`);
+  assert.ok(labels.includes('Ada Rossi · tel. …4567'), `the phone match shows its field: ${labels.join(' | ')}`);
+  assert.ok(!labels.some((text) => text.includes('mario.rossi@') || text.includes('3331234567')), 'never the whole address or number');
+});
+
+test('form: only company matches read as no match, in plain words', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-magrini', name: 'Massimiliano Magrini', email: 'massimiliano.magrini@example.it',
+      phone: null, company: { name: 'Pizzeria Anna' }, searchMatch: ['company'],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'anna';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  assert.equal(results.findAll('button').length, 0, 'nothing without a visible correspondence');
+  assert.ok(results.textContent.includes('Nessun cliente corrisponde'), 'the empty match says so in plain words');
+});
+
+test('form: customerMatchReason prints only the matched email or phone', () => {
+  assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, ['email']), 'ma…@example.it');
+  assert.equal(customerMatchReason({ phone: { value: '+39 333 123 4567' } }, ['phone']), 'tel. …4567');
+  assert.equal(customerMatchReason({ name: 'Ada Rossi' }, ['name']), null, 'a name match needs no reason');
+  assert.equal(customerMatchReason({ company: { name: 'Pizzeria Anna' } }, ['company']), null, 'the company is never a reason in the form');
+  assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, null), null, 'no reason, no explanation');
 });
 
 test('form: customerHint prefers a partial email, then the phone, then the company', () => {
