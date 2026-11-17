@@ -1631,6 +1631,12 @@ export async function cancelAppointment(context, request) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code
         : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      // The cancellation stands and the cause rides as data, so name it here:
+      // space and code only, never the appointment, the actor or the reason.
+      console.error(
+        `[accordo] appointments cancel auto-push detail unreadable: code=${code} `
+        + `spaceId=${typeof record.spaceId === 'string' && record.spaceId.trim() !== '' ? record.spaceId : 'none'}`,
+      );
       pushError = Object.freeze({ code });
     }
   }

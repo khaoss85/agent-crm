@@ -318,6 +318,36 @@ test('an unreachable Google in the auto-push keeps the Accordo cancellation and 
   assert.deepEqual(out2.pushError, { code: 'STORE_DOWN' });
 });
 
+test('a detail read that fails is logged with space and code, never personal data', async () => {
+  const lines = [];
+  const original = console.error;
+  console.error = (...args) => { lines.push(args.map((part) => String(part)).join(' ')); };
+  try {
+    const service = fakeAppointments([row()]);
+    const unreadable = {
+      async readAppointmentDetail() {
+        throw Object.assign(new Error('store down'), { code: 'STORE_DOWN' });
+      },
+      async pushAppointment() {
+        throw new Error('must not push: the link never resolved');
+      },
+    };
+    const out = await cancelAppointment(contextFor(service, { calendarSync: unreadable }), {
+      id: 'a-1', reason: 'Il cliente ha disdetto', spaceId: 'spazio-1',
+    });
+    assert.equal(out.appointment.status, 'cancelled');
+    assert.deepEqual(out.pushError, { code: 'STORE_DOWN' });
+  } finally {
+    console.error = original;
+  }
+  assert.equal(lines.length, 1, 'one log line names the cause');
+  assert.match(lines[0], /STORE_DOWN/, 'the code travels');
+  assert.match(lines[0], /spazio-1/, 'the space travels');
+  assert.doesNotMatch(lines[0], /isdetto/, 'never the reason');
+  assert.doesNotMatch(lines[0], /operator/, 'never the actor');
+  assert.doesNotMatch(lines[0], /a-1/, 'never the appointment id');
+});
+
 test('an explicit calendar still wins over the link', async () => {
   const service = fakeAppointments([row()]);
   const pushes = [];

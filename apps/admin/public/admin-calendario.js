@@ -3611,12 +3611,13 @@ export function createCalendarioView(deps) {
    * never the browser's confirm(). «No» takes the focus (Enter never cancels
    * by accident); the optional reason rides the cancellation, else «Annullato
    * dal calendario». An event imported from Google Calendar says plainly
-   * what happens there (backlog:27923678): with the calendar connected
-   * the cancellation auto-pushes to Google through the appointment's sync
-   * link, so the popover no longer says the event stays there; with the
-   * calendar disconnected or unknown the honest line stays —
-   * «cancellalo anche lì» — because nothing would carry the cancellation
-   * there.
+   * what happens there (backlog:27923678): with the calendar connected the
+   * question promises only the attempt on Google — a connected profile
+   * never proves the appointment itself pushes, so the popover no longer
+   * says the event stays there; without a connected calendar the honest
+   * line stays — «cancellalo anche lì» — because nothing would carry the
+   * cancellation there. The real outcome speaks after the write, through
+   * the toast.
    * @param {any} row
    */
   function renderCancelAsk(row) {
@@ -3626,16 +3627,18 @@ export function createCalendarioView(deps) {
     });
     box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
     if (originOf(row) === 'google') {
-      // backlog:27923678 — with the calendar connected the cancellation
-      // also lands on Google by itself (server-side auto-push through the
-      // sync link); otherwise the event stays there and the operator reads
-      // the manual removal.
-      const autoPushes = state.calendar?.connected === true;
+      // backlog:27923678 — a connected calendar in /api/profile never proves
+      // the appointment itself pushes to Google (the sync link can be missing
+      // and the answer can carry push: null), so the question promises only
+      // the attempt: the real outcome speaks after the write, through the
+      // toast. Without a connected calendar nothing would carry the
+      // cancellation there, so the honest manual-removal line stays.
+      const connected = state.calendar?.connected === true;
       box.appendChild(el(doc, 'p', {
         className: 'cal-pop-hint',
         attrs: { 'data-role': 'cancel-google' },
-        text: autoPushes
-          ? 'Arriva da Google Calendar: lo annullo qui in Accordo e anche su Google Calendar.'
+        text: connected
+          ? 'Arriva da Google Calendar: lo annullo qui in Accordo e provo ad annullarlo anche su Google Calendar; se non riesco, ti avviso di toglierlo a mano.'
           : 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
@@ -3701,6 +3704,7 @@ export function createCalendarioView(deps) {
     let ok = false;
     let failure = '';
     let pushFailed = false;
+    let pushedToGoogle = false;
     try {
       const reason = cancelReasonFrom(state.cancelReason);
       const spaceId = readSpace();
@@ -3709,6 +3713,9 @@ export function createCalendarioView(deps) {
         : { sourceKey: row.sourceKey, reason, spaceId };
       const answer = await client.request('/api/appointments/cancel', { method: 'POST', body });
       pushFailed = answer?.pushError != null;
+      // backlog:27923678 — Google is named only on the real outcome: the
+      // answer carried a push. A push: null (no sync link) stays silent.
+      pushedToGoogle = !pushFailed && answer?.push != null;
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
           if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
@@ -3740,12 +3747,15 @@ export function createCalendarioView(deps) {
       renderAll();
       // backlog:27923678 — the Accordo cancellation stands even when Google
       // was unreachable: the toast then names the manual removal on Google,
-      // never a silent divergence.
+      // never a silent divergence. Google is named on success only when the
+      // answer proves the push landed there.
       if (typeof deps.toast === 'function') {
         deps.toast(
           pushFailed
             ? 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.'
-            : 'Appuntamento annullato.',
+            : pushedToGoogle && originOf(row) === 'google'
+              ? 'Appuntamento annullato qui e su Google Calendar.'
+              : 'Appuntamento annullato.',
           pushFailed,
         );
       }

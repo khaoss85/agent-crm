@@ -73,7 +73,7 @@ function notFound() {
   return error;
 }
 
-function stubClient({ cancel = null, profile = null, pushError = null } = {}) {
+function stubClient({ cancel = null, profile = null, pushError = null, push = null } = {}) {
   const calls = [];
   let week = WEEK();
   /** @type {Array<() => void>} */
@@ -98,7 +98,7 @@ function stubClient({ cancel = null, profile = null, pushError = null } = {}) {
         week = JSON.parse(JSON.stringify(week));
         const row = week.members[0].appointments.find((entry) => entry.id === body.id);
         row.status = 'cancelled';
-        return { appointment: { ...row, cancelReason: body.reason }, cancelled: true, push: null, pushError };
+        return { appointment: { ...row, cancelReason: body.reason }, cancelled: true, push, pushError };
       }
       throw new Error(`unexpected path ${path}`);
     },
@@ -279,7 +279,9 @@ test('annulla: with the calendar connected the popover no longer says the event 
   const box = await askCancel(mount, 'g1');
   const hint = box.findAll('p').find((node) => node.getAttribute('data-role') === 'cancel-google');
   assert.ok(hint, 'the Google line still names where the event came from');
-  assert.equal(hint.textContent, 'Arriva da Google Calendar: lo annullo qui in Accordo e anche su Google Calendar.');
+  // A connected profile never proves the appointment itself pushes, so the
+  // question promises only the attempt: the outcome speaks after the write.
+  assert.equal(hint.textContent, 'Arriva da Google Calendar: lo annullo qui in Accordo e provo ad annullarlo anche su Google Calendar; se non riesco, ti avviso di toglierlo a mano.');
   assert.doesNotMatch(hint.textContent, /resta/, 'no «su Google resta» when the outbound sync is active');
 });
 
@@ -309,6 +311,30 @@ test('annulla: the space rides the cancellation, and a push failure toasts the m
     message: 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.',
     error: true,
   }], 'the operator reads the manual removal on Google');
+});
+
+test('annulla: Google is named only on the real push outcome, never on the profile alone', async () => {
+  const connected = { member: null, connections: { available: true, items: [{ connector: 'calendar', status: 'connected' }] } };
+  // The answer carried a push: the toast names Google.
+  const pushed = await openWeek({
+    profile: connected,
+    push: { status: 'pushed', sourceKey: 'gcal:marco:g1', change: 'cancelled' },
+  });
+  action(await askCancel(pushed.mount, 'g1'), 'cancel-yes').dispatch('click');
+  await settle();
+  assert.deepEqual(pushed.toasts, [{
+    message: 'Appuntamento annullato qui e su Google Calendar.',
+    error: false,
+  }], 'the real outcome names Google');
+  // The answer carried push: null (no sync link): the toast stays silent
+  // about Google even with the calendar connected.
+  const silent = await openWeek({ profile: connected });
+  action(await askCancel(silent.mount, 'g1'), 'cancel-yes').dispatch('click');
+  await settle();
+  assert.deepEqual(silent.toasts, [{
+    message: 'Appuntamento annullato.',
+    error: false,
+  }], 'no Google promise without a push');
 });
 
 test('annulla: a closed booking offers no cancel; Esc closes the question with the popover', async () => {
