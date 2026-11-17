@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createCustomerCardView,
   extractionSourcesFromTimeline,
+  withExtractionTimeout,
 } from '../apps/admin/public/admin-customer-card.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
@@ -292,6 +293,33 @@ test('e5e3e886 review #853 P2: a repaint while the run flies starts no second ru
   assert.ok(toasts.some((text) => text.includes('L\u2019AI propone 1 campo')), 'the landed run toasts its proposals');
   assert.ok(mount.textContent.includes('Ruolo: Istruttore'), 'the proposals land on the screen, not in a detached box');
   assert.ok(mount.textContent.includes('fonte: messaggio'), 'the proposal cites its source');
+});
+
+test('e5e3e886 seguito 17/11: with no messages the button never reads «Estraggo…» and says at once there is nothing to extract', async () => {
+  const client = fakeClient({
+    timeline: { ...TIMELINE, entries: { ...TIMELINE.entries, count: 0, items: [] } },
+  });
+  const { mount, toasts } = await open(client);
+  const refresh = byAction(mount, 'refresh-enrichment');
+  assert.ok(refresh, 'the «Aggiorna» button exists');
+  const clicked = refresh.listeners.click[0]();
+  assert.ok(!String(refresh.textContent).includes('Estraggo'),
+    'the button never promises an extraction it does not start (live: stuck on «Estraggo…» with no request)');
+  assert.ok(toasts.some((text) => text.includes('Non ci sono messaggi')),
+    'the button says at once there is nothing to extract');
+  await clicked;
+  await flush();
+  assert.equal(client.writes.length, 0, 'no run starts with no source to read');
+  assert.ok(toasts.includes('Nessun dato nuovo'), 'unchanged facts still read as nothing new, like main');
+});
+
+test('e5e3e886 seguito 17/11: a run that answers nothing refuses in time instead of spinning forever', async () => {
+  await assert.rejects(
+    withExtractionTimeout(new Promise(() => {}), 5),
+    (error) => error?.code === 'ENRICHMENT_EXTRACT_TIMEOUT',
+    'silence refuses with the timeout code instead of spinning forever',
+  );
+  assert.equal(await withExtractionTimeout(Promise.resolve('ok'), 1000), 'ok', 'an answer in time still lands');
 });
 
 test('e5e3e886: the run sources are messages only, capped, with channel and handle as detail', () => {
