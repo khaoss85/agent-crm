@@ -121,6 +121,11 @@ function runGate(repo, pilot, home, extra) {
       // resolve step would otherwise find the runner's own Chromium and
       // never reach the install this file is meant to prove.
       PILOT_BROWSER_IGNORE_SYSTEM: '1',
+      // The CI runners export ACCORDO_BROWSER_BIN machine-wide (their own
+      // provisioned Chromium): blank it so the first two tests prove the
+      // no-browser provisioning path deterministically. A test that names
+      // its own binary (below, via extra) still overrides this blank.
+      ACCORDO_BROWSER_BIN: '',
       ...extra,
     },
     encoding: 'utf8',
