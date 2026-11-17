@@ -566,10 +566,55 @@ export function grantExpiring(iso, nowMs = Date.now()) {
 }
 
 /**
+ * backlog:9790f4df7a93 — the single source for «is this channel synced»:
+ * observed traffic, never linkage alone. Both views — Stato sync here and
+ * Identità collegate in admin-customer-card.js — share this rule: with zero
+ * events no view claims «sincronizzato», however linked the channel is.
+ * `received` is the all-time `inbox.received` tally of
+ * GET /api/connectors/activity: only a safe integer above zero counts, so a
+ * missing or hostile count never poses as traffic.
+ * @param {unknown} received
+ */
+export function hasObservedEvents(received) {
+  return Number.isSafeInteger(received) && received > 0;
+}
+
+/**
+ * backlog:9790f4df7a93 — the all-time received tally of one counted
+ * channel, summed with the same rule the Stato sync table aggregate uses.
+ * @param {any} activity the GET /api/connectors/activity payload, possibly null.
+ * @param {unknown} channel the counted channel id
+ */
+export function activityReceivedFor(activity, channel) {
+  const id = typeof channel === 'string' && channel !== '' ? countedChannel(channel) : '';
+  if (id === '') return 0;
+  let total = 0;
+  for (const entry of entriesOf(activity)) {
+    if (entry === null || typeof entry !== 'object') continue;
+    if (countedChannel(entry.channel) !== id) continue;
+    const inbox = entry.inbox !== null && typeof entry.inbox === 'object' ? entry.inbox : null;
+    if (inbox !== null && hasObservedEvents(inbox.received)) total += inbox.received;
+  }
+  return total;
+}
+
+/**
+ * backlog:9790f4df7a93 — whether one counted channel reads «sincronizzato»:
+ * traffic proven by at least one received event in the activity payload.
+ * Identità collegate gates its «↔ sincronizzato» on this (besides the
+ * linked state and both directions seen), so the two views always agree.
+ * @param {any} activity the GET /api/connectors/activity payload, possibly null.
+ * @param {unknown} channel the counted channel id
+ */
+export function isChannelSynced(activity, channel) {
+  return hasObservedEvents(activityReceivedFor(activity, channel));
+}
+
+/**
  * The pill of one table row, in the spec's words (C20: `Attivo`,
  * `Permesso in scadenza`, `Importazione`). A calm active row that never
- * moved anything yet — no update instant and zero events (C18, backlog
- * 1a3a0ba236c0) — reads `in attesa del primo evento`, never `Attivo`:
+ * moved anything yet — zero events (C18, backlog
+ * 1a3a0ba236c0; backlog:9790f4df7a93) — reads `in attesa del primo evento`, never `Attivo`:
  * production 08/11 read `Attivo` there and the hero called it synced. A
  * binding that really broke (`attention`, `down`) is a state the spec
  * does not list: the closest honest word is `Da sistemare`, the name of
@@ -586,7 +631,10 @@ function channelPill(agg, nowMs, hasActive) {
   if (agg.expiringAt !== null && grantExpiring(agg.expiringAt, nowMs)) return { text: 'Permesso in scadenza', tone: 'permesso' };
   const calm = agg.worst === 'ok' || agg.worst === 'idle';
   if (agg.importing && calm) return { text: 'Importazione', tone: 'importazione' };
-  if (calm && agg.lastAt === null && agg.received === 0) return { text: 'in attesa del primo evento', tone: 'attesa' };
+  // backlog:9790f4df7a93: sync proves itself with arrivals, never with a
+  // recorded instant alone — a failed send stamps `lastAt` while arrivals
+  // stay zero, and the row still waits for its first event.
+  if (calm && !hasObservedEvents(agg.received)) return { text: 'in attesa del primo evento', tone: 'attesa' };
   if (calm) return { text: 'Attivo', tone: 'attivo' };
   return { text: 'Da sistemare', tone: 'altro' };
 }
