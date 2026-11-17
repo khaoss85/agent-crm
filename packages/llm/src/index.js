@@ -62,6 +62,21 @@ export {
   openLlmComplete,
 };
 export {
+  CONTACT_BRIEF_LINES,
+  CONTACT_BRIEF_MAX_HISTORY,
+  CONTACT_BRIEF_MAX_HISTORY_TEXT_CHARS,
+  CONTACT_BRIEF_MAX_ITEMS,
+  CONTACT_BRIEF_MAX_ITEM_TEXT_CHARS,
+  CONTACT_BRIEF_MAX_LINE_CHARS,
+  CONTACT_BRIEF_MAX_NAME_CHARS,
+  CONTACT_BRIEF_MAX_SOURCE_CHARS,
+  CONTACT_BRIEF_PURPOSE,
+  assertContactBriefInput,
+  briefCustomer,
+  buildContactBriefPrompt,
+  parseContactBriefResponse,
+} from './contact-brief.js';
+export {
   MESSAGE_DRAFT_KINDS,
   MESSAGE_DRAFT_MAX_CHANNELS,
   MESSAGE_DRAFT_MAX_HISTORY,
@@ -130,7 +145,7 @@ export function createLlmPackage(options = {}) {
   const pkg = definePackage({
     packageContract: 1,
     name: LLM_PACKAGE,
-    version: 3,
+    version: 4,
     label: 'Language-model completions',
     description:
       'One space-scoped LLM path on a single adapter contract: an explicit dry-run without a key, a daily '
