@@ -2010,11 +2010,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   const submissionsRead = domains['site-forms'] != null
     ? page('site-form-submission', 'site-form-submission')
     : skip;
-  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
+  // backlog:ca53e443db44 (verifier 17/11: first round, /api/profile at 5,9 s):
+  // the profile still starts beside the first wave (see above) but no longer
+  // holds the essentials paint — it lands with the names below.
+  const [tasksPage, appointmentsPage, connectionsPage, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
-    profileRead,
     // The «Da rispondere» inbox: the latest messages and their conversations.
     // Messages are the inbox; conversations only lend the name and the closed
     // state, so a space without the conversation module still lists who is
@@ -2055,7 +2057,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // consent, not through channel-connection rows: the same GET /api/profile
   // answer the Profilo screen reads. Unreadable stays null and contributes
   // no vote — an unknown state never poses as connected or missing.
-  outcome.profile = profile ?? null;
+  // backlog:ca53e443db44: the profile lands apart, in time for the names —
+  // the essentials above already painted without it (null reads unknown).
+  let essentialsPublished = false;
+  const profileLanded = profileRead.then(
+    (answer) => { outcome.profile = answer && typeof answer === 'object' ? answer : null; },
+    (error) => { noteReadFailure('profile', error); outcome.profile = null; },
+  );
   if (interactions) {
     outcome.inboxComposed = true;
     if (messagesPage != null) {
@@ -2078,6 +2086,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       noteReadFailure('paint', error);
     }
   }
+  // backlog:ca53e443db44: the day is on screen — late rows may join in place.
+  essentialsPublished = true;
   // Voce 785aeb28bd18: the essentials mark says where the first wave went.
   endStep('essentials', loadStartedAt);
   const subject = outcome.next != null && interactions
@@ -2110,14 +2120,16 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // as soon as its own data is in — the notification profile names repaint
   // after, without holding the ready rows or their count back.
   let namesPublished = false;
-  const named = () => {
+  // backlog:ca53e443db44: the rows publish as soon as their own read lands —
+  // `false` keeps the grey name bars until the names wave publishes `true`.
+  const named = (namesIn = true) => {
     if (typeof onNames !== 'function') return;
     try {
-      onNames({ ...outcome, pending: false, briefPending: true });
+      onNames({ ...outcome, pending: namesIn !== true, briefPending: true });
     } catch (error) {
       noteReadFailure('paint', error);
     }
-    namesPublished = true;
+    if (namesIn === true) namesPublished = true;
   };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
@@ -2125,6 +2137,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // The ready rows and their count paint now, even while a notification
     // profile read is still flying.
     if (namesPublished) named();
+    // backlog:ca53e443db44: the essentials are already on screen while the
+    // profile still flies — the rows join them now, the names after.
+    else if (essentialsPublished) named(false);
+    // The notification names read the profile's own mailboxes, so they wait
+    // for it, like before — the rows above no longer do.
+    await profileLanded;
     // backlog:971b3e0e: «Notifiche automatiche» always comes from the
     // local messages read, so its subjects need profile names on both
     // branches — the server view names «Da rispondere» itself, never the
