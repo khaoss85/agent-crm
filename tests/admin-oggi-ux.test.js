@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
+  OGGI_READ_LIMIT, buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
 import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
@@ -346,7 +346,7 @@ test('bab63e32acdb: receipts and no-reply notices leave Da rispondere for a clos
   assert.equal(toggled, false);
 });
 
-test('bab63e32acdb: the open group stays open when the day repaints, and its rows never read profile names', async () => {
+test('971b3e0e: the open group stays open when the day repaints, and a notification with a subject reads its profile', async () => {
   const notice = {
     id: 'm-2', conversationId: 'c2', direction: 'inbound', channel: 'email', body: 'Nuovo commento',
     occurredAt: '2026-10-19T06:30:00.000Z', ...host, subjectId: 'docs', remoteHandle: 'comments-noreply@docs.google.com', subjectLabel: 'Documenti Google',
@@ -357,7 +357,12 @@ test('bab63e32acdb: the open group stays open when the day repaints, and its row
   const mount = createMount();
   const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
   await view.render({ spaceName: 'Spazio', links: [], now: NOW });
-  assert.ok(!client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'no profile read for a notification');
+  // backlog:971b3e0e changes the bab63e32acdb rule on purpose: a
+  // notification with a customer subject reads its profile with the same
+  // function Clienti reads, so the row shows the profile name. (The
+  // fixture profile read refuses, so the row keeps its stored label here;
+  // the name itself is pinned in admin-oggi-inbox-names.test.js.)
+  assert.ok(client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'the notification subject reads its profile like Clienti');
   const toggle = () => mount.querySelector('button[data-action="inbox-notifications"]');
   assert.equal(toggle().getAttribute('aria-expanded'), 'false');
   toggle().dispatch('click');
@@ -995,4 +1000,37 @@ test('5cf918c2246e: the 13/11 case on one server answer — Da rispondere 0, da 
   links[0].dispatch('click', { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
   assert.equal(takePendingClientiView(storage), 'da-leggere', 'Clienti opens on Da leggere');
+});
+
+test('803d127c4458: with the server view in, a capped messages page still discloses the cut and links Clienti', async () => {
+  const messages = Array.from({ length: OGGI_READ_LIMIT + 1 }, (_, index) => ({
+    ...PERSON_MSG, id: `m-cap-${index}`, conversationId: `c-cap-${index}`,
+  }));
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.startsWith('/api/customer-data/customers?')) return repliesAnswer(2, { unread: 1 });
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      if (path.startsWith('/api/customer-data/profile/')) return { identity: {} };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const storage = memoryStorage();
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const seen = [];
+  const view = createOggiView({ doc, mount, client, storage, navigate: (hash) => seen.push(hash), setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  const section = mount.querySelector('section[data-oggi-section="inbox"]');
+  assert.ok(section.textContent.includes(`L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`), section.textContent);
+  const all = section.querySelector('a[data-action="inbox-all-messages"]');
+  assert.ok(all, 'the cut names where the rest is');
+  let prevented = false;
+  all.dispatch('click', { preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(seen[seen.length - 1], '#/customer-data?vista=tutti', 'Clienti opens on Tutti');
+  assert.equal(takePendingClientiView(storage), 'tutti', 'the handoff stays as the fallback');
 });

@@ -20,8 +20,9 @@
 // What it reuses, never duplicates (MEM_ACC_REUSE):
 // - reads: the generic /api/modules/:module/records surface over the native
 //   record modules of packages/work (work-task), packages/appointments
-//   (appointment), packages/channels (channel-connection) and
-//   packages/interactions (interaction-message, interaction-call);
+//   (appointment), packages/channels (channel-connection),
+//   packages/interactions (interaction-message, interaction-call) and
+//   packages/site-forms (site-form-submission);
 // - writes: the work-task `complete` module action, the same server path the
 //   Work section uses — executing from Oggi re-reads the cited record first
 //   and refuses on drift, so no action ever runs on stale data;
@@ -512,15 +513,266 @@ function appointmentPrepAction(appointment, names = {}, pendingNames = false) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Signals (backlog:d08331558c50). A signal is never a page: an internal fact
+// — a missed appointment, a thread waiting days for an answer, a website
+// form with no answer yet — surfaces in Oggi as the motive of one proposed
+// action, each row citing the record the signal was read from. Handled
+// means resolved at the record: a recompute drops every signal whose record
+// moved on (the appointment rebooked, the thread answered or closed, the
+// form decided) — the same contract the follow-up rows keep. Triage only
+// attenuates the paint; it never invents domain state.
+// ---------------------------------------------------------------------------
+
+/** Days of customer silence before Oggi proposes a follow-up. */
+export const SIGNAL_SILENCE_DAYS = 3;
+
 /**
- * Deterministic advisor list: open follow-ups due (overdue first), then the
+ * Submission states still waiting for the team's answer. `accepted` is the
+ * successfully-ingested request (inbound message logged, reply channels
+ * known) — it waits like `pending`/`needs-review` until the team answers in
+ * its conversation. Only `rejected` (spam) never signals.
+ */
+const OPEN_FORM_STATUSES = Object.freeze(['pending', 'needs-review', 'accepted']);
+
+/**
+ * Whether the team already answered an accepted website-form request: its
+ * conversation is closed, or it holds a non-inbound message newer than the
+ * request itself (same contract as silent threads: the latest word is ours).
+ * Without a linked conversation, or without a readable request date, the
+ * request still waits — the row stays rather than hiding work.
+ * @param {Record<string, any>} submission an accepted site-form-submission row
+ * @param {Array<Record<string, any>>} messages inbox message rows
+ * @param {Array<Record<string, any>>} conversations inbox conversation rows
+ */
+function formConversationAnswered(submission, messages, conversations) {
+  const conversationId = nonEmptyText(submission?.conversationId);
+  if (!conversationId) return false;
+  const conversation = (Array.isArray(conversations) ? conversations : [])
+    .find((entry) => nonEmptyText(entry?.id) === conversationId) ?? null;
+  if (conversation != null && conversation?.status === 'closed') return true;
+  const since = Date.parse(String(submission?.occurredAt ?? ''));
+  if (!Number.isFinite(since)) return false;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message == null) continue;
+    if (nonEmptyText(message?.conversationId) !== conversationId) continue;
+    if (message?.direction === 'inbound') continue;
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (Number.isFinite(at) && at > since) return true;
+  }
+  return false;
+}
+
+/**
+ * One signal action for an appointment the customer missed: rebook it.
+ * Anything but `no-show` (done, cancelled, rebooked) drops the row on the
+ * next recompute — that is the handled state, no extra flag.
+ * @param {Record<string, any>} appointment a no-show appointment row
+ * @param {Date} [now]
+ * @param {Record<string, string|null>} [names] profile names by `resource:id`
+ */
+export function missedAppointmentSignal(appointment, now = new Date(), names = {}) {
+  const id = nonEmptyText(appointment?.id);
+  if (!id) return null;
+  if (appointment?.status !== 'no-show') return null;
+  const time = romeTime(appointment?.startsAt);
+  const day = romeDayPhrase(appointment?.startsAt, now, 'del');
+  if (!time || !day) return null;
+  const label = subjectDisplayLabel(appointment, names);
+  const card = cardHrefForSubject(appointment);
+  const calendarEvent = card === null ? calendarEventOf(appointment) : null;
+  const href = card ?? CALENDAR_ROUTE;
+  return Object.freeze({
+    id: `bo04:signal:missed-appointment:${id}`,
+    kind: 'signal',
+    mono: 'CAL',
+    channel: 'calendar',
+    title: `Riprogramma con ${label}`,
+    why: `Ha saltato l'appuntamento ${day} alle ${time}: richiamalo per fissarne un altro.`,
+    cta: 'Riprogramma',
+    run: 'open',
+    href,
+    calendarEvent,
+    record: Object.freeze({
+      module: 'appointment', id, label: `Appuntamento delle ${time} con ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      status: 'no-show',
+      startsAt: appointment?.startsAt ?? null,
+    }),
+  });
+}
+
+/**
+ * One signal action for a thread whose latest message is the customer's and
+ * is older than SIGNAL_SILENCE_DAYS: send a follow-up. Automated mail is
+ * never a waiting person — the same notification rule as «Da rispondere»
+ * (`isNotificationMessage` over the page base) filters it here too. An
+ * answered or closed thread drops the row on the next recompute.
+ * @param {Record<string, any>} message the thread's latest inbound message row
+ * @param {{ conversation?: Record<string, any> | null, now?: Date, names?: Record<string, string|null>, ownAddresses?: Array<string>, correspondents?: { conversations: Set<string>, addresses: Set<string> } | null }} [options]
+ */
+export function silentThreadSignal(message, { conversation = null, now = new Date(), names = {}, ownAddresses = [], correspondents = null } = {}) {
+  const id = nonEmptyText(message?.id);
+  if (!id) return null;
+  if (message?.direction !== 'inbound') return null;
+  const at = Date.parse(String(message?.occurredAt ?? ''));
+  if (!Number.isFinite(at)) return null;
+  if (now.getTime() - at < SIGNAL_SILENCE_DAYS * 24 * 60 * 60 * 1000) return null;
+  if (conversation != null && conversation?.status === 'closed') return null;
+  const channel = String(message?.channel ?? conversation?.channel ?? '').toLowerCase();
+  const subject = {
+    subjectOwner: message?.subjectOwner ?? conversation?.subjectOwner,
+    subjectResource: message?.subjectResource ?? conversation?.subjectResource,
+    subjectId: message?.subjectId ?? conversation?.subjectId,
+  };
+  const handle = nonEmptyText(message?.remoteHandle) ?? nonEmptyText(conversation?.remoteHandle);
+  const machine = isNotificationMessage(
+    { ...message, channel, remoteHandle: handle },
+    {
+      ownAddresses,
+      labels: [conversation?.subjectLabel],
+      weWrote: correspondents != null
+        ? teamWroteTo(correspondents, { ...message, remoteHandle: handle })
+        : false,
+    },
+  );
+  if (machine) return null;
+  const key = inboxSubjectKey(subject);
+  const label = (key && names != null && typeof names === 'object' && Object.hasOwn(names, key)
+    ? readableName(nonEmptyText(names[key])) : null)
+    ?? realLabel(conversation?.subjectLabel)
+    ?? realLabel(message?.subjectLabel)
+    ?? handle
+    ?? 'Contatto senza nome';
+  const waited = waitedFor(message?.occurredAt, now);
+  const channelName = OGGI_CHANNEL_NAMES[channel] ?? null;
+  const card = cardHrefForSubject(subject);
+  const href = card ?? recordDetailHref('conversation', nonEmptyText(message?.conversationId) ?? id);
+  return Object.freeze({
+    id: `bo04:signal:silent-thread:${id}`,
+    kind: 'signal',
+    mono: channelTile(channel) ?? badgeInitials(label),
+    channel: channel === '' ? null : channel,
+    title: `Manda un follow-up a ${label}`,
+    why: `Nessuna risposta ${waited}${channelName ? ` su ${channelName}` : ''}: l'ultimo messaggio è del cliente.`,
+    cta: channelCta(channel) ?? 'Rispondi',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: 'interaction-message', id, label: `Messaggio di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      direction: 'inbound',
+      occurredAt: message?.occurredAt ?? null,
+    }),
+  });
+}
+
+/**
+ * One signal action for a website-form request still waiting for the team's
+ * answer: answer on the channel the visitor can read (MEM_ACC_GOAL: WhatsApp
+ * when there is a phone number, email when there is only an email, both when
+ * there are both). `rejected` (spam) never signals; an `accepted` request
+ * drops the row on the next recompute only when its conversation shows the
+ * team's answer (a newer non-inbound message) or is closed.
+ * @param {Record<string, any>} submission a site-form-submission row
+ * @param {{ messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>> }} [context] inbox rows to tell an answered form apart
+ */
+export function siteFormSignal(submission, { messages = [], conversations = [] } = {}) {
+  const id = nonEmptyText(submission?.id);
+  if (!id) return null;
+  if (!OPEN_FORM_STATUSES.includes(submission?.status)) return null;
+  if (submission?.status === 'accepted' && formConversationAnswered(submission, messages, conversations)) return null;
+  const fullName = [nonEmptyText(submission?.firstName), nonEmptyText(submission?.lastName)]
+    .filter((part) => part !== null).join(' ');
+  const label = fullName !== '' ? fullName
+    : readableName(nonEmptyText(submission?.subjectLabel)) ?? 'un nuovo contatto';
+  const waited = waitedFor(submission?.occurredAt);
+  const wantsWhatsapp = submission?.replyWhatsapp === true;
+  const wantsEmail = submission?.replyEmail === true;
+  const channels = wantsWhatsapp && wantsEmail ? 'su WhatsApp e via email'
+    : wantsWhatsapp ? 'su WhatsApp'
+    : wantsEmail ? 'via email'
+    : 'ai recapiti lasciati';
+  const subjectResource = nonEmptyText(submission?.subjectResource);
+  const subjectId = nonEmptyText(submission?.subjectId);
+  const card = subjectResource && subjectId
+    ? cardHrefForSubject({ subjectOwner: 'host', subjectResource, subjectId })
+    : null;
+  const href = card ?? recordDetailHref('site-form-submission', id);
+  return Object.freeze({
+    id: `bo04:signal:site-form:${id}`,
+    kind: 'signal',
+    mono: channelTile('web'),
+    channel: 'web',
+    title: `Rispondi a ${label}`,
+    why: `Richiesta dal sito di ${label}${waited !== '' ? `, ${waited}` : ''}: rispondi ${channels}.`,
+    cta: 'Rispondi',
+    run: 'open',
+    href,
+    record: Object.freeze({
+      module: 'site-form-submission', id, label: `Richiesta dal sito di ${label}`, href,
+    }),
+    snapshot: Object.freeze({
+      status: submission?.status ?? null,
+      occurredAt: submission?.occurredAt ?? null,
+    }),
+  });
+}
+
+/**
+ * The deterministic signal list: missed appointments, threads silent past
+ * SIGNAL_SILENCE_DAYS, open website forms — in that order. Malformed rows
+ * (no id, unreadable date, unknown status) contribute nothing, never a
+ * crash. Threads group by conversation like «Da rispondere»: only the
+ * latest message of a thread decides, and a thread the team answered last
+ * is not silent.
+ * @param {{ appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, ownAddresses?: Array<string> }} input
+ */
+export function buildSignalActions({ appointments = [], messages = [], conversations = [], submissions = [], now = new Date(), names = {}, ownAddresses = [] } = {}) {
+  const actions = [];
+  for (const appointment of Array.isArray(appointments) ? appointments : []) {
+    const signal = appointment == null ? null : missedAppointmentSignal(appointment, now, names);
+    if (signal) actions.push(signal);
+  }
+  const byId = new Map();
+  for (const conversation of Array.isArray(conversations) ? conversations : []) {
+    if (nonEmptyText(conversation?.id)) byId.set(conversation.id, conversation);
+  }
+  const latest = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message == null) continue;
+    const key = nonEmptyText(message?.conversationId)
+      ?? (nonEmptyText(message?.subjectId) ? `${message.subjectResource ?? ''}:${message.subjectId}:${message.channel ?? ''}` : null);
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (!key || !Number.isFinite(at)) continue;
+    const seen = latest.get(key);
+    if (!seen || at > seen.at) latest.set(key, { at, message });
+  }
+  const correspondents = teamCorrespondents(Array.isArray(messages) ? messages : []);
+  for (const [key, { message }] of latest) {
+    const conversation = byId.get(key) ?? null;
+    const signal = silentThreadSignal(message, { conversation, now, names, ownAddresses, correspondents });
+    if (signal) actions.push(signal);
+  }
+  for (const submission of Array.isArray(submissions) ? submissions : []) {
+    const signal = submission == null ? null : siteFormSignal(submission, { messages, conversations });
+    if (signal) actions.push(signal);
+  }
+  return Object.freeze(actions);
+}
+
+/**
+ * Deterministic advisor list: open follow-ups due (overdue first), the
+ * signals (missed appointments, silent threads, open forms), then the
  * preparation of today's next appointment. Capped — the screen says so when
  * the cap hides actions.
  * `pendingNames` (backlog:bd5e84545021): the profile names are still being
  * read — a card whose words depend on them says so (`namePending`).
- * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
+ * @param {{ tasks?: Array<Record<string, any>>, appointments?: Array<Record<string, any>>, messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>>, submissions?: Array<Record<string, any>>, ownAddresses?: Array<string>, now?: Date, names?: Record<string, string|null>, pendingNames?: boolean }} input
  */
-export function buildAdvisorActions({ tasks = [], appointments = [], now = new Date(), names = {}, pendingNames = false } = {}) {
+export function buildAdvisorActions({ tasks = [], appointments = [], messages = [], conversations = [], submissions = [], ownAddresses = [], now = new Date(), names = {}, pendingNames = false } = {}) {
   const open = (Array.isArray(tasks) ? tasks : [])
     .filter((task) => task != null && task.status === 'open');
   open.sort((a, b) => {
@@ -535,6 +787,12 @@ export function buildAdvisorActions({ tasks = [], appointments = [], now = new D
   for (const task of open) {
     const action = followupAction(task, now);
     if (action) actions.push(action);
+  }
+  // backlog:d08331558c50: the signals read their own records — a missed
+  // appointment, a thread silent past SIGNAL_SILENCE_DAYS, an open website
+  // form — each as the motive of one proposed action.
+  for (const signal of buildSignalActions({ appointments, messages, conversations, submissions, now, names, ownAddresses })) {
+    actions.push(signal);
   }
   // backlog:5e703a7bb397: the prep reads the next call still ahead, never
   // an appointment already over — an ended slot must not offer «Prepara».
@@ -1199,9 +1457,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)
       ?? realLabel(message.subjectLabel)
-      // A notification names its sender like Clienti does — the brand of
-      // its domain («Namecheap»), never the bare address (backlog:bab63e32acdb,
-      // verification 12/11): its profile name is never read.
+      // A notification without a customer subject names its sender like
+      // Clienti does — the brand of its domain («Namecheap»), never the
+      // bare address (backlog:bab63e32acdb, verification 12/11); with a
+      // subject the profile name above already won (backlog:971b3e0e).
       ?? (machine ? labelFromEmail(senderAddress(handle)) : null)
       ?? handle
       ?? 'Contatto senza nome';
@@ -1210,8 +1469,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       at,
       channel,
       subjectKey,
-      // Only the waiting rows read profile names (readInboxNames): a
-      // notification keeps its stored label, never a grey bar for good.
+      // Waiting rows and notifications with a subject read profile names
+      // (readInboxNames, readNotificationNames — backlog:971b3e0e); a
+      // notification still never waits in grey for its name.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
       // backlog:0f78353438c5: le righe Da rispondere mostrano le
@@ -1524,18 +1784,15 @@ async function readSpaceConnections(client, space) {
 }
 
 /**
- * The customer name of every shown «Da rispondere» row (production 07/11:
- * the channel syncs store no subject label, so every row read «Cliente»).
- * One read-only profile per shown subject — at most the inbox limit —
- * settled together; a refused or unknown profile leaves the row on its
- * stored label or sender handle, never an error on Oggi.
+ * One read-only profile per subject — settled together; a refused or
+ * unknown profile leaves the row on its stored label, brand or sender
+ * handle, never an error on Oggi. The one name rule every screen reads
+ * (`nameFromProfile`, the same function Clienti reads).
  * @param {{ request: (path: string) => Promise<any> }} client
- * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @param {Array<string>} keys `resource:id` subjects to name
  * @returns {Promise<Record<string, string>>}
  */
-export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
-  const { rows } = buildInbox({ messages, conversations, now, ownAddresses });
-  const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+async function readProfileNames(client, keys) {
   /** @type {Record<string, string>} */
   const names = {};
   const settled = await Promise.allSettled(keys.map(async (key) => {
@@ -1549,6 +1806,43 @@ export async function readInboxNames(client, messages, conversations, now, { own
     if (result.status === 'fulfilled' && result.value.name) names[result.value.key] = result.value.name;
   }
   return names;
+}
+
+/**
+ * The customer name of every shown inbox row — «Da rispondere» and
+ * «Notifiche automatiche» (production 07/11: the channel syncs store no
+ * subject label, so every row read «Cliente»; backlog:971b3e0e: a
+ * notification with a customer subject read the brand of their domain
+ * while Clienti showed their profile name). One read-only profile per
+ * shown subject — at most twice the inbox limit — settled together; a
+ * refused or unknown profile leaves the row on its stored label, brand
+ * or sender handle, never an error on Oggi.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses });
+  const keys = [...new Set([...built.rows, ...built.notifications.rows]
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
+}
+
+/**
+ * The customer name of every shown «Notifiche automatiche» row with a
+ * subject (backlog:971b3e0e): the branch the server «Da rispondere» view
+ * names itself, so it reads only what the view cannot name. Same function,
+ * same fail-soft rule as `readInboxNames`; a notification still never
+ * waits in grey for its name.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readNotificationNames(client, messages, conversations, now, { ownAddresses = [], correspondents = null } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses, correspondents });
+  const keys = [...new Set(built.notifications.rows
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
 }
 
 /** Profile reads for appointment names, at most: the agenda never has more on one screen. */
@@ -1606,10 +1900,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     tasksPartial: false,
     appointmentsPartial: false,
     inboxPartial: false,
+    submissionsPartial: false,
     interactionsAvailable: false,
     tasks: [],
     appointments: [],
     connections: [],
+    submissions: [],
     profile: null,
     // The schema's composed channel adapters: the strip's Collega follows
     // the shared channel state, like Stato sync. Null while unread.
@@ -1705,7 +2001,12 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('da-rispondere', error); return null; },
     )
     : Promise.resolve(null);
-  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage] = await Promise.all([
+  // backlog:d08331558c50: the website forms feed the signal list — one
+  // fail-soft read like the rest, gated on the composed domain.
+  const submissionsRead = domains['site-forms'] != null
+    ? page('site-form-submission', 'site-form-submission')
+    : skip;
+  const [tasksPage, appointmentsPage, connectionsPage, profile, messagesPage, conversationsPage, submissionsPage] = await Promise.all([
     domains.work != null ? page('work-task', 'work-task', { status: 'open' }) : skip,
     domains.appointments != null ? page('appointment', 'appointment') : skip,
     connectionsRead,
@@ -1716,6 +2017,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // waiting. A failed read keeps the section honest (unavailable).
     interactions ? page('inbox', 'interaction-message') : skip,
     interactions ? readModulePage(client, 'conversation').catch(() => null) : skip,
+    submissionsRead,
   ]);
   // backlog:c2bf6b206d96: «Da rispondere» from the Clienti view, one source
   // for Oggi and Clienti; fail-soft to the messages read below.
@@ -1730,6 +2032,10 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     outcome.appointments = appointmentsPage.rows;
     outcome.appointmentsPartial = appointmentsPage.capped === true;
     outcome.appointmentsAvailable = true;
+  }
+  if (submissionsPage != null) {
+    outcome.submissions = submissionsPage.rows;
+    outcome.submissionsPartial = submissionsPage.capped === true;
   }
   if (connectionsPage != null) {
     outcome.connections = connectionsPage.rows;
@@ -1796,14 +2102,42 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // a slow view never holds the agenda names or the actions back.
   outcome.inboxNamesPending = true;
   let repliesSettled = false;
+  // backlog:971b3e0e (review Codex P2 on df720f0d): «Da rispondere» paints
+  // as soon as its own data is in — the notification profile names repaint
+  // after, without holding the ready rows or their count back.
+  let namesPublished = false;
+  const named = () => {
+    if (typeof onNames !== 'function') return;
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+    namesPublished = true;
+  };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
     outcome.repliesPending = false;
-    outcome.inboxNames = outcome.inboxAvailable && replies === null
-      ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
-      : {};
+    // The ready rows and their count paint now, even while a notification
+    // profile read is still flying.
+    if (namesPublished) named();
+    // backlog:971b3e0e: «Notifiche automatiche» always comes from the
+    // local messages read, so its subjects need profile names on both
+    // branches — the server view names «Da rispondere» itself, never the
+    // notifications. The server branch reads notification subjects only,
+    // with the same scan-wide base the render decides them from.
+    outcome.inboxNames = !outcome.inboxAvailable
+      ? {}
+      : replies === null
+        ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
+        : await readNotificationNames(client, outcome.inboxMessages, outcome.inboxConversations, now, {
+          ownAddresses: ownMailboxes(outcome.profile, outcome.connections),
+          correspondents: replies.correspondents ?? null,
+        });
     outcome.inboxNamesPending = false;
     repliesSettled = true;
+    // The notification names fill in after, in place.
+    if (namesPublished) named();
   });
   // Voce 785aeb28bd18: the roster already rides the first wave beside the
   // profile (see above) — joining it here only waits for what is still
@@ -1815,15 +2149,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
-  // the call recap and «Da rispondere» may still be reading.
-  const named = () => {
-    if (typeof onNames !== 'function') return;
-    try {
-      onNames({ ...outcome, pending: false, briefPending: true });
-    } catch (error) {
-      noteReadFailure('paint', error);
-    }
-  };
+  // the call recap and the notification names may still be reading (their
+  // branches repaint in place through named, backlog:971b3e0e).
   named();
   const answeredLate = !repliesSettled;
   await repliesBranch;
@@ -2342,9 +2669,21 @@ export function renderOggi({
       inbox.appendChild(line);
     }
     // Backlog 803d127c4458: past the messages page the count above
-    // undercounts — the cut is disclosed, never silent.
+    // undercounts — the cut is disclosed, never silent, with the way to
+    // see the rest (Clienti › Tutti, like the other inbox notes above).
     if (home.inbox.partial === true) {
-      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+      const note = el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci). `);
+      if (typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutti in Clienti →');
+        all.setAttribute('href', clientiViewHash('tutti'));
+        all.setAttribute('data-action', 'inbox-all-messages');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView('tutti');
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
@@ -2762,7 +3101,19 @@ export function createOggiView(deps) {
     if (!last) return;
     // backlog:bd5e84545021: the essentials are on screen, the names not yet.
     const pendingNames = last.pending === true;
-    const built = buildAdvisorActions({ tasks: last.tasks, appointments: last.appointments, now: lastMeta.now, names: last.appointmentNames ?? {}, pendingNames });
+    // backlog:d08331558c50: the signals read the inbox rows and the open
+    // website forms beside the follow-ups — same fail-soft rows, no new page.
+    const built = buildAdvisorActions({
+      tasks: last.tasks,
+      appointments: last.appointments,
+      messages: last.inboxMessages ?? [],
+      conversations: last.inboxConversations ?? [],
+      submissions: last.submissions ?? [],
+      ownAddresses: ownMailboxes(last.profile, last.connections),
+      now: lastMeta.now,
+      names: last.appointmentNames ?? {},
+      pendingNames,
+    });
     lastBuilt = built;
     const merged = [...built.actions];
     const today = romeDayKey(lastMeta.now);
@@ -2813,7 +3164,11 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...serverInbox, notifications }
+        // Backlog 803d127c4458: the server view names «Da rispondere» but
+        // never reads the messages page — its cut still hides rows (the
+        // notifications group reads from that page), so the local capped
+        // flag rides along instead of dropping in silence.
+        ? { ...serverInbox, partial: serverInbox.partial === true || local?.partial === true, notifications }
         : local;
     renderOggi({
       doc,
@@ -3119,6 +3474,7 @@ export function createOggiView(deps) {
           profile: null,
           briefMessages: [], briefCalls: [], next: null, appointmentNames: {},
           inboxAvailable: false, inboxMessages: [], inboxConversations: [], inboxNames: {},
+          submissions: [],
         };
       }
       paint();

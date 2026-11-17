@@ -1,8 +1,8 @@
 {
   "implementationEvidenceContract": 1,
   "plan": "examples/solution-plans/activate-support-and-manage-cases.plan.json",
-  "planFingerprint": "cb324b9e36e30019e322448ff56b5a0f31c75d9cb05aba454dea250b50b6166c",
-  "applicationInspectionFingerprint": "081a0abb84253c64faf340802aca09f9b6866657d916251c29a351942ddc2ab5",
+  "planFingerprint": "f3ca1dae9916f80d6f9c276e114bf751a7435a47714b22ba9405365e5dc241d2",
+  "applicationInspectionFingerprint": "820a8e38104159cb7c39fa0d1498224e99f2588632cfc6d00ea049b12a64101f",
   "requirements": [
     {
       "requirementId": "step:step.plan-before-activating",
@@ -220,7 +220,7 @@
         }
       ],
       "partial": {
-        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not \u2014 the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
+        "reason": "\"never claims to be current\" is observed: the evaluation states its basis and states that no contractual breach was determined. \"Names the instant it used\" is not — the run publishes the state an evaluation recorded, not the timestamp field it recorded it against"
       }
     },
     {
@@ -262,7 +262,7 @@
   "limitations": [
     {
       "code": "PLAN_TARGETS_A_STARTER_NOT_THIS_REPOSITORY",
-      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application \u2014 so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
+      "message": "this plan was written against the application the b2b starter composes, which is not the composition this repository's own root has. The digest it pins is reproduced here by the service scenario, which composes exactly that application — so every fact about it is cited where it was observed, and no application fact is cited from this repository's AX1 report"
     },
     {
       "code": "SERVICE_COVERAGE_IS_NOT_A_CONTRACT",

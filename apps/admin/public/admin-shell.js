@@ -702,6 +702,14 @@ export function createShellView({
 
   const activeSpace = () => state.spaces.find((space) => space.id === state.activeSpaceId) ?? state.spaces[0];
 
+  // backlog:f6ad46980054 (review #895 P3): the agent name is space-scoped —
+  // every local space switch drops it, so the bar never names for a moment
+  // the previous space's agent before the new space's read lands.
+  function switchSpace(id) {
+    if (state.activeSpaceId !== id) state.aiAgentName = '';
+    state.activeSpaceId = id;
+  }
+
   function clearMount(mount) {
     while (mount.firstChild) mount.removeChild(mount.firstChild);
   }
@@ -824,7 +832,7 @@ export function createShellView({
       if (entry.keyHint !== '') pick.appendChild(el(doc, 'span', 'bo-space-key', entry.keyHint));
       if (entry.active) pick.appendChild(el(doc, 'span', 'bo-space-check', '✓'));
       else pick.addEventListener('click', () => {
-        state.activeSpaceId = entry.id;
+        switchSpace(entry.id);
         onPickSpace(entry.id);
         renderSidebar();
         renderTopbar();
@@ -832,7 +840,10 @@ export function createShellView({
       menu.appendChild(pick);
     }
     const manage = el(doc, 'button', 'bo-space-manage', 'Gestisci spazi e accessi');
-    manage.addEventListener('click', () => go(SETTINGS_ROUTE));
+    // backlog:2302655b1fcf: the entry opens Spazi e accessi directly, never
+    // the settings index — the route is read from the tab it opens, not a copy.
+    const spaziAccessi = SETTINGS_AREAS.find((area) => area.id === 'spazi-accessi');
+    manage.addEventListener('click', () => go(spaziAccessi?.route ?? '#/spazi-accessi'));
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
@@ -864,11 +875,24 @@ export function createShellView({
           const pill = el(doc, 'span', 'bo-count', countText);
           if (state.clientCountExact === false) pill.setAttribute('title', 'conteggio parziale: la scansione è limitata');
           link.appendChild(pill);
+        } else {
+          // backlog:b76770f82fe9: the pill's room stays reserved while the
+          // count is unknown, so the rows below never move when it lights.
+          const empty = el(doc, 'span', 'bo-count is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
         }
       }
       if (item.id === 'impostazioni') {
         const badgeText = settingsBadge(state.fixCount);
-        if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        if (badgeText !== '') {
+          link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        } else {
+          // backlog:b76770f82fe9: same reserved room for the fix count.
+          const empty = el(doc, 'span', 'bo-badge is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
+        }
       }
       container.appendChild(link);
     }
@@ -1038,7 +1062,14 @@ export function createShellView({
       else openDrawer();
     });
     topbar.appendChild(menuToggle);
-    const path = el(doc, 'div', 'bo-crumb', crumb(space.name, screenLabelFor(state.activeScreenId)));
+    // backlog:dd6a01de569b: the crumb keeps "<space> / <screen>" on desktop,
+    // but on a phone the bar above already names the space — the space part
+    // gets its own span so the ≤700px stylesheet can drop the repetition
+    // while desktop, textContent and screen readers keep the full path.
+    const screen = screenLabelFor(state.activeScreenId);
+    const path = el(doc, 'div', 'bo-crumb');
+    path.appendChild(el(doc, 'span', 'bo-crumb-space', crumb(space.name, '')));
+    path.appendChild(el(doc, 'span', 'bo-crumb-screen', screen));
     path.setAttribute('aria-label', 'Percorso');
     topbar.appendChild(path);
 
@@ -1127,7 +1158,7 @@ export function createShellView({
       const spaceId = resolveSpaceShortcut(event, state.spaces);
       if (spaceId !== null) {
         if (typeof event.preventDefault === 'function') event.preventDefault();
-        state.activeSpaceId = spaceId;
+        switchSpace(spaceId);
         onPickSpace(spaceId);
         renderSidebar();
         renderTopbar();
@@ -1146,6 +1177,17 @@ export function createShellView({
       if (typeof event?.stopPropagation === 'function') event.stopPropagation();
       closeDrawer();
     }, true);
+    // backlog:dd6a01de569b: the sticky bar needs an edge once the page
+    // slides under it — otherwise bar and content read as one surface.
+    // The stylesheet draws the edge (phone only); here only the flag.
+    const paintTopbarScrolled = () => {
+      const y = typeof win.scrollY === 'number' ? win.scrollY
+        : typeof win.pageYOffset === 'number' ? win.pageYOffset
+        : 0;
+      if (typeof topbar.classList?.toggle === 'function') topbar.classList.toggle('bo-topbar-scrolled', y > 0);
+    };
+    win.addEventListener('scroll', paintTopbarScrolled, { passive: true });
+    paintTopbarScrolled();
   }
 
   renderSidebar();
@@ -1172,9 +1214,9 @@ export function createShellView({
     setSpaces(spaces, activeId) {
       if (Array.isArray(spaces) && spaces.length > 0) state.spaces = spaces;
       if (typeof activeId === 'string' && state.spaces.some((space) => space.id === activeId)) {
-        state.activeSpaceId = activeId;
+        switchSpace(activeId);
       } else if (!state.spaces.some((space) => space.id === state.activeSpaceId)) {
-        state.activeSpaceId = state.spaces[0].id;
+        switchSpace(state.spaces[0].id);
       }
       renderSidebar();
       renderTopbar();
@@ -1222,8 +1264,13 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
-  mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
+  // backlog:2302655b1fcf: the same header as Personalizzazione (panel-title
+  // plus subtitle), never the «Backoffice» kicker the other screens dropped.
+  mount.appendChild(el(doc, 'h2', { text: 'Impostazioni', cls: 'panel-title' }));
+  mount.appendChild(el(doc, 'p', {
+    text: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+    cls: 'muted',
+  }));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(

@@ -930,19 +930,25 @@ import { buildShellNav } from './admin-shell.js';
 const TASKS = ${JSON.stringify(DEMO_TASKS)};
 const APPOINTMENTS = ${JSON.stringify(DEMO_APPOINTMENTS)};
 const MESSAGES = ${JSON.stringify(DEMO_MESSAGES)};
+const seenChannelReads = [];
 const client = {
   async request(path, options = {}) {
     if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
       return { task: { ...TASKS[0], status: 'completed' } };
     }
     if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+    if (path === '/api/profile') return null;
+    if (path === '/api/spine/memberships') return { items: [] };
     if (path.startsWith('/api/modules/work-task/records/')) {
       const id = path.split('/').pop();
       return TASKS.find((task) => task.id === id) ?? TASKS[0];
     }
     if (path.startsWith('/api/modules/work-task/records')) return { items: TASKS };
     if (path.startsWith('/api/modules/appointment/records')) return { items: APPOINTMENTS };
-    if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+    if (path.startsWith('/api/modules/channel-connection/records')) {
+      seenChannelReads.push(path);
+      return { items: [] };
+    }
     if (path.startsWith('/api/modules/interaction-message/records')) return { items: MESSAGES };
     if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
     throw new Error('unexpected read: ' + path);
@@ -953,7 +959,10 @@ const links = buildOggiLinks(buildShellNav({
   customerDataAvailable: true,
   sequencesAvailable: true,
 }));
-const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {} });
+// The live page opens Oggi with the active space (app.js passes a spaceId
+// reader): without it loadOggiData skips the scoped connections read and
+// the shot paints the read-failure line instead of the channel strip.
+const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, spaceId: () => 'locale', navigate: () => {} });
 await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: new Date('2026-10-19T07:00:00.000Z') });
 // Rendered mounts only: whole-page text would also include this very module
 // script (fixture JSON plus the match patterns), so page-wide counts reject
@@ -964,6 +973,9 @@ const oggiTitles = [...document.querySelectorAll('#view-module .bo-oggi-title')]
 document.getElementById('probe').textContent = JSON.stringify({
   recap: oggiViewText.includes('Oggi hai 2 cose da fare e 2 appuntamenti'),
   tasks: oggiTitles.filter((title) => title === 'Richiama per il preventivo' || title === 'Prepara la call con i prezzi del pacchetto').length,
+  strip: oggiViewText.includes('di 9 collegati'),
+  channelsError: oggiViewText.includes('non si sono potuti leggere'),
+  unscoped: seenChannelReads.filter((read) => !String(read).includes('filter.spaceId')).length,
 });
 document.title = 'oggi-ready';`;
     case 'clienti': return `
@@ -1995,6 +2007,9 @@ export function assertProbe(name, probe) {
     case 'oggi': {
       if (probe.recap !== true) throw new Error('oggi: the probe shows no appointments recap');
       if (probe.tasks !== 2) throw new Error(`oggi: the probe lists ${String(probe.tasks)} tasks, expected 2`);
+      if (probe.strip !== true) throw new Error('oggi: the probe shows no channel strip (expected «N di 9 collegati»)');
+      if (probe.channelsError !== false) throw new Error('oggi: the probe shows a channel read failure');
+      if (probe.unscoped !== 0) throw new Error(`oggi: the probe lists ${String(probe.unscoped)} channel-connection reads without filter.spaceId, expected 0`);
       return;
     }
     case 'clienti': {

@@ -422,6 +422,29 @@ test('the edit validates before writing and keeps the form on a refused save', a
   assert.ok(mount.textContent.includes('Maria'), 'the detail still shows the stored referente');
 });
 
+test('a refused Salva names the true reason, never «Riprova più tardi» (backlog:18cdf78c)', async () => {
+  for (const [failPatch, expected] of [
+    [{ message: 'Dati non validi', status: 400, code: 'VALIDATION_ERROR' }, 'Alcuni dati non sono validi'],
+    [{ message: 'Offerta non trovata', status: 404, code: 'NOT_FOUND' }, 'Offerta non trovata, ricarica'],
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ quotes: [], audit: [], failPatch });
+    const view = createOfferDetail({ doc, mount, client });
+    await view.renderOfferDetail('off1');
+    const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+    wrap.__edit();
+    const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+    form.__editInputs.value.value = '200.00';
+    form.__editInputs.owner.value = 'guido';
+    await form.__save({ preventDefault() {} });
+    assert.ok(!form.__editError.textContent.includes('Riprova più tardi'),
+      `a ${failPatch.code} refusal never reads «Riprova più tardi»: ${form.__editError.textContent}`);
+    assert.ok(form.__editError.textContent.includes(expected),
+      `a ${failPatch.code} refusal names why: ${form.__editError.textContent}`);
+  }
+});
+
 test('offer routes parse canonically; hostile routes are invalid', async () => {
   assert.deepEqual(parseModuleRoute('#/offerte/off1'), { view: 'offer-detail', offerId: 'off1' });
   // backlog:96c7b56001ba: opened from a scheda, the route names it.

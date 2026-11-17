@@ -1629,7 +1629,7 @@ test('pushSeriesScope following: un insert che fallisce lascia il master aperto 
 // vincolata ai calendari dello spazio chiamante prima di ogni risposta,
 // così da un altro spazio la chiave esportata e quella mai vista danno
 // la stessa risposta, senza mai scrivere sul calendario altrui.
-test('pushSeriesScope isola gli spazi: stessa risposta qualunque sia la chiave (backlog:6acf0a73bfc3)', async (t) => {
+test('pushSeriesScope fail-closed sullo spazio: straniero o assente rifiuta, mai solo-griglia (backlog:6acf0a73bfc3, giro 2)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
   const calls = { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 };
@@ -1666,13 +1666,25 @@ test('pushSeriesScope isola gli spazi: stessa risposta qualunque sia la chiave (
   assert.equal(own.status, 'pushed', 'lo spazio che possiede il grant converge');
   const masterBefore = JSON.stringify(ctx.provider.getEvent(CAL, own.eventId));
   for (const fn of Object.keys(calls)) calls[fn] = 0;
-  const probe = { spaceId: 'space-b', scope: 'single', occurrenceStartsAt: anchor };
-  const fromExported = await wired.pushSeriesScope(appointment.sourceKey, probe);
-  const fromUnknown = await wired.pushSeriesScope('gym:serie:mai:esportata', probe);
-  assert.equal(fromExported.status, 'local-only', 'lo spazio straniero non converge mai');
-  assert.equal(fromUnknown.status, 'local-only', 'la chiave mai vista risponde allo stesso modo');
-  assert.equal(fromExported.reason, fromUnknown.reason, 'stessa risposta qualunque sia la chiave');
-  assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'nessuna chiamata a Google dallo spazio straniero');
+  const foreign = { spaceId: 'space-b', scope: 'single', occurrenceStartsAt: anchor };
+  await assert.rejects(
+    wired.pushSeriesScope(appointment.sourceKey, foreign),
+    (error) => {
+      assert.equal(error.code, 'CALENDAR_GRANT_UNKNOWN');
+      assert.equal(error.status, 404);
+      assert.doesNotMatch(String(error.message), new RegExp(CAL), 'il rifiuto non nomina il calendario altrui');
+      return true;
+    },
+    'lo spazio straniero rifiuta con un codice, mai solo-griglia',
+  );
+  await assert.rejects(
+    wired.pushSeriesScope(appointment.sourceKey, { scope: 'single', occurrenceStartsAt: anchor }),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    'lo spazio assente rifiuta con un codice, mai solo-griglia',
+  );
+  const fromUnknown = await wired.pushSeriesScope('gym:serie:mai:esportata', foreign);
+  assert.equal(fromUnknown.status, 'local-only', 'la chiave mai vista resta solo griglia');
+  assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'nessuna chiamata a Google dallo spazio straniero o assente');
   assert.equal(JSON.stringify(ctx.provider.getEvent(CAL, own.eventId)), masterBefore, 'il calendario altrui non cambia');
   const { appointment: local } = await handle.bookAppointment({
     sourceKey: 'gym:serie:engine:spazio-local',
@@ -1689,11 +1701,13 @@ test('pushSeriesScope isola gli spazi: stessa risposta qualunque sia la chiave (
   assert.equal(localOnly.status, 'local-only', 'la serie mai esportata resta solo griglia');
 });
 
-// backlog:6acf0a73bfc3 — la sonda del collegamento: lo spazio che ha
-// esportato la serie legge linked:true; uno straniero legge linked:false
-// come una chiave mai vista (nessun oracolo), senza toccare Google; un
-// grant revocato rifiuta con il suo codice.
-test('seriesScopeLink isola gli spazi: straniero come mai visto, revocato rifiuta (backlog:6acf0a73bfc3)', async (t) => {
+// backlog:6acf0a73bfc3, giro 2 — la sonda del collegamento è fail-closed:
+// lo spazio che ha esportato la serie legge linked:true; uno straniero o
+// uno spazio assente su una serie collegata rifiuta 404 (mai linked:false
+// che farebbe mutare la griglia da sola); una chiave mai vista legge
+// linked:false senza toccare Google; un grant revocato rifiuta con il suo
+// codice.
+test('seriesScopeLink fail-closed: straniero o assente rifiuta, mai-vista resta linked:false (backlog:6acf0a73bfc3, giro 2)', async (t) => {
   const ctx = setup();
   t.after(() => ctx.close());
   const calls = { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 };
@@ -1726,16 +1740,97 @@ test('seriesScopeLink isola gli spazi: straniero come mai visto, revocato rifiut
   for (const fn of Object.keys(calls)) calls[fn] = 0;
   const own = await wired.seriesScopeLink(appointment.sourceKey, { spaceId: 'space-a' });
   assert.equal(own.linked, true, 'lo spazio che ha esportato vede il collegamento');
-  const foreign = await wired.seriesScopeLink(appointment.sourceKey, { spaceId: 'space-b' });
+  await assert.rejects(
+    wired.seriesScopeLink(appointment.sourceKey, { spaceId: 'space-b' }),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    'lo straniero rifiuta, mai linked:false',
+  );
+  await assert.rejects(
+    wired.seriesScopeLink(appointment.sourceKey, {}),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    'lo spazio assente rifiuta, mai linked:false',
+  );
   const unknown = await wired.seriesScopeLink('gym:serie:mai:esportata', { spaceId: 'space-b' });
-  assert.equal(foreign.linked, false, 'lo straniero non vede il collegamento');
-  assert.equal(unknown.linked, false, 'la chiave mai vista risponde allo stesso modo');
+  assert.equal(unknown.linked, false, 'la chiave mai vista resta linked:false');
   assert.deepEqual(calls, { getEvent: 0, patchEvent: 0, insertEvent: 0, cancelEvent: 0 }, 'la sonda non tocca il provider');
   await wired.revokeCalendarGrant({ spaceId: 'space-a', calendarId: CAL, actor: ACTOR });
   await assert.rejects(
     wired.seriesScopeLink(appointment.sourceKey, { spaceId: 'space-a' }),
     (error) => error.code === 'CALENDAR_GRANT_REVOKED',
   );
+});
+
+// backlog:6acf0a73bfc3, giro 2 (P1 review su agent-crm#947 testa 197b5e1d):
+// «solo questo» su una serie collegata a Google con spazio straniero o
+// assente rifiuta 404 PRIMA della prima scrittura — la griglia non cambia
+// e Google non viene toccato. Senza questo rifiuto la sonda leggeva la
+// serie come solo-locale e la griglia mutava da sola.
+test('scoped reschedule/cancel on a Google-linked series with a foreign or missing space refuses before the first write (backlog:6acf0a73bfc3, giro 2)', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const wired = createCalendarSyncOperations({
+    modules: ctx.modules,
+    appointmentBook: createAppointmentBookCapability({}),
+    provider: ctx.provider,
+    mapping: ctx.mapping,
+    database: ctx.database,
+    actor: ACTOR,
+    now: () => new Date(T0).toISOString(),
+    resolveSecret: async () => 'sekrit',
+  });
+  await wired.bindCalendarGrant({ spaceId: 'space-a', calendarId: CAL, secretRef: 'vault://space-a/grant', actor: ACTOR });
+  const handle = createAppointmentBookCapability({}).create({
+    modules: ctx.modules, actor: ACTOR, consumer: 'calendar-sync', calendarSync: wired,
+  });
+  const booked = await handle.bookAppointment({
+    sourceKey: 'gym:serie:spazio:chiuso',
+    subject: { ...SUBJECT },
+    teamMemberId: MEMBER,
+    ...SERVICE,
+    startsAt: '2026-10-21T09:00:00.000Z',
+    endsAt: '2026-10-21T10:00:00.000Z',
+    source: { package: 'calendar-sync', action: 'probe' },
+    recurrence: { kind: 'weekly', count: 3 },
+  });
+  const headKey = booked.occurrences[0].sourceKey;
+  const exported = await wired.pushAppointment(CAL, headKey, { spaceId: 'space-a', recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] });
+  assert.equal(exported.status, 'exported', 'la testa si esporta come evento ricorrente');
+  const gridBefore = ctx.appointmentRows().map((row) => `${row.sourceKey}|${row.startsAt}|${row.endsAt}|${row.status}`).sort();
+  const masterBefore = JSON.stringify(ctx.provider.getEvent(CAL, exported.eventId));
+  const second = booked.occurrences[1];
+  await assert.rejects(
+    handle.rescheduleAppointment({
+      id: second.id,
+      startsAt: '2026-10-29T09:00:00.000Z',
+      endsAt: '2026-10-29T10:00:00.000Z',
+      scope: 'single',
+      spaceId: 'space-b',
+    }),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    '«solo questo» dallo spazio straniero rifiuta 404',
+  );
+  await assert.rejects(
+    handle.rescheduleAppointment({
+      id: second.id,
+      startsAt: '2026-10-29T09:00:00.000Z',
+      endsAt: '2026-10-29T10:00:00.000Z',
+      scope: 'single',
+    }),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    '«solo questo» senza spazio rifiuta 404',
+  );
+  const third = booked.occurrences[2];
+  await assert.rejects(
+    handle.cancelAppointment({ id: third.id, reason: 'Disdetto', scope: 'single', spaceId: 'space-b' }),
+    (error) => error.code === 'CALENDAR_GRANT_UNKNOWN' && error.status === 404,
+    'l’annullo dallo spazio straniero rifiuta 404',
+  );
+  assert.deepEqual(
+    ctx.appointmentRows().map((row) => `${row.sourceKey}|${row.startsAt}|${row.endsAt}|${row.status}`).sort(),
+    gridBefore,
+    'la griglia non cambia dopo i rifiuti',
+  );
+  assert.equal(JSON.stringify(ctx.provider.getEvent(CAL, exported.eventId)), masterBefore, 'Google non viene toccato dai rifiuti');
 });
 
 // backlog:6acf0a73bfc3 — un master vero con EXDATE;TZID=... converge come

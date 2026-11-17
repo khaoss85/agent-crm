@@ -104,9 +104,23 @@ function createRestDouble({ expectedBearer, nowMs } = {}) {
     expireTokens() { epoch += 1; },
     liveCount() { return events.size; },
     async fetch(url, init = {}) {
-      requests.push({ url, method: init.method ?? 'GET' });
+      requests.push({ url, method: init.method ?? 'GET', body: init.body ?? null });
       if (!checkAuth(init)) return fail(401, 'login required');
       const parsed = new URL(url, 'https://www.googleapis.com');
+      const watchMatch = /^\/calendar\/v3\/calendars\/([^/]+)\/events\/watch$/.exec(parsed.pathname);
+      if (watchMatch !== null && (init.method ?? 'GET').toUpperCase() === 'POST') {
+        const watch = JSON.parse(init.body ?? '{}');
+        if (typeof watch.id !== 'string' || watch.id === '' || watch.type !== 'web_hook'
+          || typeof watch.address !== 'string' || watch.address === '') {
+          return fail(400, 'watch needs id, web_hook type and address');
+        }
+        return ok({
+          kind: 'api#channel',
+          id: watch.id,
+          resourceId: `rest-resource-${watch.id}`,
+          resourceUri: `https://www.googleapis.com/calendar/v3/calendars/${watchMatch[1]}/events`,
+        });
+      }
       const match = /^\/calendar\/v3\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(parsed.pathname);
       if (!match) return fail(404, 'not found');
       const eventId = match[2] === undefined ? null : decodeURIComponent(match[2]);
@@ -452,6 +466,45 @@ test('listEvents follows every result page and keeps the final sync token', asyn
   assert.deepEqual(listed.items.map((event) => event.id), ['evt-page-1', 'evt-page-2']);
   assert.equal(listed.nextSyncToken, 'rest-0-2', 'the token rides on the final page only');
   assert.ok(calls.length === 2 && calls[1].includes('pageToken=second'), 'the same query continues the pages');
+});
+
+test('watch opens a push channel: a web_hook body in, the channel pair out', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  const opened = await ctx.provider.watch({
+    calendarId: CAL,
+    address: 'https://bo.accordo.example/hooks/gcal',
+    token: 'push-bearer-rest',
+    channelId: 'chan-1',
+    secret: GRANT,
+  });
+  assert.equal(opened.channelId, 'chan-1');
+  assert.equal(opened.resourceId, 'rest-resource-chan-1');
+  const post = ctx.double.requests.find((r) => r.method === 'POST');
+  assert.ok(post, 'opening the channel speaks REST');
+  assert.match(post.url, /\/calendars\/presti-room-1\/events\/watch$/);
+  const body = JSON.parse(post.body);
+  assert.equal(body.type, 'web_hook');
+  assert.equal(body.id, 'chan-1');
+  assert.equal(body.address, 'https://bo.accordo.example/hooks/gcal');
+  assert.equal(body.token, 'push-bearer-rest', 'the bearer rides the watch body the deployment owns');
+});
+
+test('watch refuses without the grant, the address or the token', async (t) => {
+  const ctx = setup();
+  t.after(() => ctx.close());
+  await assert.rejects(
+    ctx.provider.watch({ calendarId: CAL, address: 'https://bo.accordo.example/hooks/gcal', token: 'x' }),
+    (error) => error.code === 'GOOGLE_GRANT_REFUSED',
+  );
+  await assert.rejects(
+    ctx.provider.watch({ calendarId: CAL, address: '', token: 'x', secret: GRANT }),
+    (error) => error.code === 'GOOGLE_CALL_MALFORMED',
+  );
+  await assert.rejects(
+    ctx.provider.watch({ calendarId: CAL, address: 'https://bo.accordo.example/hooks/gcal', token: '', secret: GRANT }),
+    (error) => error.code === 'GOOGLE_CALL_MALFORMED',
+  );
 });
 
 test('the factory refuses without a transport, and the grant never travels in text', async (t) => {

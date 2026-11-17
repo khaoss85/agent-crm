@@ -94,10 +94,47 @@ const NAME_PLACEHOLDERS = new Set([
 const ADDRESS_WORD = /^[<("']*[^@\s<>()"']+@[^@\s<>()"']+\.[^@\s<>()"']+[>)"',;:]*$/;
 
 /**
+ * A bare reply word: a mailbox token, never a surname on its own
+ * (backlog:088b639d96a2). In the read path it drops only past a kept
+ * surname (review rev-agent-crm-955-d7262d39, so `John Reply` stays):
+ * a word in the middle stays.
+ */
+const BARE_REPLY_WORD = /^(?:reply|replies)$/i;
+
+/** Wrapping punctuation around a word of a display name. */
+const NAME_WRAPPING = /^[([<"']+|[)\]>"',;:]+$/g;
+
+/**
+ * A stored name without its trailing platform qualifier: the co-brand after
+ * a pipe («MailUp | TeamSystem» reads «MailUp») and trailing parenthetical
+ * notes («Francesco Tirsi (Documenti Google)» reads «Francesco Tirsi»).
+ * Only trailing qualifiers go — inner words stay untouched.
+ * @param {string} text
+ */
+function stripNameQualifier(text) {
+  let out = text;
+  for (;;) {
+    const trailing = /\s*\([^()]*\)\s*$/.exec(out);
+    if (trailing) {
+      out = out.slice(0, trailing.index);
+      continue;
+    }
+    const pipe = out.indexOf('|');
+    if (pipe >= 0) {
+      out = out.slice(0, pipe);
+      continue;
+    }
+    return out;
+  }
+}
+
+/**
  * A stored name with its placeholder words dropped («PayPal Unknown» reads
  * «PayPal»), null when nothing real is left. A name that carries an
  * address (`Mittente: x@…`, or a bare email used as a label) names nobody:
- * null, never the long address on screen (production 10/11).
+ * null, never the long address on screen (production 10/11). The address
+ * check runs on the whole stored value first, so a qualifier never hides
+ * an address (`Mario (x@y.com)` still names nobody).
  * The browser twin of customer-data `readableName` (display-name.js): the
  * bundle cannot import a package, so tests/customer-display-name.test.js
  * runs both on the same table.
@@ -108,8 +145,20 @@ export function readableName(value) {
   if (typeof value !== 'string') return null;
   const words = value.trim().split(/\s+/).filter((word) => word !== '');
   if (words.some((word) => ADDRESS_WORD.test(word))) return null;
-  const kept = words.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
-  while (kept.length > 0 && NO_REPLY_WORD.test(kept[kept.length - 1].replace(/^[([<"']+|[)\]>"',;:]+$/g, ''))) kept.pop();
+  const head = stripNameQualifier(value.trim()).split(/\s+/).filter((word) => word !== '');
+  const kept = head.filter((word) => !NAME_PLACEHOLDERS.has(word.toLowerCase()) && !(word.includes('_') && /\d/.test(word)));
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1].replace(NAME_WRAPPING, '');
+    if (NO_REPLY_WORD.test(last)) {
+      kept.pop();
+      continue;
+    }
+    if (BARE_REPLY_WORD.test(last) && kept.length > 2) {
+      kept.pop();
+      continue;
+    }
+    break;
+  }
   const text = kept.join(' ');
   return text !== '' && /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
@@ -355,7 +404,13 @@ export function teamPeople(roster) {
     };
   });
   const byBase = new Map();
-  for (const row of rows) byBase.set(row.base, [...(byBase.get(row.base) ?? []), row]);
+  for (const row of rows) {
+    // backlog:6563edf41aab: same name modulo case is one unreadable pair —
+    // «Daniele Pelleri» and «daniele pelleri» number like the homonyms,
+    // never two identical-looking rows.
+    const key = row.base.toLowerCase();
+    byBase.set(key, [...(byBase.get(key) ?? []), row]);
+  }
   const ordinal = new Map();
   for (const same of byBase.values()) {
     if (same.length < 2) continue;
@@ -381,7 +436,47 @@ export function personOf(id, rosterOrPeople) {
   const wanted = id.trim();
   const list = Array.isArray(rosterOrPeople) ? rosterOrPeople : [];
   const people = list.length > 0 && Array.isArray(list[0]?.subjects) ? list : teamPeople(list);
-  return people.find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+  const exact = people.find((row) => row.subjects.includes(wanted) || row.keys.includes(wanted)) ?? null;
+  if (exact !== null) return exact;
+  // backlog:3f3c143b (seguito di #918): an audit may record another
+  // identifier of the same person — their mailbox or display name — while
+  // the roster holds the opaque subject. The same resolution function
+  // matches every identity the person's members carry, but only when a
+  // single person claims it: a shared mailbox or a homonym name never picks
+  // a person (agent-crm#644/#742; review Codex su #999: teamPeople keeps
+  // the first mailbox and the preferred name only, so the row's `email`
+  // and `name` alone cannot prove uniqueness).
+  const folded = wanted.toLowerCase();
+  const claimed = people.filter((row) => identitiesOf(row).has(folded));
+  if (claimed.length === 1) return claimed[0];
+  return null;
+}
+
+/**
+ * backlog:3f3c143b (seguito di #918): every identifier one person row
+ * claims — each member's real mailbox and display name, plus the row's own
+ * email and profile name (hand-built rows carry no members). Lower-cased
+ * and trimmed for the lookup; technical mailboxes and placeholder words
+ * never count as a person's name.
+ * @param {any} row one `teamPeople` row
+ * @returns {Set<string>}
+ */
+function identitiesOf(row) {
+  const out = new Set();
+  const add = (value) => {
+    if (typeof value !== 'string') return;
+    const text = value.trim().toLowerCase();
+    if (text !== '' && !NAME_PLACEHOLDERS.has(text)) out.add(text);
+  };
+  for (const member of Array.isArray(row?.members) ? row.members : []) {
+    if (member === null || typeof member !== 'object') continue;
+    const mail = memberText(member.email);
+    if (mail !== null) out.add(mail.toLowerCase());
+    add(member.displayName);
+  }
+  add(row?.email);
+  add(row?.name);
+  return out;
 }
 
 /**
@@ -659,18 +754,22 @@ export function auditActorLabel(entry, known = [], roster = []) {
   // else their mailbox, like personLabel does (backlog:3f3c143b).
   const person = personOf(id, roster);
   if (person !== null && person.known) return person.label;
+  // A technical or service id is never corroborated into a name: a record
+  // value that literally equals a provider subject stays hidden, like the
+  // old code hid technical ids first (review Muse rev-agent-crm-918 P2).
+  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
   const names = (Array.isArray(known) ? known : []).filter((value) => typeof value === 'string' && value !== '');
   // A corroborated slug still paints as words, never the raw stored id
   // («coach-guido» reads «Coach Guido», a digit slug names nobody and
   // reads as unknown); any other corroborated value paints verbatim, like
   // the scheda tests read it («elena», a typed name, a real mailbox).
   if (names.includes(id)) return SLUG_SHAPE.test(id) ? (subjectText(id) ?? '—') : id;
-  if (SERVICE_ACTORS.has(id) || isTechnicalMemberText(id) || UUID_SHAPE.test(id)) return '—';
   // A real mailbox is self-describing and reads as itself even when no
-  // roster names it; any other uncorroborated id (a slug, a bare handle,
-  // a digit id) stays hidden behind the dash.
+  // roster names it; a lone or malformed '@' is no mailbox and stays
+  // hidden, like any other uncorroborated id (review Muse rev-agent-crm-918
+  // P2: ADDRESS_WORD, the same shape readableName trusts).
   const text = subjectText(id);
-  return text !== null && id.includes('@') ? text : '—';
+  return text !== null && ADDRESS_WORD.test(id) ? text : '—';
 }
 
 /**

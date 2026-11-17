@@ -609,6 +609,67 @@ test('review #776: another customer opened during the save keeps the screen', as
   assert.ok(!mount.textContent.includes('Nessun connettore voce collegato'), 'no call panel there');
 });
 
+const callPanel = (mount) => mount.findAll('div').find((node) => node.getAttribute('data-call') === 'open') ?? null;
+
+// Voce 14d999de: «Chiama dal CRM» opens in the shared scheda window frame —
+// the same dark head as «Scrivi» and the number window — and the tel:
+// fallback reads as a /bo link, never browser-default blue.
+test('14d999de: «Chiama dal CRM» opens in the shared window frame with a styled tel: link', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  const panel = callPanel(mount);
+  assert.ok(panel, 'the call panel opens');
+  assert.equal(panel.getAttribute('role'), 'dialog', 'the shared frame marks the dialog');
+  assert.ok(panel.textContent.includes('Chiama dal CRM'), 'the head names the purpose');
+  assert.ok(panel.textContent.includes('Guido Presti'), 'the head names the customer like Scrivi');
+  assert.ok(button(mount, 'call-close'), 'Chiudi closes like every scheda window');
+  const fallback = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'call-fallback');
+  assert.ok(fallback, 'the device dialer is offered');
+  assert.ok(String(fallback.getAttribute('class') ?? '').split(/\s+/).includes('bo-call-fallback'),
+    'the tel: link carries the /bo class, never browser-default blue');
+});
+
+// Voce 14d999de: Escape and Chiudi close the panel with nothing written.
+test('14d999de: Escape and Chiudi close «Chiama dal CRM» with no effect', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const mount = await renderCard(client);
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the call panel opens');
+  callPanel(mount).dispatch('keydown', { key: 'Escape' });
+  assert.equal(callPanel(mount), null, 'Escape closes it');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the call panel reopens');
+  button(mount, 'call-close').listeners.click[0]();
+  assert.equal(callPanel(mount), null, 'Chiudi closes it');
+  assert.equal(client.posts.length, 0, 'opening and closing writes nothing');
+});
+
+// Voce 14d999de: a click outside the panel closes it; a click inside the
+// panel or on the opener tile never trips the outside closer.
+test('14d999de: a click outside closes «Chiama dal CRM», a click inside does not', async () => {
+  const client = stubClient({ card: CARD_WITH_PHONE, connectors: [] });
+  const doc = createFakeDocument();
+  const heard = {};
+  doc.addEventListener = (type, handler) => { (heard[type] ??= []).push(handler); };
+  const mount = createMount();
+  await createCustomerCardView({ doc, mount, client, spaceId: 'presti' }).renderCard('contact', 'c1');
+  button(mount, 'call-customer').listeners.click[0]();
+  await flush();
+  assert.ok(callPanel(mount), 'the call panel opens');
+  assert.ok((heard.click ?? []).length > 0, 'the document closer is installed');
+  heard.click[0]({ target: callPanel(mount).findAll('p')[0] });
+  assert.ok(callPanel(mount), 'a click inside the panel stays');
+  heard.click[0]({ target: button(mount, 'call-customer') });
+  assert.ok(callPanel(mount), 'the opener tile never trips the outside closer');
+  heard.click[0]({ target: mount });
+  assert.equal(callPanel(mount), null, 'a click outside closes it');
+  assert.equal(client.posts.length, 0, 'closing writes nothing');
+});
+
 test('backlog:af43dffdff83: the number window says how the call really starts, never «parte la chiamata»', async () => {
   const { HOW_THE_CALL_STARTS } = await import('../apps/admin/public/admin-call-number.js');
   assert.match(HOW_THE_CALL_STARTS, /apro il telefono del computer con questo numero/);

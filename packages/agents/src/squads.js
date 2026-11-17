@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError } from '../../core/index.js';
 import { AGENT_CATALOG } from './catalog.js';
+import { OUTREACH_DEFAULT_WEEKLY_CAP } from './outreach.js';
 import { checkCostCents, checkSpaceId, monthStartIso, spentSince } from './agents.js';
 
 /**
@@ -165,6 +166,47 @@ export const SQUAD_TEMPLATES = Object.freeze([
     outputs: Object.freeze(['Messaggi di riapertura pronti', 'Solleciti per le offerte ferme']),
   }),
   Object.freeze({
+    slug: 'outreach',
+    name: 'Outreach',
+    objective: 'Riempire la settimana di nuovi colloqui con persone che non ci conoscono ancora.',
+    metric: Object.freeze({ name: 'Primi colloqui proposti', target: 6, unit: 'proposte/settimana' }),
+    members: Object.freeze([
+      Object.freeze({
+        key: 'cercatore',
+        name: 'Cercatore',
+        role: 'Trova persone nuove con la provenienza',
+        instructions: 'Trova persone nuove da liste, sito e passaparola e segna per ciascuna da dove viene. Senza provenienza non si propone nessuno.',
+      }),
+      Object.freeze({
+        key: 'valutatore',
+        name: 'Valutatore',
+        role: 'Valuta e registra il motivo',
+        instructions: 'Valuta ogni candidato e registra in una riga il motivo; chi è stato scartato resta scartato alla corsa dopo. Non chiama nessuno da solo.',
+      }),
+      Object.freeze({
+        key: 'redattore',
+        name: 'Redattore',
+        role: 'Prepara il messaggio, mai inviarlo da solo',
+        instructions: 'Prepara un messaggio corto e personale per ogni candidato scelto. Ogni invio aspetta il tuo ok.',
+      }),
+    ]),
+    routines: Object.freeze([
+      Object.freeze({ memberKey: 'cercatore', phrase: `ogni lunedì trova nuovi candidati con provenienza (tetto ${OUTREACH_DEFAULT_WEEKLY_CAP} invii a settimana)`, plan: Object.freeze({ cadence: 'weekly', weekday: 1, timeOfDay: '08:00' }) }),
+      Object.freeze({ memberKey: 'valutatore', phrase: 'ogni lunedì valuta i candidati e registra il motivo', plan: Object.freeze({ cadence: 'weekly', weekday: 1, timeOfDay: '10:00' }) }),
+      Object.freeze({ memberKey: 'redattore', phrase: 'ogni martedì prepara i messaggi di primo contatto', plan: Object.freeze({ cadence: 'weekly', weekday: 2, timeOfDay: '09:00' }) }),
+    ]),
+    phases: Object.freeze([
+      Object.freeze({ name: 'Ricerca', approval: 'review' }),
+      Object.freeze({ name: 'Valutazione', approval: 'review' }),
+      Object.freeze({ name: 'Invio', approval: 'owner' }),
+    ]),
+    sources: Object.freeze([
+      Object.freeze({ channel: 'Liste di contatti', timeOfDay: '08:00' }),
+      Object.freeze({ channel: 'Sito e passaparola', timeOfDay: '08:00' }),
+    ]),
+    outputs: Object.freeze(['Candidati con provenienza e motivo', 'Messaggi di primo contatto da approvare']),
+  }),
+  Object.freeze({
     slug: 'discovery',
     name: 'Discovery',
     objective: "Riempire l'agenda di prime chiamate utili.",
@@ -248,6 +290,7 @@ function checkCallerKey(key) {
 const BRIEF_KEYWORDS = Object.freeze([
   ['lead-generation', ['lead', 'contatti', 'clienti nuovi', 'acquisizione', 'prospect']],
   ['social-posting', ['social', 'post', 'instagram', 'tiktok', 'facebook']],
+  ['outreach', ['prospezione', 'candidat', 'freddo', 'primo contatto']],
   ['sales-outreach', ['vendite', 'outreach', 'offerte ferme', 'sollecit', 'preventiv', 'follow-up', 'followup']],
   ['discovery', ['discovery', 'chiamat', 'appuntament', 'conoscitiv', 'prime visite', 'agenda']],
   ['contenuti', ['contenut', 'articol', 'blog', 'newsletter', 'redazione']],

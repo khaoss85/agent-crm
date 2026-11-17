@@ -471,7 +471,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.throws(() => assertProbe('login', {
     magic: true, email: 1, google: 1, story: 1, noValidate: false,
   }), /did not install/);
-  assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
+  assert.doesNotThrow(() => assertProbe('oggi', {
+    recap: true, tasks: 2, strip: true, channelsError: false, unscoped: 0,
+  }));
   assert.doesNotThrow(() => assertProbe('clienti', {
     rows: 3,
     pills: ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni'],
@@ -559,6 +561,21 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
   assert.throws(() => assertProbe('oggi', null), /not a JSON object/);
+});
+
+test('oggi opens with a space: the channel strip paints and every connections read is scoped (0b6a6b92)', () => {
+  // Repro for the shot without a space: loadOggiData skips the scoped
+  // connections read, the strip is gone and the read-failure line paints.
+  const good = { recap: true, tasks: 2, strip: true, channelsError: false, unscoped: 0 };
+  assert.doesNotThrow(() => assertProbe('oggi', good));
+  assert.throws(() => assertProbe('oggi', { ...good, strip: false }), /channel strip/);
+  assert.throws(() => assertProbe('oggi', { ...good, channelsError: true }), /channel read failure/);
+  assert.throws(() => assertProbe('oggi', { ...good, unscoped: 1 }), /filter\.spaceId/);
+  // The harness opens the view with the demo space, like the live page with
+  // the active space: no open without a space reaches the shot.
+  const page = harnessHtml('oggi', publicDir);
+  assert.ok(page.includes(`spaceId: () => 'locale'`), 'the oggi shot opens with a space');
+  assert.ok(page.includes('unscoped:'), 'the oggi probe records the unscoped reads');
 });
 
 test('assertProbe fails an empty render the substring expects would pass', () => {
