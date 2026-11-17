@@ -172,7 +172,9 @@ export function createSequencesPackage(options = {}) {
     name: SEQUENCES_DOMAIN,
     // 1: BO-F3-03 — sequences with reply stop, fail-closed permission,
     // pause/resume without doubles, metrics counted from records.
-    version: 1,
+    // 2: backlog:b6f8a6504a24 — space send rules (window, daily cap, one
+    // journey, do-not-contact) plus the sequence-suppression resource.
+    version: 2,
     label: 'Follow-up sequences',
     description:
       'Follow-up sequences with reply stop and human approval: ordered day+channel steps with personalized '

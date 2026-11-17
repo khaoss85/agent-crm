@@ -809,6 +809,16 @@ export async function advanceSequences({
       current = enrollment;
     }
     if (!current || current.status !== 'active') return false;
+    // A listed domain or contact never forms a proposal, so the stop pass
+    // reads no inbox for it — a recipient the channel adapter cannot map
+    // (an email on a WhatsApp step) still reaches the due pass, which
+    // refuses with the list's reason. A suppression read failure falls
+    // through: the due pass records it and refuses to send (fail closed).
+    try {
+      if (await matchSpaceSuppression(modules, current)) return false;
+    } catch {
+      // Fall through to the inbox read below.
+    }
     let inboxRows;
     try {
       inboxRows = await loadEnrollmentInbox(current);
@@ -956,7 +966,37 @@ export async function advanceSequences({
       const step = live[0];
       const messageKey = sequenceMessageKey(current.spaceId, current.sourceKey, step.stepOrder);
 
-      // 1. Stop on reply: the first recorded reply ends the enrollment.
+      // 1a. Do-not-contact first: a listed domain or contact never forms a
+      // proposal, so the sweep refuses before reading the inbox — a
+      // recipient the channel adapter cannot map (an email on a WhatsApp
+      // step) still blocks with the list's reason instead of going blind.
+      // The cursor moves on like every other terminal refusal.
+      let suppression = null;
+      try {
+        suppression = await matchSpaceSuppression(modules, current);
+      } catch (error) {
+        noteSweepError(current, error, 'due');
+        continue;
+      }
+      if (suppression) {
+        let pre = null;
+        try {
+          pre = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
+        } catch (error) {
+          noteSweepError(current, error, 'due');
+          continue;
+        }
+        const recorded = await recordTerminalSkip({
+          seqKey, current, step, messageKey, nowIso,
+          detail: `DO_NOT_CONTACT: ${suppression.reason}`,
+          pre,
+        });
+        await moveCursorAfterSkip(current, ordered, step);
+        if (recorded) summary.skipped += 1;
+        continue;
+      }
+
+      // 1b. Stop on reply: the first recorded reply ends the enrollment.
       // Without the inbox — or without the reply window — this sweep
       // cannot know, so it fails closed and never fires. The window
       // resolution is the same connectionKey-then-channel lookup as the
@@ -994,34 +1034,6 @@ export async function advanceSequences({
           continue;
         }
         summary.stoppedReplied += 1;
-        continue;
-      }
-
-      // 1b. Do-not-contact: a listed domain or contact never forms a
-      // proposal — the step is refused row-locally with the list's reason,
-      // and the cursor moves on like every other terminal refusal.
-      let suppression = null;
-      try {
-        suppression = await matchSpaceSuppression(modules, current);
-      } catch (error) {
-        noteSweepError(current, error, 'due');
-        continue;
-      }
-      if (suppression) {
-        let pre = null;
-        try {
-          pre = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
-        } catch (error) {
-          noteSweepError(current, error, 'due');
-          continue;
-        }
-        const recorded = await recordTerminalSkip({
-          seqKey, current, step, messageKey, nowIso,
-          detail: `DO_NOT_CONTACT: ${suppression.reason}`,
-          pre,
-        });
-        await moveCursorAfterSkip(current, ordered, step);
-        if (recorded) summary.skipped += 1;
         continue;
       }
 

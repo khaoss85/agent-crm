@@ -236,15 +236,15 @@
       "name": "sequences",
       "dir": "sequences",
       "graph": "contract1",
-      "version": 1,
-      "fingerprint": "83566240335ead906dd3b4f097402d474b06849683bd781e332820aad41a9882"
+      "version": 2,
+      "fingerprint": "2ff0b66cd70a71e1681b2f169514d4334acbfcbc2d3823249309056b80803e60"
     },
     {
       "name": "sequences",
       "dir": "sequences",
       "graph": "contract2",
-      "version": 1,
-      "fingerprint": "c09afe7629a3aba887ad3b8a3856ac6b57903981d92c57f9fb535c8313750348"
+      "version": 2,
+      "fingerprint": "a6001fb8ddac8576ea742e2d2e7592a205a8131a7c8e913ad88dd8e9085ddaed"
     },
     {
       "name": "service",
