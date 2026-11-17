@@ -621,6 +621,13 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   display: grid; place-items: center; font-size: 11px; font-weight: 700;
   background: var(--surface-soft); color: var(--muted);
 }
+/* backlog:b76770f82fe9: the pill's room stays reserved while its count is
+ * unknown (hidden, never removed), so the rows below never move when the
+ * number lights up next to Clienti or Impostazioni. */
+.bo-count.is-empty,
+.bo-badge.is-empty {
+  visibility: hidden;
+}
 .bo-add { margin-top: 6px; }
 .bo-add-button {
   display: flex; align-items: center; justify-content: center; width: 100%;

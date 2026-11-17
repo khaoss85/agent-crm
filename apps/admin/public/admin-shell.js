@@ -867,11 +867,24 @@ export function createShellView({
           const pill = el(doc, 'span', 'bo-count', countText);
           if (state.clientCountExact === false) pill.setAttribute('title', 'conteggio parziale: la scansione è limitata');
           link.appendChild(pill);
+        } else {
+          // backlog:b76770f82fe9: the pill's room stays reserved while the
+          // count is unknown, so the rows below never move when it lights.
+          const empty = el(doc, 'span', 'bo-count is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
         }
       }
       if (item.id === 'impostazioni') {
         const badgeText = settingsBadge(state.fixCount);
-        if (badgeText !== '') link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        if (badgeText !== '') {
+          link.appendChild(el(doc, 'span', 'bo-badge', badgeText));
+        } else {
+          // backlog:b76770f82fe9: same reserved room for the fix count.
+          const empty = el(doc, 'span', 'bo-badge is-empty', '0');
+          empty.setAttribute('aria-hidden', 'true');
+          link.appendChild(empty);
+        }
       }
       container.appendChild(link);
     }
