@@ -1364,7 +1364,9 @@ export async function advanceSequences({
 
   // 4. Confirm: re-queue every queued row (the outbox replays the stored
   // job with its current state) and record what the provider answered.
-  // No provider is contacted here — the re-enqueue is a storage read.
+  // A row that already carries a job id replays stored state — a storage
+  // read that creates nothing. A row with no job id yet adopts the job the
+  // recovery enqueue returns, inside the sending window only (see below).
   const queuedRows = [];
   for (const sequence of Array.isArray(rows) ? rows : []) {
     if (!sequence || typeof sequence !== 'object') continue;
@@ -1398,6 +1400,22 @@ export async function advanceSequences({
       const stepRows = await steps.listWhere({ spaceId: row.spaceId, sequenceSourceKey: row.sequenceSourceKey });
       const step = (Array.isArray(stepRows) ? stepRows : []).find((entry) => entry && entry.stepOrder === row.stepOrder) ?? null;
       if (!step) continue;
+      // Recovery that can still create a job obeys the sending window: a
+      // queued claim with no outbox job yet (a crash between the claim
+      // write and the first enqueue) must not send outside the playbook
+      // window — it waits for the next sweep inside it. A claim that
+      // already carries a job id only replays stored provider state, a
+      // storage read that creates nothing, so it confirms on every sweep.
+      if (!row.jobId) {
+        let sendWindows = null;
+        try {
+          sendWindows = await spaceSendWindows(modules, row.spaceId);
+        } catch (error) {
+          noteSweepError(enrollment, error, 'confirm');
+          continue;
+        }
+        if (sendWindows !== null && !isInsideSendWindow(nowMs, sendWindows)) continue;
+      }
       let requeue = null;
       const confirmVariables = await resolveSendVariables(step, enrollment, row.variables ?? null);
       try {
@@ -1433,6 +1451,16 @@ export async function advanceSequences({
       }
       const state = requeue && typeof requeue.state === 'string' ? requeue.state : '';
       const jobId = requeue && typeof requeue.jobId === 'string' ? requeue.jobId : row.jobId;
+      if (!row.jobId && jobId) {
+        // Recovery adopted its job: a claim written before the first
+        // enqueue learns the outbox job now, so the next sweep replays that
+        // job instead of enqueueing again. The status is untouched — only
+        // the branches below settle the row.
+        const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
+        if (latest[0] && latest[0].status === 'queued') {
+          await sends.applyManaged(latest[0].id, { jobId, decidedAt: nowIso }, { actor: timer });
+        }
+      }
       if (state === 'succeeded') {
         const latest = await sends.listWhere({ spaceId: row.spaceId, sourceKey: row.sourceKey });
         if (latest[0] && latest[0].status === 'queued') {
@@ -1470,6 +1498,29 @@ export async function advanceSequences({
 function fireMs(current, nowMs) {
   const due = Date.parse(current?.nextDueAt ?? '');
   return Number.isFinite(due) ? due : nowMs;
+}
+
+/**
+ * One in-process enrollment lane per person (backlog:b6f8a6504a24, review
+ * giro 1 P2). The one-active-journey check below reads before it writes,
+ * so two enrollments racing in this process would both pass and both
+ * create. Chaining them per subject makes the second see the first one's
+ * committed row and refuse with SEQUENCE_ALREADY_ENROLLED. This covers one
+ * process: two runtimes sharing one database still need a storage-level
+ * serialized claim (follow-up).
+ */
+const enrollmentLanes = new Map();
+/** @param {string} key @param {() => Promise<any>} run */
+function serializeEnrollment(key, run) {
+  const prev = enrollmentLanes.get(key);
+  const gate = prev ? prev.catch(() => {}) : Promise.resolve();
+  const task = gate.then(run);
+  const settled = task.then(
+    () => { if (enrollmentLanes.get(key) === settled) enrollmentLanes.delete(key); },
+    () => { if (enrollmentLanes.get(key) === settled) enrollmentLanes.delete(key); },
+  );
+  enrollmentLanes.set(key, settled);
+  return task;
 }
 
 /**
@@ -1518,51 +1569,55 @@ export async function enrollSequencePerson({ modules, input, at }) {
   }
   const enrollments = trusted(modules, 'sequence-enrollment');
   const atIso = checkInstant(at ?? new Date().toISOString(), 'at');
-  // One active journey at a time: a person with an active enrollment in
-  // another sequence of the same space never enters a second one — they
-  // finish the first journey. Re-enrolling in the SAME sequence replays.
-  const actives = await enrollments.listWhere({
-    spaceId, subjectResource, subjectId, status: 'active',
-  });
-  const elsewhere = (Array.isArray(actives) ? actives : [])
-    .filter((row) => row && row.sequenceSourceKey !== sequenceSourceKey);
-  if (elsewhere.length > 0) {
-    throw new AppError('This person is already in an active journey in this space', {
-      code: 'SEQUENCE_ALREADY_ENROLLED', status: 409,
-      details: { sequenceSourceKey: elsewhere[0].sequenceSourceKey },
+  // The journey check and the create below run in one per-person lane, so
+  // a concurrent enrollment in this process always sees the committed row.
+  return serializeEnrollment(`${spaceId} ${subjectResource} ${subjectId}`, async () => {
+    // One active journey at a time: a person with an active enrollment in
+    // another sequence of the same space never enters a second one — they
+    // finish the first journey. Re-enrolling in the SAME sequence replays.
+    const actives = await enrollments.listWhere({
+      spaceId, subjectResource, subjectId, status: 'active',
     });
-  }
-  const existing = await enrollments.listWhere({ spaceId, sourceKey: key });
-  if (existing[0]) return { enrollment: existing[0], replayed: true };
-  const row = {
-    sourceKey: key,
-    sequenceSourceKey,
-    spaceId,
-    subjectResource,
-    subjectId,
-    subjectLabel,
-    recipient,
-    connectionKey,
-    vars: JSON.stringify(vars),
-    status: 'active',
-    currentStep: 0,
-    nextDueAt: atIso,
-    enrolledAt: atIso,
-    decidedAt: atIso,
-    actorType: actor.type,
-    actorId: actor.id,
-    sourcePackage: SEQUENCES_DOMAIN_REF,
-    sourceAction: 'enroll-sequence-person',
-  };
-  try {
-    const enrollment = await enrollments.createManaged(row, { actor });
-    return { enrollment, replayed: false };
-  } catch (error) {
-    if (!isWinnerConflict(error)) throw error;
-    const winner = await enrollments.listWhere({ spaceId, sourceKey: key });
-    if (!winner[0]) throw error;
-    return { enrollment: winner[0], replayed: true };
-  }
+    const elsewhere = (Array.isArray(actives) ? actives : [])
+      .filter((row) => row && row.sequenceSourceKey !== sequenceSourceKey);
+    if (elsewhere.length > 0) {
+      throw new AppError('This person is already in an active journey in this space', {
+        code: 'SEQUENCE_ALREADY_ENROLLED', status: 409,
+        details: { sequenceSourceKey: elsewhere[0].sequenceSourceKey },
+      });
+    }
+    const existing = await enrollments.listWhere({ spaceId, sourceKey: key });
+    if (existing[0]) return { enrollment: existing[0], replayed: true };
+    const row = {
+      sourceKey: key,
+      sequenceSourceKey,
+      spaceId,
+      subjectResource,
+      subjectId,
+      subjectLabel,
+      recipient,
+      connectionKey,
+      vars: JSON.stringify(vars),
+      status: 'active',
+      currentStep: 0,
+      nextDueAt: atIso,
+      enrolledAt: atIso,
+      decidedAt: atIso,
+      actorType: actor.type,
+      actorId: actor.id,
+      sourcePackage: SEQUENCES_DOMAIN_REF,
+      sourceAction: 'enroll-sequence-person',
+    };
+    try {
+      const enrollment = await enrollments.createManaged(row, { actor });
+      return { enrollment, replayed: false };
+    } catch (error) {
+      if (!isWinnerConflict(error)) throw error;
+      const winner = await enrollments.listWhere({ spaceId, sourceKey: key });
+      if (!winner[0]) throw error;
+      return { enrollment: winner[0], replayed: true };
+    }
+  });
 }
 
 /** The longest do-not-contact reason a human reads in one line. */

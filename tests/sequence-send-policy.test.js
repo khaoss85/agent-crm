@@ -5,6 +5,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createDatabase } from '../packages/core/src/database.js';
+import { createDurableJobStore } from '../packages/core/src/durable-jobs.js';
+import { channelSendIdempotencyKey } from '../packages/channels/src/connection.js';
 import { AuditLog } from '../packages/core/src/audit.js';
 import { EventBus } from '../packages/core/src/event-bus.js';
 import {
@@ -456,4 +458,105 @@ test('dominio da non contattare: la proposta non si forma, il motivo resta nella
   const stored = (await enrollments.listWhere({ sequenceSourceKey: 'seq:stop-list' }))[0];
   assert.equal(stored.status, 'active');
   assert.equal(stored.currentStep, 1);
+});
+
+test('due corse insieme: una sola entra nel secondo percorso, l\u2019altra trova 409', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:gara-a', ONE_STEP);
+  await createActiveSequence(ops, 'seq:gara-b', ONE_STEP);
+  const person = {
+    spaceId: SPACE,
+    subject: { resource: 'contact', id: 'c-gara', owner: 'host' },
+    subjectLabel: 'Gara',
+    recipient: TO,
+    connectionKey,
+    actor: USER,
+    vars: {},
+  };
+  const [a, b] = await Promise.allSettled([
+    ops.enrollSequencePerson({ ...person, sequenceSourceKey: 'seq:gara-a' }),
+    ops.enrollSequencePerson({ ...person, sequenceSourceKey: 'seq:gara-b' }),
+  ]);
+  const won = [a, b].filter((entry) => entry.status === 'fulfilled');
+  const lost = [a, b].filter((entry) => entry.status === 'rejected');
+  assert.equal(won.length, 1, 'exactly one enrollment wins the race');
+  assert.equal(won[0].value.replayed, false);
+  assert.equal(lost.length, 1);
+  assert.equal(lost[0].reason?.code, 'SEQUENCE_ALREADY_ENROLLED');
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  const actives = await enrollments.listWhere({
+    spaceId: SPACE, subjectResource: 'contact', subjectId: 'c-gara', status: 'active',
+  });
+  assert.equal(actives.length, 1, 'a single active journey survives the race');
+});
+
+test('recovery fuori orario: il claim senza job aspetta la finestra', async (t) => {
+  const composed = compose();
+  t.after(() => composed.database.close());
+  const connectionKey = await activeConnection(composed);
+  await allowSends(composed);
+  withPlaybookHours(composed, PLAYBOOK_HOURS);
+  const ops = sequenceOps(composed, connectionKey);
+  await createActiveSequence(ops, 'seq:recovery', ONE_STEP);
+  const enrolled = await ops.enrollSequencePerson({
+    spaceId: SPACE,
+    sequenceSourceKey: 'seq:recovery',
+    subject: { resource: 'contact', id: 'c-recupero', owner: 'host' },
+    subjectLabel: 'Recupero',
+    recipient: TO,
+    connectionKey,
+    actor: USER,
+    vars: { name: 'Recupero', hour: '17:00' },
+  });
+  // Crash between the claim write and the first outbox enqueue: a queued
+  // row with no job id yet.
+  const sends = composed.modules.get('sequence-send').service;
+  const messageKey = 'seq:recovery:crash:step0';
+  const nowIso = new Date().toISOString();
+  await sends.createManaged({
+    sourceKey: messageKey,
+    enrollmentSourceKey: enrolled.enrollment.sourceKey,
+    sequenceSourceKey: 'seq:recovery',
+    spaceId: SPACE,
+    stepOrder: 0,
+    messageKey,
+    jobId: '',
+    status: 'queued',
+    queuedAt: nowIso,
+    decidedAt: nowIso,
+    detail: '',
+    variables: JSON.stringify(['Ciao Recupero, promemoria.']),
+    actorType: 'system',
+    actorId: 'send-policy-kit',
+  }, { actor: SYSTEM });
+  // Keep the due pass off the enrollment: only the confirm path may see it.
+  const enrollments = composed.modules.get('sequence-enrollment').service;
+  const future = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+  await enrollments.applyManaged(enrolled.enrollment.id, { nextDueAt: future }, { actor: SYSTEM });
+
+  // Sunday carries no window: the claim waits, no outbox job is created.
+  const store = createDurableJobStore({ storage: composed.database.storage, tenantId: TENANT });
+  const root = channelSendIdempotencyKey({ spaceId: SPACE, connectionKey, messageKey });
+  const sunday = new Date(nextSundayMs()).toISOString();
+  await advance(composed, connectionKey, sunday);
+  assert.equal(composed.api.state.sendCalls, 0);
+  assert.equal(await store.getByRoot(root), null, 'no queue request leaves outside the window');
+  const waiting = (await sends.listWhere({ spaceId: SPACE, sourceKey: messageKey }))[0];
+  assert.equal(waiting.status, 'queued');
+  assert.ok(!waiting.jobId, 'no outbox job is created outside the window');
+
+  // Monday morning inside the window: the same claim recovers with exactly
+  // one job, and a second sweep replays it instead of doubling it.
+  const monday = '2026-11-16T08:00:00.000Z'; // Monday 9:00 in Rome
+  await advance(composed, connectionKey, monday);
+  const created = await store.getByRoot(root);
+  assert.ok(created, 'the recovery enqueues its job inside the window');
+  const recovered = (await sends.listWhere({ spaceId: SPACE, sourceKey: messageKey }))[0];
+  assert.equal(recovered.jobId, created.id, 'the claim adopts its job');
+  await advance(composed, connectionKey, '2026-11-16T08:05:00.000Z');
+  const replayed = (await sends.listWhere({ spaceId: SPACE, sourceKey: messageKey }))[0];
+  assert.equal(replayed.jobId, created.id, 'one claim, one job');
 });
