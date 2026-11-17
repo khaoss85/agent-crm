@@ -179,7 +179,9 @@ function checkCount(value, field) {
  * seen in the batch, a reply received (the human conversation resumed, the
  * automation stops), data without provenance, or the weekly cap already
  * reached. Dismissed candidates are excluded (the dismissal recorded
- * earlier is reused here), untrusted content is quarantined, and past the
+ * earlier is reused here), every other candidate is validated first (reason
+ * and draft are mandatory: invalid ones are skipped with the reason, never
+ * queued), untrusted content is quarantined, and past the
  * cap the overflow waits for next week. Nothing sends on a halted run.
  */
 export function planOutreachRun(input) {
@@ -230,13 +232,26 @@ export function planOutreachRun(input) {
       skipped.push({ key, why: 'DISMISSED', note: 'Scartato dalla persona in una corsa precedente: escluso anche da questa.' });
       continue;
     }
-    const scan = scanUntrustedContent(`${raw?.draft ?? ''}\n${raw?.excerpt ?? ''}`);
+    let checked;
+    try {
+      checked = checkOutreachCandidate(raw);
+    } catch (error) {
+      const why = typeof error?.code === 'string' && error.code !== '' ? error.code : 'INVALID_CANDIDATE';
+      if (why === 'OUTREACH_NO_PROVENANCE') {
+        skipped.push({ key, why: 'NO_PROVENANCE', note: 'Dato senza provenienza: la corsa si ferma, il candidato non si manda.' });
+        haltKeys.NO_PROVENANCE.push(key);
+        continue;
+      }
+      skipped.push({ key, why, note: `Candidato non valido (${why}): non si manda.` });
+      continue;
+    }
+    const scan = scanUntrustedContent(`${checked.draft}\n${checked.excerpt}`);
     if (scan.flagged || raw?.untrusted === true) {
       const signals = [].concat(raw?.untrustedSignals ?? scan.signals).filter((signal) => typeof signal === 'string' && signal !== '');
       skipped.push({ key, why: 'UNTRUSTED_CONTENT', note: `Contenuto con istruzioni per l'agente (${signals.length > 0 ? signals.join(', ') : 'segnale sospetto'}): trattato come dato, non si manda.` });
       continue;
     }
-    sendable.push(raw);
+    sendable.push(checked);
   }
 
   const remaining = weeklyCap - sentThisWeek;

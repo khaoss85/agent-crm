@@ -176,6 +176,23 @@ test('an opt-out, a reply, data without provenance or the reached cap halt the r
   assert.ok(capped.haltReason.note.includes('2 invii su 2'));
 });
 
+test('a candidate without a reason or without a draft never queues: skipped with the reason', () => {
+  const planned = planOutreachRun({
+    candidates: [
+      candidate(),
+      candidate({ key: 'senza-motivo', reason: '  ', draft: 'Ciao, ti scrivo dalla palestra in via Roma.' }),
+      candidate({ key: 'senza-bozza', reason: 'Nuovo in zona', draft: '   ' }),
+    ],
+  });
+  assert.equal(planned.halted, false);
+  assert.deepEqual(planned.queued.map((entry) => entry.key), ['anna-rossi']);
+  assert.deepEqual(planned.skipped.map((entry) => [entry.key, entry.why]), [
+    ['senza-motivo', 'OUTREACH_NO_REASON'],
+    ['senza-bozza', 'OUTREACH_NO_DRAFT'],
+  ]);
+  assert.ok(planned.skipped.every((entry) => typeof entry.note === 'string' && entry.note.length > 0));
+});
+
 test('past the weekly cap the run sends up to the cap and the overflow waits', () => {
   const three = [
     candidate(),
