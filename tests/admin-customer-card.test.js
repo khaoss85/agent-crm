@@ -6583,3 +6583,66 @@ test('a060a4aa65b6: an offer outside any board reads its core stage like the Pip
   const { upperFirst, offerStageLabel } = await import('../apps/admin/public/admin-labels.js');
   assert.equal(state.textContent, upperFirst(offerStageLabel([], { stage: 'qualification' })), 'the same words as the Pipeline off-board list');
 });
+
+// Voce 714433c2af86, VERIFIER_BACK (returns: 1):
+// evidence/supervisor-browser/2026-11-07.md:73 — «AC-3 no: nessun menu per
+// lo stato, il badge "Contatto" in testata è uno span senza azione e il
+// modulo Modifica non ha lo Stato». Repro del NON PASSA: su un contatto
+// senza offerta e senza attività firmata (prove complete a zero) il pill
+// resta l'indicatore derivato condiviso con l'elenco (customer-status.js,
+// mai un menu che scrive a mano), ma ora porta il motivo italiano come
+// tooltip osservabile; lo stato che si cambia da un menu è quello
+// dell'offerta mostrata, attraverso il workflow governato. Rosso sul codice
+// prima della cura (il badge non aveva alcun title), verde dopo.
+test('714433c2af86ac3: il pill derivato spiega il motivo e lo stato offerta si cambia dal menu', async () => {
+  const zeroEvidence = {
+    orders: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+    contracts: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+    subscriptions: { available: true, count: 0, countIsComplete: true, truncated: false, items: [], reason: null },
+  };
+  const emptyCommercial = {
+    opportunities: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+  };
+  // Il contatto della verifica (nessuna offerta, nessuna attività firmata).
+  const bare = await renderCard(stubClient({
+    profile: { ...PROFILE, ...zeroEvidence, ...emptyCommercial },
+  }));
+  const badge = bare.findAll('span').find((node) => node.getAttribute('class') === 'bo-scheda-badge');
+  assert.ok(badge, 'the stato pill exists');
+  assert.equal(badge.textContent, 'Contatto', 'the pill reads the derived stato in Italian');
+  assert.equal(badge.getAttribute('title'), 'Nessuna attività firmata collegata',
+    'the pill carries its Italian reason where the verifier looked for the menu');
+  assert.ok(bare.textContent.includes('Nessuna attività firmata collegata'),
+    'Dettagli states the same reason under Stato');
+  assert.equal(
+    bare.findAll('button').filter((node) => node.getAttribute('data-action') === 'change-offer-stage').length,
+    0,
+    'with no offer there is no offer stage to move, so no menu',
+  );
+
+  // Con un'offerta in qualificazione lo stato si cambia dal menu.
+  const seen = [];
+  const base = stubClient({ profile: { ...OPPORTUNITY_ONLY_PROFILE, ...zeroEvidence } });
+  const client = recordingClient(base, () => ({ output: { outcome: 'stage_changed' } }));
+  const doc = createFakeDocument();
+  const mount = createMount();
+  await createCustomerCardView({
+    doc, mount, client, toast: (message, error) => { seen.push({ message, error: error ?? false }); },
+  }).renderCard('contact', 'c1');
+  const change = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'change-offer-stage');
+  assert.ok(change, 'the Cambia stato menu button exists on the shown offer');
+  change.dispatch('click');
+  const voices = mount.findAll('button').filter((node) => node.getAttribute('data-stage') !== null);
+  assert.deepEqual(
+    voices.map((node) => node.textContent),
+    ['Proposta', 'Persa'],
+    'the menu offers the legal Italian moves from qualificazione',
+  );
+  voices.find((node) => node.getAttribute('data-stage') === 'proposal').dispatch('click');
+  await flushClicks();
+  assert.equal(client.writes.length, 1, 'one write for the stage move');
+  assert.equal(client.writes[0].path, '/api/opportunities/o1/stage', 'the move goes through the governed stage route');
+  assert.deepEqual(client.writes[0].body, { targetStage: 'proposal' }, 'the move names its target stage');
+  assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
+});
