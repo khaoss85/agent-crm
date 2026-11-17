@@ -2917,6 +2917,9 @@ export function renderOggi({
     // disponibile» channels: the count still shows, without a Collega.
     if (invite.leads.length > 0 || invite.aside !== null || partialChannels) {
       const section = el(doc, 'section', 'bo-oggi-section');
+      // backlog:ca53e443db44: keyed so the late refill swaps it in place
+      // when the deferred profile lands — the strip is profile-dependent.
+      section.setAttribute('data-oggi-section', 'channels');
       // The strip lands on #/connettori, whose head is the Collegamenti
       // Google card with the Collega links.
       if (invite.leads.length > 0) {
@@ -3340,7 +3343,9 @@ export function createOggiView(deps) {
     paint(scratch);
     const section = (root, key) => root.querySelector(`section[data-oggi-section="${key}"]`);
     const pairs = [];
-    for (const key of ['inbox', 'agenda', 'brief']) {
+    // backlog:ca53e443db44: the channel strip is profile-dependent, so the
+    // late refill swaps it too — a deferred profile no longer strands it.
+    for (const key of ['inbox', 'agenda', 'brief', 'channels']) {
       const live = section(mount, key);
       const fresh = section(scratch, key);
       if ((live === null) !== (fresh === null)) {
