@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import {
-  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, createOggiView, ownMailboxes, renderOggi,
+  buildAdvisorActions, buildInbox, buildPreCallBrief, buildServerReplies, buildTodayAgenda, buildTodayRecap, buildUnreadSummary, createOggiView, ownMailboxes, renderOggi,
 } from '../apps/admin/public/admin-oggi.js';
 import { isAutomatedSender, isNotificationMessage } from '../apps/admin/public/admin-labels.js';
 import { takePendingCalendarEvent, takePendingClientiView, writePendingCalendarEvent, writePendingClientiView } from '../apps/admin/public/admin-prefill.js';
@@ -928,18 +928,74 @@ test('review #821 P2: a slow «Da rispondere» view never holds the agenda names
 // ---------------------------------------------------------------------------
 
 test('5cf918c2246e: the recap names the unread when nothing else waits', () => {
+  // backlog:a03226f6a8c3: without a message count the recap names the
+  // customers, never a message number.
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
-    'Solo 4 messaggi da leggere e nessun appuntamento per oggi.');
+    'Solo 4 clienti con messaggi da leggere e nessun appuntamento per oggi.');
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 1 }),
-    'Solo 1 messaggio da leggere e nessun appuntamento per oggi.');
+    'Solo 1 cliente con messaggi da leggere e nessun appuntamento per oggi.');
   assert.equal(buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 0, unread: 4 }),
-    'Ti restano 4 messaggi da leggere e 1 appuntamento.');
+    'Ti restano 4 clienti con messaggi da leggere e 1 appuntamento.');
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 0, unread: 2 }),
-    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Restano 2 messaggi da leggere.');
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Restano 2 clienti con messaggi da leggere.');
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0 }),
     'Niente in sospeso e nessun appuntamento per oggi.', 'unchanged when nothing is unread');
   assert.equal(buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 2, unread: 4 }),
     'Ti aspettano 2 messaggi da rispondere e nessun appuntamento per oggi.', 'waiting still leads over unread');
+});
+
+// backlog:a03226f6a8c3 (production 17/11: Oggi read «2 messaggi da
+// leggere» for 2 customers with 5 new messages): the recap counts the
+// messages apart from the customers and names both, singular and plural.
+test('a03226f6a8c3: the recap names true messages and customers', () => {
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 2, unreadMessages: 5, unreadMessagesExact: true }),
+    'Solo 5 messaggi nuovi da 2 clienti e nessun appuntamento per oggi.');
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 1, unreadMessages: 1, unreadMessagesExact: true }),
+    'Solo 1 messaggio nuovo da 1 cliente e nessun appuntamento per oggi.');
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 2, unreadMessages: 1, unreadMessagesExact: true }),
+    'Solo 1 messaggio nuovo da 2 clienti e nessun appuntamento per oggi.');
+  assert.equal(
+    buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 0, unread: 2, unreadMessages: 5, unreadMessagesExact: true }),
+    'Ti restano 5 messaggi nuovi da 2 clienti e 1 appuntamento.');
+  assert.equal(
+    buildTodayRecap({ appointments: [{ ...APPT, startsAt: '2026-10-19T15:00:00.000Z' }], openTasks: [], now: NOW, waiting: 0, unread: 1, unreadMessages: 1, unreadMessagesExact: true }),
+    'Ti resta 1 messaggio nuovo da 1 cliente e 1 appuntamento.');
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 0, unread: 2, unreadMessages: 5, unreadMessagesExact: true }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Restano 5 messaggi nuovi da 2 clienti.');
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [TASK], now: NOW, waiting: 0, unread: 1, unreadMessages: 1, unreadMessagesExact: true }),
+    'Oggi hai 1 cosa da fare e nessun appuntamento. Ti servono circa 3 minuti. Resta 1 messaggio nuovo da 1 cliente.');
+  // A partial scan reads as a floor, never as an exact count.
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: 2, unreadMessages: 5, unreadMessagesExact: false }),
+    'Solo almeno 5 messaggi nuovi da 2 clienti e nessun appuntamento per oggi.');
+});
+
+test('a03226f6a8c3: the unread summary sums rows, not the pill', () => {
+  const full = {
+    items: [{ id: 'a', unreadCount: 2 }, { id: 'b', unreadCount: 3 }],
+    total: 2, complete: true, totalIsExact: true,
+    views: [{ id: 'tutti', label: 'Tutti', count: 9 }, { id: 'da-leggere', label: 'Da leggere', count: 2 }],
+  };
+  assert.deepEqual(buildUnreadSummary(full), { customers: 2, messages: 5, exact: true });
+  const summary = buildUnreadSummary(full);
+  assert.equal(
+    buildTodayRecap({ appointments: [], openTasks: [], now: NOW, waiting: 0, unread: summary?.customers ?? 0, unreadMessages: summary?.messages ?? null, unreadMessagesExact: summary?.exact === true }),
+    'Solo 5 messaggi nuovi da 2 clienti e nessun appuntamento per oggi.');
+  // A truncated page is a floor: the pill stays exact, the sum does not.
+  assert.deepEqual(
+    buildUnreadSummary({ ...full, items: full.items.slice(0, 1), complete: true }),
+    { customers: 2, messages: 2, exact: false });
+  // Rows without a count leave the messages unknown: only customers read.
+  assert.deepEqual(
+    buildUnreadSummary({ items: [{ id: 'a' }], total: 2, complete: true, views: [{ id: 'da-leggere', label: 'Da leggere', count: 2 }] }),
+    { customers: 2, messages: null, exact: false });
+  assert.equal(buildUnreadSummary(null), null);
+  assert.equal(buildUnreadSummary({ items: 'no' }), null);
 });
 
 test('5cf918c2246e: empty «Da rispondere» with unread paints the unread, never «done»', () => {
@@ -989,7 +1045,9 @@ test('5cf918c2246e: the 13/11 case on one server answer — Da rispondere 0, da 
   assert.ok(!text.includes('Hai finito per oggi'), text);
   assert.ok(!text.includes('Niente in sospeso'), text);
   assert.ok(!text.includes('Nessun messaggio aspetta una risposta.'), text);
-  assert.ok(text.includes('Solo 4 messaggi da leggere e nessun appuntamento per oggi.'), text);
+  // backlog:a03226f6a8c3: no per-row count on this answer, so the recap
+  // names the customers, never a message number.
+  assert.ok(text.includes('Solo 4 clienti con messaggi da leggere e nessun appuntamento per oggi.'), text);
   assert.ok(text.includes('Hai risposto a tutto. Restano 4 messaggi da leggere, qui sotto.'), text);
   const section = mount.querySelector('section[data-oggi-section="inbox"]');
   assert.ok(section.textContent.includes('0 in attesa'), 'the head is the view total');
@@ -1000,4 +1058,43 @@ test('5cf918c2246e: the 13/11 case on one server answer — Da rispondere 0, da 
   links[0].dispatch('click', { preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
   assert.equal(takePendingClientiView(storage), 'da-leggere', 'Clienti opens on Da leggere');
+});
+
+test('a03226f6a8c3: the 17/11 case — 2 customers with 5 new messages', async () => {
+  const daLeggere = {
+    items: [
+      { subject: { resource: 'contact', id: 'p1' }, resource: 'contact', id: 'p1', name: 'Persona 1', unreadCount: 2 },
+      { subject: { resource: 'contact', id: 'p2' }, resource: 'contact', id: 'p2', name: 'Persona 2', unreadCount: 3 },
+    ],
+    total: 2, complete: true, totalIsExact: true,
+    views: [
+      { id: 'tutti', label: 'Tutti', count: 9 },
+      { id: 'da-leggere', label: 'Da leggere', count: 2 },
+      { id: 'da-rispondere', label: 'Da rispondere', count: 0 },
+    ],
+  };
+  const calls = [];
+  const client = {
+    async request(path, options = {}) {
+      enforceAdminWriteGate(path, options);
+      calls.push(path);
+      if (path === '/api/schema') return { domains: { interactions: {}, 'customer-data': {} } };
+      if (path === '/api/profile') return {};
+      if (path.includes('vista=da-leggere')) return daLeggere;
+      if (path.startsWith('/api/customer-data/customers?')) return repliesAnswer(0, { unread: 2 });
+      if (path.startsWith('/api/modules/interaction-message/records')) return { items: [] };
+      if (path.startsWith('/api/modules/conversation/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createOggiView({ doc, mount, client, storage: memoryStorage(), navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
+  await view.render({ spaceName: 'Spazio', links: [], now: new Date('2026-10-19T10:00:00.000Z') });
+  assert.ok(calls.some((path) => path.includes('vista=da-leggere')), 'the recap reads Da leggere apart');
+  const text = mount.textContent;
+  const recap = mount.querySelector('.bo-oggi-recap');
+  assert.ok(recap?.textContent.includes('Solo 5 messaggi nuovi da 2 clienti e nessun appuntamento per oggi.'), recap?.textContent);
+  assert.ok(!recap?.textContent.includes('2 messaggi da leggere'), 'the recap never reads the customer count as messages');
+  assert.ok(text.includes('Solo 5 messaggi nuovi da 2 clienti e nessun appuntamento per oggi.'), text);
 });

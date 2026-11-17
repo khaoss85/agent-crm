@@ -960,9 +960,9 @@ export async function executeAdvisorAction(client, action, run) {
  * «Da leggere» is its own wait (backlog:5cf918c2246e, production 13/11:
  * Clienti read «4 da leggere» while Oggi read «nothing waits»): «Niente in
  * sospeso» never covers messages still to be read, so the recap names them.
- * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number }} input
+ * @param {{ appointments?: Array<Record<string, any>>, openTasks?: Array<Record<string, any>>, now?: Date, waiting?: number, waitingExact?: boolean, unread?: number, unreadMessages?: number | null, unreadMessagesExact?: boolean }} input
  */
-export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0 } = {}) {
+export function buildTodayRecap({ appointments = [], openTasks = [], now = new Date(), waiting = 0, waitingExact = true, unread = 0, unreadMessages = null, unreadMessagesExact = true } = {}) {
   // backlog:5e703a7bb397: «Ti resta» counts what is still ahead today —
   // only appointments ending after now; an ended slot stays in the
   // agenda (grey) but leaves the count.
@@ -979,6 +979,23 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
   // the verb agrees with the count, and zero reads as a person says it.
   const unanswered = Number.isSafeInteger(waiting) && waiting > 0 ? waiting : 0;
   const unreadN = Number.isSafeInteger(unread) && unread > 0 ? unread : 0;
+  // backlog:a03226f6a8c3 (production 17/11: «2 messaggi da leggere» for 2
+  // customers with 5 new messages): the pill counts customers, so the recap
+  // counts the messages apart (see buildUnreadSummary) and names both —
+  // «5 messaggi nuovi da 2 clienti» — with singular and plural. With no
+  // message count only the customers read, never a message number.
+  const unreadMessagesN = Number.isSafeInteger(unreadMessages) && unreadMessages > 0 ? unreadMessages : null;
+  const unreadText = (() => {
+    if (unreadMessagesN !== null) {
+      const least = unreadMessagesExact === false ? 'almeno ' : '';
+      const what = `${least}${unreadMessagesN} ${unreadMessagesN === 1 ? 'messaggio nuovo' : 'messaggi nuovi'}`;
+      if (unreadN <= 0) return `${what} da leggere`;
+      return `${what} da ${unreadN === 1 ? '1 cliente' : `${unreadN} clienti`}`;
+    }
+    if (unreadN <= 0) return null;
+    return unreadN === 1 ? '1 cliente con messaggi da leggere' : `${unreadN} clienti con messaggi da leggere`;
+  })();
+  const unreadSingular = unreadMessagesN !== null ? unreadMessagesN === 1 && unreadMessagesExact !== false : unreadN === 1;
   // review Muse #795: a count from a truncated scan is a floor, never a
   // zero — «almeno N», or the honest «non riesco a contarli» at zero.
   const floor = waitingExact === false || waiting === null;
@@ -999,20 +1016,22 @@ export function buildTodayRecap({ appointments = [], openTasks = [], now = new D
       return `${waitingLine(false)}. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
     }
     if (today.length === 0) {
-      return unreadN === 0
+      return unreadText === null
         ? 'Niente in sospeso e nessun appuntamento per oggi.'
-        : `Solo ${plural(unreadN, 'messaggio da leggere', 'messaggi da leggere')} e nessun appuntamento per oggi.`;
+        : `Solo ${unreadText} e nessun appuntamento per oggi.`;
     }
-    return unreadN === 0
-      ? `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`
-      : `Ti restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere e ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
+    if (unreadText === null) {
+      return `Niente in sospeso. ${today.length === 1 ? 'Ti resta' : 'Ti restano'} ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
+    }
+    return `${unreadSingular ? 'Ti resta' : 'Ti restano'} ${unreadText} e ${plural(today.length, 'appuntamento', 'appuntamenti')}.`;
   }
   const appointmentsPart = today.length === 0 ? 'nessun appuntamento' : plural(today.length, 'appuntamento', 'appuntamenti');
   const base = `Oggi hai ${plural(tasks.length, 'cosa da fare', 'cose da fare')} e ${appointmentsPart}. Ti servono circa ${tasks.length * 3} minuti`;
   const drafted = tasks.filter((row) => nonEmptyText(row?.note) !== null).length;
   const recap = drafted > 0 ? `${base}: ho già preparato i messaggi.` : `${base}.`;
   if (unanswered > 0 || floor) return `${recap} ${waitingLine(true)}.`;
-  return unreadN === 0 ? recap : `${recap} Restano ${plural(unreadN, 'messaggio', 'messaggi')} da leggere.`;
+  if (unreadText === null) return recap;
+  return `${recap} ${unreadSingular ? 'Resta' : 'Restano'} ${unreadText}.`;
 }
 
 /**
@@ -1335,6 +1354,34 @@ export function buildServerReplies(answer, now = new Date()) {
     rows,
     unread: Number.isSafeInteger(unreadPill?.count) ? unreadPill.count : null,
     correspondents,
+  };
+}
+
+/**
+ * «Da leggere» as numbers for the recap (backlog:a03226f6a8c3): the view
+ * pill counts customers, never messages, so the recap reads the message
+ * count apart — the sum of each row's own `unreadCount`. Exact when the
+ * scan ran whole and the page holds every row, a floor («almeno»)
+ * otherwise, unknown when no row names a count. Null on a malformed
+ * answer, never a measured zero.
+ * @param {any} answer GET /api/customer-data/customers?vista=da-leggere
+ * @returns {{ customers: number | null, messages: number | null, exact: boolean } | null}
+ */
+export function buildUnreadSummary(answer) {
+  if (!answer || typeof answer !== 'object' || !Array.isArray(answer.items)) return null;
+  const pill = Array.isArray(answer.views) ? answer.views.find((view) => view?.id === UNREAD_VIEW) : null;
+  const customers = Number.isSafeInteger(pill?.count) && pill.count > 0 ? pill.count : null;
+  let messages = 0;
+  let seen = false;
+  for (const item of answer.items) {
+    const n = item?.unreadCount;
+    if (Number.isSafeInteger(n) && n >= 0) { messages += n; seen = true; }
+  }
+  const total = Number.isSafeInteger(answer.total) && answer.total >= 0 ? answer.total : null;
+  return {
+    customers,
+    messages: seen ? messages : null,
+    exact: seen === true && answer.complete === true && total !== null && answer.items.length >= total,
   };
 }
 
@@ -2001,6 +2048,15 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
       (error) => { noteReadFailure('da-rispondere', error); return null; },
     )
     : Promise.resolve(null);
+  // backlog:a03226f6a8c3: the recap counts messages apart from customers,
+  // so it reads the «Da leggere» view beside «Da rispondere» — one row
+  // per unread customer with its own unreadCount. Fail-soft like the rest.
+  const unreadRead = repliesComposed
+    ? client.request(`/api/customer-data/customers?vista=${UNREAD_VIEW}&sort=recent&page=1&pageSize=50`).then(
+      (answer) => buildUnreadSummary(answer),
+      (error) => { noteReadFailure('da-leggere', error); return null; },
+    )
+    : Promise.resolve(null);
   // backlog:d08331558c50: the website forms feed the signal list — one
   // fail-soft read like the rest, gated on the composed domain.
   const submissionsRead = domains['site-forms'] != null
@@ -2023,6 +2079,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // for Oggi and Clienti; fail-soft to the messages read below.
   outcome.replies = null;
   outcome.repliesPending = repliesComposed;
+  outcome.unreadSummary = null;
   if (tasksPage != null) {
     outcome.tasks = tasksPage.rows;
     outcome.tasksPartial = tasksPage.capped === true;
@@ -2139,6 +2196,13 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
     // The notification names fill in after, in place.
     if (namesPublished) named();
   });
+  // backlog:a03226f6a8c3: the «Da leggere» numbers land on their own
+  // branch — a slow view never holds «Da rispondere» back, and the recap
+  // repaints in place when they arrive.
+  const unreadBranch = unreadRead.then((summary) => {
+    outcome.unreadSummary = summary;
+    if (namesPublished) named();
+  });
   // Voce 785aeb28bd18: the roster already rides the first wave beside the
   // profile (see above) — joining it here only waits for what is still
   // flying, never a new read. The names mark says where the second wave went.
@@ -2154,6 +2218,7 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   named();
   const answeredLate = !repliesSettled;
   await repliesBranch;
+  await unreadBranch;
   if (answeredLate) named();
   await briefRead;
   // Voce 785aeb28bd18: where the load time went, step by step.
@@ -3164,7 +3229,7 @@ export function createOggiView(deps) {
       now: lastMeta.now,
       home: {
         recapPending: inbox?.pending === true,
-        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0 }),
+        recap: buildTodayRecap({ appointments: last.appointments, openTasks: last.tasks, now: lastMeta.now, waiting: inbox?.available === false ? null : inbox?.available ? inbox.total : 0, waitingExact: !(inbox?.available && inbox.totalIsExact === false), unread: last.unreadSummary?.customers ?? (inbox?.available === true && Number.isSafeInteger(inbox.unread) ? inbox.unread : 0), unreadMessages: last.unreadSummary?.messages ?? null, unreadMessagesExact: last.unreadSummary?.exact === true }),
         actions,
         triage,
         capped,
