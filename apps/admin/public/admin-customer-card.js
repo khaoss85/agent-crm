@@ -583,6 +583,45 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
   && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
     || /** @type {any} */ (error).status === 503);
 
+export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
+ * spins without end — a run that answers nothing within the timeout refuses
+ * with the retry code instead of hanging the section. The caller names the
+ * wait in Italian («Non ha risposto in tempo: riprova.»). The clock is the
+ * view's injectable `wait` seam, so tests fire it without real time.
+ * @param {Promise<any>} promise @param {number} [ms] @param {(wms: number) => Promise<any>} [waitFn]
+ * @returns {Promise<any>}
+ */
+export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
+  if (typeof waitFn === 'function') {
+    const timeout = Promise.resolve(waitFn(ms)).then(() => {
+      throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
+    });
+    return Promise.race([promise, timeout]);
+  }
+  // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
+  // leak one 60s timer per fast run — the losing timeout was never cleared.
+  // The guard below clears it as soon as the wrapped promise settles.
+  // No unref: an unref'd short timer lets the event loop drain before it
+  // fires (CI: 'Promise resolution is still pending but the event loop has
+  // already resolved'). Fast runs clear the timer below, so no 60s hang.
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
+    }, ms);
+  });
+  const guarded = Promise.resolve(promise).then(
+    (value) => { if (timer !== null) clearTimeout(timer); return value; },
+    (error) => { if (timer !== null) clearTimeout(timer); throw error; },
+  );
+  return Promise.race([guarded, timeout]);
+}
+/** The Italian line for a run the timeout above refused. @param {any} error */
+const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
+  && /** @type {any} */ (error).code === 'ENRICHMENT_EXTRACT_TIMEOUT';
+
 /**
  * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
  * the phone-bearing identities the profile holds beside the record, and the
@@ -1205,7 +1244,13 @@ export function createCustomerCardView(deps) {
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
-    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    : (ms) => new Promise((resolve) => {
+      // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the extraction
+      // deadline below outlives a fast run — unref'd so the leftover 60s
+      // never holds the loop (the race already ignored its late refusal).
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
   // load backstop never sits among the screen's pauses above. Unref'd
   // where the host allows it, so an idle process never waits on it.
@@ -3718,7 +3763,10 @@ export function createCustomerCardView(deps) {
     // Backlog e5e3e886 (supera C13): the ghost `Aggiorna` button STARTS one
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
-    // when it lands the section re-reads the facts and lists the stored
+    // a run that answers nothing refuses in time with the retry line, never
+    // a wait without end. With no messages the button says so at once under
+    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
     // says the AI is off — `Nessun dato nuovo` now means the run happened
@@ -3743,8 +3791,55 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
-        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return;
+      refresh.addEventListener('click', () => {
+        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
+        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
+        // to extract — the button says so at once and sends nothing, never
+        // «Estraggo…», and never spins without end. The re-read below is the
+        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
+        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
+          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+          return uiBusy(refresh, 'Aggiorno…', async () => {
+            busy = true;
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+            // without messages flies under the same single-flight guard as
+            // the extract run — otherwise a repaint in flight lets two
+            // reload()s race and lands the first answer in a detached box.
+            const painted = lastShown;
+            const flight = {};
+            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+            try {
+              let fresh;
+              try {
+                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+              } catch (error) {
+                if (isExtractionTimeout(error)) {
+                  toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+                  }
+                } else {
+                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+                }
+                return;
+              }
+              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              } else {
+                while (box.firstChild) box.removeChild(box.firstChild);
+                enriched(box, fresh, reload, null, ctx, null);
+              }
+              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+            } finally {
+              busy = false;
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            }
+          });
+        }
+        return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
         // The paint this click was painted on: landing anywhere else means
         // a repaint detached this box while the run flew.
@@ -3759,35 +3854,28 @@ export function createCustomerCardView(deps) {
         };
         try {
           const sources = extractionSourcesFromTimeline(sourcesOf);
-          if (sources.length === 0) {
-            // Backlog e5e3e886, arbitrato #853 P1: with zero messages the
-            // run cannot start, but the button still re-reads the facts
-            // like main (voce b9f6a2b58e00) instead of leaving the old
-            // rows on screen — then it says where the AI starts from.
-            let fresh;
-            try {
-              fresh = await reload();
-            } catch (error) {
-              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
-              return;
-            }
-            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-            while (box.firstChild) box.removeChild(box.firstChild);
-            enriched(box, fresh, reload, null, ctx, null);
-            toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-            return;
-          }
           const status = el('p', 'bo-scheda-extracting', 'Estraggo…');
           status.setAttribute('role', 'status');
           box.appendChild(status);
           let answer;
           try {
-            answer = await extract(sources);
+            // Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): a run
+            // that answers nothing refuses in time with the retry line —
+            // «Estraggo…» never spins without end.
+            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
+            } else if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              // Review #989 (P2): a repaint may have detached this box while
+              // the run flew, and its replacement shows the flying
+              // «Estraggo…». The flight is over: release it before the
+              // repaint below, or the new paint shows it again.
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
@@ -3801,9 +3889,21 @@ export function createCustomerCardView(deps) {
           // line — never a silent old screen after a happened run.
           let fresh;
           try {
-            fresh = await reload();
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3848): the re-read
+            // after a landed run flies under the same 60s deadline as the
+            // extract — otherwise a hanging GET holds the flight forever and
+            // every later «Aggiorna» no-ops with no retry line.
+            fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
-            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
@@ -3838,7 +3938,8 @@ export function createCustomerCardView(deps) {
         } finally {
           release();
         }
-      }));
+        });
+      });
       box.appendChild(refresh);
       if (runKey !== null && enrichmentRuns.has(runKey)) {
         // A run this button did not start is still flying (a repaint
