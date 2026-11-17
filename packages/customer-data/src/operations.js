@@ -1542,8 +1542,10 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     teamCorrespondents: serializeCorrespondents(repliesReadable ? correspondents : null),
     // backlog:f6b9d189: every item names the fields that explain the text
     // match (`searchMatchFields`), so a picker can drop what it cannot show
-    // and print the reason beside the rest. Clienti ignores the key.
-    items: page.items.map((item) => ({ ...item, searchMatch: searchMatchFields(item, query.q ?? '') })),
+    // and print the reason beside the rest. Clienti ignores the key. The
+    // frozen items/rows contract holds: a new frozen array of frozen rows
+    // (review #985 P2).
+    items: Object.freeze(page.items.map((item) => Object.freeze({ ...item, searchMatch: searchMatchFields(item, query.q ?? '') }))),
     total: page.total,
     page: page.page,
     pageSize: page.pageSize,

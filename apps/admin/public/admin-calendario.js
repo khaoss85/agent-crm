@@ -4513,6 +4513,10 @@ export function createCalendarioView(deps) {
     const explained = state.customerItems.filter((item) => {
       const match = Array.isArray(item?.searchMatch) ? item.searchMatch : null;
       if (match === null) return true;
+      // A channel-only query matches on the channel, never on text: the
+      // server sends an empty reason, and the row already passed the
+      // channel filter, so it stays listed (review #985 P2).
+      if (match.length === 0) return true;
       if (!match.some((field) => field === 'name' || field === 'email' || field === 'phone')) return false;
       if (match.includes('name')) return true;
       return customerMatchReason(item, match) !== null;

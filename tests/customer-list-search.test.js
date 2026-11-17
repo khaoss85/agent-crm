@@ -541,6 +541,16 @@ test('f6b9d189: searchMatchFields names the fields a text match sits on', () => 
   assert.deepEqual(searchMatchFields(split, 'Ada rossi'), ['name', 'email'], 'review #985 P2: spanning words blame both fields');
   assert.deepEqual(searchMatchFields(anna, 'whatsapp'), [], 'a channel-only query matches on the channel, never on text');
   assert.deepEqual(searchMatchFields(anna, ''), [], 'no needle, no explanation');
+  // Review #985 P2: «pizzeria 07» lists «Ada 07» of «Pizzeria» through the
+  // mixed branch, so the digit word visibly sitting in the name must blame
+  // the name — otherwise the form drops the row as company-only.
+  const ada07 = shapeCustomerRow({
+    contact: { id: 'c-ada07', companyId: 'co-piz', firstName: 'Ada', lastName: '07', email: null },
+    company: { id: 'co-piz', name: 'Pizzeria' },
+  }, {});
+  assert.deepEqual(hits([ada07], 'pizzeria 07'), ['Ada 07'], 'the mixed needle lists the row by its visible words');
+  assert.deepEqual(searchMatchFields(ada07, 'pizzeria 07'), ['name', 'company'], 'the digit word blames the name it visibly sits in');
+  assert.deepEqual(searchMatchFields(ada07, '07'), [], 'a pure-digit needle never blames the shown name');
 });
 
 test('f6b9d189: the list response carries searchMatch on every item', async () => {
@@ -553,6 +563,9 @@ test('f6b9d189: the list response carries searchMatch on every item', async () =
   );
   assert.deepEqual(page.items.map((item) => item.name), ['Anna Bianchi']);
   assert.deepEqual(page.items[0].searchMatch, ['name', 'email']);
+  // Review #985 P2: adding the key must keep the frozen items/rows contract.
+  assert.ok(Object.isFrozen(page.items), 'the items array stays frozen');
+  assert.ok(Object.isFrozen(page.items[0]), 'each row stays frozen with its searchMatch');
 });
 
 test('d128847d21fc: the services clamp the search scan to their own ceiling, the list stays at 500', () => {

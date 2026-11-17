@@ -462,6 +462,20 @@ function searchPartsOf(row) {
 }
 
 /**
+ * Whether a digit word visibly sits in a shown field (backlog:f6b9d189
+ * review #985 P2): the same word-start/infix rule `searchRank` uses for
+ * mixed needles, so «07» in «Ada 07» keeps the row. Never used for a
+ * pure-digit needle, which names ONLY the held phone.
+ * @param {unknown} value the field text
+ * @param {string} word one folded digit word of the needle
+ */
+function digitWordHitInField(value, word) {
+  const words = searchWords(value);
+  if (words.some((candidate) => candidate.startsWith(word))) return true;
+  return word.length >= SEARCH_INFIX_MIN_CHARS && words.some((candidate) => candidate.includes(word));
+}
+
+/**
  * Which fields of a shaped list row explain a text match (backlog:f6b9d189:
  * the appointment form's «anna» listed Massimiliano Magrini with no visible
  * reason — the match sat on a field the form never shows). A subset of
@@ -470,9 +484,10 @@ function searchPartsOf(row) {
  * never on a visible field). Every text word keeps the `searchRank` word
  * rule and blames each field it sits in, so a word the row matches globally
  * (even on another field than its siblings, like «Ada» on the name and
- * «rossi» on the email) is always blamed on at least one field; the digits
- * keep the held-phone rule with its floor. Pure, so the endpoint and the
- * admin panel share it.
+ * «rossi» on the email) is always blamed on at least one field; the joined
+ * digits keep the held-phone rule with its floor, and the digit words of a
+ * mixed needle also blame the shown fields they visibly sit in (review
+ * #985 P2). Pure, so the endpoint and the admin panel share it.
  * @param {any} row a shaped list row
  * @param {unknown} q the raw `q` query text
  */
@@ -482,6 +497,12 @@ export function searchMatchFields(row, q) {
   const phoneValue = typeof row?.phone?.value === 'string' ? row.phone.value : '';
   const text = needle.filter((word) => !/^[0-9]+$/.test(word));
   const digits = needle.filter((word) => /^[0-9]+$/.test(word)).join('');
+  // Digit words of a mixed needle also read the shown fields by the word
+  // rules above (review #985 P2: «pizzeria 07» lists «Ada 07» of «Pizzeria»
+  // through the mixed branch of searchRank, so «07» must blame the name or
+  // the row is dropped as company-only). A pure-digit needle still names
+  // ONLY the held phone below, never the shown fields.
+  const digitWords = text.length > 0 ? needle.filter((word) => /^[0-9]+$/.test(word)) : [];
   const hits = [];
   if (text.length > 0) {
     const fields = [
@@ -491,7 +512,8 @@ export function searchMatchFields(row, q) {
     ];
     for (const [key, value] of fields) {
       if (typeof value !== 'string' || value === '') continue;
-      if (text.some((word) => searchRank([value], [word], '') >= 0)) hits.push(key);
+      if (text.some((word) => searchRank([value], [word], '') >= 0)
+        || digitWords.some((word) => digitWordHitInField(value, word))) hits.push(key);
     }
   }
   if (digits !== '' && digits.length >= PHONE_SEARCH_MIN_DIGITS

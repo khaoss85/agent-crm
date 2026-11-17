@@ -338,6 +338,34 @@ test('form: only company matches read as no match, in plain words', async () => 
   assert.ok(results.textContent.includes('Nessun cliente corrisponde'), 'the empty match says so in plain words');
 });
 
+// Review #985 P2: a channel-only query reaches the form with an empty
+// reason (the match sits on the channel, never on text) — the row already
+// passed the channel filter, so it stays listed instead of reading as no
+// match with a try-another-name empty state.
+test('form: a channel-only query keeps the channel members listed', async () => {
+  const customers = [
+    {
+      resource: 'contact', id: 'c-wa', name: 'Ada Rossi', email: null,
+      phone: null, company: null, searchMatch: [],
+    },
+  ];
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient({ customers }), now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  openManual(mount);
+  const search = byName(mount, 'customerSearch');
+  search.value = 'whatsapp';
+  search.dispatch('input');
+  await settle();
+  const results = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-results');
+  assert.equal(results.findAll('button').length, 1, 'the channel member stays listed');
+  assert.ok(!results.textContent.includes('Prova con un altro nome'), 'no name-oriented empty state for a channel query');
+});
+
 test('form: customerMatchReason prints only the matched email or phone', () => {
   assert.equal(customerMatchReason({ email: 'mario.rossi@example.it' }, ['email']), 'ma…@example.it');
   assert.equal(customerMatchReason({ phone: { value: '+39 333 123 4567' } }, ['phone']), 'tel. …4567');
