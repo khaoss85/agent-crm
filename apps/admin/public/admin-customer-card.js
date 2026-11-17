@@ -4911,11 +4911,12 @@ export function createCustomerCardView(deps) {
 
   // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
   // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
-  // when the package is not composed.
+  // when the package is not composed. A cancelled step is not a next
+  // action (seguito 17/11: it read as to-do in the block).
   const openTasksOf = (profile) => {
     if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
-    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
+    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed' && item?.status !== 'cancelled');
   };
   // Voce 2c1c0e149cf9: an agent-opened task is an AI suggestion — the
   // prototype's «✦ suggeriti» mark, read from the record's openedByType
@@ -5766,10 +5767,10 @@ export function createCustomerCardView(deps) {
    * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
    * AZIONI lists the open server tasks, the only copy on the scheda. A failed
    * read fails its vista (or the azioni block) like the card it replaces,
-   * never vanishing as empty. DECISION (to be confirmed): the panel always
-   * paints with honest vista states; only an empty azioni list hides its own
-   * block — the review left the empty state undecided, and hiding the whole
-   * panel would drop the failure contract.
+   * never vanishing as empty. DECISION (supervisore 17/11, verifier back su
+   * 84ebe9e5 AC-3): the block always paints — with no open step it keeps its
+   * title and an honest empty state, never hiding; only an uncomposed
+   * package (null) hides the block, like every uncomposed section.
    */
   function recapPanel(box, parts) {
     const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
@@ -5812,8 +5813,14 @@ export function createCustomerCardView(deps) {
       readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
       return true;
     }
-    if (tasks === null || tasks.length === 0) return true;
+    if (tasks === null) return true;
     box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    // Seguito 17/11: with no open step the block stays with an honest empty
+    // state — the prototype holds PROSSIME AZIONI, never a missing block.
+    if (tasks.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'Nessuna azione aperta.'));
+      return true;
+    }
     for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
     return true;
   }

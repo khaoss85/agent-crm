@@ -5377,9 +5377,11 @@ test('59def6cb805d: a next step completes its work task from the circular check 
   await flushComposer(10);
   assert.ok(completed, 'the work-task complete action ran');
   assert.deepEqual(toasts, ['Fatto: Richiamare per la prova']);
-  // Voce 2c1c0e149cf9: the card re-reads the server list, never an optimistic
-  // copy — with no open step left the empty azioni block hides like the prototype.
-  assert.ok(!mount.textContent.includes('Prossime azioni'), 'with no open step the azioni block hides');
+  // Voce 2c1c0e149cf9 (seguito 17/11, verifier back AC-3): the card
+  // re-reads the server list, never an optimistic copy — with no open step
+  // left the azioni block stays with its honest empty state.
+  assert.ok(mount.textContent.includes('Prossime azioni'), 'with no open step left the azioni block stays');
+  assert.ok(mount.textContent.includes('Nessuna azione aperta.'), 'the empty azioni block says so');
   assert.deepEqual(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'complete-step'), [],
     'no check without an open step');
 });
@@ -6645,4 +6647,81 @@ test('714433c2af86ac3: il pill derivato spiega il motivo e lo stato offerta si c
   assert.equal(client.writes[0].path, '/api/opportunities/o1/stage', 'the move goes through the governed stage route');
   assert.deepEqual(client.writes[0].body, { targetStage: 'proposal' }, 'the move names its target stage');
   assert.deepEqual(seen, [{ message: 'Stato aggiornato', error: false }], 'the move toasts in Italian');
+});
+// Voce 2c1c0e149cf9 (seguito 17/11, verifier back su 84ebe9e5: AC-2 il menu
+// Offerta si apre a sinistra sotto la sidebar — voci x=156 con sidebar a
+// x=264; AC-3 mancano «Prossime azioni» e «✦ suggeriti» nel Recap).
+// Repro: rosso sul codice prima della cura, verde dopo.
+test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, il Recap mostra Prossime azioni e suggeriti', async () => {
+  // AC-2: il menu condiviso (right:0, largo 290px) usciva dal riquadro
+  // stretto e finiva sotto la barra laterale (voci x=156, sidebar a x=264).
+  // Il vero difetto non è il lato dell'ancora ma l'antenato che ritaglia:
+  // .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole CSS
+  // overflow-x diventa auto e ritaglia il menu anche con left:0/right:auto
+  // (review P2 su 0429edd6). La cura toglie il contenitore di scorrimento
+  // al desktop: nessuna regola .bo-scheda-col-side può ritagliare a 1280px
+  // o più, o una regola min-width la riporta a visible.
+  const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
+  const sideClipsAtDesktop = (cssText) => {
+    const baseClips = /\.bo-scheda-col-side\s*\{[^}]*overflow(?:-[xy])?\s*:\s*(auto|scroll|hidden)/.test(cssText);
+    if (!baseClips) return false;
+    const desktopResets = [...cssText.matchAll(/@media\s*\(([^)]*)\)\s*\{[^]*?\.bo-scheda-col-side\s*\{([^}]*)\}/g)];
+    return !desktopResets.some((match) => {
+      const minWidth = match[1].match(/min-width\s*:\s*(\d+)px/);
+      return minWidth && Number(minWidth[1]) >= 1280 && /overflow\s*:\s*visible/.test(match[2]);
+    });
+  };
+  assert.equal(sideClipsAtDesktop(css), false,
+    'no .bo-scheda-col-side clipping ancestor at desktop widths (the Offerta menu would be cut at 1280px+)');
+  // L'ancora resta a destra del bottone, dentro l'area visibile.
+  const offerRules = [...css.matchAll(/\.bo-scheda-offerwrap[^{]*\{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(offerRules.some((body) => /left\s*:\s*0/.test(body) && /right\s*:\s*auto/.test(body)),
+    'the scheda Offerta menu opens right (left:0, right:auto), never under the sidebar');
+  // Il menu si apre davvero dentro il suo wrap, non come finestra diretta.
+  const mount = await renderCard(stubClient());
+  const offer = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'new-offer');
+  assert.ok(offer, 'the Offerta tile exists');
+  offer.dispatch('click');
+  assert.equal(offer.getAttribute('aria-expanded'), 'true', 'Offerta opens its menu');
+  const wrap = offer.parentNode;
+  assert.ok(wrap && (wrap.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-offerwrap'),
+    'the Offerta tile lives in its menu wrap');
+  const menu = (wrap?.childNodes ?? []).find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('ui-add-menu'));
+  assert.ok(menu, 'the wrap holds the menu');
+  assert.ok(!(menu.getAttribute('class') ?? '').split(/\s+/).includes('hidden'), 'the menu is visible after the click');
+  assert.ok(menu.textContent.includes("Crea con l'AI"), 'the menu voices creating with the AI');
+  assert.ok(menu.textContent.includes('Compila manualmente'), 'the menu voices filling in by hand');
+  // AC-3a: con zero passi aperti il titolo resta, con uno stato onesto.
+  const empty = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+    },
+  }));
+  assert.ok(empty.textContent.includes('Prossime azioni'), 'the recap keeps its Prossime azioni block with no open step');
+  // Un passo annullato non è una prossima azione.
+  const cancelled = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w8', status: 'cancelled', name: 'Richiamare per la prova' }],
+      },
+    },
+  }));
+  assert.ok(cancelled.textContent.includes('Prossime azioni'), 'the recap keeps its block with only a cancelled step');
+  assert.ok(!cancelled.findAll('button').some((node) => node.getAttribute('data-action') === 'complete-step'),
+    'a cancelled step carries no check');
+  // AC-3b: il passo aperto dall'AI porta il marchio del prototipo.
+  const suggested = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      workTasks: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'w9', status: 'open', name: 'Richiamare per la prova', openedByType: 'agent' }],
+      },
+    },
+  }));
+  assert.ok(suggested.textContent.includes('Prossime azioni'), 'the recap lists the next actions');
+  assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
 });
