@@ -2808,7 +2808,13 @@ export function createCustomerCardView(deps) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
         chip.setAttribute('aria-disabled', 'true');
-        chip.setAttribute('title', `${entry.label}: nessun indirizzo su questo canale`);
+        // backlog:7eb7dc663bbd: a phone channel without a number names the
+        // missing number — the operator opened it from «WhatsApp» and must
+        // read why it is missing, not a bare «no address».
+        const needsNumber = entry.channel === 'whatsapp' || entry.channel === 'sms';
+        chip.setAttribute('title', needsNumber
+          ? `${entry.label}: nessun numero su questo cliente — aggiungi un telefono per scrivere su ${entry.label}`
+          : `${entry.label}: nessun indirizzo su questo canale`);
       } else if (!entry.connected) {
         radio.setAttribute('disabled', 'disabled');
         chip.setAttribute('data-off', 'true');
@@ -2834,6 +2840,17 @@ export function createCustomerCardView(deps) {
       const preferred = radios.find((row) => row.entry.channel === preferChannel
         && row.entry.recipient !== null && row.entry.connected === true);
       if (preferred) select(preferred.entry);
+    }
+    // backlog:7eb7dc663bbd: opened from the «WhatsApp» tile on a customer
+    // without a number — the composer names the missing number, never just
+    // the fallback channel it selected.
+    if (typeof preferChannel === 'string' && preferChannel !== '') {
+      const preferred = channels.find((entry) => entry.channel === preferChannel) ?? null;
+      if (preferred !== null && preferred.recipient === null
+        && (preferred.channel === 'whatsapp' || preferred.channel === 'sms')) {
+        offLine.appendChild(el('span', undefined,
+          `${preferred.label} manca perché il cliente non ha un numero.`));
+      }
     }
     // backlog:bd9ae1482194: the space links none of the channels the
     // composer writes on (no active row, no profile Gmail). Production
@@ -5435,6 +5452,18 @@ export function createCustomerCardView(deps) {
       return Number.isFinite(startsMs) && startsMs >= nowMs;
     });
   };
+  // backlog:d77f434ba40c: the bookings that already happened — a
+  // booked/confirmed row starting before now — so «Nessun appuntamento»
+  // never hides the past the cronologia still lists.
+  const pastBookedOf = (timeline) => {
+    const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
+    const nowMs = Date.now();
+    return items.filter((item) => {
+      if (!['booked', 'confirmed'].includes(String(item?.status ?? ''))) return false;
+      const startsMs = Date.parse(String(item?.startsAt ?? ''));
+      return Number.isFinite(startsMs) && startsMs < nowMs;
+    });
+  };
   /** The prototype card body for one upcoming booking (C26): title, then `<giorno> · <orari>`. */
   function appointmentBody(box, next, serviceNames = null, customerName = null) {
     // Soonest slot first, like the timeline projection. Voce 1a066ddfe42a:
@@ -5733,7 +5762,23 @@ export function createCustomerCardView(deps) {
     }
     const upcoming = upcomingOf(timeline);
     if (upcoming.length === 0) {
-      box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+      // backlog:d77f434ba40c: «Nessun appuntamento» hid the past bookings
+      // the cronologia still lists — name them, with a way down to them.
+      const past = pastBookedOf(timeline);
+      if (past.length === 0) {
+        box.appendChild(el('p', 'bo-muted', 'Nessun appuntamento prenotato'));
+        return;
+      }
+      box.appendChild(el('p', 'bo-muted', `Nessun appuntamento futuro · ${plural(past.length, 'passato', 'passati')} in cronologia`));
+      const more = el('button', 'bo-scheda-vista', 'Vedi in cronologia');
+      more.setAttribute('type', 'button');
+      more.setAttribute('data-action', 'vista-past-appointments');
+      more.addEventListener('click', () => {
+        let root = box;
+        while (root.parentNode) root = root.parentNode;
+        root.querySelector?.('.bo-scheda-timeline')?.scrollIntoView?.({ block: 'start' });
+      });
+      box.appendChild(more);
       return;
     }
     // backlog:26afd13657c5: the listino names the service here too — like
@@ -6294,11 +6339,20 @@ export function createCustomerCardView(deps) {
    * longer work, so the toast that offers it leaves too.
    * @param {{ keepalive?: boolean }} [options]
    */
+  // backlog:fc09e6f16326: whether this view showed the «Nota eliminata»
+  // toast and nothing closed it yet — the shell gives no read-back, so the
+  // view tracks its own toast instead of hiding a scope on every render.
+  let noteToastShown = false;
   function flushWithdrawals(options = {}) {
     const unsent = [...pendingWithdrawals.entries()]
       .filter(([, pending]) => pending.state === 'waiting' || pending.state === 'restored');
+    // backlog:fc09e6f16326: the scheda's toast leaves with its screen — even
+    // when its withdrawal already settled and nothing still waits.
+    if (noteToastShown) {
+      noteToastShown = false;
+      hideToast(NOTE_TOAST_SCOPE);
+    }
     if (unsent.length === 0) return;
-    if (unsent.some(([, pending]) => pending.state === 'waiting')) hideToast(NOTE_TOAST_SCOPE);
     // Review Muse #883 (P2): a withdrawal restored from the previous page
     // and not settled yet leaves too, never hidden until it expires.
     for (const [pendingKey, pending] of unsent) {
@@ -6420,6 +6474,7 @@ export function createCustomerCardView(deps) {
     pendingWithdrawals.set(pendingKey, pending);
     if (noteEditing !== null && noteEditing.noteId === noteId) noteEditing = null;
     repaintIfShown(resource, id);
+    noteToastShown = true;
     toast('Nota eliminata', false, {
       scope: NOTE_TOAST_SCOPE,
       duration: NOTE_WITHDRAW_GRACE_MS,
@@ -6433,6 +6488,7 @@ export function createCustomerCardView(deps) {
             return;
           }
           pendingWithdrawals.delete(pendingKey);
+          noteToastShown = false;
           repaintIfShown(resource, id);
           toast('Nota ripristinata');
         },
@@ -6807,6 +6863,13 @@ export function createCustomerCardView(deps) {
    */
   function invalidate() {
     cardRenderToken += 1;
+    // backlog:fc09e6f16326: leaving the screen closes a spent «Nota
+    // eliminata» toast — with nothing still undoable its «Annulla» is dead.
+    // A withdrawal still in its «Annulla» window keeps its toast
+    // (backlog:947260f9f036): coming back still undoes.
+    if (![...pendingWithdrawals.values()].some((pending) => pending.state === 'waiting')) {
+      hideToast(NOTE_TOAST_SCOPE);
+    }
     // backlog:947260f9f036: the router leaves the scheda and clears the
     // mount, so nothing of it stays on screen: coming back to the same
     // customer paints the skeleton at once, never the router's lone

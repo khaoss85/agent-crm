@@ -632,6 +632,36 @@ export function slotInGrid(startsAt, endsAt) {
   return startMin >= GRID_START_MINUTES && startMin < GRID_END_MINUTES;
 }
 
+/**
+ * backlog:8f10bea47ac8 — the manual form's opening proposal as a Rome day
+ * plus HH:MM: today at its first half-hour slot strictly after now when one
+ * still fits the 09:00–18:00 grid, else tomorrow 09:30–10:00. A real
+ * free-slot read needs the person, still unnamed at this point, so the
+ * default stays a proposal the operator confirms or moves — never an empty
+ * form that books a midnight. Pure so tests pin it without a clock.
+ * @param {number} [nowMs]
+ */
+export function defaultManualSlot(nowMs = Date.now()) {
+  const pad = (value) => String(value).padStart(2, '0');
+  const label = (minutes) => `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+  const now = new Date(nowMs);
+  const todayKey = romeDayKey(now);
+  const nowMin = romeMinutes(now);
+  if (todayKey !== null && nowMin !== null) {
+    // 10:17 Roma proposes today 10:30–11:00: the first grid step after now,
+    // never tomorrow 09:30 with today still free.
+    let start = Math.floor(nowMin / GRID_SLOT_MINUTES) * GRID_SLOT_MINUTES;
+    if (start <= nowMin) start += GRID_SLOT_MINUTES;
+    if (start < GRID_START_MINUTES) start = GRID_START_MINUTES;
+    if (start + GRID_SLOT_MINUTES <= GRID_END_MINUTES) {
+      return { date: todayKey, start: label(start), end: label(start + GRID_SLOT_MINUTES) };
+    }
+  }
+  const tomorrow = romeDayKey(new Date(nowMs + 24 * 3600 * 1000).toISOString());
+  if (!tomorrow) return null;
+  return { date: tomorrow, start: '09:30', end: '10:00' };
+}
+
 /** Phrase read-back cadence: every 3 s, about a minute (production 07/11). */
 /** Quiet time after the last keystroke before the customer search reads (backlog:29bb3f2c0d64). */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -1144,6 +1174,11 @@ export function aiBlockOf(error) {
  * An exact identity wins; then one display-name match (case-insensitive).
  * Homonyms and strangers resolve to nothing — the caller keeps the drafted
  * words on the outsider path instead of booking as the wrong human.
+ * backlog:a16726b5ea76 — the painted homonym ordinal («Rossi (2)») is not
+ * the name: it is stripped before matching, so a phrase echoing the Team
+ * label still finds a unique person, while two real homonyms stay
+ * unresolved. The match also reads the painted label base, so a team known
+ * only by a differently-cased id («MARCO») is still recognised.
  * @param {unknown} draftMember @param {unknown} named @param {unknown} members
  */
 export function resolveDraftMemberIds(draftMember, named, members) {
@@ -1151,8 +1186,11 @@ export function resolveDraftMemberIds(draftMember, named, members) {
   const rows = personRows(named, [], members);
   const exact = rows.find((row) => row.ids.includes(draftMember));
   if (exact) return [...exact.ids];
-  const wanted = draftMember.trim().toLowerCase();
-  const byName = rows.filter((row) => typeof row.name === 'string' && row.name.trim().toLowerCase() === wanted);
+  const stripOrdinal = (text) => String(text).trim().toLowerCase().replace(/\s*\(\d+\)\s*$/, '');
+  const wanted = stripOrdinal(draftMember);
+  if (wanted === '') return [];
+  const byName = rows.filter((row) => [row.name, row.label]
+    .some((name) => typeof name === 'string' && stripOrdinal(name) === wanted));
   if (byName.length === 1) return [...byName[0].ids];
   return [];
 }
@@ -1606,6 +1644,8 @@ export function createCalendarioView(deps) {
     draft: null,
     draftNote: '',
     bookingNote: '',
+    /** backlog:1e3393038b8b — the panel note is the missing-data note: while true it is recomputed from the live fields on every edit and repaint, never cleared early. */
+    bookingNoteMissing: false,
     /** The service field's own refusal, painted under it (BO_APPOINTMENT_SERVICE_REFUSED). */
     serviceError: '',
     /** @type {any} */
@@ -2618,18 +2658,19 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:134f3ed7 — every opening of the manual form proposes a day and
-   * a time: the picked slot where one was clicked, else tomorrow 09:30–10:00
-   * Rome. A real free-slot read needs the person, still unnamed at this
-   * point, so the default is a proposal the operator confirms or moves —
-   * never an empty form that books a midnight.
+   * backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening of the manual
+   * form proposes a day and a time: the picked slot where one was clicked,
+   * else today at its first slot after now, else tomorrow 09:30–10:00 Rome
+   * (defaultManualSlot). A real free-slot read needs the person, still
+   * unnamed at this point, so the default is a proposal the operator
+   * confirms or moves — never an empty form that books a midnight.
    */
   function ensureManualDefaults() {
     const manual = { ...(state.manual ?? {}) };
     if ((manual.date ?? '') !== '' || (manual.start ?? '') !== '' || (manual.end ?? '') !== '') return;
-    const tomorrow = romeDayKey(new Date(clock().getTime() + 86400000).toISOString());
-    if (!tomorrow) return;
-    state.manual = { ...manual, date: tomorrow, start: '09:30', end: '10:00' };
+    const slot = defaultManualSlot(clock().getTime());
+    if (!slot) return;
+    state.manual = { ...manual, ...slot };
   }
 
   /** Opens the manual form for a slot chosen on the grid. */
@@ -2673,8 +2714,9 @@ export function createCalendarioView(deps) {
    * backlog:6e6750ff8163 + backlog:134f3ed7 — × or Esc on the «Nuovo
    * appuntamento» form: it closes AND drops the typed values — never the
    * old slot, customer or price left behind. The next opening proposes a
-   * day and a time (tomorrow 09:30–10:00) instead of an empty form. Focus
-   * goes back to the «Nuovo appuntamento» button.
+   * day and a time (today when a slot is still ahead, else tomorrow
+   * 09:30–10:00) instead of an empty form. Focus goes back to the «Nuovo
+   * appuntamento» button.
    */
   function closeManual() {
     if (!state.selection && !state.manualOpen && !state.draftFill) return;
@@ -2694,6 +2736,7 @@ export function createCalendarioView(deps) {
     state.customerError = null;
     state.customerPartial = false;
     state.bookingNote = '';
+    state.bookingNoteMissing = false;
     state.serviceError = '';
     state.confirmed = null;
     renderAll();
@@ -4554,9 +4597,10 @@ export function createCalendarioView(deps) {
         // Review #690 (P2): the choice ends the search — no pending timer or
         // request in flight reads again after it.
         cancelCustomerSearch();
-        // backlog:134f3ed7 — the pick is the missing data: the note goes
-        // with the repaint.
-        state.bookingNote = '';
+        // backlog:134f3ed7 + backlog:1e3393038b8b — the pick fills one
+        // datum, never the note: a missing-data note stays (recomputed on
+        // the repaint below) while other data is still missing.
+        if (!state.bookingNoteMissing) state.bookingNote = '';
         state.customerPick = {
           resource: typeof item?.resource === 'string' && item.resource !== '' ? item.resource : 'contact',
           id: typeof item?.id === 'string' ? item.id : '',
@@ -4752,8 +4796,10 @@ export function createCalendarioView(deps) {
       change.addEventListener('click', () => {
         // Review #690 (P2): a search still pending never lands after the reset.
         cancelCustomerSearch();
-        // backlog:134f3ed7 — the reset is an edit: the missing-data note goes.
-        state.bookingNote = '';
+        // backlog:134f3ed7 + backlog:1e3393038b8b — the reset is an edit: it
+        // drops the customer, so a missing-data note stays for the repaint
+        // to recompute instead of going with the click.
+        if (!state.bookingNoteMissing) state.bookingNote = '';
         state.customerPick = null;
         state.customerQuery = '';
         state.customerItems = [];
@@ -4772,6 +4818,10 @@ export function createCalendarioView(deps) {
       value: state.customerQuery,
     });
     const box = el(doc, 'div', { attrs: { 'data-role': 'customer-results' } });
+    // backlog:1e3393038b8b — the suggestions box keeps one row (~40px)
+    // whether answers are in or out, so the panel never jumps under the
+    // Cliente field while typing; reseatFormPopover only re-seats it.
+    box.setAttribute('style', 'min-height: 40px');
     const field = search.querySelector('input');
     if (field) {
       field.addEventListener('input', () => {
@@ -5044,6 +5094,30 @@ export function createCalendarioView(deps) {
       ['end', 'time', 'Fine', ''],
       ['notes', 'text', 'Note', 'Facoltative'],
     ];
+    // backlog:1e3393038b8b — the grid block follows the edited end time: a
+    // form opened from a slot pick keeps its block on the picked day,
+    // resized in place as Inizio/Fine change. No re-render here — it would
+    // drop focus from the field being typed — and no cross-day move: a new
+    // day keeps the pick where it was until the operator re-picks.
+    const followManualPick = () => {
+      if (!state.selection) return;
+      const day = String(inputs.date?.value ?? '');
+      if (day === '' || day !== state.selection.key) return;
+      const toMin = (text) => {
+        const match = /^(\d{2}):(\d{2})$/.exec(String(text ?? ''));
+        if (!match) return null;
+        return Number(match[1]) * 60 + Number(match[2]);
+      };
+      const start = toMin(inputs.start?.value);
+      const end = toMin(inputs.end?.value);
+      if (start === null || end === null || end <= start) return;
+      state.selection = { ...state.selection, start, end };
+      const pick = mount.querySelector?.('[data-role="slot-pick"]');
+      if (pick && typeof pick.setAttribute === 'function') {
+        pick.setAttribute('style', `grid-row: ${rowsOf(start, end)}; grid-column: 1 / -1`);
+        pick.textContent = `${minutesLabel(start)}–${minutesLabel(end)}`;
+      }
+    };
     for (const [name, type, label, placeholder] of fields) {
       const input = el(doc, 'input', { attrs: { type, name, ...(placeholder !== '' ? { placeholder } : {}) } });
       // Keep what the operator typed: a re-render (propose, slots, week)
@@ -5054,6 +5128,7 @@ export function createCalendarioView(deps) {
       input.addEventListener('input', () => {
         state.manual = { ...(state.manual ?? {}), [name]: String(input.value ?? '') };
         state.manualTyped.add(name);
+        if (name === 'date' || name === 'start' || name === 'end') followManualPick();
       });
       inputs[name] = input;
       // Giorno and Note take the row; Inizio and Fine sit side by side, so
@@ -5063,16 +5138,29 @@ export function createCalendarioView(deps) {
     // Live nodes for the slot Conferma: it books the claim the operator
     // sees, not a stale snapshot.
     state.manualNodes = inputs;
-    // backlog:134f3ed7 — a missing-data note never outlives the edit that
-    // fixes it: every keystroke in the form clears it live, like the
-    // service refusal under its field.
-    const clearBookingNote = () => {
-      state.bookingNote = '';
-      bookingNoteNode.textContent = '';
+    // backlog:134f3ed7 + backlog:1e3393038b8b — a missing-data note never
+    // outlives the edit that fixes the LAST datum, but no earlier one:
+    // every keystroke recomputes it from the live fields, so it stays —
+    // naming what is still missing — until nothing is. Other notes keep
+    // the old rule: any edit clears them at once.
+    const refreshBookingNote = () => {
+      if (!state.bookingNoteMissing) {
+        state.bookingNote = '';
+        bookingNoteNode.textContent = '';
+        return;
+      }
+      const missing = missingManualFields(inputs);
+      if (missing.length === 0) {
+        state.bookingNoteMissing = false;
+        state.bookingNote = '';
+      } else {
+        state.bookingNote = missingNoteText(missing);
+      }
+      bookingNoteNode.textContent = state.bookingNote;
     };
     for (const node of Object.values(inputs)) {
-      node?.addEventListener?.('input', clearBookingNote);
-      node?.addEventListener?.('change', clearBookingNote);
+      node?.addEventListener?.('input', refreshBookingNote);
+      node?.addEventListener?.('change', refreshBookingNote);
     }
     // state.manualFirst is the customer search field (or the «Cambia
     // cliente» button over an existing pick), set by renderCustomerPick
@@ -5160,6 +5248,18 @@ export function createCalendarioView(deps) {
     form.appendChild(propose);
     form.appendChild(confirm);
     panel.appendChild(form);
+    // backlog:1e3393038b8b — a repaint recomputes a live missing-data note
+    // from the fields on screen, so picks, resets and re-renders name what
+    // is still missing instead of keeping a stale list or dropping it.
+    if (state.bookingNoteMissing) {
+      const missing = missingManualFields(inputs);
+      if (missing.length === 0) {
+        state.bookingNoteMissing = false;
+        state.bookingNote = '';
+      } else {
+        state.bookingNote = missingNoteText(missing);
+      }
+    }
     const bookingNoteNode = el(doc, 'p', { className: 'empty', text: state.bookingNote });
     if (state.bookingNote) panel.appendChild(bookingNoteNode);
     return panel;
@@ -5265,6 +5365,17 @@ export function createCalendarioView(deps) {
    * request: empty ones are named in Italian next to the form, and nothing
    * is sent until the operator fills them (backlog:9046f940).
    */
+  /**
+   * backlog:1e3393038b8b — the missing-data panel note for the live field
+   * list, naming what is still empty. One function, both writers: the
+   * submit refusal and every later recompute, so the note never goes stale.
+   * @param {Array<string>} missing
+   */
+  function missingNoteText(missing) {
+    return state.servicesMode === 'failed' && missing.includes('servizio')
+      ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
+      : `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+  }
   function missingManualFields(inputs) {
     return missingBookingFields(
       {
@@ -5336,9 +5447,8 @@ export function createCalendarioView(deps) {
     state.serviceError = '';
     const missing = missingManualFields(inputs);
     if (missing.length > 0) {
-      state.bookingNote = state.servicesMode === 'failed' && missing.includes('servizio')
-        ? 'I servizi prenotabili non si sono potuti leggere: riprova tra poco, nessuna prenotazione parte senza.'
-        : `Mancano dei dati: ${missing.join(', ')}. Compilali prima di confermare.`;
+      state.bookingNoteMissing = true;
+      state.bookingNote = missingNoteText(missing);
       renderAll();
       return;
     }
