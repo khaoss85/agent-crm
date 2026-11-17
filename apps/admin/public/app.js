@@ -277,17 +277,21 @@ function wakingNotice(waking) {
  * backlog:0d25ed7dc34f: while a read waits for the space to wake past a
  * single retry, the shell says so once — the waiting line, never a refusal
  * — and the screen keeps its loading state until the space answers and
- * paints. Writes keep the short notice above: a second write attempt may
- * already have committed, so it never polls.
+ * paints. The notice stays for the whole wait: a plain toast hides after
+ * 3.2 s while the poll runs up to a minute (Codex review on #1009), so the
+ * wait carries its own duration and leaves only with the last waiting read
+ * — and only when it still shows ours. Writes keep the short notice above:
+ * a second write attempt may already have committed, so it never polls.
  */
 let spaceWakingReads = 0;
 function spaceWakingNotice(waking) {
   if (!waking) {
     spaceWakingReads = Math.max(0, spaceWakingReads - 1);
+    if (spaceWakingReads === 0 && toaster !== null) toaster.hideScope('space-waking');
     return;
   }
   spaceWakingReads += 1;
-  if (spaceWakingReads === 1 && elements.toast) toast(SPACE_WAKING_TEXT);
+  if (spaceWakingReads === 1 && elements.toast) toast(SPACE_WAKING_TEXT, false, { duration: 65000, scope: 'space-waking' });
 }
 
 /**
