@@ -550,6 +550,14 @@ export async function advanceSequences({
   };
   /** Enrollments the sweep cannot see the inbox of: never fired blind. */
   const blindEnrollments = new Set();
+  /**
+   * Send keys this sweep's due pass already handled (claimed, queued, or
+   * crash-attempted): the confirm pass behind it recovers rows left by
+   * earlier sweeps, never rows the due pass just touched — otherwise a
+   * crash between the outbox enqueue and the job-id write would recover
+   * inside the same sweep and the retry contract below would drift.
+   */
+  const dueClaimed = new Set();
   const blindKey = (enrollment) => `${enrollment.spaceId} ${enrollment.sourceKey}`;
   const noteInboxBlind = (enrollment, error) => {
     const details = error && typeof error === 'object' ? error.details : null;
@@ -1283,6 +1291,7 @@ export async function advanceSequences({
           }, { actor: timer });
         }
         const claim = (await sends.listWhere({ spaceId: current.spaceId, sourceKey: messageKey }))[0] ?? null;
+        dueClaimed.add(`${current.spaceId} ${messageKey}`);
         if (!claim) {
           throw new AppError('Sequence send claim vanished before the outbox enqueue', {
             code: 'SEQUENCES_SEND_MISSING', status: 500,
@@ -1392,6 +1401,10 @@ export async function advanceSequences({
   for (const row of queuedRows) {
     // One broken confirm row never aborts the confirm pass: its failure is
     // recorded on the summary and the sweep confirms the next row instead.
+    // Rows this sweep's due pass just handled wait for the next sweep: the
+    // due pass already enqueued (or crash-attempted) them, so recovering
+    // here would adopt a job the retry contract still expects empty.
+    if (row && typeof row.messageKey === 'string' && dueClaimed.has(`${row.spaceId} ${row.messageKey}`)) continue;
     let enrollment = null;
     try {
       const enrollmentRows = await enrollments.listWhere({ spaceId: row.spaceId, sourceKey: row.enrollmentSourceKey });
