@@ -1717,7 +1717,7 @@ export async function readSchedule({ appointments }, subject, viewer = null) {
     // instant of the decision, so the scheda's history reads it.
     cancelReason: row.cancelReason ?? null,
     decidedAt: row.decidedAt ?? null,
-  })));
+  }))));
 }
 
 const MAX_TEAM_WEEK_MEMBERS = 32;
