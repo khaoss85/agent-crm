@@ -178,6 +178,27 @@ A plan whose premises have changed is not a plan, and reading one as if it were
 is how an agent confidently builds on a capability the application no longer
 has.
 
+## Repinning the checked-in example pins
+
+The five plans under `examples/solution-plans/` and the four paired evidences
+under `examples/implementation-evidence/` pin the composition they were
+written against, and the PR fast gate fails when any pin drifts
+(`scripts/ci-fast.sh`, phase `checked-in plan pins still bind`). The fix is
+one command, never a hand-edit:
+
+```bash
+npm run repin:example-pins
+```
+
+It recomputes every pin from its live authority (the repository itself, the
+two composed fixture projects, the verifier scenario run) and rewrites only
+the drifted files; a PR that does not move the composition rewrites nothing.
+Two PRs that move the composition in different directions still collide on
+the same pin lines — one checked-in value cannot hold two compositions — so
+after merging `main`, run the command again and commit the rewritten files.
+`govern-customer-identity` is the exception: no authority binds its
+composition pins, so they stay frozen and only its derived values refresh.
+
 ## Approvals: a closed vocabulary
 
 `solve-business-goal` §9 lists the sensitive boundaries in prose. Here they are

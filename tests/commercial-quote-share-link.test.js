@@ -595,3 +595,208 @@ test('sharing stays a human act on an approved quote only', async (t) => {
   }));
   assert.equal(draftShare.ok, false, 'a draft carries no sendable price');
 });
+
+test('A5-4: a lost first answer regenerates — the old token dies, the new one opens the frozen price', async (t) => {
+  const app = await sharedApp();
+  const { quote, product, offerId } = await approvedQuote(app, { sku: 'LINK-4R', cents: 10000 });
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const lost = first.result.token;
+  assert.match(lost, /^[0-9a-f]{64}$/, 'the first answer carried a bearer');
+
+  // The operator never saw it: regenerate revokes the live link and mints one bearer.
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.alreadyExisted, false);
+  assert.equal(again.result.regenerated, true, 'the live link was revoked and replaced');
+  const token = again.result.token;
+  assert.match(token, /^[0-9a-f]{64}$/, 'the fresh bearer is unguessable');
+  assert.notEqual(token, lost, 'the fresh bearer differs from the lost one');
+  assert.ok(!('token' in again.result.share), 'the share summary carries no bearer');
+
+  // The lost bearer is dead: it answers «link non valido o scaduto», never the offer.
+  const deadAccept = await refusal(app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: lost }, actor: PUBLIC,
+  }));
+  assert.equal(deadAccept.ok, false);
+  assert.equal(deadAccept.code, 'QUOTE_LINK_INVALID');
+  assert.equal(deadAccept.status, 404);
+  assert.equal(deadAccept.message, 'link non valido o scaduto');
+  const deadInfo = await refusal(app.runAction({
+    module: 'quote', action: 'link-info', recordId: quote.id, input: { token: lost }, actor: PUBLIC,
+  }));
+  assert.equal(deadInfo.ok, false);
+  assert.equal(deadInfo.code, 'QUOTE_LINK_INVALID');
+
+  // The catalog moves AFTER the regenerate: the new link still opens the frozen send price.
+  await app.setManualPrices({
+    productId: product.id,
+    offerIds: [offerId],
+    offers: [{ name: 'Prodotto LINK-4R', components: [COMPONENT(20000)] }],
+  }, ACTOR);
+  const accepted = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(accepted.result.accepted, true, 'the fresh link accepts without a login');
+  assert.equal(accepted.result.offer.oneTimeNetCents, 10000, 'the price is the frozen send price');
+  assert.equal(accepted.result.offer.lines[0].netAmountCents, 10000);
+
+  const shares = app.modules.get('quote-share').service;
+  const rows = shares.listWhere({ quoteId: quote.id, quoteVersionId: first.result.share.quoteVersionId });
+  assert.equal(rows.length, 1, 'one row per version: the bearer rotated, no second row was minted');
+  assert.equal(rows[0].status, 'accepted');
+  assert.equal(rows[0].tokenHash, hashOf(token), 'the row holds the fresh hash, never the bearer');
+});
+
+test('A5-4e: a bearer revoked between the accept read and its commit cannot steal the rotated row', async (t) => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-4E', cents: 10000 });
+  const first = await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const lost = first.result.token;
+  assert.match(lost, /^[0-9a-f]{64}$/, 'the first answer carried a bearer');
+
+  // The rotation the pending accept is about to lose against: a fresh
+  // bearer the operator holds, committed mid-accept.
+  const fresh = hashOf(`${lost}:fresh`);
+  const freshHash = hashOf(fresh);
+
+  const shares = app.modules.get('quote-share').service;
+  const shareTable = shares.manifest.table;
+  const tokenHashCol = shares.manifest.fields.find((field) => field?.name === 'tokenHash')?.column;
+  assert.equal(typeof tokenHashCol, 'string', 'the test pins the same mapped hash column as the claim');
+  const shareId = shares.listWhere({ tokenHash: hashOf(lost) })[0].id;
+
+  // Stage the supervisor's race: the rotation commits after the accept
+  // read its bearer but before the accept claim writes. The raw handle is
+  // the same connection the claim writes through, so the staged write is
+  // visible to the claim — no nested action, no second connection,
+  // deterministic on every run. The first UPDATE on the share row inside
+  // this window is the accept claim (reads before it are all SELECTs).
+  const raw = app.database.raw;
+  const origPrepare = raw.prepare.bind(raw);
+  let staged = false;
+  raw.prepare = (sql, ...rest) => {
+    if (!staged && typeof sql === 'string' && sql.startsWith('UPDATE "') && sql.includes(`"${shareTable}"`)) {
+      staged = true;
+      origPrepare(`UPDATE "${shareTable}" SET ${tokenHashCol} = ? WHERE id = ?`).run(freshHash, shareId);
+    }
+    return origPrepare(sql, ...rest);
+  };
+  let dead;
+  try {
+    dead = await refusal(app.runAction({
+      module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: lost }, actor: PUBLIC,
+    }));
+  } finally {
+    raw.prepare = origPrepare;
+  }
+  assert.equal(staged, true, 'the rotation really landed between the accept read and its commit');
+  assert.equal(dead.ok, false, 'the revoked bearer never accepts the row it lost');
+  assert.equal(dead.code, 'QUOTE_LINK_INVALID');
+  assert.equal(dead.status, 404);
+
+  // The refused claim wrote nothing: the row is still live, never accepted.
+  const current = await shares.get(shareId);
+  assert.equal(current.status, 'active', 'the refused accept left the live row alone');
+  assert.equal(current.acceptCount, 0, 'the refused accept recorded no acceptance');
+
+  // The operator recovers through the real chain: regenerate revokes and
+  // the fresh bearer opens the frozen send price.
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.regenerated, true);
+  const recovered = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: again.result.token }, actor: PUBLIC,
+  });
+  assert.equal(recovered.result.accepted, true, 'the fresh bearer accepts without a login');
+  assert.equal(recovered.result.offer.oneTimeNetCents, 10000, 'the price is the frozen send price');
+});
+
+test('A5-4b: an accepted link is never revoked nor regenerated — the receipt stays', async (t) => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-4B', cents: 10000 });
+  const { token } = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  })).result;
+  const first = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(first.result.accepted, true);
+
+  const refused = await refusal(app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  }));
+  assert.equal(refused.ok, false, 'regenerating an accepted link refuses');
+  assert.equal(refused.code, 'QUOTE_LINK_ALREADY_ACCEPTED');
+  assert.equal(refused.status, 409);
+
+  // Nothing moved: the receipt answers exactly as before.
+  const shares = app.modules.get('quote-share').service;
+  const rows = shares.listWhere({ tokenHash: hashOf(token) });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'accepted');
+  assert.equal(rows[0].acceptCount, 1, 'the refused regenerate wrote nothing');
+  const retry = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(retry.result.alreadyAccepted, true, 'the original link still answers already accepted');
+  assert.equal(retry.result.acceptedAt, first.result.acceptedAt, 'the acceptance instant never moves');
+  const info = await app.runAction({
+    module: 'quote', action: 'link-info', recordId: quote.id, input: { token }, actor: PUBLIC,
+  });
+  assert.equal(info.result.status, 'accepted');
+});
+
+test('A5-4c: regenerating an expired link mints a fresh bearer and the old hash dies', async (t) => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-4C', cents: 10000 });
+  const { token: stale } = (await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: { expiresInDays: 1 }, actor: ACTOR,
+  })).result;
+  const shares = app.modules.get('quote-share').service;
+  const shareId = shares.listWhere({ tokenHash: hashOf(stale) })[0].id;
+  await shares.applyManaged(shareId, { expiresAt: '2000-01-01T00:00:00.000Z' }, { actor: ACTOR });
+
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  assert.equal(again.result.alreadyExisted, false);
+  assert.match(again.result.token, /^[0-9a-f]{64}$/);
+  assert.notEqual(again.result.token, stale);
+  const accepted = await app.runAction({
+    module: 'quote', action: 'accept-link', recordId: quote.id, input: { token: again.result.token }, actor: PUBLIC,
+  });
+  assert.equal(accepted.result.accepted, true, 'the fresh link accepts');
+  assert.equal(accepted.result.offer.oneTimeNetCents, 10000);
+});
+
+test('A5-4d: the regenerate trace holds the token hash, never the bearer', async (t) => {
+  const app = await sharedApp();
+  const { quote } = await approvedQuote(app, { sku: 'LINK-4D', cents: 10000 });
+  await app.runAction({
+    module: 'quote', action: 'share-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const again = await app.runAction({
+    module: 'quote', action: 'regenerate-link', recordId: quote.id, input: {}, actor: ACTOR,
+  });
+  const token = again.result.token;
+  assert.match(token, /^[0-9a-f]{64}$/);
+
+  const runs = app.database.raw.prepare(
+    "SELECT workflow_name, input_json, output_json FROM workflow_runs WHERE workflow_name = 'quote.regenerate-link'",
+  ).all();
+  assert.ok(runs.length >= 1, 'the regenerate left its trace');
+  for (const run of runs) {
+    for (const column of [run.input_json, run.output_json]) {
+      if (column === null || column === undefined) continue;
+      assert.ok(!String(column).includes(token), 'no regenerate trace holds the raw bearer');
+    }
+  }
+  const traced = runs.map((run) => `${run.input_json ?? ''}${run.output_json ?? ''}`).join('\n');
+  assert.ok(traced.includes(hashOf(token)), 'the trace holds the token hash, never the bearer');
+});

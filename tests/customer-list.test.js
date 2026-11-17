@@ -337,7 +337,7 @@ const matchShape = (rows, filters) => rows.filter((row) => Object.entries(filter
 }));
 
 /** A module map with exact-match reads and no writes: any write attempt throws. */
-function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], omit = [] }) {
+function fakeModules({ contacts, companies, identities = [], orders = [], opportunities = [], tasks = [], signals = [], messages = [], calls = [], reads = [], appointments = [], omit = [] }) {
   const exact = (rows) => ({
     listWhere: async (filters) => matchShape(rows, filters),
     createManaged: async () => { throw new Error('the list writes nothing'); },
@@ -353,6 +353,7 @@ function fakeModules({ contacts, companies, identities = [], orders = [], opport
     ['interaction-message', { service: exact(messages) }],
     ['interaction-call', { service: exact(calls) }],
     ['conversation-read', { service: exact(reads) }],
+    ['appointment', { service: exact(appointments) }],
   ]);
   for (const name of omit) map.delete(name);
   return {
@@ -443,6 +444,71 @@ test('backlog:5c2f8bc67859: a contact row sums only its own offers, never its co
   // makes both contacts customers.
   assert.equal(ada.status.value, 'cliente');
   assert.equal(bea.status.value, 'cliente');
+});
+
+test('backlog:1adf95307b31: solo vinte o nessuna aperta legge null, valute miste restano separate', async () => {
+  // (a) A contact with only won offers — like one with no offers at all —
+  // reads null («—»), never «0 €». (b) Mixed open currencies never sum into
+  // one naked number: each keeps its subtotal with its own code, and lost
+  // offers never count.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+    { id: 'c2', companyId: 'co1', firstName: 'Bea', lastName: 'Bianchi', email: 'bea@palestra-uno.example' },
+    { id: 'c3', companyId: 'co1', firstName: 'Leo', lastName: 'Verdi', email: 'leo@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      { id: 'op-won', companyId: 'co1', contactId: 'c1', valueCents: 50000, currency: 'EUR', stage: 'won' },
+      { id: 'op-eur', companyId: 'co1', contactId: 'c2', valueCents: 100000, currency: 'EUR', stage: 'proposal' },
+      { id: 'op-usd', companyId: 'co1', contactId: 'c2', valueCents: 50000, currency: 'USD', stage: 'negotiation' },
+      { id: 'op-lost', companyId: 'co1', contactId: 'c2', valueCents: 70000, currency: 'EUR', stage: 'lost' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, null, 'solo vinte: nessun valore aperto');
+  assert.equal(ada.offerCurrency, null);
+  assert.equal(ada.offerParts, null);
+  const bea = page.items.find((item) => item.id === 'c2');
+  assert.equal(bea.offerCurrency, null, 'valute miste: nessuna valuta sola');
+  assert.deepEqual(bea.offerParts, [
+    { valueCents: 100000, currency: 'EUR' },
+    { valueCents: 50000, currency: 'USD' },
+  ], 'la persa da 70000 non conta');
+  const leo = page.items.find((item) => item.id === 'c3');
+  assert.equal(leo.offerValueCents, null, 'nessuna offerta: «—»');
+  assert.equal(leo.offerParts, null);
+});
+
+test('backlog:0acf5809: a company row sums the contact offers and the company offers', async () => {
+  // The wide rule, mirror of 5c2f8bc67859: a company row (no contact of its
+  // own) counts every open opportunity filed on the company, whether the
+  // offer names a contact or the company alone. Closed stages stay out.
+  const companies = [{ id: 'co9', name: 'Azienda Nove', domain: 'nove.example' }];
+  const modules = fakeModules({
+    contacts: [],
+    companies,
+    opportunities: [
+      { id: 'op-sede', companyId: 'co9', contactId: null, valueCents: 35000, currency: 'EUR', stage: 'qualification' },
+      { id: 'op-ref', companyId: 'co9', contactId: 'cx', valueCents: 1500, currency: 'EUR', stage: 'proposal' },
+      { id: 'op-won', companyId: 'co9', contactId: null, valueCents: 99900, currency: 'EUR', stage: 'won' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  assert.equal(page.total, 1);
+  const azienda = page.items[0];
+  assert.equal(azienda.id, 'co9');
+  assert.equal(azienda.offerValueCents, 36500, 'company row sums contact and company offers, never the won one');
+  assert.equal(azienda.offerCurrency, 'EUR');
 });
 
 test('views, filters and search run on the same page the server returns', async () => {
@@ -621,9 +687,9 @@ test('budget signals attach with their source only when a space is named', async
   assert.deepEqual(budget.source, { resource: 'contact', id: 'c1' });
 });
 
-test('budget is an opt-in column: cliente, canali, stato, ultimo and prossimo are on by default', () => {
+test('budget is an opt-in column: cliente, canali, stato, ultimo, prossimo and calendario are on by default', () => {
   const on = Object.fromEntries(CUSTOMER_COLUMNS.filter((column) => column.def).map((column) => [column.id, true]));
-  assert.deepEqual(on, { canali: true, stato: true, ultimo: true, prossimo: true });
+  assert.deepEqual(on, { canali: true, stato: true, ultimo: true, prossimo: true, calendario: true });
   assert.equal(CUSTOMER_COLUMNS.find((column) => column.id === 'budget').ai, true);
   assert.equal(CUSTOMER_COLUMNS.find((column) => column.id === 'cliente').always, true);
 });
@@ -735,6 +801,99 @@ test('the operation previews the latest message body, never a call', async () =>
   // Dan 10/11: previews read like Gmail, so markup never reaches the cell;
   // the view still renders the text as text (escaping stays the view's).
   assert.equal(hostile.lastContactText, 'ciao', 'markup is stripped from the preview, the words stay');
+});
+
+test('an empty message previews the same fallback as Oggi, a call previews nothing', async () => {
+  // backlog:1740985ba18c: mail imported before the cure with an empty body
+  // (Widiba, MuscleWiki) read a blank row in Clienti and «Messaggio senza
+  // testo» in Oggi. The row now carries the subject when there is one, the
+  // one fallback otherwise — like the Oggi inbox. A latest call still
+  // previews as nothing, never an invented excerpt.
+  const { contacts, companies, identities } = SCENE();
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities, ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const widiba = (await run({
+    messages: [{
+      id: 'm-w', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email',
+      body: '', mailSubject: 'Il tuo estratto conto è pronto',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(widiba.lastContactText, 'Il tuo estratto conto è pronto', 'the subject when the body is empty');
+  const noSubject = (await run({
+    messages: [{
+      id: 'm-n', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(noSubject.lastContactText, 'Messaggio senza testo', 'the one fallback, like Oggi');
+  const callAfter = (await run({
+    messages: [{
+      id: 'm-n', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+    }],
+    calls: [{
+      id: 'k1', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T11:00:00.000Z', channel: 'phone',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(callAfter.lastContactText, null, 'a newer call still names no excerpt');
+});
+
+test('an attachment-only mail previews «Allegato» like Oggi, the subject first when there is one', async () => {
+  // backlog:1740985ba18c review (P2): the row carries the attachment flag
+  // through operations, so an empty body with a file never reads the
+  // affirmative «Messaggio senza testo» while Oggi reads 'Allegato'.
+  const { contacts, companies, identities } = SCENE();
+  const run = (extra) => listCustomerRecords(
+    { modules: fakeModules({ contacts, companies, identities, ...extra }), core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const attached = (await run({
+    messages: [{
+      id: 'm-a', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+      attachmentKind: 'document', attachmentRef: 'ref-a1',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(attached.lastContactText, 'Allegato', 'empty body with a file names it, like Oggi');
+  const attachedSubject = (await run({
+    messages: [{
+      id: 'm-b', subjectResource: 'contact', subjectId: 'c1',
+      occurredAt: '2026-11-12T10:00:00.000Z', channel: 'email', body: '',
+      mailSubject: 'Ecco il file', attachmentKind: 'document', attachmentRef: 'ref-b1',
+    }],
+  })).items.find((item) => item.name === 'Guido Presti');
+  assert.equal(attachedSubject.lastContactText, 'Ecco il file', 'the subject still heads the preview');
+});
+
+test('a legacy activity without the isMessage flag still reads the fallback, an explicit call reads nothing', () => {
+  // backlog:1740985ba18c review (P2): direct readers handing over the
+  // pre-flag shape must not reintroduce the blank cell. The flag is
+  // authoritative; without it the content decides — a body (even empty), a
+  // subject or an attachment reads as a message, while neither reads like a
+  // call, which carries no text.
+  const legacy = (activity) => rowOf({}, {
+    ...baseReads(),
+    activityBySubject: new Map([['contact:c1', activity]]),
+  }).lastContactText;
+  const at = '2026-11-12T10:00:00.000Z';
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: 'Il tuo estratto conto è pronto' }),
+    'Il tuo estratto conto è pronto', 'legacy shape without the flag: the subject');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null }),
+    'Messaggio senza testo', 'legacy shape without the flag: the one fallback');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null, isMessage: true }),
+    'Messaggio senza testo', 'operations shape');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: '', subject: null, hasAttachment: true }),
+    'Allegato', 'legacy shape with the attachment flag');
+  assert.equal(legacy({ occurredAt: at, channel: 'phone', text: null, subject: null, isMessage: false }),
+    null, 'an explicit call still names no excerpt');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: null, subject: null }),
+    null, 'no content and no flag reads like a call: nothing is invented');
+  assert.equal(legacy({ occurredAt: at, channel: 'email', text: 'ciao', subject: null }),
+    'ciao', 'a body still previews as itself');
 });
 
 test('826e377c: the CANALI column unions held identities with observed message channels', () => {
@@ -909,4 +1068,103 @@ test('9e003582: la lista conta i non letti con la regola di interactions, senza 
   );
   const noFnsViews = Object.fromEntries(noFns.views.map((view) => [view.id, view]));
   assert.ok(!('count' in noFnsViews['da-leggere']), 'no read state, no da-leggere count');
+});
+
+test('backlog:2262771da550: the row carries the next live appointment, never history', async () => {
+  // The Calendario column: the soonest future appointment in a live state
+  // (booked, confirmed). Past slots and terminal states (done, no-show,
+  // cancelled) name history, never the next slot.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+    { id: 'c2', companyId: 'co1', firstName: 'Bea', lastName: 'Bianchi', email: 'bea@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    appointments: [
+      { id: 'a-past', status: 'booked', startsAt: '2020-03-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-done', status: 'done', startsAt: '2030-06-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-noshow', status: 'no-show', startsAt: '2030-05-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-cancelled', status: 'cancelled', startsAt: '2030-04-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-late', status: 'booked', startsAt: '2030-06-10T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-soon', status: 'confirmed', startsAt: '2030-06-02T09:30:00.000Z', endsAt: '2030-06-02T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-other', status: 'booked', startsAt: '2030-01-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c2' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.calendarComplete, true, 'the exact appointment scan reads exact');
+  assert.deepEqual(ada.nextAppointment, {
+    startsAt: '2030-06-02T09:30:00.000Z',
+    endsAt: '2030-06-02T10:00:00.000Z',
+    status: 'confirmed',
+  }, 'the soonest live future appointment, never past or terminal history');
+  const bea = page.items.find((item) => item.id === 'c2');
+  assert.equal(bea.calendarComplete, true);
+  assert.deepEqual(bea.nextAppointment, {
+    startsAt: '2030-01-01T10:00:00.000Z',
+    endsAt: null,
+    status: 'booked',
+  }, 'a missing end reads null, never undefined');
+});
+
+test('backlog:2262771da550: a hole in the appointment scan reads partial, never an exact none', async () => {
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const run = (request) => listCustomerRecords({ modules, core: {}, names: { identity: 'external-identity' } }, request);
+  // No appointment module composed: unreadable, so no «next» and no exact claim.
+  const { modules } = { modules: fakeModules({ contacts, companies, omit: ['appointment'] }) };
+  const unreadable = await run({ vista: 'tutti', sort: 'name', pageSize: '10' });
+  const adaUnreadable = unreadable.items.find((item) => item.id === 'c1');
+  assert.equal(adaUnreadable.nextAppointment, null);
+  assert.equal(adaUnreadable.calendarComplete, false, 'unreadable scan, no exact none');
+  // A list-only module reads a bounded page: partial, never exact.
+  const base = fakeModules({ contacts, companies, omit: ['appointment'] });
+  const partial = {
+    get: (name) => (name === 'appointment'
+      ? { service: { list: async () => [{ id: 'a1', status: 'booked', startsAt: '2030-06-02T09:30:00.000Z', subjectResource: 'contact', subjectId: 'c1' }] } }
+      : base.get(name)),
+  };
+  const partialPage = await listCustomerRecords(
+    { modules: partial, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const adaPartial = partialPage.items.find((item) => item.id === 'c1');
+  assert.equal(adaPartial.nextAppointment, null, 'a partial scan shapes no next over the hole');
+  assert.equal(adaPartial.calendarComplete, false);
+});
+
+test('backlog:2262771da550 repro review rev-agent-crm-938-1443ea09: only live states name the next slot', async () => {
+  // P2: the scan kept any status that was not exactly done/no-show/cancelled,
+  // so a malformed row (missing or unknown status) with a future startsAt
+  // shipped as the next live appointment. Only booked/confirmed count.
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    appointments: [
+      { id: 'a-empty', status: '', startsAt: '2030-06-01T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-unknown', status: 'pending', startsAt: '2030-06-01T11:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+      { id: 'a-live', status: 'booked', startsAt: '2030-06-10T10:00:00.000Z', subjectResource: 'contact', subjectId: 'c1' },
+    ],
+  });
+  const page = await listCustomerRecords(
+    { modules, core: {}, names: { identity: 'external-identity' } },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.deepEqual(ada.nextAppointment, {
+    startsAt: '2030-06-10T10:00:00.000Z',
+    endsAt: null,
+    status: 'booked',
+  }, 'malformed and unknown states never read as the next slot');
 });

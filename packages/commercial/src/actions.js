@@ -22,6 +22,7 @@ import {
  *   quote.approve / quote.reject       (human actor only, one decision)
  *   quote.revise                       (rejected → draft, next version n+1)
  *   quote.share-link                   (approved → public token for the frozen version)
+ *   quote.regenerate-link              (approved → revoke the live link, mint a fresh token)
  *   quote.accept-link / quote.link-info (token-only: accept idempotently, read the frozen offer)
  *
  * A quote line selects ONE Offer (rate plan) and a quantity. The offer's price

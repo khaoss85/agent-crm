@@ -308,6 +308,12 @@ export const REPO_WIDE_GUARDS = Object.freeze([
   // a PR adding a guard-shaped file anywhere must run the audit that
   // requires it listed.
   'tests/ci-touched-tests.test.js',
+  // Holds every document quoting the tour's composition counts to the live
+  // tour output with readFileSync, never importing the composed sources: a
+  // composition change selects nothing through the import mapping, so the
+  // fast stayed green while the nightly full suite failed on three of its
+  // five tests (main run 43665590178, cure in agent-crm backlog:d6402b8f).
+  'tests/tour-claim.test.js',
 ]);
 
 /**

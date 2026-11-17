@@ -389,11 +389,14 @@ test('calendario expects are dynamic-only: static chrome alone must fail them', 
   // pass on a painted-but-empty grid. Every calendario expect must be a
   // string the static page can never contain: a painted event marker. Since
   // fetta 4 the customer link lives in the detail card (painted only after a
-  // block click), the painted proof is the Rome time range of a held event.
+  // block click), the painted proof is the blocks the week holds
+  // (backlog:667f1f1c): the short block on its compact line and the long
+  // block on its Rome range.
   const calendario = SCREENS.find((screen) => screen.name === 'calendario');
   assert.ok(calendario, 'the calendario screen exists');
   assert.ok(!calendario.expect.includes('Mostra settimana'), 'the static button is not an expect');
-  assert.ok(calendario.expect.includes('18:00–18:30'), 'a painted Rome time range is expected');
+  assert.ok(calendario.expect.includes('Taglio · Ada, 18:00'), 'a painted short-block line is expected');
+  assert.ok(calendario.expect.includes('09:00–10:30'), 'a painted long-block Rome time range is expected');
   assert.ok(calendario.expect.includes('cal-event'), 'a painted event marker is expected');
 });
 
@@ -468,7 +471,9 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.throws(() => assertProbe('login', {
     magic: true, email: 1, google: 1, story: 1, noValidate: false,
   }), /did not install/);
-  assert.doesNotThrow(() => assertProbe('oggi', { recap: true, tasks: 2 }));
+  assert.doesNotThrow(() => assertProbe('oggi', {
+    recap: true, tasks: 2, strip: true, channelsError: false, unscoped: 0,
+  }));
   assert.doesNotThrow(() => assertProbe('clienti', {
     rows: 3,
     pills: ['Tutti 3', 'Da ricontattare oggi 1', 'Nuovi lead 1', 'Clienti attivi 1', 'Rinnovi entro 30 giorni'],
@@ -556,6 +561,21 @@ test('assertProbe accepts the filled demo probes and rejects unknown screens', (
   assert.doesNotThrow(() => assertProbe('componenti', { sections: 4, controls: 12 }));
   assert.throws(() => assertProbe('nope', {}), /no probe assertion/);
   assert.throws(() => assertProbe('oggi', null), /not a JSON object/);
+});
+
+test('oggi opens with a space: the channel strip paints and every connections read is scoped (0b6a6b92)', () => {
+  // Repro for the shot without a space: loadOggiData skips the scoped
+  // connections read, the strip is gone and the read-failure line paints.
+  const good = { recap: true, tasks: 2, strip: true, channelsError: false, unscoped: 0 };
+  assert.doesNotThrow(() => assertProbe('oggi', good));
+  assert.throws(() => assertProbe('oggi', { ...good, strip: false }), /channel strip/);
+  assert.throws(() => assertProbe('oggi', { ...good, channelsError: true }), /channel read failure/);
+  assert.throws(() => assertProbe('oggi', { ...good, unscoped: 1 }), /filter\.spaceId/);
+  // The harness opens the view with the demo space, like the live page with
+  // the active space: no open without a space reaches the shot.
+  const page = harnessHtml('oggi', publicDir);
+  assert.ok(page.includes(`spaceId: () => 'locale'`), 'the oggi shot opens with a space');
+  assert.ok(page.includes('unscoped:'), 'the oggi probe records the unscoped reads');
 });
 
 test('assertProbe fails an empty render the substring expects would pass', () => {

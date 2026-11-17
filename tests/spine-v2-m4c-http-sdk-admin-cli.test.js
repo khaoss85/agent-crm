@@ -2,6 +2,7 @@
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import pg from 'pg';
 import { spawnSync } from 'node:child_process';
 import { assertSyncChildExited, hangGuardMs } from './helpers/child-exit.js';
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -375,6 +376,58 @@ describe('M4C PostgreSQL HTTP/SDK/Admin/CLI', { concurrency: 1 }, () => {
     assert.equal(committed[0].body.id, committed[1].body.id);
     const listed = await http(listening.url, '/api/companies');
     assert.equal(listed.body.items.length, 1);
+  });
+
+  test('contested outcome insert lock timeout replays the winner instead of timing out', { timeout: 60_000 }, async (t) => {
+    // backlog:fe03f452 — on a loaded shared Postgres the loser of a
+    // concurrent first attempt trips the lock_timeout on the contested
+    // outcome row (55P03 → STORAGE_TIMEOUT) instead of waiting for the
+    // winner. The envelope must decide by the lock: replay the committed
+    // winner (201) or report unknown (503, reconciles). A 504 here, or any
+    // status outside 201/503, means the deadline decided — red. Forced
+    // deterministically by failing exactly the first outcome INSERT with the
+    // same SQLSTATE the lock_timeout raises; the other attempt runs clean.
+    const booted = await bootPostgresqlApp(t);
+    if (!booted) return;
+    const server = createHttpServer(booted.app);
+    const listening = await listen(server);
+    t.after(() => listening.close());
+    const idempotencyKey = key();
+    const postSame = () => http(listening.url, '/api/companies', {
+      method: 'POST', body: { name: 'Race Lock' }, key: idempotencyKey,
+    });
+    const originalQuery = pg.Client.prototype.query;
+    let contestedFailures = 0;
+    pg.Client.prototype.query = /** @type {any} */ (function (/** @type {any} */ queryText, /** @type {any[]} */ ...rest) {
+      const sql = typeof queryText === 'string' ? queryText : queryText?.text;
+      if (typeof sql === 'string' && contestedFailures === 0
+        && /^insert\s/i.test(sql) && sql.includes('write_outcomes')) {
+        contestedFailures += 1;
+        throw Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+      }
+      return originalQuery.apply(this, [queryText, ...rest]);
+    });
+    let left;
+    let right;
+    try {
+      [left, right] = await Promise.all([postSame(), postSame()]);
+    } finally {
+      pg.Client.prototype.query = originalQuery;
+    }
+    assert.equal(contestedFailures, 1, 'the contested insert fault must fire exactly once');
+    const statuses = [left.status, right.status].sort();
+    assert.ok(
+      statuses.every((status) => status === 201 || status === 503),
+      `expected the lock to decide (201/503), got ${left.status}/${right.status}: ${left.haystack} ${right.haystack}`,
+    );
+    const listed = await http(listening.url, '/api/companies');
+    assert.equal(listed.body.items.length, 1);
+    const again = await postSame();
+    assert.equal(again.status, 201);
+    assert.equal(again.body.id, listed.body.items[0].id);
+    for (const response of [left, right, again]) {
+      if (response.status === 201) assertNoSecrets(response.body);
+    }
   });
 
   test('post-commit ACK drop through HTTP reconciles to one record', { timeout: 60_000 }, async (t) => {

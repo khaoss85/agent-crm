@@ -76,9 +76,18 @@ test('setting the current stage without a pin is idempotent', async (t) => {
   const { app, actor, opportunity } = await fixture();
   t.after(() => app.close());
 
-  await app.services.opportunities.setStage(opportunity.id, 'proposal', { actor });
+  // backlog:8a226a0f: a legacy same-stage setStage (no expectedFromStage pin)
+  // must not rewrite the pipeline history: stage_entered_at stays put.
+  const moved = await app.services.opportunities.setStage(opportunity.id, 'proposal', { actor });
+  assert.equal(moved.stage, 'proposal');
+  assert.equal(typeof moved.stageEnteredAt, 'string');
   const same = await app.services.opportunities.setStage(opportunity.id, 'proposal', { actor });
   assert.equal(same.stage, 'proposal');
+  assert.equal(same.stageEnteredAt, moved.stageEnteredAt);
+  assert.equal(
+    app.services.opportunities.get(opportunity.id).stageEnteredAt,
+    moved.stageEnteredAt,
+  );
 });
 
 test('two intents converging on one target commit exactly once: one success, one 409', async (t) => {

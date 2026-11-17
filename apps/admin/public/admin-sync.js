@@ -280,7 +280,19 @@ export function syncIndicator(activity, nowMs = Date.now(), { syncing = false, e
   }
   if (waiting) {
     const importing = rows.some((row) => row.connected && row.pill !== null && row.pill.tone === 'importazione');
-    return { tone: 'wait', title: importing ? 'Importazione in corso' : 'In attesa del primo evento', detail, count: 0 };
+    // Voce a5fb0770: the wait names who waits, so the title never reads
+    // against the counts («In attesa del primo evento» beside «1 evento
+    // ricevuto» and an «Attivo» row meant another channel's wait). One
+    // waiting channel reads by name, several read as a count.
+    const waitingNames = rows
+      .filter((row) => row.connected && row.pill !== null && row.pill.tone === 'attesa')
+      .map((row) => row.label);
+    const waitingTitle = waitingNames.length === 1
+      ? `${waitingNames[0]} in attesa del primo evento`
+      : waitingNames.length > 1
+        ? `${waitingNames.length} canali in attesa del primo evento`
+        : 'In attesa del primo evento';
+    return { tone: 'wait', title: importing ? 'Importazione in corso' : waitingTitle, detail, count: 0 };
   }
   return { tone: 'ok', title: 'Tutto sincronizzato', detail, count: 0 };
 }
@@ -675,6 +687,34 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       keys: agg.keys,
       catalogued: extraCatalogued,
       detailRoute: extraCatalogued ? `#/connettori/${channel}` : '#/connettori',
+      connectRoute: syncConnectRoute(channel, profile, adapters),
+    });
+  }
+  // The catalog channels outside the fixed nine (Telegram, SMS) read here
+  // too, with the same state Connettori shows: an unlinked Telegram no
+  // longer hides while Connettori invites it. Like the Stripe row, a
+  // channel nothing here can connect reads `non collegato` with no Collega;
+  // its Collega appears through the same shared state as every other row.
+  // These rows never widen the «<n> di 9 collegati» count (review #680
+  // P2-3): only a linked outsider does.
+  for (const entry of CONNECTOR_CATALOG) {
+    const channel = entry != null ? entry.channel : '';
+    if (typeof channel !== 'string' || channel === '') continue;
+    if (SYNC_CHANNELS.some((fixed) => fixed.id === channel)) continue;
+    if (byChannel.has(channel)) continue;
+    rows.push({
+      channel,
+      label: channelLabel(channel),
+      mark: syncMark(channel),
+      direction: directionLabel(null),
+      present: false,
+      connected: false,
+      received: 0,
+      lastAt: null,
+      pill: null,
+      keys: [],
+      catalogued: true,
+      detailRoute: `#/connettori/${channel}`,
       connectRoute: syncConnectRoute(channel, profile, adapters),
     });
   }

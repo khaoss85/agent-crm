@@ -5,6 +5,9 @@ import { createQuoteView } from '../apps/admin/public/admin-quotes.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 
+/** The non-breaking space the quote view keeps with its number (backlog:cf270ae1f808). */
+const NBSP = String.fromCharCode(160);
+
 /**
  * backlog:a2ea75f705fd — repro for the VERIFIER_BACK verdict of 2026-11-13
  * (returns:1, OBSERVATION_FAILED): the offer page did two
@@ -216,7 +219,7 @@ test('a2ea75f705fd repro AC-4: the discount reads in percent and euro, never «p
   assert.ok(!/punti base/i.test(text), 'never «punti base» anywhere');
   assert.ok(text.includes('Sconto (%)'), 'the fields say percent');
   assert.ok(text.includes('sconto 5,00%'), 'the line reads the discount in percent');
-  assert.ok(text.includes('410 €'), 'the line reads the discount in euro too');
+  assert.ok(text.includes('410' + NBSP + '€'), 'the line reads the discount in euro too');
   const row = mount.findAll('div').find((node) => node.getAttribute('data-line') === 'l1');
   const field = row.__discount ?? row.__discountBps;
   assert.equal(field.value, '5', 'the line field shows its percent, not basis points');

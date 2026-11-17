@@ -70,7 +70,7 @@ const SUMMARY_ANSWER = JSON.stringify({
 const CALL_MODULES = ['call-notice', 'call-transcript', 'call-signal'];
 const LLM_MODULES = ['llm-usage-day', 'llm-call-audit'];
 
-function setupCallHarness({ withLlm = false, retention = undefined, llmAnswers = null } = {}) {
+function setupCallHarness({ withLlm = false, retention = undefined, llmAnswers = null, llmSpaces = null } = {}) {
   const database = createDatabase({ path: ':memory:' });
   const manifests = [
     ...CALL_MODULES.map((name) => ({ pkg: 'intelligence', name })),
@@ -102,7 +102,7 @@ function setupCallHarness({ withLlm = false, retention = undefined, llmAnswers =
     llmApi = fixture.api;
     const llmOps = createLlmOperations({
       adapters: [fixture.definition],
-      spaces: {
+      spaces: llmSpaces ?? {
         [SPACE]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 },
         [SPACE_SHORT]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1 },
       },
@@ -215,6 +215,68 @@ test('the summary stores signals that cite the transcript, word for word', async
   const replayed = await harness.ops.summarizeCall({ spaceId: SPACE, callRef: 'call-1', actor: USER });
   assert.equal(replayed.replayed, true, 'a summarized call replays without spending again');
   assert.equal(harness.llmApi.state.calls.length, 1, 'no second provider call');
+});
+
+test('a summarize with another organization spaceId refuses with no spend there (backlog:5c9e006a)', async (t) => {
+  const harness = setupCallHarness({
+    withLlm: true,
+    llmSpaces: {
+      [SPACE]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-b' },
+      [SPACE_SHORT]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-b' },
+    },
+  });
+  t.after(() => harness.close());
+  await noticeAndSave(harness.ops);
+  // The caller belongs to org-a but names the org-b space: same 403 as an
+  // unknown space, no summary stored, no signal, no provider call.
+  const answer = await outcome(harness.ops.summarizeCall({
+    spaceId: SPACE, callRef: 'call-1', actor: USER, organizationId: 'org-a',
+  }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'LLM_SPACE_DISABLED');
+  assert.equal(answer.status, 403);
+  assert.equal(harness.llmApi.state.calls.length, 0, 'no provider call for another organization space');
+  assert.equal((await harness.signals()).length, 0, 'no signal stored for another organization space');
+  // The legitimate call inside the caller own space still spends once.
+  const retry = await harness.ops.summarizeCall({
+    spaceId: SPACE, callRef: 'call-1', actor: USER, organizationId: 'org-b',
+  });
+  assert.equal(retry.replayed, false);
+  assert.equal(harness.llmApi.state.calls.length, 1);
+});
+
+test('a voice note with another organization spaceId refuses with no spend there (backlog:5c9e006a)', async (t) => {
+  const draftAnswer = JSON.stringify({
+    riassunto: 'Chiamata andata bene: il cliente vuole provare prima di Natale.',
+    decisioni: 'Prova gratuita di una settimana concordata.',
+    prossimiPassi: 'Elena richiama lunedì per fissare il primo ingresso.',
+  });
+  const harness = setupCallHarness({
+    withLlm: true,
+    llmAnswers: [{ text: draftAnswer }, { text: draftAnswer }],
+    llmSpaces: {
+      [SPACE]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-b' },
+      [SPACE_SHORT]: { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-b' },
+    },
+  });
+  t.after(() => harness.close());
+  // The caller belongs to org-a but names the org-b space: same 403 as an
+  // unknown space, no draft, no provider call.
+  const answer = await outcome(harness.ops.structureVoiceNote({
+    spaceId: SPACE, actor: USER, organizationId: 'org-a',
+    text: 'Ho chiamato il cliente, è andata bene, vuole provare prima di Natale.',
+  }));
+  assert.equal(answer.accepted, false);
+  assert.equal(answer.code, 'LLM_SPACE_DISABLED');
+  assert.equal(answer.status, 403);
+  assert.equal(harness.llmApi.state.calls.length, 0, 'no provider call for another organization space');
+  // The legitimate dictation inside the caller own space still structures once.
+  const retry = await harness.ops.structureVoiceNote({
+    spaceId: SPACE, actor: USER, organizationId: 'org-b',
+    text: 'Ho chiamato il cliente, è andata bene, vuole provare prima di Natale.',
+  });
+  assert.equal(retry.riassunto, JSON.parse(draftAnswer).riassunto);
+  assert.equal(harness.llmApi.state.calls.length, 1);
 });
 
 test('a summary answer quoting text outside the transcript is refused, and nothing is stored', async (t) => {
@@ -348,7 +410,7 @@ test('the domain hands the composed llm-complete capability to the summarize ope
   const byName = Object.fromEntries(domain.operations.map((entry) => [entry.name, entry]));
   assert.deepEqual(
     Object.keys(byName).sort(),
-    ['purge-expired-transcripts', 'read-customer-calls', 'record-call-notice', 'save-call-transcript', 'summarize-call'],
+    ['purge-expired-transcripts', 'read-customer-calls', 'record-call-notice', 'save-call-transcript', 'structure-voice-note', 'summarize-call'],
   );
   await byName['record-call-notice'].create(runtime)({ ...NOTICE });
   await byName['save-call-transcript'].create(runtime)({

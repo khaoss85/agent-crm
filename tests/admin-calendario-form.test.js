@@ -267,7 +267,7 @@ test('form: two customers with the same name show a partial email or phone, a si
   assert.ok(!labels.some((text) => text.includes('ada.rossi@') || text.includes('3331234567')), 'never the whole address or number');
   // The pick still books the customer by id, with the bare name.
   results.findAll('button').find((node) => node.textContent.endsWith('tel. …4567')).dispatch('click');
-  assert.ok(mount.findAll('p').some((node) => node.textContent === 'Cliente: Ada Rossi'), 'the pick names the customer');
+  assert.ok(mount.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick' && node.textContent === 'Ada Rossi'), 'the pick names the customer');
 });
 
 test('form: customerHint prefers a partial email, then the phone, then the company', () => {
@@ -362,4 +362,32 @@ test('form: customerHint keeps the short prefix when only the domain tells homon
   const second = { name: 'Mario Rossi', email: 'mario@other.com' };
   assert.equal(customerHint(first, [first, second]), 'ma…@example.com');
   assert.equal(customerHint(second, [first, second]), 'ma…@other.com');
+});
+
+// backlog:b0788e62ace6: the «Cliente» label stays once a customer is picked.
+test('form: the picked customer keeps its «Cliente» label, the search field too', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const storage = new Map();
+  const store = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) };
+  store.setItem('accordo.bo.customer-pick.appointment', JSON.stringify({ resource: 'contact', id: 'c1', name: 'Guido Presti' }));
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient(), storage: store, now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  const field = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-field');
+  assert.ok(field, 'the picked customer sits in a labelled field');
+  assert.equal(field.getAttribute('role'), 'group');
+  const label = field.findAll('span').find((node) => node.getAttribute('id') === field.getAttribute('aria-labelledby'));
+  assert.equal(label?.textContent, 'Cliente', 'the group is named «Cliente»');
+  assert.equal(field.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick')?.textContent, 'Guido Presti');
+  assert.ok(field.findAll('button').some((node) => node.textContent === 'Cambia cliente'), '«Cambia cliente» sits in the same field');
+  // «Cambia cliente» brings back the search field, still labelled.
+  field.findAll('button').find((node) => node.textContent === 'Cambia cliente').dispatch('click');
+  await settle();
+  const search = byName(mount, 'customerSearch');
+  let node = search;
+  while (node && node.tagName !== 'LABEL') node = node.parentNode;
+  assert.equal(node?.findAll('span').find((span) => (span.getAttribute('class') ?? '').includes('cal-field-label'))?.textContent, 'Cliente');
 });

@@ -768,6 +768,19 @@ const clientiListView = createCustomerListView({
   },
   onManualAdd: () => { window.location.hash = CLIENTI_NUOVO_ROUTE; },
   storage: shellStorage,
+  // backlog:7cf5c4931cfc: the Clienti view lives in the address
+  // (`#/customer-data?vista=...`), so the link saves and a reload reopens
+  // it. Read late (a function): the hash at route entry. View taps update
+  // the address silently — replaceState never re-routes, the list is
+  // already on the tapped view.
+  routeHash: () => window.location.hash,
+  replaceHash: (next) => {
+    try {
+      window.history.replaceState(window.history.state, '', next);
+    } catch {
+      // The list already shows the view; the address stays as it was.
+    }
+  },
 });
 
 // New customer form (backlog:273de560): nome, email, telefono, azienda,
@@ -1307,7 +1320,7 @@ async function populateNav({ repaintScreen = true } = {}) {
       const link = document.createElement('a');
       link.setAttribute('href', '#/quotes');
       link.setAttribute('data-nav', 'quotes');
-      link.textContent = 'Quotes';
+      link.textContent = 'Preventivi'; // backlog:cf270ae1f808: la voce si raggiunge dal menu, in italiano.
       generatedNav.appendChild(link);
     }
     // Product catalog (BO-F2-05): one nav link when the commercial product

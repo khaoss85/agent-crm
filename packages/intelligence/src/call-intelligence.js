@@ -77,6 +77,13 @@ const MAX_TRANSCRIPT_CHARS = 30000;
 const MAX_SUMMARY_CHARS = 2000;
 const MAX_EXCERPT_CHARS = 500;
 const MAX_SIGNALS_PER_CALL = 20;
+// Voce 5036bc435465: the dictated text (2000 chars in) and its three
+// structured sections. 400 + 250 + 250 plus the «Riassunto: / Decisioni: /
+// Prossimi passi: » labels compose a cronologia note of 938 characters at
+// most, inside the subject-note bound of 1000.
+const MAX_VOICE_NOTE_CHARS = 2000;
+const MAX_VOICE_NOTE_SUMMARY_CHARS = 400;
+const MAX_VOICE_NOTE_ITEMS_CHARS = 250;
 const MAX_CALLS_READ = 50;
 /** A phone clock ahead of the server is tolerated this far; beyond it the stamp would push the retention deadline out. */
 const MAX_RECORDED_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -421,9 +428,14 @@ export function createCallIntelligence(options = {}) {
         code: 'CALL_SUMMARY_UNAVAILABLE', status: 409,
       });
     }
+    // Voce 5c9e006a: the caller's organization, threaded by the route from
+    // the verified identity (never the body), so spend on another
+    // organization's space refuses inside `complete` before any provider is
+    // touched. Absent keeps the historic behavior.
     const completion = await llm.complete({
       actor,
       spaceId,
+      ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
       purpose: 'call-summary',
       messages: [
         {
@@ -583,10 +595,87 @@ export function createCallIntelligence(options = {}) {
     return { calls };
   }
 
+  /**
+   * Structure a dictated post-call voice note (voce 5036bc435465): the
+   * operator dictates after a call from any phone, the browser transcribes
+   * on the device, and this structures the text into riassunto, decisioni
+   * and prossimi passi for the scheda cronologia. Stateless: it stores
+   * nothing — the operator edits the draft and saves it through the
+   * existing subject-note write, which signs it and keeps it under its own
+   * 1000-character bound (the three sections are capped so the composed
+   * note always fits). The audio never reaches the server: retention has
+   * nothing to erase by construction. Without a composed language model
+   * it refuses 409 VOICE_NOTE_UNAVAILABLE instead of inventing a draft —
+   * the card names the switched-off AI, never a fake structure. Spend
+   * lands through the workspace LLM caps like every other purpose.
+   * @param {{spaceId?: unknown, text?: unknown, actor?: unknown, organizationId?: unknown}} input
+   */
+  async function structureVoiceNote(input = {}) {
+    const actor = requireActor(input.actor);
+    const spaceId = assertSpaceId(input.spaceId);
+    const text = typeof input.text === 'string' ? input.text.trim() : '';
+    if (text === '' || text.length > MAX_VOICE_NOTE_CHARS) {
+      throw new ValidationError(`a voice note needs 1-${MAX_VOICE_NOTE_CHARS} characters of dictated text`, { field: 'text' });
+    }
+    if (!llm || typeof llm.complete !== 'function') {
+      throw new AppError('No language model is composed for this space: the voice note cannot be structured', {
+        code: 'VOICE_NOTE_UNAVAILABLE', status: 409,
+      });
+    }
+    // Voce 5c9e006a: same shape as summarizeCall — the caller organization,
+    // threaded by the route from the verified identity (never the body), so
+    // spend on another organization's space refuses inside `complete` before
+    // any provider is touched. Absent keeps the historic behavior.
+    const completion = await llm.complete({
+      actor,
+      spaceId,
+      ...(input.organizationId === undefined ? {} : { organizationId: input.organizationId }),
+      purpose: 'voice-note-structure',
+      messages: [
+        {
+          role: 'system',
+          content: 'Ordina il dettato post-chiamata di un venditore in italiano. Rispondi con solo JSON, esattamente {"riassunto": string, "decisioni": string, "prossimiPassi": string}. Il riassunto racconta com\'è andata la chiamata in al massimo 400 caratteri. Le decisioni elencano ciò che è stato deciso, al massimo 250 caratteri. I prossimi passi elencano cosa fare dopo e chi lo fa, al massimo 250 caratteri. Niente testo fuori dal JSON, niente contenuto inventato oltre il dettato.',
+        },
+        { role: 'user', content: text },
+      ],
+      maxTokens: 1024,
+    });
+    return parseVoiceNoteAnswer(completion);
+  }
+
+  /**
+   * Parse the LLM's bounded structuring answer fail-closed: valid JSON
+   * with three non-empty sections inside their caps, so the cronologia
+   * note composed from them always fits the subject-note bound. Anything
+   * else is VOICE_NOTE_INVALID — a draft never carries invented sections.
+   * @param {unknown} answer
+   */
+  function parseVoiceNoteAnswer(answer) {
+    let parsed;
+    try {
+      parsed = JSON.parse(String(answer?.text ?? ''));
+    } catch {
+      throw new AppError('The voice-note answer is not valid JSON', { code: 'VOICE_NOTE_INVALID', status: 502 });
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new AppError('The voice-note answer must be a JSON object', { code: 'VOICE_NOTE_INVALID', status: 502 });
+    }
+    const sections = {};
+    for (const [key, max] of [['riassunto', MAX_VOICE_NOTE_SUMMARY_CHARS], ['decisioni', MAX_VOICE_NOTE_ITEMS_CHARS], ['prossimiPassi', MAX_VOICE_NOTE_ITEMS_CHARS]]) {
+      const value = parsed[key];
+      if (typeof value !== 'string' || value.trim() === '' || value.length > max) {
+        throw new AppError(`The voice-note ${key} must be 1-${max} characters`, { code: 'VOICE_NOTE_INVALID', status: 502 });
+      }
+      sections[key] = value;
+    }
+    return Object.freeze({ ...sections });
+  }
+
   return {
     recordCallNotice,
     saveCallTranscript,
     summarizeCall,
+    structureVoiceNote,
     purgeExpiredTranscripts,
     readCustomerCalls,
   };

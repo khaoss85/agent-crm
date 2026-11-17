@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { boot, project, signedOrder } from './helpers/contracts-project.js';
+import { boot, project, signedOrder } from './helpers/contracts-project-cache.js';
 
 /**
  * The one capability Signature & Order OFFERS — `signature-orders@1` — exists

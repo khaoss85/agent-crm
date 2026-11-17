@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { takePendingCustomerPick, writePendingCustomerPick } from '../apps/admin/public/admin-prefill.js';
+import { clientiViewHash, hashWithVista, takePendingCustomerPick, vistaOfHash, writePendingCustomerPick } from '../apps/admin/public/admin-prefill.js';
 
 /**
  * Voce 714433c2: the scheda cliente hands «Nuova offerta» and
@@ -73,4 +73,23 @@ test('an unknown screen and a missing storage stay inert', () => {
   assert.equal(writePendingCustomerPick(null, 'offer', PICK), false, 'no storage: no write, no crash');
   assert.equal(takePendingCustomerPick(undefined, 'offer'), null, 'no storage: no pick, no crash');
   assert.equal(takePendingCustomerPick({}, 'offer'), null, 'a storage-shaped object without the API reads null');
+});
+
+test('7cf5c4931cfc: the Clienti view lives in the address', () => {
+  assert.equal(clientiViewHash('da-rispondere'), '#/customer-data?vista=da-rispondere');
+  assert.equal(vistaOfHash('#/customer-data?vista=da-rispondere'), 'da-rispondere');
+  assert.equal(vistaOfHash('#/customer-data'), null, 'no query: no view');
+  assert.equal(vistaOfHash('#/customer-data?vista='), null, 'an empty view is no view');
+  assert.equal(vistaOfHash('#/customer-data?vista=../x'), null, 'a forged view never resolves');
+  assert.equal(vistaOfHash(null), null, 'no hash: no view, no crash');
+});
+
+test('7cf5c4931cfc: setting the view keeps the other query entries', () => {
+  assert.equal(hashWithVista('#/customer-data', 'da-leggere'), '#/customer-data?vista=da-leggere');
+  assert.equal(
+    hashWithVista('#/customer-data?vista=tutti&binding=b1', 'da-rispondere'),
+    '#/customer-data?vista=da-rispondere&binding=b1',
+    'e.g. binding survives the view change',
+  );
+  assert.equal(hashWithVista('', 'tutti'), '#/customer-data?vista=tutti');
 });

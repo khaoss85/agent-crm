@@ -1,11 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { AppError } from '../packages/core/index.js';
+import { AppError, ValidationError } from '../packages/core/index.js';
 import {
   MESSAGE_DRAFT_KINDS,
+  MESSAGE_DRAFT_PLAYBOOK_FIELDS,
   assertMessageDraftInput,
+  assertMessageDraftPlaybook,
   buildMessageDraftPrompt,
+  buildPlaybookContextBlock,
   draftCustomerMessage,
   parseMessageDraftResponse,
 } from '../packages/llm/src/message-draft.js';
@@ -165,6 +168,32 @@ test('empty intent, empty name and no channels refuse before any provider is tou
   assert.equal(called, 0);
 });
 
+test('the draft threads the caller organization to complete, never from the body (backlog:5c9e006a)', async () => {
+  const seen = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+    organizationId: 'org-a',
+  });
+  assert.equal(seen.request.organizationId, 'org-a');
+  const absent = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: absent }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  });
+  assert.equal('organizationId' in absent.request, false, 'absent stays absent: historic behavior');
+});
+
 test('parseMessageDraftResponse validates the labeled shape on its own', () => {
   const parsed = parseMessageDraftResponse(DRAFT_JSON, CHANNELS);
   assert.equal(parsed.corta, 'Certo, ti confermo le 18 di domani.');
@@ -177,4 +206,138 @@ test('parseMessageDraftResponse validates the labeled shape on its own', () => {
   assert.throws(() => assertMessageDraftInput({
     customerName: 'Marco', history: [], intent: 'x'.repeat(501), connectedChannels: CHANNELS,
   }), /intent/);
+});
+
+test('a dry run stays off without error instead of parsing the fixture text (backlog:a1c597a4)', async () => {
+  // What the no-key dry run really produces: the fixture's literal
+  // answer, not the labeled JSON the model owes. The draft answers
+  // without error but carries no presentable wording — only the reason —
+  // so fixture text can never be rendered or dispatched as model wording.
+  const out = await draftCustomerMessage({
+    complete: async () => ({ text: 'fixture answer', dryRun: true }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  });
+  assert.equal(out.status, 'llm-disabled');
+  assert.equal(out.draft, null);
+  assert.equal(out.dryRun, true);
+  assert.ok(typeof out.reason === 'string' && out.reason !== '');
+  assert.ok(!('corta' in out) && !('lunga' in out) && !('diretta' in out) && !('oggetto' in out),
+    'no presentable wording rides a dry run');
+});
+
+test('the fence is the measured prompt, not the history count (backlog:a1c597a4)', async () => {
+  const { assertGenerateInput } = await import('../packages/llm/src/adapter.js');
+  const draftOf = (history) => ({
+    customerName: 'N'.repeat(100),
+    history,
+    intent: 'I'.repeat(500),
+    connectedChannels: Array.from({ length: 11 }, (_, index) => `canale-${index}`),
+  });
+  const shortHistory = Array.from({ length: 12 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'ciao '.repeat(20),
+  }));
+  // Twelve short entries fit the fence: they draft as on main (giro 1).
+  assertGenerateInput({ messages: buildMessageDraftPrompt(draftOf(shortHistory)).messages, model: 'probe', maxTokens: 1024 });
+  // Twenty full-length entries measure past the fence and refuse here,
+  // fail-closed, before any provider is touched.
+  const fullHistory = Array.from({ length: 20 }, (_, index) => Object.freeze({
+    direction: index % 2 === 0 ? 'in' : 'out', text: 'x'.repeat(2000),
+  }));
+  assert.throws(() => buildMessageDraftPrompt(draftOf(fullHistory)), /prompt/);
+  // The count cap is back at main's twenty: twenty-one still refuses.
+  assert.throws(() => assertMessageDraftInput({
+    customerName: 'Marco',
+    history: Array.from({ length: 21 }, () => ({ direction: 'in', text: 'ciao' })),
+    intent: 'conferma',
+    connectedChannels: CHANNELS,
+  }), /history/);
+});
+
+test('draft text validation matches the composer fence: tab refuses here as it refuses there (backlog:a1c597a4)', async () => {
+  const { composerTimelineRefusal } = await import('../packages/channels/src/composer-text.js');
+  const withTab = JSON.stringify({
+    corta: 'Ciao\tMarco', lunga: 'Ciao Marco, confermato.', diretta: 'Confermato.',
+    oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.ok(composerTimelineRefusal('Ciao\tMarco') !== null, 'the composer refuses the tab downstream');
+  assert.throws(() => parseMessageDraftResponse(withTab, CHANNELS), ValidationError);
+  const withCr = JSON.stringify({
+    corta: 'Ciao\rMarco', lunga: 'ok', diretta: 'ok', oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.ok(composerTimelineRefusal('Ciao\rMarco') !== null);
+  assert.throws(() => parseMessageDraftResponse(withCr, CHANNELS), ValidationError);
+  const withNewline = JSON.stringify({
+    corta: 'Ciao\nMarco', lunga: 'Ciao Marco,\nconfermato.', diretta: 'Confermato.',
+    oggetto: 'Conferma', canale: 'whatsapp',
+  });
+  assert.equal(composerTimelineRefusal('Ciao\nMarco'), null, 'the composer keeps line feeds');
+  assert.equal(parseMessageDraftResponse(withNewline, CHANNELS).corta, 'Ciao\nMarco');
+});
+
+test('the composer draft receives the playbook as context: different playbooks, different prompts (backlog:ad7e03ac)', async () => {
+  const base = {
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma lo spostamento alle 18',
+    connectedChannels: CHANNELS,
+  };
+  const gym = {
+    companyName: 'Presti Group',
+    products: 'Abbonamento mensile\nPersonal training',
+    tone: 'Energico ma mai pressante.',
+    hours: 'Lun-Ven 6:30-22:00.',
+  };
+  const flowers = {
+    companyName: 'Fiori Arvo',
+    products: 'Mazzo del giorno',
+    tone: 'Gentile.',
+    hours: 'Lun-Sab 9:00-19:00.',
+  };
+  const seenGym = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: seenGym }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    ...base,
+    playbook: gym,
+  });
+  const seenFlowers = {};
+  await draftCustomerMessage({
+    complete: fakeComplete({ seen: seenFlowers }),
+    spaceId: 'presti',
+    actor: ACTOR,
+    ...base,
+    playbook: flowers,
+  });
+  const promptGym = seenGym.request.messages.map((message) => message.content).join('\n');
+  const promptFlowers = seenFlowers.request.messages.map((message) => message.content).join('\n');
+  assert.ok(promptGym.includes('Personal training'), 'the gym playbook product reaches the model');
+  assert.ok(!promptGym.includes('Mazzo del giorno'), 'the other playbook never leaks in');
+  assert.ok(promptFlowers.includes('Mazzo del giorno'), 'the flower playbook product reaches the model');
+  assert.ok(!promptFlowers.includes('Personal training'), 'the gym playbook never leaks in');
+  assert.notEqual(promptGym, promptFlowers, 'the same request produces a different context');
+  assert.ok(promptGym.includes('conferma lo spostamento alle 18'), 'the intent still travels');
+});
+
+test('no playbook keeps the prompt as on main (backlog:ad7e03ac)', () => {
+  const prompt = buildMessageDraftPrompt({
+    customerName: 'Marco Rossi',
+    history: HISTORY,
+    intent: 'conferma',
+    connectedChannels: CHANNELS,
+  }).messages.map((message) => message.content).join('\n');
+  assert.ok(!prompt.includes('Playbook dello spazio'), 'no block without a playbook');
+  assert.equal(buildPlaybookContextBlock(null), null);
+  assert.equal(buildPlaybookContextBlock({}), null, 'an empty playbook behaves like none');
+  assert.equal(buildPlaybookContextBlock({ companyName: '  ' }), null, 'a blank playbook behaves like none');
+  assert.throws(() => assertMessageDraftPlaybook('Presti Group'), ValidationError);
+  assert.throws(() => assertMessageDraftPlaybook({ products: 42 }), ValidationError);
+  assert.throws(() => assertMessageDraftPlaybook({ tone: 'x'.repeat(2001) }), ValidationError);
+  assert.deepEqual(Object.keys(assertMessageDraftPlaybook({ companyName: 'Presti' })).sort(),
+    [...MESSAGE_DRAFT_PLAYBOOK_FIELDS].sort());
 });

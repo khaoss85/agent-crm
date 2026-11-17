@@ -19,7 +19,7 @@
 // Rome clock: every instant renders with timeZone 'Europe/Rome' through the
 // Oggi helpers, never as UTC or ISO.
 
-import { humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, pendingRequestId, readBackPending, unrefWait } from './admin-core.js';
+import { formatAmount, humanReadError, humanWriteError, isNotComposedFailure, isUnsupportedContractFailure, isWakeTransient, pendingRequestId, readBackPending, unrefWait, WAKE_WAIT_TEXT } from './admin-core.js';
 import { markUnsaved } from './admin-version.js';
 import { isTodayInRome, romeDayKey, romeLongDay, romeShortDay, romeTime } from './admin-oggi.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -281,7 +281,40 @@ export function memberColorIndex(memberId) {
   for (let index = 0; index < id.length; index += 1) {
     hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
   }
-  return hash % 5;
+  return hash % CAL_MEMBER_TINTS;
+}
+
+/** Person tints the calendar palette paints (cal-m0..cal-m4 in styles.css). */
+export const CAL_MEMBER_TINTS = 5;
+
+/**
+ * Unique tint per identity, stable across reloads (backlog:bffe778332e6):
+ * two different people share no tint while the palette has room — the old
+ * hash alone painted khaoss85 and daniele pelleri with the same tint. Order
+ * is the sorted identity, never the roster order, so reloads alone never
+ * repaint anyone; the hashed tint stays the first pick, so a lone person
+ * keeps the tint it always had. A newcomer takes the first free tint from
+ * its hash and may shift later members by one on collision. Past the
+ * palette size tints wrap, still deterministically.
+ * @param {unknown} ids
+ * @returns {Map<string, number>}
+ */
+export function assignMemberColors(ids) {
+  const unique = [...new Set(
+    (Array.isArray(ids) ? ids : []).filter((id) => typeof id === 'string' && id !== ''),
+  )].sort();
+  const taken = new Set();
+  const colors = new Map();
+  for (const id of unique) {
+    const base = memberColorIndex(id);
+    let color = base;
+    while (taken.has(color) && taken.size < CAL_MEMBER_TINTS) {
+      color = (color + 1) % CAL_MEMBER_TINTS;
+    }
+    taken.add(color);
+    colors.set(id, color);
+  }
+  return colors;
 }
 
 /**
@@ -340,10 +373,12 @@ export function originOf(row) {
 export function teamRows(named, hidden) {
   const names = Array.isArray(named) ? named.filter((id) => typeof id === 'string' && id !== '') : [];
   const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
-  return [...new Set(names)].map((id) => ({
+  const unique = [...new Set(names)];
+  const colors = assignMemberColors(unique);
+  return unique.map((id) => ({
     id,
     active: !off.has(id),
-    color: memberColorIndex(id),
+    color: colors.get(id) ?? memberColorIndex(id),
     initials: memberInitials(id),
   }));
 }
@@ -374,6 +409,9 @@ export function teamRows(named, hidden) {
 export function personRows(named, hidden, members) {
   const names = Array.isArray(named) ? [...new Set(named.filter((id) => typeof id === 'string' && id !== ''))] : [];
   const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
+  // backlog:6563edf41aab: identity matching ignores case — a typed filter
+  // and a roster subject that differ only by case are the same person.
+  const namedFold = new Set(names.map((id) => id.toLowerCase()));
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
@@ -386,18 +424,39 @@ export function personRows(named, hidden, members) {
     born: person.born, bornIndex: index,
   }));
   const bySubject = new Map();
-  for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
-  const groupFor = (subject) => bySubject.get(subject) ?? null;
+  const byFold = new Map();
+  for (const group of groups) {
+    for (const subject of group.subjects) {
+      bySubject.set(subject, group);
+      if (!byFold.has(subject.toLowerCase())) byFold.set(subject.toLowerCase(), group);
+    }
+  }
+  // backlog:6563edf41aab: the operator's named filter joins the roster
+  // person whatever the case — «Daniele Pelleri» typed over a «daniele
+  // pelleri» roster row is one row, not the same person read twice.
+  const groupFor = (subject) => bySubject.get(subject)
+    ?? (typeof subject === 'string' ? byFold.get(subject.toLowerCase()) ?? null : null);
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
-    if (!groupFor(id)) {
+    const found = groupFor(id);
+    if (!found) {
       const group = {
         subjects: [id], displayName: null, email: null, label: subjectText(id) ?? 'Membro del team',
         born: null, bornIndex: groups.length,
       };
       groups.push(group);
       bySubject.set(id, group);
+      if (!byFold.has(id.toLowerCase())) byFold.set(id.toLowerCase(), group);
+    } else if (!found.subjects.includes(id)) {
+      // backlog:6563edf41aab (review #960 giro 1, P2): the typed filter
+      // joined case-insensitively without adding its identity to the row —
+      // the week request carried both spellings while the toggle hid one,
+      // so blocks stayed visible with no toggle left to hide them. The
+      // typed identity stays on the row: toggle, request and grid hide
+      // the same identities.
+      found.subjects.push(id);
+      bySubject.set(id, found);
     }
   }
   const order = [];
@@ -411,9 +470,11 @@ export function personRows(named, hidden, members) {
     }
   }
   const painted = order.map((group) => {
-    const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
+    const primary = group.subjects.find((subject) => names.includes(subject))
+      ?? group.subjects.find((subject) => namedFold.has(subject.toLowerCase()))
+      ?? group.subjects[0];
     const name = group.displayName ?? group.email;
-    const listed = group.subjects.some((subject) => names.includes(subject));
+    const listed = group.subjects.some((subject) => namedFold.has(subject.toLowerCase()));
     // backlog:e52c5e0dd49f (review Muse #750 giro 2): a row without a name
     // paints the teamPeople label (name, mailbox, plain words, else the
     // generic fallback) — never the raw stored id, so no slug leaks.
@@ -428,9 +489,12 @@ export function personRows(named, hidden, members) {
   // so Team, manual choice and booking lines read the same label.
   const byBase = new Map();
   for (const entry of painted) {
-    const list = byBase.get(entry.base) ?? [];
+    // backlog:6563edf41aab: same rule as teamPeople — names equal modulo
+    // case number like the homonyms, never two identical-looking rows.
+    const key = entry.base.toLowerCase();
+    const list = byBase.get(key) ?? [];
     list.push(entry);
-    byBase.set(entry.base, list);
+    byBase.set(key, list);
   }
   const ordinalOf = new Map();
   for (const entries of byBase.values()) {
@@ -443,6 +507,9 @@ export function personRows(named, hidden, members) {
     ));
     ranked.forEach((entry, index) => ordinalOf.set(entry.group, index + 1));
   }
+  // backlog:bffe778332e6 — one tint per person, unique while the palette
+  // has room: the hashed tint alone painted two people the same.
+  const colors = assignMemberColors(painted.map((entry) => entry.primary));
   return painted.map(({ group, primary, name, listed, base }) => {
     const ordinal = ordinalOf.get(group);
     const label = ordinal === undefined ? base : `${base} (${ordinal})`;
@@ -462,8 +529,13 @@ export function personRows(named, hidden, members) {
       listed,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
+      // backlog:6563edf41aab (review #960 giro 1, P2): hidden-state matching
+      // stays exact — two distinct roster identities («Alice», «alice»)
+      // hide independently; the case-insensitive join above already keeps
+      // the typed spelling on the row, so the real toggle (which hides
+      // every row id) still switches the whole person off.
       active: listed && group.subjects.some((subject) => !off.has(subject)),
-      color: memberColorIndex(primary),
+      color: colors.get(primary) ?? memberColorIndex(primary),
       initials: memberInitials(name ?? primary),
     };
   });
@@ -790,10 +862,12 @@ export function catalogBookingServices(payload) {
 
 /**
  * backlog:c2f21b5debdd — one service in the «Nuovo appuntamento» menu:
- * the name and the price as Italian money («Lezione di prova · 1,00 €»,
- * «PT · 1.080,00 €»), never the dotted «1.00 €» the price field keeps for
- * typing. A price that is not whole cents, or not in euros, reads as the
- * name alone.
+ * the name and the price as Italian money («Lezione di prova · 1 €»,
+ * «PT · 1.080 €»), never the dotted «1.00 €» the price field keeps for
+ * typing. The single shared display helper (formatAmount in admin-core.js,
+ * backlog:93e26f3d2cdc): same «1.080» grouping as Clienti, Reporting,
+ * Pipeline and the scheda. A price that is not whole cents, or not in
+ * euros, reads as the name alone.
  * @param {{name: string, priceCents: number, currency?: string}} entry
  */
 export function serviceOptionLabel(entry) {
@@ -802,18 +876,7 @@ export function serviceOptionLabel(entry) {
   // The menu books euros only (catalogBookingServices keeps EUR singles):
   // any other or unknown currency reads as the name alone, never a throw.
   if (!Number.isSafeInteger(cents) || cents < 0 || currency !== 'EUR') return String(entry?.name ?? '');
-  return `${entry.name} · ${italianEuros(cents)}`;
-}
-
-/**
- * Italian money with the grouping pinned (review #813): «1.080,00 €», the
- * same thousands dot as the rest of the /bo, never left to the runtime's
- * locale data.
- * @param {number} cents
- */
-function italianEuros(cents) {
-  const whole = String(Math.floor(cents / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${whole},${String(cents % 100).padStart(2, '0')} €`;
+  return `${entry.name} · ${formatAmount(cents, 'EUR')}`;
 }
 
 /**
@@ -889,6 +952,22 @@ export function calendarRefusalText(error) {
     return 'Questo appuntamento è chiuso (finito, mancato o annullato) e non si può più spostare.';
   }
   return null;
+}
+
+/**
+ * backlog:0ffb1dd0 — what the «Trova slot liberi» search says when the host
+ * was waking: the wait in plain words, never «Ricerca non riuscita». The
+ * phrase answer is a POST, so only failures the shell retries as a POST
+ * name the wait (isWakeTransient with method POST: an explicit starting
+ * signal only — the shell toasts «Il server si sta svegliando…» around
+ * that single retry). A bare 503, a gateway 502/504 UNKNOWN or a network
+ * fault earns no POST retry and keeps the generic «Ricerca non riuscita».
+ * A named refusal keeps its own sentence through calendarRefusalText,
+ * checked first by the caller.
+ * @param {unknown} error
+ */
+export function wakeSearchText(error) {
+  return isWakeTransient(error, { method: 'POST' }) ? WAKE_WAIT_TEXT : null;
 }
 
 /**
@@ -2729,8 +2808,7 @@ export function createCalendarioView(deps) {
     });
     col.addEventListener('pointercancel', () => {
       if (eventDrag) {
-        eventDrag = null;
-        detachNode(mount.querySelector('.cal-drag-ghost'));
+        abortEventDrag();
         return;
       }
       drag?.node?.remove?.(); drag = null;
@@ -2779,14 +2857,24 @@ export function createCalendarioView(deps) {
    * once per view; the fake test document has no listeners and is skipped.
    */
   let docDragHooked = false;
+  /**
+   * An interrupted drag (backlog:667f1f1c review P1): a resize stretches
+   * the origin block live, so aborting must repaint — otherwise the mutated
+   * inline grid-row stays painted on rows the booking no longer covers.
+   */
+  function abortEventDrag() {
+    const aborted = eventDrag;
+    eventDrag = null;
+    detachNode(mount.querySelector('.cal-drag-ghost'));
+    if (aborted?.mode === 'resize' && aborted.moved === true && mount.querySelector('.cal-wrap') !== null) renderAll();
+  }
   function hookDocDragEnd() {
     if (docDragHooked || typeof doc?.addEventListener !== 'function') return;
     docDragHooked = true;
     doc.addEventListener('pointerup', () => { if (eventDrag) void commitEventDrag(); });
     doc.addEventListener('pointercancel', () => {
       if (!eventDrag) return;
-      eventDrag = null;
-      detachNode(mount?.querySelector?.('.cal-drag-ghost'));
+      abortEventDrag();
     });
   }
 
@@ -2829,6 +2917,24 @@ export function createCalendarioView(deps) {
       drag.targetEnd = start + durationMin;
     }
     drag.moved = drag.targetDay !== drag.dayKey || drag.targetStart !== drag.startMin || drag.targetEnd !== drag.endMin;
+    if (drag.mode === 'resize') {
+      // backlog:667f1f1c: a stretch pulls the block itself, never a second
+      // block under the preview — the origin node takes the target range
+      // live, time label included (review P2), so the operator never aims
+      // blind. Compact blocks (<45 min) rewrite their single line with the
+      // live interval, which only they render (giro 3 P1).
+      const origin = paintedEvents.get(String(drag.row?.id ?? ''));
+      if (origin && typeof origin.setAttribute === 'function') {
+        const current = String(origin.getAttribute?.('style') ?? '');
+        const column = current.match(/grid-column:[^;]+;?/);
+        origin.setAttribute('style', `grid-row: ${rowsOf(drag.targetStart, drag.targetEnd)}; ${column ? column[0] : ''}`.trim());
+        const timeLabel = origin.querySelector?.('.cal-time') ?? null;
+        if (timeLabel) timeLabel.textContent = `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+        const compactLabel = origin.querySelector?.('.cal-compact') ?? null;
+        if (compactLabel) compactLabel.textContent = `${titleOf(drag.row)}, ${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`;
+      }
+      return;
+    }
     detachNode(mount.querySelector('.cal-drag-ghost'));
     const ghost = el(doc, 'div', {
       className: 'cal-pick is-dragging cal-drag-ghost',
@@ -2838,9 +2944,8 @@ export function createCalendarioView(deps) {
       },
       text: `${minutesLabel(drag.targetStart)}–${minutesLabel(drag.targetEnd)}`,
     });
-    // A resize ghost paints on the origin column (review #757); a move
-    // ghost paints on the hovered column.
-    (drag.mode === 'resize' ? (drag.originCol ?? col) : col).appendChild(ghost);
+    // A move ghost paints on the hovered column.
+    col.appendChild(ghost);
   }
 
   /**
@@ -2932,6 +3037,12 @@ export function createCalendarioView(deps) {
       renderAll();
       return;
     }
+    // backlog:667f1f1c: a stretch keeps its start and changes its end —
+    // compared by value (review P2): the same instant in a different ISO
+    // spelling is still the same start. Computed before the write so the
+    // queued outcome names it too.
+    const sameStart = Date.parse(before.startsAt) === Date.parse(startsAt);
+    const isStretch = sameStart && Date.parse(before.endsAt) !== Date.parse(endsAt);
     state.moveBusy = true;
     row.startsAt = startsAt;
     row.endsAt = endsAt;
@@ -2955,15 +3066,22 @@ export function createCalendarioView(deps) {
       state.moveOpen = false;
       // backlog:7587307d5215: the day and the date, like a person says it —
       // «Spostato a martedì 10 novembre, 10:30–11:15.».
+      // backlog:667f1f1c: a stretch keeps its start and changes its end —
+      // the toast names it, «Allungato a …», never «Spostato».
       const date = day !== null ? `${dayName(day).toLowerCase()} ${romeLongDay(`${day}T12:00:00Z`) ?? ''}, ` : '';
-      outcome = { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
+      outcome = isStretch
+        ? { text: `Allungato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false }
+        : { text: `Spostato a ${date}${romeTime(row.startsAt) ?? ''}–${romeTime(row.endsAt) ?? ''}.`, error: false };
       ok = true;
     } catch (error) {
       if (error?.code === 'BO_CRM_PENDING') {
         // Still queued on the worker: the drop stands where the operator
-        // put it until the week read says otherwise.
+        // put it until the week read says otherwise. A stretch says so
+        // (review P2), never «Spostamento».
         queued = true;
-        outcome = { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
+        outcome = isStretch
+          ? { text: 'Allungamento in coda: lo confermo appena è registrato.', error: false }
+          : { text: 'Spostamento in coda: lo confermo appena è registrato.', error: false };
       } else {
         row.startsAt = before.startsAt;
         row.endsAt = before.endsAt;
@@ -3194,16 +3312,20 @@ export function createCalendarioView(deps) {
   }
 
   /**
-   * backlog:df55cf25 — the booking identity a grid block tints by: the
-   * person's stable primary subject, the same identity the Team toggle
-   * hashes, so a block and its toggle always match even when the person
-   * holds several subjects. Unknown subjects tint by themselves.
+   * backlog:bffe778332e6 — the tint a grid block or popover paints: the
+   * colour of the person's Team toggle row, the same row the operator
+   * filters with, so a block and its toggle always match even when the
+   * person holds several subjects. Unknown subjects fall back to their
+   * own hashed tint.
    * @param {unknown} subject
    */
-  function tintSubjectOf(subject) {
-    if (typeof subject !== 'string' || subject === '') return subject;
-    const rows = personRows(parseMemberFilter(state.memberFilter), [], state.members);
-    return rows.find((row) => row.ids.includes(subject))?.id ?? subject;
+  function tintIndexOf(subject) {
+    if (typeof subject === 'string' && subject !== '') {
+      const rows = personRows(parseMemberFilter(state.memberFilter), [], state.members);
+      const hit = rows.find((row) => row.ids.includes(subject));
+      if (hit) return hit.color;
+    }
+    return memberColorIndex(subject);
   }
 
   /**
@@ -3217,7 +3339,7 @@ export function createCalendarioView(deps) {
    */
   function renderEvent(row, lane) {
     const placed = gridRowsFor(row?.startsAt, row?.endsAt);
-    const classes = ['cal-event', `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`];
+    const classes = ['cal-event', `cal-m${tintIndexOf(row?.teamMemberId)}`];
     const memberName = resolveMemberName(row?.teamMemberId, parseMemberFilter(state.memberFilter), state.members);
     const selected = state.selectedId !== null && String(row?.id ?? '') === state.selectedId;
     if (selected) classes.push('cal-selected');
@@ -3226,6 +3348,9 @@ export function createCalendarioView(deps) {
     if (cancelled) classes.push('cal-cancelled');
     const movable = isMovableAppointment(row);
     if (movable) classes.push('is-movable');
+    const durationMin = Math.max(GRID_ROW_MINUTES, Math.round((Date.parse(row.endsAt) - Date.parse(row.startsAt)) / 60000));
+    if (durationMin < 45) classes.push('is-short');
+    else if (durationMin < 60) classes.push('is-medium');
     const id = String(row?.id ?? '');
     const item = el(doc, 'button', {
       className: classes.join(' '),
@@ -3238,8 +3363,23 @@ export function createCalendarioView(deps) {
       },
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
-    item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-    item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    const origin = originOf(row);
+    if (durationMin < 45) {
+      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      // The origin badge stays readable on the single line when the foot
+      // below stays hidden (15-min blocks), so nothing paints half-cut.
+      // At 30+ min the foot carries avatar and badges.
+      if (durationMin < 30) {
+        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
+        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+      }
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
+    }
     const foot = el(doc, 'span', { className: 'cal-day-foot' });
     // Initials decorate (the tint already encodes the member); the WA badge
     // stays readable because it names the booking origin.
@@ -3248,7 +3388,6 @@ export function createCalendarioView(deps) {
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    const origin = originOf(row);
     if (origin === 'whatsapp') {
       foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
     } else if (origin === 'google') {
@@ -3261,7 +3400,10 @@ export function createCalendarioView(deps) {
     if (cancelled) {
       foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
     }
-    item.appendChild(foot);
+    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
+    // block has room — 15-min blocks already carry origin and status on
+    // their single line, so the foot never paints half-cut.
+    if (durationMin >= 30) item.appendChild(foot);
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
@@ -3457,7 +3599,7 @@ export function createCalendarioView(deps) {
     close.addEventListener('click', () => closeEventPop());
     tools.appendChild(close);
     pop.appendChild(tools);
-    const tint = `cal-m${memberColorIndex(tintSubjectOf(row?.teamMemberId))}`;
+    const tint = `cal-m${tintIndexOf(row?.teamMemberId)}`;
     const title = el(doc, 'h2', { className: 'cal-detail-title', attrs: { id: 'cal-event-pop-title' } });
     title.appendChild(el(doc, 'span', { className: `cal-swatch ${tint}`, attrs: { 'aria-hidden': 'true' } }));
     title.appendChild(el(doc, 'span', { text: titleOf(row) }));
@@ -3561,10 +3703,13 @@ export function createCalendarioView(deps) {
    * never the browser's confirm(). «No» takes the focus (Enter never cancels
    * by accident); the optional reason rides the cancellation, else «Annullato
    * dal calendario». An event imported from Google Calendar says plainly
-   * that the event stays on Google: the backoffice cancel names no calendar
-   * and nothing in this application runs the two-way sync that would carry
-   * the cancellation there (calendar-sync's push/sync operations are not
-   * wired to any route or job), so «cancellalo anche lì» is the truth.
+   * what happens there (backlog:27923678): with the calendar connected the
+   * question promises only the attempt on Google — a connected profile
+   * never proves the appointment itself pushes, so the popover no longer
+   * says the event stays there; without a connected calendar the honest
+   * line stays — «cancellalo anche lì» — because nothing would carry the
+   * cancellation there. The real outcome speaks after the write, through
+   * the toast.
    * @param {any} row
    */
   function renderCancelAsk(row) {
@@ -3574,10 +3719,19 @@ export function createCalendarioView(deps) {
     });
     box.appendChild(el(doc, 'p', { className: 'cal-pop-question', attrs: { id: 'cal-cancel-question' }, text: 'Annullare l’appuntamento?' }));
     if (originOf(row) === 'google') {
+      // backlog:27923678 — a connected calendar in /api/profile never proves
+      // the appointment itself pushes to Google (the sync link can be missing
+      // and the answer can carry push: null), so the question promises only
+      // the attempt: the real outcome speaks after the write, through the
+      // toast. Without a connected calendar nothing would carry the
+      // cancellation there, so the honest manual-removal line stays.
+      const connected = state.calendar?.connected === true;
       box.appendChild(el(doc, 'p', {
         className: 'cal-pop-hint',
         attrs: { 'data-role': 'cancel-google' },
-        text: 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
+        text: connected
+          ? 'Arriva da Google Calendar: lo annullo qui in Accordo e provo ad annullarlo anche su Google Calendar; se non riesco, ti avviso di toglierlo a mano.'
+          : 'Arriva da Google Calendar: lo annullo qui in Accordo. Su Google Calendar l’evento resta: cancellalo anche lì.',
       }));
     }
     const field = el(doc, 'label', { className: 'cal-move-field', text: 'Motivo (facoltativo)' });
@@ -3620,9 +3774,14 @@ export function createCalendarioView(deps) {
 
   /**
    * Cancels the booking through POST /api/appointments/cancel
-   * (backlog:5346ab531538). On success the row reads cancelled at once — it
-   * leaves the grid and the popover closes — and the week reloads; a refusal
-   * stays in the popover in Italian and the booking stays where it was.
+   * (backlog:5346ab531538, backlog:27923678). On success the row reads
+   * cancelled at once — it leaves the grid and the popover closes — and the
+   * week reloads; a refusal stays in the popover in Italian and the booking
+   * stays where it was. The space rides the write so the server-side
+   * auto-push converges the linked Google event under the owning space's
+   * grant; when Google was unreachable the cancellation still stands and
+   * the answer carries `pushError`, which the toast names as the manual
+   * removal on Google.
    * @param {any} row
    */
   async function submitCancel(row) {
@@ -3636,10 +3795,19 @@ export function createCalendarioView(deps) {
     renderAll();
     let ok = false;
     let failure = '';
+    let pushFailed = false;
+    let pushedToGoogle = false;
     try {
       const reason = cancelReasonFrom(state.cancelReason);
-      const body = id !== '' ? { id: row.id, reason } : { sourceKey: row.sourceKey, reason };
-      await client.request('/api/appointments/cancel', { method: 'POST', body });
+      const spaceId = readSpace();
+      const body = id !== ''
+        ? { id: row.id, reason, spaceId }
+        : { sourceKey: row.sourceKey, reason, spaceId };
+      const answer = await client.request('/api/appointments/cancel', { method: 'POST', body });
+      pushFailed = answer?.pushError != null;
+      // backlog:27923678 — Google is named only on the real outcome: the
+      // answer carried a push. A push: null (no sync link) stays silent.
+      pushedToGoogle = !pushFailed && answer?.push != null;
       for (const group of state.week?.members ?? []) {
         for (const stored of group?.appointments ?? []) {
           if (stored && String(stored.id ?? '') === id) stored.status = 'cancelled';
@@ -3669,7 +3837,20 @@ export function createCalendarioView(deps) {
         state.moveNote = '';
       }
       renderAll();
-      if (typeof deps.toast === 'function') deps.toast('Appuntamento annullato.');
+      // backlog:27923678 — the Accordo cancellation stands even when Google
+      // was unreachable: the toast then names the manual removal on Google,
+      // never a silent divergence. Google is named on success only when the
+      // answer proves the push landed there.
+      if (typeof deps.toast === 'function') {
+        deps.toast(
+          pushFailed
+            ? 'Appuntamento annullato in Accordo, ma su Google Calendar va tolto a mano.'
+            : pushedToGoogle && originOf(row) === 'google'
+              ? 'Appuntamento annullato qui e su Google Calendar.'
+              : 'Appuntamento annullato.',
+          pushFailed,
+        );
+      }
       const members = parseMemberFilter(state.memberFilter);
       if (members.length > 0) void loadWeek(members);
       return;
@@ -4142,9 +4323,13 @@ export function createCalendarioView(deps) {
       if (record.code === 'LLM_SPACE_DISABLED' || record.code === 'LLM_SECRET_UNAVAILABLE') state.aiOff.add(askedSpace);
       state.aiBlocked = aiBlockOf(error);
       if (refusal !== null) console.warn('bo-calendario phrase refused:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
+      // backlog:0ffb1dd0 — the waking host names its wait; log the cause
+      // (code and space, never the message or personal data) like refusals do.
+      const waking = refusal === null && record.code !== 'APPOINTMENTS_AI_DRAFT_IN_PAST' ? wakeSearchText(error) : null;
+      if (waking !== null) console.warn('bo-calendario phrase waking:', String(record.code ?? 'unknown'), `spaceId=${readSpace()}`);
       state.aiNote = record.code === 'APPOINTMENTS_AI_DRAFT_IN_PAST'
         ? 'La frase indica un momento già passato: prova con un giorno futuro.'
-        : refusal ?? humanReadError(error, {
+        : refusal ?? waking ?? humanReadError(error, {
           failed: 'Ricerca non riuscita. Riprova più tardi.',
           notComposed: 'Il calendario non è composto in questo spazio.',
         });
@@ -4551,7 +4736,18 @@ export function createCalendarioView(deps) {
   function renderCustomerPick(form) {
     const pick = state.customerPick;
     if (pick && typeof pick?.name === 'string') {
-      form.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: `Cliente: ${pick.name}` }));
+      // backlog:b0788e62ace6: the picked customer keeps the «Cliente» label
+      // the search field carries, so the form reads its eight labels in
+      // every state; the name sits under it, «Cambia cliente» beside.
+      const field = el(doc, 'div', {
+        className: 'cal-field cal-field-wide',
+        attrs: { role: 'group', 'aria-labelledby': 'cal-customer-label', 'data-role': 'customer-field' },
+      });
+      field.appendChild(el(doc, 'span', { className: 'cal-field-label', attrs: { id: 'cal-customer-label' }, text: 'Cliente' }));
+      const picked = el(doc, 'div', { className: 'cal-customer-picked' });
+      picked.appendChild(el(doc, 'p', { attrs: { 'data-role': 'customer-pick' }, text: pick.name }));
+      field.appendChild(picked);
+      form.appendChild(field);
       const change = uiSecondaryButton(doc, 'Cambia cliente');
       change.addEventListener('click', () => {
         // Review #690 (P2): a search still pending never lands after the reset.
@@ -4564,7 +4760,7 @@ export function createCalendarioView(deps) {
         state.customerError = null;
         renderAll();
       });
-      form.appendChild(change);
+      picked.appendChild(change);
       state.manualFirst = change;
       return;
     }

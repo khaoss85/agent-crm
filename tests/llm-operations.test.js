@@ -1134,3 +1134,29 @@ test('real storage round-trips the exact audit sentinels', async (t) => {
   assert.equal(refusal.sources, '');
   assert.deepEqual([refusal.inputTokens, refusal.outputTokens], [0, 0]);
 });
+
+test('a spaceId of another organization refuses with no spend on that space (backlog:5c9e006a)', async () => {
+  const { definition, api } = createFixtureLlmAdapter({ secret: SECRET });
+  const spaces = {
+    'space-a': { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-a' },
+    'space-b': { enabled: true, adapter: 'fixture-llm', adapterVersion: 1, organizationId: 'org-b' },
+  };
+  const { ops, modules } = setup({ adapters: [definition], spaces });
+  // The caller of org-a names the space of org-b: refused like an unknown
+  // space, so the answer never confirms the space exists elsewhere.
+  const code = await codeOf(() => call(ops, modules, {
+    tag: 'cross-org', spaceId: 'space-b', organizationId: 'org-a',
+  }));
+  assert.equal(code, 'LLM_SPACE_DISABLED');
+  assert.equal(api.calls(), 0, 'the adapter ran for another organization space');
+  const audit = await ops.readAudit({ actor: ACTOR, spaceId: 'space-b' }, modules);
+  assert.equal(audit.length, 1);
+  assert.equal(audit[audit.length - 1].refused, 'space-organization-mismatch');
+  assert.deepEqual([audit[0].inputTokens, audit[0].outputTokens], [0, 0]);
+  const usage = await ops.readUsage({ actor: ACTOR, spaceId: 'space-b' }, modules);
+  assert.deepEqual(usage, [], 'spend was recorded on another organization space');
+  // The legitimate call inside the caller own space still spends.
+  const own = await call(ops, modules, { tag: 'own-org', spaceId: 'space-a', organizationId: 'org-a' });
+  assert.equal(own.dryRun, false);
+  assert.equal(api.calls(), 1);
+});

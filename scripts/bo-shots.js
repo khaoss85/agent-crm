@@ -218,6 +218,8 @@ const DEMO_CLIENTS = [
     lastContactText: 'Ciao, posso passare giovedi per una prova?',
     offerValueCents: 120000, offerCurrency: 'EUR',
     nextStep: { title: 'Prova gratuita', dueAt: '2026-10-22', overdue: false },
+    calendarComplete: true,
+    nextAppointment: { startsAt: '2026-10-23T09:30:00.000Z', endsAt: '2026-10-23T10:00:00.000Z', status: 'confirmed' },
     budget: { available: true, value: '200/mese', source: { resource: 'contact', id: 'c1' }, reason: null },
   },
   {
@@ -226,6 +228,7 @@ const DEMO_CLIENTS = [
     status: { value: 'contatto', reason: 'no signed business on record' },
     lastContactAt: null, lastContactChannel: null,
     offerValueCents: null, offerCurrency: null, nextStep: null,
+    calendarComplete: false, nextAppointment: null,
     budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
   },
   {
@@ -236,6 +239,7 @@ const DEMO_CLIENTS = [
     lastContactAt: '2026-10-19T16:30:00.000Z', lastContactChannel: 'phone',
     offerValueCents: 9900, offerCurrency: 'EUR',
     nextStep: { title: 'Inviare il preventivo', dueAt: '2026-10-24', overdue: false },
+    calendarComplete: true, nextAppointment: null,
     budget: { available: false, value: null, source: null, reason: 'nessun budget estratto per questo cliente' },
   },
 ];
@@ -373,8 +377,10 @@ const DEMO_WEEK = {
     {
       teamMemberId: 'sara',
       appointments: [
+        // backlog:667f1f1c: the long block keeps its full Rome interval
+        // (09:00–10:30) while the 30-min taglio above reads one compact line.
         {
-          id: 'a2', status: 'booked', startsAt: '2026-10-23T07:00:00.000Z', endsAt: '2026-10-23T07:30:00.000Z',
+          id: 'a2', status: 'booked', startsAt: '2026-10-23T07:00:00.000Z', endsAt: '2026-10-23T08:30:00.000Z',
           serviceKey: 'barba', teamMemberId: 'sara', priceCents: 2000, currency: 'EUR', notes: null,
           sourceKey: 'calendario:sara:1:c2', subject: { resource: 'contact', id: 'c2', owner: 'host', ownerPackage: null, label: 'Bo' },
         },
@@ -713,7 +719,9 @@ export const SCREENS = Object.freeze([
   { name: 'cliente', module: 'admin-customer-card.js', ready: 'cliente-ready', expect: ['Guido Presti', 'Ciao, vorrei prenotare una prova'] },
   { name: 'import', module: 'admin-customer-data.js', ready: 'import-ready', expect: ['Importa clienti', 'Trascina qui il file', 'Abbina le colonne'] },
   { name: 'pipeline', module: 'admin-pipeline.js', ready: 'pipeline-ready', expect: ['Palestra Esempio', 'Proposta'] },
-  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['18:00–18:30', 'cal-event'] },
+  // backlog:667f1f1c: short blocks read one compact line «Titolo, 18:00»;
+  // the long demo block keeps its full Rome interval.
+  { name: 'calendario', module: 'admin-calendario.js', ready: 'calendario-ready', expect: ['Taglio · Ada, 18:00', '09:00–10:30', 'cal-event'] },
   { name: 'sequenze', module: 'admin-sequenze.js', ready: 'sequenze-ready', expect: ['Bentornato in palestra', 'Promemoria appuntamento'] },
   { name: 'agenti', module: 'admin-agenti.js', ready: 'agenti-ready', expect: ['occupati dei lead WhatsApp non contattati', 'Ciao Giulia, ti scrivo per'] },
   // backlog:06d4b855fac4: the demo dashboard follows the requested period
@@ -922,19 +930,25 @@ import { buildShellNav } from './admin-shell.js';
 const TASKS = ${JSON.stringify(DEMO_TASKS)};
 const APPOINTMENTS = ${JSON.stringify(DEMO_APPOINTMENTS)};
 const MESSAGES = ${JSON.stringify(DEMO_MESSAGES)};
+const seenChannelReads = [];
 const client = {
   async request(path, options = {}) {
     if (String(options.method ?? 'GET').toUpperCase() !== 'GET') {
       return { task: { ...TASKS[0], status: 'completed' } };
     }
     if (path === '/api/schema') return { domains: { work: {}, appointments: {}, channels: {}, interactions: {} } };
+    if (path === '/api/profile') return null;
+    if (path === '/api/spine/memberships') return { items: [] };
     if (path.startsWith('/api/modules/work-task/records/')) {
       const id = path.split('/').pop();
       return TASKS.find((task) => task.id === id) ?? TASKS[0];
     }
     if (path.startsWith('/api/modules/work-task/records')) return { items: TASKS };
     if (path.startsWith('/api/modules/appointment/records')) return { items: APPOINTMENTS };
-    if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+    if (path.startsWith('/api/modules/channel-connection/records')) {
+      seenChannelReads.push(path);
+      return { items: [] };
+    }
     if (path.startsWith('/api/modules/interaction-message/records')) return { items: MESSAGES };
     if (path.startsWith('/api/modules/interaction-call/records')) return { items: [] };
     throw new Error('unexpected read: ' + path);
@@ -945,7 +959,10 @@ const links = buildOggiLinks(buildShellNav({
   customerDataAvailable: true,
   sequencesAvailable: true,
 }));
-const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, navigate: () => {} });
+// The live page opens Oggi with the active space (app.js passes a spaceId
+// reader): without it loadOggiData skips the scoped connections read and
+// the shot paints the read-failure line instead of the channel strip.
+const view = createOggiView({ doc: document, mount: document.getElementById('view-module'), client, spaceId: () => 'locale', navigate: () => {} });
 await view.render({ spaceName: 'Spazio locale', userName: 'Elena', links, now: new Date('2026-10-19T07:00:00.000Z') });
 // Rendered mounts only: whole-page text would also include this very module
 // script (fixture JSON plus the match patterns), so page-wide counts reject
@@ -956,6 +973,9 @@ const oggiTitles = [...document.querySelectorAll('#view-module .bo-oggi-title')]
 document.getElementById('probe').textContent = JSON.stringify({
   recap: oggiViewText.includes('Oggi hai 2 cose da fare e 2 appuntamenti'),
   tasks: oggiTitles.filter((title) => title === 'Richiama per il preventivo' || title === 'Prepara la call con i prezzi del pacchetto').length,
+  strip: oggiViewText.includes('di 9 collegati'),
+  channelsError: oggiViewText.includes('non si sono potuti leggere'),
+  unscoped: seenChannelReads.filter((read) => !String(read).includes('filter.spaceId')).length,
 });
 document.title = 'oggi-ready';`;
     case 'clienti': return `
@@ -984,6 +1004,7 @@ const MENUS = {
     { id: 'stato', label: 'Stato', always: false, ai: false, def: true },
     { id: 'ultimo', label: 'Ultimo contatto', always: false, ai: false, def: true },
     { id: 'prossimo', label: 'Prossimo passo', always: false, ai: false, def: true },
+    { id: 'calendario', label: 'Calendario', always: false, ai: false, def: true },
     { id: 'email', label: 'Email', always: false, ai: false, def: false },
     { id: 'telefono', label: 'Telefono', always: false, ai: false, def: false },
     { id: 'offerta', label: 'Valore offerta', always: false, ai: false, def: false },
@@ -1169,7 +1190,9 @@ await new Promise((r) => setTimeout(r, 100));
 // client answers no confirm endpoint — the PNG proves rows and ghosts.
 document.getElementById('probe').textContent = JSON.stringify({
   days: document.querySelectorAll('.cal-day').length,
-  events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
+  // backlog:667f1f1c: short blocks carry no strong — their line lives in
+  // .cal-compact («Titolo, 18:00»), like tests/admin-calendario-shots.test.js.
+  events: [...document.querySelectorAll('.cal-event strong, .cal-event .cal-compact')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
@@ -1984,6 +2007,9 @@ export function assertProbe(name, probe) {
     case 'oggi': {
       if (probe.recap !== true) throw new Error('oggi: the probe shows no appointments recap');
       if (probe.tasks !== 2) throw new Error(`oggi: the probe lists ${String(probe.tasks)} tasks, expected 2`);
+      if (probe.strip !== true) throw new Error('oggi: the probe shows no channel strip (expected «N di 9 collegati»)');
+      if (probe.channelsError !== false) throw new Error('oggi: the probe shows a channel read failure');
+      if (probe.unscoped !== 0) throw new Error(`oggi: the probe lists ${String(probe.unscoped)} channel-connection reads without filter.spaceId, expected 0`);
       return;
     }
     case 'clienti': {

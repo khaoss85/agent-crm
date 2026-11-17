@@ -332,6 +332,13 @@ export {
   bindTenantStorage,
 } from './src/tenant-storage.js';
 
+// ---- write-outcome storage detection (backlog:f7a380e7) ----
+// External operations run as V2 on write-outcome storages (PostgreSQL) and
+// as V1 everywhere else. A package that routes its provider calls through
+// the sequencer only where V1 runs asks this instead of reaching into
+// `packages/core/src/*` for it.
+export { usesWriteOutcomes } from './src/write-outcome-runtime.js';
+
 export {
   TENANT_BINDING_CONTRACT,
   TENANT_BINDING_CONTRACT_V2,

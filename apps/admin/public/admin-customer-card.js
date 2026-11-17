@@ -3,13 +3,14 @@
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
-import { matchConnections } from './admin-connectors.js';
+import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
+import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
@@ -464,15 +465,25 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
  * count — the section names the shortfall instead.
  * @param {any} timeline the read-customer-timeline answer
  */
+/**
+ * Voce a5fb0770 (review #966): the handle half of an identity key — the same
+ * normalization the row merge and the direction union share, so one mailbox
+ * under two spellings keys alike and two mailboxes never do. Email
+ * lowercases, phone-like systems strip separators, the rest compare raw.
+ * @param {string} system the lowercase identity system
+ * @param {unknown} handle the remote handle or external id
+ */
+function normalizeIdentityHandle(system, handle) {
+  const value = String(handle ?? '');
+  if (PHONE_LIKE_SYSTEMS.includes(system)) return value.replace(/[ .\-()/]/g, '');
+  if (system === 'email' || system === 'gmail' || system === 'outlook') return value.toLowerCase();
+  return value;
+}
+
 export function mergeLinkedIdentities(timeline) {
   const rows = [];
   const seen = new Set();
-  const dedupeKey = (system, externalId) => {
-    const value = String(externalId);
-    if (PHONE_LIKE_SYSTEMS.includes(system)) return `${system}|${value.replace(/[ .\-()/]/g, '')}`;
-    if (system === 'email' || system === 'gmail' || system === 'outlook') return `${system}|${value.toLowerCase()}`;
-    return `${system}|${value}`;
-  };
+  const dedupeKey = (system, externalId) => `${system}|${normalizeIdentityHandle(system, externalId)}`;
   const push = (system, externalId) => {
     const key = dedupeKey(system, externalId);
     if (seen.has(key)) return;
@@ -572,6 +583,45 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
   && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
     || /** @type {any} */ (error).status === 503);
 
+export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
+ * spins without end — a run that answers nothing within the timeout refuses
+ * with the retry code instead of hanging the section. The caller names the
+ * wait in Italian («Non ha risposto in tempo: riprova.»). The clock is the
+ * view's injectable `wait` seam, so tests fire it without real time.
+ * @param {Promise<any>} promise @param {number} [ms] @param {(wms: number) => Promise<any>} [waitFn]
+ * @returns {Promise<any>}
+ */
+export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
+  if (typeof waitFn === 'function') {
+    const timeout = Promise.resolve(waitFn(ms)).then(() => {
+      throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
+    });
+    return Promise.race([promise, timeout]);
+  }
+  // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
+  // leak one 60s timer per fast run — the losing timeout was never cleared.
+  // The guard below clears it as soon as the wrapped promise settles.
+  // No unref: an unref'd short timer lets the event loop drain before it
+  // fires (CI: 'Promise resolution is still pending but the event loop has
+  // already resolved'). Fast runs clear the timer below, so no 60s hang.
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
+    }, ms);
+  });
+  const guarded = Promise.resolve(promise).then(
+    (value) => { if (timer !== null) clearTimeout(timer); return value; },
+    (error) => { if (timer !== null) clearTimeout(timer); throw error; },
+  );
+  return Promise.race([guarded, timeout]);
+}
+/** The Italian line for a run the timeout above refused. @param {any} error */
+const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
+  && /** @type {any} */ (error).code === 'ENRICHMENT_EXTRACT_TIMEOUT';
+
 /**
  * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
  * the phone-bearing identities the profile holds beside the record, and the
@@ -626,6 +676,59 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
+
+/**
+ * The open «Chiama dal CRM» panel, if any (voce 14d999de): one live view at
+ * a time, like the calendar popover — set while the panel is painted,
+ * cleared when it closes or the view routes away. A click outside the panel
+ * closes it; Escape and Chiudi come from the shared window frame.
+ * @type {{ shut: () => void, gone: () => boolean } | null}
+ */
+let openCallPanelHandle = null;
+
+/** The document the single outside-click closer for «Chiama dal CRM» is installed on, if any. */
+let callOutsideInstalledOn = null;
+
+/**
+ * True when the click landed inside the «Chiama dal CRM» panel or on its
+ * opener tile. Matched by attribute, never by node identity: a click that
+ * repaints the view leaves its target in the detached old tree, which still
+ * carries the same markers.
+ * @param {any} target
+ */
+function insideCallPanel(target) {
+  let node = target ?? null;
+  while (node) {
+    const read = typeof node.getAttribute === 'function' ? (name) => node.getAttribute(name) : () => null;
+    if (read('data-call') === 'open' || read('data-action') === 'call-customer') return true;
+    node = node.parentNode ?? null;
+  }
+  return false;
+}
+
+/**
+ * Install once per document: a click outside the open «Chiama dal CRM»
+ * panel closes it. The containment walk uses parentNode, so the
+ * dependency-free fake DOM used by the unit tests behaves like a real
+ * Element. Documents without addEventListener (the fake document) skip the
+ * closer; Escape and Chiudi still work there.
+ * @param {any} doc
+ */
+function installCallOutsideCloser(doc) {
+  if (callOutsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
+  callOutsideInstalledOn = doc;
+  doc.addEventListener('click', (event) => {
+    const current = openCallPanelHandle;
+    if (!current) return;
+    if (current.gone()) {
+      if (openCallPanelHandle === current) openCallPanelHandle = null;
+      return;
+    }
+    if (insideCallPanel(event?.target)) return;
+    openCallPanelHandle = null;
+    current.shut();
+  });
+}
 /** What a passage reads when neither its text nor its subject says anything. */
 export const PASSAGE_NO_TEXT = '(nessun testo)';
 
@@ -792,8 +895,48 @@ export function shownCompanyName(card) {
   // (review #739 giro 3): the same rule as customer-data
   // `isPlaceholderCompanyName`, through the browser twin.
   if (readableName(name.replace(/\([^)]*\)/g, ' ')) === null) return null;
-  return name;
+  // The display name, not the stored one (backlog:088b639d96a2): the same
+  // rule as customer-data `companyDisplayName`. A documentation domain
+  // (`esempio.invalid`) is no company; co-brands read by their own brand;
+  // bare domains read united.
+  let shown = name;
+  // A pipe inside parentheses belongs to the qualifier, never a co-brand
+  // cut (review rev-agent-crm-955-d7262d39): the scheda keeps the same rule
+  // as customer-data `companyDisplayName`.
+  const pipe = pipeOutsideParens(shown);
+  if (pipe >= 0) shown = shown.slice(0, pipe).trim();
+  if (shown === '') return null;
+  if (!/\s/.test(shown) && BARE_COMPANY_DOMAIN.test(shown)) {
+    const top = shown.slice(shown.lastIndexOf('.') + 1);
+    if (/^(?:example|invalid|localhost|test)$/i.test(top)) return null;
+    if (top.length >= 2) shown = shown.toLowerCase();
+  }
+  return shown;
 }
+
+/**
+ * The first pipe outside parentheses (the customer-data `pipeOutsideParens`
+ * rule, restated: the bundle cannot import a package).
+ * @param {string} text
+ */
+function pipeOutsideParens(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth > 0) depth--;
+    } else if (ch === '|' && depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * A bare domain name with no spaces (the customer-data `companyDisplayName`
+ * rule, restated: the bundle cannot import a package). The last label needs
+ * at least two characters, so an abbreviation like `S.p.A` never counts.
+ */
+const BARE_COMPANY_DOMAIN = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 
 /**
  * backlog:2a214b66fe12 — the write applied to what the scheda shows, so
@@ -898,6 +1041,60 @@ export function withOfferStage(loaded, opportunityId, kind, stage) {
 /** The longest note the server keeps (work `bounds.noteBody`). */
 const NOTE_MAX = 1000;
 const NOTE_TOO_LONG = `La nota è troppo lunga: al massimo ${NOTE_MAX} caratteri.`;
+
+/**
+ * Device dictation for the post-call voice note (voce 5036bc435465): the
+ * browser's own speech recognition transcribes on the device, so no audio
+ * ever leaves the phone. Answers null (like the probe) where the browser
+ * has no recognition; otherwise a `{ stop }` handle delivering said text
+ * to `hooks.onText` and the end to `hooks.onEnd`.
+ * @param {any} docNode @param {{ onText?: (text: string) => void, onEnd?: () => void, probe?: boolean }} [hooks]
+ */
+export function defaultDeviceDictate(docNode, hooks = {}) {
+  const view = docNode?.defaultView ?? null;
+  const Recognition = view?.SpeechRecognition ?? view?.webkitSpeechRecognition ?? null;
+  if (typeof Recognition !== 'function') return null;
+  if (hooks?.probe === true) return { stop() {} };
+  let instance = null;
+  try {
+    instance = new Recognition();
+  } catch {
+    return null;
+  }
+  instance.lang = 'it-IT';
+  instance.interimResults = false;
+  instance.maxAlternatives = 1;
+  instance.onresult = (event) => {
+    // Indexed walk (voce 5036bc435465): SpeechRecognitionResultList is an
+    // indexed array-like but not iterable on every implementation
+    // (historically webkit), so for...of would throw and no chunk would
+    // ever reach the transcript.
+    const results = event?.results ?? [];
+    const count = typeof results?.length === 'number' ? results.length : 0;
+    for (let index = 0; index < count; index += 1) {
+      const result = results[index];
+      if (result?.isFinal !== true) continue;
+      const said = String(result?.[0]?.transcript ?? '').trim();
+      if (said !== '') hooks?.onText?.(said);
+    }
+  };
+  instance.onend = () => hooks?.onEnd?.();
+  instance.onerror = () => hooks?.onEnd?.();
+  try {
+    instance.start();
+  } catch {
+    return null;
+  }
+  return {
+    stop() {
+      try {
+        instance.stop();
+      } catch {
+        // Already stopped: the onend already fired.
+      }
+    },
+  };
+}
 
 /**
  * What a refused note says (backlog:82235e46e3e9 seguito, production
@@ -1047,7 +1244,13 @@ export function createCustomerCardView(deps) {
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
-    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    : (ms) => new Promise((resolve) => {
+      // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the extraction
+      // deadline below outlives a fast run — unref'd so the leftover 60s
+      // never holds the loop (the race already ignored its late refusal).
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
   // load backstop never sits among the screen's pauses above. Unref'd
   // where the host allows it, so an idle process never waits on it.
@@ -1318,6 +1521,28 @@ export function createCustomerCardView(deps) {
         if (input && typeof input.value === 'string') drafts.fieldAdd[name] = input.value;
       }
     }
+    // Voce 5036bc435465 (design check 15/11): the open dictation panel is
+    // typing in progress like «Scrivi una nota» — a section landing while
+    // the panel is open repaints the scheda, and the panel must stay open
+    // with the same dictated text and draft. The draftWrap carries which
+    // text the draft was structured from (data-structured-for, read through
+    // the class selector: the fake-DOM querySelector only answers
+    // tag[attr="value"] and .class).
+    const keptVoiceText = root.querySelector('[name="voiceNoteText"]');
+    if (keptVoiceText) {
+      const keptVoice = { open: true, text: String(keptVoiceText.value ?? '') };
+      const keptRiassunto = root.querySelector('[name="voiceRiassunto"]');
+      if (keptRiassunto) keptVoice.riassunto = String(keptRiassunto.value ?? '');
+      const keptDecisioni = root.querySelector('[name="voiceDecisioni"]');
+      if (keptDecisioni) keptVoice.decisioni = String(keptDecisioni.value ?? '');
+      const keptPassi = root.querySelector('[name="voiceProssimiPassi"]');
+      if (keptPassi) keptVoice.prossimiPassi = String(keptPassi.value ?? '');
+      const keptDraftWrap = root.querySelector('.bo-scheda-voice-draft');
+      const keptStructuredFor = typeof keptDraftWrap?.getAttribute === 'function'
+        ? keptDraftWrap.getAttribute('data-structured-for') : null;
+      if (typeof keptStructuredFor === 'string') keptVoice.structuredFor = keptStructuredFor;
+      drafts.voice = keptVoice;
+    }
     return Object.keys(drafts).length > 0 ? drafts : null;
   }
 
@@ -1427,16 +1652,21 @@ export function createCustomerCardView(deps) {
     ]);
     // backlog:a060a4aa65b6 (pilota 14/11: «Carico offerte e cambi di
     // stato…» for 3,0-4,1 s from «Per <cliente>»): the team roster needs
-    // nothing, and the offer the person came from is already known — both
-    // leave as soon as the first wave is done (or its budget ends), ahead of
-    // the profile and without waiting for it. Review Muse #887 (P1): never
-    // beside card and timeline, which keep the first wave to themselves.
-    // The profile's own paint reuses them (historyReads, rosterRead).
+    // nothing, so it leaves as soon as the first wave is done (or its
+    // budget ends), ahead of the profile and without waiting for it.
+    // Review Muse #887 (P1): never beside card and timeline, which keep
+    // the first wave to themselves. The profile's own paint reuses it
+    // (rosterRead).
+    // Voce 4970ba6a2e96 (review Muse giro 2 di #887, P3): the remembered
+    // source offer is only a guess — reading its history here and the
+    // shown offer's at the profile paint read the audit twice whenever
+    // they differed. The profile names the shown offer, so its history is
+    // read once at its paint (the cronologia and «Storia stati» paints
+    // share the same in-flight read); the remembered offer is never read
+    // ahead.
     if (typeof onPart === 'function') {
       void wave2gate.then(() => {
         void readRoster();
-        const cameFrom = knownNames !== null && typeof knownNames.offer === 'function' ? knownNames.offer(resource, id) : null;
-        if (cameFrom !== null) void readHistory(cameFrom).catch(() => {});
       // A client that throws at once fails the card on its own read; this
       // early start never adds a second, unhandled failure.
       }).catch(() => {});
@@ -1494,7 +1724,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function header(panel, card, resource, id) {
+  function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
     // NOT rendered: no record holds it yet (the contact record has no city,
@@ -1502,6 +1732,11 @@ export function createCustomerCardView(deps) {
     // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
     // the origin is the earliest-observed identity the card reports; city
     // and referente have no record yet, so those segments are left out.
+    // Voce 714433c2 (correction liveprobe-20261113, riga 2026-11-07.md:73):
+    // the Cliente/Contatto pill stays a derived indicator (customer-status.js,
+    // shared with the list: the two views cannot disagree), never a menu —
+    // but it now carries its Italian reason as a tooltip, so the derivation
+    // is observable where the verifier looked for the menu.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -1516,7 +1751,10 @@ export function createCustomerCardView(deps) {
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
-    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const badge = el('span', 'bo-scheda-badge', statusLabel(card?.status?.value));
+    const badgeReason = statusMicrocopy(card, profile);
+    if (badgeReason !== null) badge.setAttribute('title', badgeReason);
+    meta.appendChild(badge);
     // C3, as the prototype reads it: `<città> · via <canale> · la segue
     // <referente>`. Only what a record holds is shown: a missing segment is
     // left out, never written as `Da raccogliere` three times in a row
@@ -1812,30 +2050,39 @@ export function createCustomerCardView(deps) {
   // failed (404 not composed or any other error).
   const appendDeviceDialFallback = (into, dialPhone) => {
     const dialable = dialPhone.replaceAll(/[^\d+]/g, '');
-    into.appendChild(link(
+    const dial = link(
       `tel:${dialable === '' ? dialPhone : dialable}`,
-      `Chiama ${dialPhone} (tel:)`, 'call-fallback'));
+      `Chiama ${dialPhone} (tel:)`, 'call-fallback');
+    // Voce 14d999de: a /bo link, never the browser-default blue underline.
+    dial.setAttribute('class', 'bo-call-fallback');
+    into.appendChild(dial);
   };
   function openCallPanel(box, card, navCtx, phone) {
-    const old = box.querySelector('div[data-call="open"]');
-    if (old) {
-      while (old.firstChild) old.removeChild(old.firstChild);
-    }
-    const panel = old ?? el('div', 'bo-scheda-composer');
-    panel.setAttribute('data-call', 'open');
-    if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Chiama dal CRM'));
+    // Voce 14d999de: the shared scheda window frame — the same dark head
+    // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
+    // so the panel reads as /bo and Escape/Chiudi close it. A click outside
+    // closes it too, through the document closer below.
+    installCallOutsideCloser(doc);
+    const win = openSchedaWindow({
+      doc, host: box, attr: 'data-call', action: 'call',
+      title: 'Chiama dal CRM',
+      customer: typeof card?.name === 'string' ? card.name : null,
+    });
+    if (openCallPanelHandle && !openCallPanelHandle.gone()) openCallPanelHandle.shut();
+    openCallPanelHandle = win;
+    const { body } = win;
     const spaceId = activeSpaceId();
     if (spaceId === null) {
-      panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
-      appendDeviceDialFallback(panel, phone);
+      body.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
+      appendDeviceDialFallback(body, phone);
       return;
     }
     const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
-    panel.appendChild(wait);
+    body.appendChild(wait);
     client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        panel.removeChild(wait);
+        if (win.gone()) return;
+        body.removeChild(wait);
         const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
         // The same gate the calls route enforces: active AND a non-empty
       // connectionKey. An entry without a key would be refused 409
@@ -1846,21 +2093,22 @@ export function createCustomerCardView(deps) {
         .find((entry) => entry.status === 'active'
           && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') ?? null;
         if (voice === null) {
-          panel.appendChild(el('p', 'bo-muted',
+          body.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
-          appendDeviceDialFallback(panel, phone);
+          appendDeviceDialFallback(body, phone);
           return;
         }
-        buildCallForm(panel, navCtx, spaceId, phone);
+        buildCallForm(body, navCtx, spaceId, phone);
       },
       (error) => {
-        panel.removeChild(wait);
-        panel.appendChild(el('p', 'bo-muted',
+        if (win.gone()) return;
+        body.removeChild(wait);
+        body.appendChild(el('p', 'bo-muted',
           'La chiamata dal CRM non è disponibile qui: chiama dal telefono.'));
-        panel.appendChild(el('p', 'field-error', humanReadError(error, {
+        body.appendChild(el('p', 'field-error', humanReadError(error, {
           failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
         })));
-        appendDeviceDialFallback(panel, phone);
+        appendDeviceDialFallback(body, phone);
       },
     );
   }
@@ -3043,8 +3291,31 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
-    const directions = observedDirections(timeline);
-    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    // Voce a5fb0770: alias spellings share one mailbox — Gmail, Email and
+    // Outlook read the union of their passages, Messenger the Facebook one —
+    // so an Email row never reads «→ in uscita» alone while arrivals sit
+    // under another spelling. Review #966: the union is keyed by counted
+    // channel plus normalized handle, never by counted channel alone —
+    // inbound on one mailbox plus outbound on another read ↔ on both rows
+    // otherwise. Entries without a usable handle feed the handle-less bucket
+    // their handle-less row reads.
+    const directions = new Map();
+    for (const entry of (Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])) {
+      const system = String(entry?.channel ?? '').toLowerCase();
+      if (system === '') continue;
+      const direction = String(entry?.direction ?? '');
+      if (direction !== 'inbound' && direction !== 'outbound') continue;
+      const counted = cardCountedChannel(system);
+      const remote = typeof entry?.remoteHandle === 'string' && entry.remoteHandle.trim() !== ''
+        && !isUuid(entry.remoteHandle) ? normalizeIdentityHandle(system, entry.remoteHandle) : '';
+      const key = `${counted}|${remote}`;
+      const union = directions.get(key) ?? { in: false, out: false };
+      if (direction === 'inbound') union.in = true;
+      else union.out = true;
+      directions.set(key, union);
+    }
+    const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+    /** @type {Array<{ node: any, counted: string, both: boolean, traffic: string }>} */
     const syncLines = [];
     for (const row of merged.rows) {
       const { system } = row;
@@ -3058,37 +3329,55 @@ export function createCustomerCardView(deps) {
         : ` ${channelLabel(system)} · ${row.externalId}`));
       // Voce 59def6cb805d (C10): the prototype's sync line, from what the
       // passages on this channel prove — both directions seen reads
-      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «↔ in entrata e in uscita», received only «← in entrata», sent only
       // «→ in uscita». A channel with no directed passage says nothing.
       // Review #650 (P2): the directions come from the entries page, so on
       // a truncated read a single direction is not exhaustive — the other
       // may sit on a later page. Both seen is proven either way; one seen
       // names the partial list, the same honesty standard as the count.
-      const seen = directions.get(system);
-      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
-      // backlog:e381c48581fa: both directions seen prove traffic, not a
-      // sync. «↔ sincronizzato» needs the channel linked in the space (the
-      // shared `channelState`); until that is known the line says what was
-      // seen, and a channel known unlinked says so.
-      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
-        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) {
-        const node = el('span', 'bo-scheda-identity-sync', sync);
+      // Voce a5fb0770: an in-only channel never reads outbound — the cap
+      // comes from the shared matrix (`directionOf` in admin-connectors.js),
+      // never from a hardcoded channel name, so a future in-only channel is
+      // capped too. Voice keeps its outbound: operator calls («Chiama») are
+      // real outbound traffic, and the tests fix it (59def6cb805d C10 phone
+      // row plus the voice/site-form tests below).
+      const counted = cardCountedChannel(system);
+      const key = row.externalId == null
+        ? `${counted}|`
+        : `${counted}|${normalizeIdentityHandle(system, row.externalId)}`;
+      const seen = directions.get(key) ?? { in: false, out: false };
+      const inbound = seen.in === true;
+      const outbound = seen.out === true && !(directionOf(counted) === 'in-only' && counted !== 'voice');
+      const traffic = inbound && outbound ? '↔ in entrata e in uscita'
+        : inbound ? `← in entrata${partial}` : outbound ? `→ in uscita${partial}` : null;
+      if (traffic !== null) {
+        // Voce a5fb0770: the channel state arrives after the paint
+        // (/api/connectors is the last read). Until it lands the line is a
+        // placeholder, never a claim the state then corrects: the final
+        // text lands once, traffic then linked or unlinked.
+        // backlog:e381c48581fa: both directions seen prove traffic, not a
+        // sync. «↔ sincronizzato» needs the channel linked in the space (the
+        // shared `channelState`); a channel known unlinked says so.
+        const node = el('span', 'bo-scheda-identity-sync', '…');
         line.appendChild(node);
-        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+        syncLines.push({ node, counted, both: inbound && outbound, traffic });
       }
       box.appendChild(line);
     }
     if (syncLines.length > 0) {
       void readSpaceChannels().then((space) => {
-        if (space === null) return;
         for (const entry of syncLines) {
-          const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
+          if (space === null) {
+            entry.node.textContent = entry.traffic;
+            continue;
+          }
+          const linked = channelState(entry.counted, space).state === 'collegato';
           if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
           // «non collegato» only when known (review #819 P2): with the
           // profile unread a Profilo link cannot be ruled out, so the line
           // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+          else if (!linked && space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
+          else entry.node.textContent = entry.traffic;
         }
       });
     }
@@ -3474,7 +3763,10 @@ export function createCustomerCardView(deps) {
     // Backlog e5e3e886 (supera C13): the ghost `Aggiorna` button STARTS one
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
-    // when it lands the section re-reads the facts and lists the stored
+    // a run that answers nothing refuses in time with the retry line, never
+    // a wait without end. With no messages the button says so at once under
+    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
     // says the AI is off — `Nessun dato nuovo` now means the run happened
@@ -3499,8 +3791,55 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
-        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return;
+      refresh.addEventListener('click', () => {
+        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
+        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
+        // to extract — the button says so at once and sends nothing, never
+        // «Estraggo…», and never spins without end. The re-read below is the
+        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
+        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
+          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+          return uiBusy(refresh, 'Aggiorno…', async () => {
+            busy = true;
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+            // without messages flies under the same single-flight guard as
+            // the extract run — otherwise a repaint in flight lets two
+            // reload()s race and lands the first answer in a detached box.
+            const painted = lastShown;
+            const flight = {};
+            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+            try {
+              let fresh;
+              try {
+                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+              } catch (error) {
+                if (isExtractionTimeout(error)) {
+                  toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+                  }
+                } else {
+                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+                }
+                return;
+              }
+              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              } else {
+                while (box.firstChild) box.removeChild(box.firstChild);
+                enriched(box, fresh, reload, null, ctx, null);
+              }
+              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+            } finally {
+              busy = false;
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            }
+          });
+        }
+        return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
         // The paint this click was painted on: landing anywhere else means
         // a repaint detached this box while the run flew.
@@ -3515,35 +3854,28 @@ export function createCustomerCardView(deps) {
         };
         try {
           const sources = extractionSourcesFromTimeline(sourcesOf);
-          if (sources.length === 0) {
-            // Backlog e5e3e886, arbitrato #853 P1: with zero messages the
-            // run cannot start, but the button still re-reads the facts
-            // like main (voce b9f6a2b58e00) instead of leaving the old
-            // rows on screen — then it says where the AI starts from.
-            let fresh;
-            try {
-              fresh = await reload();
-            } catch (error) {
-              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
-              return;
-            }
-            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-            while (box.firstChild) box.removeChild(box.firstChild);
-            enriched(box, fresh, reload, null, ctx, null);
-            toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-            return;
-          }
           const status = el('p', 'bo-scheda-extracting', 'Estraggo…');
           status.setAttribute('role', 'status');
           box.appendChild(status);
           let answer;
           try {
-            answer = await extract(sources);
+            // Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): a run
+            // that answers nothing refuses in time with the retry line —
+            // «Estraggo…» never spins without end.
+            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
+            } else if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              // Review #989 (P2): a repaint may have detached this box while
+              // the run flew, and its replacement shows the flying
+              // «Estraggo…». The flight is over: release it before the
+              // repaint below, or the new paint shows it again.
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
@@ -3557,9 +3889,21 @@ export function createCustomerCardView(deps) {
           // line — never a silent old screen after a happened run.
           let fresh;
           try {
-            fresh = await reload();
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3848): the re-read
+            // after a landed run flies under the same 60s deadline as the
+            // extract — otherwise a hanging GET holds the flight forever and
+            // every later «Aggiorna» no-ops with no retry line.
+            fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
-            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
@@ -3594,7 +3938,8 @@ export function createCustomerCardView(deps) {
         } finally {
           release();
         }
-      }));
+        });
+      });
       box.appendChild(refresh);
       if (runKey !== null && enrichmentRuns.has(runKey)) {
         // A run this button did not start is still flying (a repaint
@@ -3804,7 +4149,8 @@ export function createCustomerCardView(deps) {
     ];
     const channels = [...new Set(entries.map((item) => String(item?.channel ?? '')).filter((channel) => channel !== ''))];
     // Dan 06/11: the notes get their own chip — «Note · N» — and, once
-    // there, one chip per writer («da dan», «dal team»).
+    // there, one chip per named writer («da dan»); a bucket nobody can
+    // name gets no chip (backlog:3f3c143b).
     const notes = entries.filter((item) => item?.entry === 'note');
     // backlog:82235e46e3e9: a provider id the roster names is a writer too.
     const noteAuthor = (item) => {
@@ -3855,10 +4201,11 @@ export function createCustomerCardView(deps) {
         noteChip.setAttribute('class', 'bo-scheda-chip-note');
         chips.appendChild(noteChip);
       }
-      // backlog:6c40dcfaeb3f: no «dal team» chip that splits into names a
-      // moment later. Review Muse #894 (P2): the chips that can already be named show at
+      // backlog:6c40dcfaeb3f: no chip that splits into names a moment
+      // later. Review Muse #894 (P2): the chips that can already be named show at
       // once (a human handle, an API-named writer); a provider id the
-      // roster alone can name, and the «dal team» bucket, wait for it.
+      // roster alone can name waits for it. A bucket nobody can name never
+      // gets a chip (backlog:3f3c143b).
       const chipAuthors = rosterSettled ? authors : authors.filter((author) => {
         if (author === '') return false;
         const first = notes.find((note) => noteAuthor(note) === author) ?? null;
@@ -3869,19 +4216,21 @@ export function createCustomerCardView(deps) {
         for (const author of chipAuthors) {
           // backlog:2883ef12f233: like the signature, a chip prefers the
           // API-named author of one of its notes over the roster lookup.
+          // backlog:3f3c143b: a bucket nobody can name gets no chip — never
+          // «dal team» or «un membro del team»; its notes stay under «Note».
           const first = author === '' ? null : notes.find((note) => noteAuthor(note) === author) ?? null;
-          const named = first === null ? null : noteWriterName(first);
-          const label = author === '' ? 'dal team' : `da ${named ?? writerName(author) ?? 'un membro del team'}`;
-          const node = chip(label, `note:${author}`, noteAuthorFilter === author, () => {
+          const label = first === null ? null : noteWriterName(first);
+          if (label === null) continue;
+          const node = chip(`da ${label}`, `note:${author}`, noteAuthorFilter === author, () => {
             noteAuthorFilter = noteAuthorFilter === author ? null : author;
             timelineShown = TIMELINE_PAGE;
             drawChips();
             drawList();
           });
-          node.setAttribute('data-author', author === '' ? 'team' : author);
+          node.setAttribute('data-author', author);
           byAuthor.appendChild(node);
         }
-        chips.appendChild(byAuthor);
+        if (byAuthor.firstChild) chips.appendChild(byAuthor);
       }
     };
     const list = el('div', 'bo-scheda-timeline');
@@ -4105,7 +4454,9 @@ export function createCustomerCardView(deps) {
           // roster, which an admin-gated read may withhold.
           const writer = noteWriterName(item);
           const waits = signatureWaits(item?.teamAuthorId, item?.teamAuthor);
-          const author = writer !== null && !waits ? `da ${writer}` : 'dal team';
+          // backlog:3f3c143b: a writer nobody names stays unnamed — the head
+          // reads «Nota · 10:00», never «dal team».
+          const author = writer !== null && !waits ? `da ${writer}` : null;
           row.setAttribute('class', 'bo-scheda-entry bo-scheda-entry-note');
           const mark = el('span', 'bo-scheda-chan bo-tile-note', '✎');
           mark.setAttribute('aria-hidden', 'true');
@@ -4123,7 +4474,10 @@ export function createCustomerCardView(deps) {
             noteHead.appendChild(signaturePlaceholder());
             noteHead.appendChild(el('span', undefined, `${when ? ` · ${when}` : ''}${revised}`));
           } else {
-            noteHead.textContent = `${when ? `Nota · ${author} · ${when}` : `Nota · ${author}`}${revised}`;
+            const headBits = ['Nota'];
+            if (author !== null) headBits.push(author);
+            if (when) headBits.push(when);
+            noteHead.textContent = `${headBits.join(' · ')}${revised}`;
           }
           paper.appendChild(noteHead);
           const mine = myActorId();
@@ -4383,16 +4737,287 @@ export function createCustomerCardView(deps) {
       noteForm.appendChild(el('p', 'bo-muted',
         'Invio aggiunge la nota, Maiusc+Invio va a capo. Non viene inviata a nessuno.'));
       box.appendChild(noteForm);
+      // Voce 5036bc435465: «Detta nota vocale» — after a call from any
+      // phone (CRM-logged or tel: fallback) the operator dictates how it
+      // went. The browser transcribes on the device (the `dictate` seam,
+      // so tests dictate without a microphone); where the browser cannot
+      // dictate the same field is typed. «Ordina con l'AI» structures the
+      // text into riassunto, decisioni and prossimi passi through POST
+      // /api/call-intelligence/voice-note: the three fields stay editable
+      // and «Salva in cronologia» writes them through the existing
+      // subject-note write, signed like every note. No audio ever leaves
+      // the device, so retention has nothing to erase; the spend lands
+      // through the workspace LLM caps. With the AI off the option says so
+      // (VOICE_NOTE_UNAVAILABLE / LLM_* codes) and the dictated text can
+      // still be saved as-is.
+      const voiceWrap = el('div', 'bo-scheda-voice-note');
+      const voiceToggle = el('button', undefined, 'Detta nota vocale');
+      voiceToggle.setAttribute('type', 'button');
+      voiceToggle.setAttribute('data-action', 'dictate-note');
+      voiceWrap.appendChild(voiceToggle);
+      const voicePanel = el('div', 'bo-scheda-voice-panel');
+      // Voce 5036bc435465 (design check 15/11): open/closed, the dictation
+      // and the three draft fields survive a repaint of the scheda — the
+      // sections of a first read land one by one while the panel can be
+      // open. The previous paint's words travel through pendingDrafts
+      // (readDrafts), like «Scrivi una nota». A live microphone handle
+      // cannot travel: a repaint keeps the said words, not the recording.
+      const keptVoice = pendingDrafts?.voice?.open === true ? pendingDrafts.voice : null;
+      let voiceOpen = keptVoice !== null;
+      let voiceDictation = null;
+      // The dictated text the AI draft was structured from (voce
+      // 5036bc435465). Saving refuses a draft whose dictation changed
+      // since, so a stale draft never lands in the cronologia as the new
+      // dictation. Null until the first successful «Ordina». It travels
+      // through pendingDrafts through data-structured-for on the draftWrap.
+      let structuredFor = typeof keptVoice?.structuredFor === 'string' ? keptVoice.structuredFor : null;
+      // Words said or typed before this paint (or before a close-then-reopen
+      // inside one paint): the panel rebuilds with them.
+      let carriedText = typeof keptVoice?.text === 'string' ? keptVoice.text : '';
+      let carriedRiassunto = typeof keptVoice?.riassunto === 'string' ? keptVoice.riassunto : '';
+      let carriedDecisioni = typeof keptVoice?.decisioni === 'string' ? keptVoice.decisioni : '';
+      let carriedPassi = typeof keptVoice?.prossimiPassi === 'string' ? keptVoice.prossimiPassi : '';
+      const stopDictation = () => {
+        try {
+          voiceDictation?.stop?.();
+        } catch {
+          // A stopped-twice device handle is already silent: nothing to say.
+        }
+        voiceDictation = null;
+      };
+      const stashPanelWords = () => {
+        const curText = voicePanel.querySelector('[name="voiceNoteText"]');
+        if (!curText) return;
+        carriedText = String(curText.value ?? '');
+        const curRiassunto = voicePanel.querySelector('[name="voiceRiassunto"]');
+        if (curRiassunto) carriedRiassunto = String(curRiassunto.value ?? '');
+        const curDecisioni = voicePanel.querySelector('[name="voiceDecisioni"]');
+        if (curDecisioni) carriedDecisioni = String(curDecisioni.value ?? '');
+        const curPassi = voicePanel.querySelector('[name="voiceProssimiPassi"]');
+        if (curPassi) carriedPassi = String(curPassi.value ?? '');
+      };
+      const buildVoicePanel = () => {
+        voicePanel.appendChild(el('p', 'bo-muted',
+          'Dopo la chiamata detta com’è andata: la trascrizione resta su questo dispositivo finché non la salvi. L’audio non lascia mai il dispositivo.'));
+        const dictateRow = el('div', 'bo-scheda-form-actions');
+        const dictateButton = el('button', undefined, 'Detta');
+        dictateButton.setAttribute('type', 'button');
+        dictateButton.setAttribute('data-action', 'dictate-start');
+        const dictateState = el('p', 'bo-muted', '');
+        const voiceInput = el('textarea', 'bo-scheda-note-input');
+        voiceInput.setAttribute('name', 'voiceNoteText');
+        voiceInput.setAttribute('rows', '3');
+        voiceInput.setAttribute('aria-label', 'Dettato della chiamata');
+        voiceInput.setAttribute('placeholder', 'Detta qui com’è andata la chiamata, oppure scrivilo…');
+        if (carriedText !== '') voiceInput.value = carriedText;
+        // The device dictation seam: `dictate(doc, hooks)` returns null when
+        // the browser cannot dictate (then the probe below answers null
+        // too), else a `{ stop }` handle delivering text to `hooks.onText`
+        // and `hooks.onEnd`. With `{ probe: true }` it only answers whether
+        // dictation is available, starting nothing.
+        const startDictate = typeof deps.dictate === 'function' ? deps.dictate : defaultDeviceDictate;
+        const canDictate = (() => {
+          try {
+            return startDictate(doc, { probe: true }) !== null;
+          } catch {
+            return false;
+          }
+        })();
+        if (!canDictate) {
+          dictateButton.setAttribute('disabled', '');
+          dictateState.textContent = 'Questo browser non detta: scrivi qui sotto.';
+        }
+        dictateButton.addEventListener('click', () => {
+          if (voiceDictation !== null) {
+            stopDictation();
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+            return;
+          }
+          dictateState.textContent = 'Detto… premi Stop quando hai finito.';
+          dictateButton.textContent = 'Stop';
+          try {
+            voiceDictation = startDictate(doc, {
+              onText: (chunk) => {
+                const said = typeof chunk === 'string' ? chunk : '';
+                if (said === '') return;
+                voiceInput.value = String(voiceInput.value ?? '') === ''
+                  ? said : `${String(voiceInput.value).replace(/\s+$/, '')} ${said}`;
+              },
+              onEnd: () => {
+                voiceDictation = null;
+                dictateButton.textContent = 'Detta';
+                if (dictateState.textContent === 'Detto… premi Stop quando hai finito.') {
+                  dictateState.textContent = 'Dettato fermo: controlla il testo qui sotto.';
+                }
+              },
+            });
+          } catch {
+            voiceDictation = null;
+          }
+          if (voiceDictation === null || typeof voiceDictation?.stop !== 'function') {
+            voiceDictation = null;
+            dictateButton.textContent = 'Detta';
+            dictateState.textContent = 'Il dettato non è partito: scrivi qui sotto.';
+          }
+        });
+        dictateRow.appendChild(dictateButton);
+        voicePanel.appendChild(dictateRow);
+        voicePanel.appendChild(dictateState);
+        voicePanel.appendChild(voiceInput);
+        const voiceError = el('small', 'field-error', '');
+        const structureButton = el('button', undefined, 'Ordina con l’AI');
+        structureButton.setAttribute('type', 'button');
+        structureButton.setAttribute('data-action', 'structure-voice-note');
+        const draftWrap = el('div', 'bo-scheda-voice-draft');
+        const draftField = (name, label, rows) => {
+          const wrap = el('div');
+          const title = el('label', 'bo-scheda-field-label', label);
+          title.setAttribute('for', name);
+          const field = el('textarea', 'bo-scheda-note-input');
+          field.setAttribute('name', name);
+          field.setAttribute('id', name);
+          field.setAttribute('rows', String(rows));
+          field.setAttribute('aria-label', label);
+          wrap.appendChild(title);
+          wrap.appendChild(field);
+          draftWrap.appendChild(wrap);
+          return field;
+        };
+        const riassuntoField = draftField('voiceRiassunto', 'Riassunto', 3);
+        const decisioniField = draftField('voiceDecisioni', 'Decisioni', 2);
+        const passiField = draftField('voiceProssimiPassi', 'Prossimi passi', 2);
+        if (carriedRiassunto !== '') riassuntoField.value = carriedRiassunto;
+        if (carriedDecisioni !== '') decisioniField.value = carriedDecisioni;
+        if (carriedPassi !== '') passiField.value = carriedPassi;
+        if (structuredFor !== null) draftWrap.setAttribute('data-structured-for', structuredFor);
+        const saveButton = el('button', undefined, 'Salva in cronologia');
+        saveButton.setAttribute('type', 'button');
+        saveButton.setAttribute('data-action', 'save-voice-note');
+        structureButton.addEventListener('click', () => uiBusy(structureButton, 'Ordino…', async () => {
+          const spaceId = activeSpaceId();
+          if (spaceId === null) {
+            voiceError.textContent = 'Scegli uno spazio per ordinare la nota con l’AI.';
+            return;
+          }
+          const text = String(voiceInput.value ?? '').trim();
+          if (text === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          voiceError.textContent = '';
+          try {
+            const draft = await client.request('/api/call-intelligence/voice-note', {
+              method: 'POST',
+              body: JSON.stringify({ spaceId, text }),
+            });
+            riassuntoField.value = String(draft?.riassunto ?? '');
+            decisioniField.value = String(draft?.decisioni ?? '');
+            passiField.value = String(draft?.prossimiPassi ?? '');
+            structuredFor = text;
+            draftWrap.setAttribute('data-structured-for', text);
+            voiceError.textContent = '';
+          } catch (error) {
+            const code = typeof error?.code === 'string' ? error.code : '';
+            if (code === 'VOICE_NOTE_UNAVAILABLE' || COMPOSER_AI_OFF_CODES.has(code)) {
+              voiceError.textContent = 'L’AI non è attiva in questo spazio: la bozza resta qui sotto, modificala e salvala lo stesso.';
+            } else {
+              voiceError.textContent = humanReadError(error, { failed: 'L’AI non ha risposto. Riprova tra poco.' });
+            }
+          }
+        }));
+        saveButton.addEventListener('click', () => uiBusy(saveButton, 'Salvo…', async () => {
+          if (noteSaving) return;
+          const riassunto = String(riassuntoField.value ?? '').trim();
+          const decisioni = String(decisioniField.value ?? '').trim();
+          const passi = String(passiField.value ?? '').trim();
+          const dictated = String(voiceInput.value ?? '').trim();
+          // Without an AI draft the dictated text itself is the note, so the
+          // AI-off path still saves — the option said why, it never blocks.
+          const body = riassunto !== '' || decisioni !== '' || passi !== ''
+            ? `Riassunto: ${riassunto}\nDecisioni: ${decisioni}\nProssimi passi: ${passi}`
+            : dictated;
+          if (body === '') {
+            voiceError.textContent = 'Detta o scrivi prima com’è andata la chiamata.';
+            return;
+          }
+          if (body.length > NOTE_MAX) {
+            voiceError.textContent = NOTE_TOO_LONG;
+            return;
+          }
+          // A draft structured from older words never saves as the current
+          // dictation (voce 5036bc435465): reordering after the dictation
+          // changed — or clearing the draft to save the words as-is — comes
+          // first. Untouched manual drafts (never structured) still save.
+          if (body !== dictated && structuredFor !== null && dictated !== structuredFor) {
+            voiceError.textContent = 'La bozza è di un dettato diverso: premi di nuovo «Ordina con l’AI» prima di salvare.';
+            return;
+          }
+          noteSaving = true;
+          voiceError.textContent = '';
+          try {
+            const saved = await client.request('/api/customer-hub/notes', {
+              method: 'POST',
+              body: JSON.stringify({ resource: noteCtx.resource, id: noteCtx.id, body }),
+            });
+            voiceInput.value = '';
+            riassuntoField.value = '';
+            decisioniField.value = '';
+            passiField.value = '';
+            structuredFor = null;
+            carriedText = '';
+            carriedRiassunto = '';
+            carriedDecisioni = '';
+            carriedPassi = '';
+            draftWrap.removeAttribute('data-structured-for');
+            const refreshed = refreshParts(noteCtx.resource, noteCtx.id, ['timeline'],
+              (loaded) => withNote(loaded, saved, body));
+            toast('Nota aggiunta in cima alla cronologia');
+            await refreshed;
+          } catch (error) {
+            const said = noteRefusalText(error);
+            voiceError.textContent = said;
+            toast(said, true);
+          } finally {
+            noteSaving = false;
+          }
+        }));
+        voicePanel.appendChild(structureButton);
+        voicePanel.appendChild(voiceError);
+        voicePanel.appendChild(draftWrap);
+        voicePanel.appendChild(saveButton);
+      };
+      voiceToggle.addEventListener('click', () => {
+        if (voiceOpen) {
+          stashPanelWords();
+          voiceOpen = false;
+          voiceToggle.textContent = 'Detta nota vocale';
+          while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
+          stopDictation();
+          return;
+        }
+        voiceOpen = true;
+        voiceToggle.textContent = 'Chiudi dettato';
+        while (voicePanel.firstChild) voicePanel.removeChild(voicePanel.firstChild);
+        buildVoicePanel();
+      });
+      if (voiceOpen) {
+        voiceToggle.textContent = 'Chiudi dettato';
+        buildVoicePanel();
+      }
+      voiceWrap.appendChild(voicePanel);
+      box.appendChild(voiceWrap);
     }
   }
 
   // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
   // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
-  // when the package is not composed.
+  // when the package is not composed. A cancelled step is not a next
+  // action (seguito 17/11: it read as to-do in the block).
   const openTasksOf = (profile) => {
     if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
-    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
+    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed' && item?.status !== 'cancelled');
   };
   // Voce 2c1c0e149cf9: an agent-opened task is an AI suggestion — the
   // prototype's «✦ suggeriti» mark, read from the record's openedByType
@@ -5243,10 +5868,10 @@ export function createCustomerCardView(deps) {
    * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
    * AZIONI lists the open server tasks, the only copy on the scheda. A failed
    * read fails its vista (or the azioni block) like the card it replaces,
-   * never vanishing as empty. DECISION (to be confirmed): the panel always
-   * paints with honest vista states; only an empty azioni list hides its own
-   * block — the review left the empty state undecided, and hiding the whole
-   * panel would drop the failure contract.
+   * never vanishing as empty. DECISION (supervisore 17/11, verifier back su
+   * 84ebe9e5 AC-3): the block always paints — with no open step it keeps its
+   * title and an honest empty state, never hiding; only an uncomposed
+   * package (null) hides the block, like every uncomposed section.
    */
   function recapPanel(box, parts) {
     const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
@@ -5289,8 +5914,14 @@ export function createCustomerCardView(deps) {
       readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
       return true;
     }
-    if (tasks === null || tasks.length === 0) return true;
+    if (tasks === null) return true;
     box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    // Seguito 17/11: with no open step the block stays with an honest empty
+    // state — the prototype holds PROSSIME AZIONI, never a missing block.
+    if (tasks.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'Nessuna azione aperta.'));
+      return true;
+    }
     for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
     return true;
   }
@@ -5955,7 +6586,8 @@ export function createCustomerCardView(deps) {
         if (people.length > 0) rosterPeople = people;
         // Names arrive after the first paint: paint once more, no read. The
         // first answer repaints even without names: the waiting signatures
-        // then read «dal team» for a writer the team really does not name.
+        // then stay unnamed for a writer the team really does not name
+        // (backlog:3f3c143b: «Nota · 10:00», never «dal team»).
         if ((firstNames || firstAnswer) && lastShown !== null && lastShown.key === shownKey) {
           paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
         }
@@ -6159,7 +6791,7 @@ export function createCustomerCardView(deps) {
       }
       panel.appendChild(head);
     } else {
-      header(panel, card, resource, id);
+      header(panel, card, resource, id, profile);
     }
     const grid = el('div', 'bo-scheda-grid');
     // Dan 06/11: the side columns stay put while the conversation scrolls.

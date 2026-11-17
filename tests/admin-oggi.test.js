@@ -496,6 +496,53 @@ test('57e3d1685e58: past appointments leave «Ti resta» and offer no «Prepara�
   assert.equal(agenda[0].past, true);
 });
 
+test('5e703a7bb397: «Ti resta» counts only appointments ending after now, fixed clock', () => {
+  // 12/11 19:05 in Rome, like the production check: the 10:00 and 12:00
+  // calls are over, so nothing remains and no prep is offered for them.
+  const evening = new Date('2026-11-12T18:05:00.000Z'); // 19:05 in Rome
+  const morning = {
+    ...APPT_TODAY,
+    id: 'appt-10',
+    startsAt: '2026-11-12T09:00:00.000Z', // 10:00 in Rome
+    endsAt: '2026-11-12T10:00:00.000Z', // 11:00 in Rome
+  };
+  const noon = {
+    ...APPT_TODAY,
+    id: 'appt-12',
+    startsAt: '2026-11-12T11:00:00.000Z', // 12:00 in Rome
+    endsAt: '2026-11-12T12:00:00.000Z', // 13:00 in Rome
+  };
+  assert.equal(
+    buildTodayRecap({ appointments: [morning, noon], openTasks: [], now: evening }),
+    'Niente in sospeso e nessun appuntamento per oggi.',
+  );
+  assert.deepEqual(
+    buildAdvisorActions({ tasks: [], appointments: [morning, noon], now: evening }).actions,
+    [],
+    'no prep for calls already over',
+  );
+  assert.equal(nextAppointment([morning, noon], evening), null);
+  assert.equal(upcomingAppointment([morning, noon], evening), null);
+  const agenda = buildTodayAgenda([morning, noon], evening);
+  assert.equal(agenda.length, 2, 'ended slots stay listed, grey');
+  assert.ok(agenda.every((row) => row.past === true));
+  // A call in progress still counts and still offers its prep.
+  const live = {
+    ...APPT_TODAY,
+    id: 'appt-live',
+    startsAt: '2026-11-12T17:30:00.000Z', // 18:30 in Rome
+    endsAt: '2026-11-12T18:30:00.000Z', // 19:30 in Rome
+  };
+  assert.equal(
+    buildTodayRecap({ appointments: [morning, live], openTasks: [], now: evening }),
+    'Niente in sospeso. Ti resta 1 appuntamento.',
+  );
+  const [prep] = buildAdvisorActions({ tasks: [], appointments: [morning, live], now: evening }).actions;
+  assert.equal(prep?.record.id, 'appt-live', 'the prep reads the call in progress');
+  assert.equal(nextAppointment([morning, live], evening)?.id, 'appt-live');
+  assert.equal(buildTodayAgenda([live], evening)[0].past, false, 'a call in progress stays lit');
+});
+
 test('57e3d1685e58: the chi line shows the contact address, never the user one', () => {
   const userMail = 'operatore@esempio.it';
   const contactMail = 'ospite@esempio.it';
@@ -524,7 +571,26 @@ test('57e3d1685e58: the chi line shows the contact address, never the user one',
     {},
     [{ subject: 'op-1', displayName: 'Marco Ferri', email: userMail }],
   );
-  assert.equal(named[0].who, 'Marco Ferri', 'a real team name still reads first');
+  assert.equal(named[0].who, 'Marco Ferri', 'team name reads only without a contact address');
+});
+
+test('57e3d1685e58: the chi line prefers the contact address over a known team name', () => {
+  // VERIFIER_BACK 2026-11-17 (failed delivery 24d7bde1): live «Prova
+  // verifica 40» read «daniele pelleri» (the roster name of the operator
+  // holding the slot) in the grey line under the contact, instead of the
+  // contact's own channel/email. A synced invitee keeps its email in the
+  // stored subject label, so the contact address must win over the team
+  // name whenever both are known.
+  const roster = [{ subject: 'op-1', displayName: 'daniele pelleri', email: 'operatore@esempio.it' }];
+  const appt = {
+    ...APPT_TODAY, id: 'appt-live-40', teamMemberId: 'op-1',
+    subjectLabel: 'ospite@esempio.it', notes: '',
+  };
+  assert.equal(
+    buildTodayAgenda([appt], OGGI_NOW, {}, roster)[0].who,
+    'ospite@esempio.it',
+    'the contact email, never the known team name',
+  );
 });
 
 test('agenda rows link the scheda when it resolves, the calendar event otherwise', () => {
@@ -734,7 +800,7 @@ test('agenda rows carry the chi line from the team member or the notes', () => {
   const withTeam = { ...APPT_TODAY, id: 'appt-team', teamMemberId: 'Marco' };
   const withNotesOnly = { ...APPT_TODAY, id: 'appt-notes' };
   const agenda = buildTodayAgenda([withTeam, withNotesOnly], OGGI_NOW);
-  assert.equal(agenda[0].who, 'Marco', 'team member first');
+  assert.equal(agenda[0].who, 'Marco', 'team member as fallback without a contact address');
   assert.ok(
     agenda[1].who.includes('Vuole la scheda'),
     'notes cue when no team member is stored',
@@ -2463,4 +2529,46 @@ test('8763c6f1a9b0: advisor card, agenda and next-call card read one name for th
     assert.ok(prep.why.includes(`con ${want}.`), `${label}: advisor motive`);
     assert.ok(!`${prep.title} ${prep.why}`.includes('ospite da confermare'), `${label}: no stand-in beside a known name`);
   }
+});
+
+// Backlog 6d0df351: the pilot shape — the schema serves only WhatsApp and
+// Telegram. Oggi invites exactly those (Telegram joins from outside the
+// nine); what no adapter serves reads «non ancora disponibile», never Collega.
+test('6d0df351: with the pilot adapters Oggi invites only what the schema serves', () => {
+  const adapters = ['whatsapp', 'telegram']
+    .map((channel) => ({ channel, name: `${channel}-adapter`, version: 1 }));
+  const channels = missingLeadChannels([], null, adapters).map((entry) => entry.channel);
+  assert.ok(channels.includes('whatsapp'), 'WhatsApp served: still invited');
+  assert.ok(channels.includes('telegram'), 'Telegram served: invited like the nine');
+  for (const channel of ['instagram', 'facebook', 'tiktok', 'voice', 'site-form', 'email']) {
+    assert.ok(!channels.includes(channel), `${channel} unserved: no invite`);
+  }
+  const invite = buildChannelInvite({ connections: [], profile: null, adapters });
+  assert.ok(invite.leads.includes('WhatsApp'), 'WhatsApp invited');
+  assert.ok(invite.leads.includes('Telegram'), 'Telegram invited');
+  for (const label of ['TikTok', 'Chiamate', 'Form del sito', 'Instagram', 'Facebook', 'Email']) {
+    assert.ok(!invite.leads.includes(label), `${label}: no Collega without an adapter`);
+  }
+  assert.ok(invite.aside !== null && invite.aside.includes('non ancora disponibil'),
+    'the unserved rest reads non ancora disponibile');
+});
+
+// Backlog 6d0df351: the adapters the schema names reach the invite; a
+// schema with no adapters metadata leaves them unknown (backlog:803d127c4458
+// keeps its invite).
+test('6d0df351: loadOggiData carries the schema adapters to the invite', async () => {
+  const adapters = [{ channel: 'whatsapp', name: 'whatsapp-adapter', version: 1 }];
+  const clientFor = (schema) => ({
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      if (path === '/api/schema') return schema;
+      if (path === '/api/profile') return null;
+      if (path.startsWith('/api/modules/channel-connection/records')) return { items: [] };
+      throw new Error(`unexpected read: ${path}`);
+    },
+  });
+  const served = await loadOggiData(clientFor({ domains: { channels: { metadata: { adapters } } } }), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.deepEqual(served.channelAdapters, adapters, 'named adapters reach the invite');
+  const unknown = await loadOggiData(clientFor({ domains: { channels: {} } }), OGGI_NOW, { spaceId: 'spazio-b' });
+  assert.equal(unknown.channelAdapters, null, 'no adapters metadata stays unknown');
 });

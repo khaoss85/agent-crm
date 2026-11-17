@@ -324,7 +324,7 @@ const probe = {
   suggest: suggestProbe,
   customer: customerProbe,
   days: document.querySelectorAll('.cal-day').length,
-  events: [...document.querySelectorAll('.cal-event strong')].map((n) => n.textContent),
+  events: [...document.querySelectorAll('.cal-event strong, .cal-event .cal-compact')].map((n) => n.textContent),
   lede: document.querySelector('.cal-wrap .lede') ? document.querySelector('.cal-wrap .lede').textContent : null,
   filled: byName('teamMemberId').value + '|' + byName('date').value + '|' + byName('start').value,
   proposals: [...document.querySelectorAll('.cal-slots button')].filter((b) => b.textContent === 'Conferma').length,
@@ -404,6 +404,7 @@ probe.stretch = await (async () => {
   const minute = (m) => Math.round(colTop + (m / 540) * col.getBoundingClientRect().height);
   col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 5))));
   col.dispatchEvent(new PointerEvent('pointermove', at(minute(3 * 60 + 52))));
+  const during = { origBox: measure() };
   const ghost = document.querySelector('.cal-drag-ghost');
   const ghostBox = ghost ? ghost.getBoundingClientRect() : null;
   col.dispatchEvent(new PointerEvent('pointerup', at(minute(3 * 60 + 52))));
@@ -414,7 +415,7 @@ probe.stretch = await (async () => {
   await settleFrames(3);
   const reloaded = measure();
   return {
-    before, saved, reloaded,
+    before, saved, reloaded, during,
     ghost: ghostBox ? { top: Math.round(ghostBox.top - colTop), bottom: Math.round(ghostBox.bottom - colTop) } : null,
     writes: RESCHEDULES,
   };
@@ -557,7 +558,8 @@ test('the team week renders in a real browser: desktop PNG', { skip: SHOTS_SKIP 
   const stretch = probe.stretch;
   assert.ok(stretch && stretch.before, `the lesson paints before the stretch: ${JSON.stringify(stretch)}`);
   assert.ok(Math.abs(stretch.before.top - 60) <= 2 && Math.abs(stretch.before.bottom - 120) <= 2, `10:00–11:00 before: ${JSON.stringify(stretch)}`);
-  assert.ok(stretch.ghost && Math.abs(stretch.ghost.top - 60) <= 2 && Math.abs(stretch.ghost.bottom - 240) <= 2, `the stretch ghost covers 10:00–13:00: ${JSON.stringify(stretch)}`);
+  assert.equal(stretch.ghost, null, `no second block under the stretch preview: ${JSON.stringify(stretch)}`);
+  assert.ok(stretch.during && stretch.during.origBox && Math.abs(stretch.during.origBox.top - 60) <= 2 && Math.abs(stretch.during.origBox.bottom - 240) <= 2, `the block itself stretches live 10:00–13:00: ${JSON.stringify(stretch)}`);
   assert.deepEqual(stretch.writes, [{ id: 'a5', startsAt: '2026-10-20T08:00:00.000Z', endsAt: '2026-10-20T11:00:00.000Z' }], 'one write: same start, end at 13:00 Rome');
   for (const phase of ['saved', 'reloaded']) {
     const box = stretch[phase];

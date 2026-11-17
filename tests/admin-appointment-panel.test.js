@@ -135,7 +135,7 @@ test('Nuovo appuntamento: the window has the scheda frame, the customer chosen, 
   assert.ok(panel.findAll('div').some((node) => node.getAttribute('class') === 'bo-composer-head'));
   assert.ok(panel.textContent.includes('Nuovo appuntamento · Guido Presti'), 'the head names the chosen customer');
   const services = selectNamed(panel, 'service').findAll('option').map((node) => node.textContent);
-  assert.deepEqual(services, ['Scegli il servizio', 'Lezione prova · 45,00 €', 'Personal training · 60,00 €']);
+  assert.deepEqual(services, ['Scegli il servizio', 'Lezione prova · 45 €', 'Personal training · 60 €']);
   assert.deepEqual(selectNamed(panel, 'duration').findAll('option').map((node) => node.textContent),
     ['15 min', '30 min', '45 min', '1 ora', '1 ora e 30', '2 ore']);
   assert.equal(selectNamed(panel, 'duration').value, '30');
@@ -517,7 +517,7 @@ test('P1 11/11: the window menu is the served bookable list and the claim books 
   };
   const { panel } = await open({ client });
   assert.deepEqual(selectNamed(panel, 'service').findAll('option').map((node) => node.textContent),
-    ['Scegli il servizio', 'Lezione di prova · 15,00 €', 'PT singola · 40,00 €']);
+    ['Scegli il servizio', 'Lezione di prova · 15 €', 'PT singola · 40 €']);
   assert.ok(!base.paths().includes('/api/catalog/products?limit=200'), 'no second rule over the catalog');
   await choose(panel, { service: 'personal-training' });
   chips(panel)[0].dispatch('click');
@@ -544,4 +544,28 @@ test('verifica 12/11: a full free day never hides the next days', async () => {
   chips(panel)[0].dispatch('click');
   await panel.__submit();
   assert.equal(client.confirms()[0].body.startsAt, '2026-11-13T09:00:00.000Z', 'a later day books');
+});
+
+// Voce 9a91d09e (seguito P3 review Muse su #818): the hours of the chosen
+// day were cut to APPOINTMENT_SLOTS_SHOWN with no way to see the rest.
+// Now «Mostra altri orari» reveals them, and no free hour stays hidden.
+test('9a91d09e: a day with more hours than shown offers «Mostra altri orari» and books a late hour', async () => {
+  const crowded = Array.from({ length: 14 }, (_, index) => {
+    const startMs = Date.parse('2026-11-12T08:00:00.000Z') + index * 30 * 60000;
+    return { startsAt: new Date(startMs).toISOString(), endsAt: new Date(startMs + 30 * 60000).toISOString() };
+  });
+  const { panel, client } = await open({ client: fakeClient({ slots: { members: [{ teamMemberId: 'google|sara', slots: crowded }] } }) });
+  await choose(panel);
+  assert.equal(chips(panel).length, 12, 'only the first twelve hours paint');
+  const more = panel.findAll('button').filter((button) => button.getAttribute('data-more-slots') !== null);
+  assert.equal(more.length, 1, 'one way out is offered');
+  assert.ok(more[0].textContent.includes('Mostra altri orari'), 'named so the operator finds it');
+  assert.ok(more[0].textContent.includes('2'), 'the hidden count is said');
+  more[0].dispatch('click');
+  assert.equal(chips(panel).length, 14, 'every free hour is now visible');
+  assert.equal(panel.findAll('button').filter((button) => button.getAttribute('data-more-slots') !== null).length, 0,
+    'nothing is left to reveal');
+  chips(panel)[13].dispatch('click');
+  await panel.__submit();
+  assert.equal(client.confirms()[0].body.startsAt, '2026-11-12T14:30:00.000Z', 'a revealed late hour books');
 });
