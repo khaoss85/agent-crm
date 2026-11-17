@@ -5518,14 +5518,16 @@ export function createCustomerCardView(deps) {
    * backlog:0d68c387 — a confirmed booking reads in the cronologia as its
    * own row («Appuntamento fissato · servizio · data»), at the slot it
    * fixes: the booking used to leave no row, only its cancellation. A
-   * decided cancellation (decidedAt) then sorts after it, newest first.
+   * cancelled booking keeps that row too (the Mac saw two cancellations
+   * with no fissato row before them): the cancellation row follows it at
+   * the decided instant, newest first.
    * @param {any} timeline
    * @param {Map<string, string> | null} serviceNames
    */
   function bookedAppointmentEntries(timeline, serviceNames = null) {
     const items = Array.isArray(timeline?.appointments?.items) ? timeline.appointments.items : [];
     return items
-      .filter((item) => ['booked', 'confirmed'].includes(String(item?.status ?? '')))
+      .filter((item) => ['booked', 'confirmed', 'cancelled'].includes(String(item?.status ?? '')))
       .filter((item) => Number.isFinite(Date.parse(String(item?.startsAt ?? ''))))
       .map((item) => {
         const slot = [shortDayParts(item?.startsAt), timeParts(item?.startsAt)].filter(Boolean).join(' ');
@@ -5559,16 +5561,39 @@ export function createCustomerCardView(deps) {
   }
 
   /**
+   * Two keys name the same service when they only differ in case or
+   * separators («PT-singola» vs «pt_singola»): the menu and the stored
+   * booking may spell them apart, the listino name still wins.
+   */
+  function normalizeServiceKey(serviceKey) {
+    return typeof serviceKey === 'string' ? serviceKey.toLowerCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() : '';
+  }
+
+  /**
    * The booked service as the listino names it («Lezione di prova»), never
-   * the raw slug. A key the listino does not name reads as slug words
-   * («lezione-prova» → «Lezione prova»), like before.
+   * the raw slug. A key the listino does not name reads as slug words —
+   * with the sigle uppercase as in the listino («pt-singola» →
+   * «PT singola», while «lezione-di-prova» stays «Lezione di prova»):
+   * a token of two or more letters with no vowel is a sigla, never a word.
    */
   function serviceTitle(serviceKey, serviceNames = null) {
     const key = typeof serviceKey === 'string' ? serviceKey : '';
-    const named = serviceNames instanceof Map ? serviceNames.get(key) : null;
-    if (typeof named === 'string' && named !== '') return named;
+    if (serviceNames instanceof Map) {
+      const named = serviceNames.get(key);
+      if (typeof named === 'string' && named !== '') return named;
+      const wanted = normalizeServiceKey(key);
+      if (wanted !== '') {
+        for (const [listedKey, listedName] of serviceNames) {
+          if (typeof listedName === 'string' && listedName !== '' && normalizeServiceKey(listedKey) === wanted) return listedName;
+        }
+      }
+    }
     const words = key.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return words === '' ? 'Appuntamento' : `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+    if (words === '') return 'Appuntamento';
+    const readable = words.split(' ').map((word) =>
+      word.length >= 2 && !/[aeiouàèéìòóù]/i.test(word) ? word.toUpperCase() : word,
+    ).join(' ');
+    return `${readable.charAt(0).toUpperCase()}${readable.slice(1)}`;
   }
 
   const SIGNAL_LABELS = Object.freeze({

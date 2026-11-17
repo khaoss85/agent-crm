@@ -575,7 +575,7 @@ test('a cancelled appointment reads in the cronologia as «Appuntamento annullat
   assert.ok(first, 'the service reads as the listino names it');
   assert.ok(first.textContent.includes('Appuntamento annullato · Lezione di prova · 10 nov 10:00'), first.textContent);
   assert.ok(first.textContent.includes('Motivo: Il cliente ha disdetto'), 'the reason reads under it');
-  const second = rows.find((node) => node.textContent.includes('Pt single'));
+  const second = rows.find((node) => node.textContent.includes('PT single'));
   assert.ok(second && !second.textContent.includes('Motivo'), 'no reason line without a reason');
   const text = mount.textContent;
   assert.ok(!text.includes('coach-guido'), 'never the member id');
@@ -619,8 +619,10 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     },
   }));
   const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
-  assert.equal(booked.length, 1, 'one cronologia row per confirmed booking');
+  assert.equal(booked.length, 2, 'the confirmed booking and the cancelled one each keep a fissato row');
   assert.ok(booked[0].textContent.includes('Appuntamento fissato · Lezione di prova · 12 nov'), booked[0].textContent);
+  assert.ok(booked.some((node) => node.textContent.includes('Appuntamento fissato · Lezione di prova · 10 nov 10:00')),
+    'the cancelled booking keeps its fissato row at its slot');
   const text = mount.textContent;
   assert.ok(!text.includes('appointment-booked'), 'never the row key');
   assert.ok(!text.includes('Lezione prova ·'), 'never the slug words when the listino names the service');
@@ -634,6 +636,66 @@ test('a confirmed booking reads in the cronologia as «Appuntamento fissato», b
     0,
     'a channel filter hides the booking row',
   );
+});
+
+// backlog:0d68c387 (repro del NON PASSA 17/11, verifica Mac: due annullamenti
+// senza la riga «Appuntamento fissato» prima, e «Pt singola» invece di
+// «PT singola»). Una prenotazione annullata tiene la sua riga di fissato
+// (allo slot) oltre a quella di annullamento, e la sigla del fallback legge
+// maiuscola come nel listino — mai «Pt singola».
+test('0d68c387: a cancelled «pt-singola» booking keeps its «Appuntamento fissato · PT singola» row', async () => {
+  const mount = await renderCard(stubClient({
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt: '2026-11-13T10:00:00.000Z', endsAt: '2026-11-13T10:45:00.000Z',
+            serviceKey: 'pt-singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt: '2026-11-14T15:00:00.000Z',
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the cancelled booking keeps its fissato row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('Pt singola'), 'never the lowercase sigla');
+  const cancelled = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-cancelled'));
+  assert.equal(cancelled.length, 1, 'the cancellation row stays');
+  assert.ok(cancelled[0].textContent.includes('Appuntamento annullato · PT singola ·'), cancelled[0].textContent);
+});
+
+// backlog:0d68c387: the menu and the stored booking may spell the key apart
+// («PT-singola» vs «pt_singola»): the listino name still wins, never the
+// slug words.
+test('0d68c387: the listino name wins when the stored key spells it apart', async () => {
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'PT-singola', name: 'PT singola', priceCents: 4000, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'confirmed', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'pt_singola', teamMemberId: 'coach-guido', priceCents: 4000, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · PT singola ·'), booked[0].textContent);
 });
 
 // backlog:0d68c387: without the bookable list (an older server, a failed
@@ -724,7 +786,7 @@ test('26afd13657c5: without the listino the Appuntamenti vista still reads slug 
   vista.dispatch('click');
   const recap = mount.findAll('div').find((node) => node.getAttribute('class') === 'bo-scheda-recap-body');
   assert.ok(recap, 'the recap body paints the vista');
-  assert.ok(recap.textContent.includes('Pt single'), `the vista falls back to slug words: ${recap.textContent}`);
+  assert.ok(recap.textContent.includes('PT single'), `the vista falls back to slug words: ${recap.textContent}`);
 });
 
 // backlog:26afd13657c5 (repro del NON PASSA 14/11, verifica Mac 06:5xZ: la
@@ -5442,7 +5504,7 @@ test('backlog:c51dca86dc66: the next appointment reads the contact name like Ogg
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
+  assert.equal(title.textContent, 'PT single · con Coach Guido · per Guido Presti', 'the service with the member Oggi hides and the contact name Oggi shows');
   assert.ok(card.textContent.includes('Venerdì 23 ottobre 2099 · 18:00–19:00'), card.textContent);
   assert.ok(!card.textContent.includes('pt-single') && !card.textContent.includes('coach-guido'), 'no raw keys');
   assert.ok(!card.textContent.includes('Google Calendar'), 'no sync line the booking does not record');
@@ -5453,7 +5515,7 @@ test('backlog:c51dca86dc66 review P2: the appointment title keeps the member whe
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · con Coach Guido', 'the member suffix survives without a readable contact name');
+  assert.equal(title.textContent, 'PT single · con Coach Guido', 'the member suffix survives without a readable contact name');
 });
 
 test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» the contact when the member id is unreadable (C26)', async () => {
@@ -5468,7 +5530,7 @@ test('backlog:c51dca86dc66 review giro 3: the appointment title reads «per» th
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
   assert.ok(card, 'the appointment card paints');
   const title = card.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-appt-title');
-  assert.equal(title.textContent, 'Pt single · per Guido Presti', 'the booking reads as held for the client, never by the client');
+  assert.equal(title.textContent, 'PT single · per Guido Presti', 'the booking reads as held for the client, never by the client');
 });
 
 test('59def6cb805d: the composer reads «Rispondi su», the named placeholder, «Invia su» and the channel note (C21, C22)', async () => {
