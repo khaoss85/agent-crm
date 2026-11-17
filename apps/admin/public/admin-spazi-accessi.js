@@ -435,6 +435,48 @@ export function buildTeamRows(members = [], { selfSubject = null } = {}) {
 }
 
 /**
+ * backlog:6563edf41aab — possible team duplicates for Impostazioni: roster
+ * rows that paint the same name with the same mailbox and access line are
+ * indistinguishable on screen («Daniele Pelleri» vs «daniele pelleri», both
+ * with the same avatar). One entry per colliding painted name, in team
+ * order; rows told apart by mailbox or access kind stay silent, like the
+ * homonyms the access line already separates. A name alone never proves one
+ * person (backlog:9d06eb1e174b), so the hint names the cause and the cure —
+ * it never merges or removes anything itself.
+ * @param {Array<{name?: unknown, email?: unknown, access?: unknown, subject?: unknown, subjects?: unknown}>} rows
+ */
+export function duplicateTeamHints(rows = []) {
+  const list = Array.isArray(rows) ? rows : [];
+  const byPaint = new Map();
+  for (const row of list) {
+    if (!row || typeof row !== 'object') continue;
+    const name = typeof row.name === 'string' ? row.name : '';
+    const email = typeof row.email === 'string' ? row.email : '';
+    const access = typeof row.access === 'string' ? row.access : '';
+    if (name === '' && email === '') continue;
+    const key = [name.toLowerCase(), email.toLowerCase(), access.toLowerCase()].join(' ');
+    byPaint.set(key, [...(byPaint.get(key) ?? []), row]);
+  }
+  const hints = [];
+  for (const group of byPaint.values()) {
+    if (group.length < 2) continue;
+    const variants = [...new Set(group.flatMap((row) => {
+      const fromList = Array.isArray(row.subjects) ? row.subjects : [];
+      const single = typeof row.subject === 'string' ? [row.subject] : [];
+      return [...fromList, ...single].filter((subject) => typeof subject === 'string' && subject !== '');
+    }))];
+    if (variants.length < 2) continue;
+    const painted = group[0].name !== '' ? group[0].name : group[0].email;
+    hints.push({
+      name: painted,
+      count: group.length,
+      text: `«${painted}» compare ${group.length} volte con lo stesso nome: se è la stessa persona con due voci, rimuovi quella vecchia con Rimuovi; se sono due persone diverse, ignoralo.`,
+    });
+  }
+  return hints;
+}
+
+/**
  * The five switches with their effective value: the flipped row wins, the
  * package default covers the rest. Rows of another space never leak in —
  * only rows carrying this space id are honored.
@@ -1186,6 +1228,12 @@ export function createSpaziAccessiView(deps) {
     }
     if (rows.length === 0) {
       list.appendChild(el(doc, 'p', { text: 'Nessun membro oltre a te.', cls: 'bo-muted' }));
+    }
+    // backlog:6563edf41aab: possible duplicates read like the customer
+    // cards — one muted line per colliding name, never a merge: the operator
+    // decides with Rimuovi on the stale row.
+    for (const hint of duplicateTeamHints(rows)) {
+      list.appendChild(el(doc, 'p', { text: `Possibile doppione: ${hint.text}`, cls: 'bo-muted' }));
     }
     for (const row of rows) {
       const item = el(doc, 'div', { cls: 'bo-spazi-member' });

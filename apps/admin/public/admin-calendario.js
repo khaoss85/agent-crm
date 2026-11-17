@@ -409,6 +409,9 @@ export function teamRows(named, hidden) {
 export function personRows(named, hidden, members) {
   const names = Array.isArray(named) ? [...new Set(named.filter((id) => typeof id === 'string' && id !== ''))] : [];
   const off = new Set(Array.isArray(hidden) ? hidden.filter((id) => typeof id === 'string') : []);
+  // backlog:6563edf41aab: identity matching ignores case — a typed filter
+  // and a roster subject that differ only by case are the same person.
+  const namedFold = new Set(names.map((id) => id.toLowerCase()));
   const roster = Array.isArray(members)
     ? members.filter((member) => member && typeof member.subject === 'string' && member.subject !== '')
     : [];
@@ -421,18 +424,39 @@ export function personRows(named, hidden, members) {
     born: person.born, bornIndex: index,
   }));
   const bySubject = new Map();
-  for (const group of groups) for (const subject of group.subjects) bySubject.set(subject, group);
-  const groupFor = (subject) => bySubject.get(subject) ?? null;
+  const byFold = new Map();
+  for (const group of groups) {
+    for (const subject of group.subjects) {
+      bySubject.set(subject, group);
+      if (!byFold.has(subject.toLowerCase())) byFold.set(subject.toLowerCase(), group);
+    }
+  }
+  // backlog:6563edf41aab: the operator's named filter joins the roster
+  // person whatever the case — «Daniele Pelleri» typed over a «daniele
+  // pelleri» roster row is one row, not the same person read twice.
+  const groupFor = (subject) => bySubject.get(subject)
+    ?? (typeof subject === 'string' ? byFold.get(subject.toLowerCase()) ?? null : null);
   // The operator's named filter joins in: a named subject joins its roster
   // group, an unknown one stands alone with no roster name.
   for (const id of names) {
-    if (!groupFor(id)) {
+    const found = groupFor(id);
+    if (!found) {
       const group = {
         subjects: [id], displayName: null, email: null, label: subjectText(id) ?? 'Membro del team',
         born: null, bornIndex: groups.length,
       };
       groups.push(group);
       bySubject.set(id, group);
+      if (!byFold.has(id.toLowerCase())) byFold.set(id.toLowerCase(), group);
+    } else if (!found.subjects.includes(id)) {
+      // backlog:6563edf41aab (review #960 giro 1, P2): the typed filter
+      // joined case-insensitively without adding its identity to the row —
+      // the week request carried both spellings while the toggle hid one,
+      // so blocks stayed visible with no toggle left to hide them. The
+      // typed identity stays on the row: toggle, request and grid hide
+      // the same identities.
+      found.subjects.push(id);
+      bySubject.set(id, found);
     }
   }
   const order = [];
@@ -446,9 +470,11 @@ export function personRows(named, hidden, members) {
     }
   }
   const painted = order.map((group) => {
-    const primary = group.subjects.find((subject) => names.includes(subject)) ?? group.subjects[0];
+    const primary = group.subjects.find((subject) => names.includes(subject))
+      ?? group.subjects.find((subject) => namedFold.has(subject.toLowerCase()))
+      ?? group.subjects[0];
     const name = group.displayName ?? group.email;
-    const listed = group.subjects.some((subject) => names.includes(subject));
+    const listed = group.subjects.some((subject) => namedFold.has(subject.toLowerCase()));
     // backlog:e52c5e0dd49f (review Muse #750 giro 2): a row without a name
     // paints the teamPeople label (name, mailbox, plain words, else the
     // generic fallback) — never the raw stored id, so no slug leaks.
@@ -463,9 +489,12 @@ export function personRows(named, hidden, members) {
   // so Team, manual choice and booking lines read the same label.
   const byBase = new Map();
   for (const entry of painted) {
-    const list = byBase.get(entry.base) ?? [];
+    // backlog:6563edf41aab: same rule as teamPeople — names equal modulo
+    // case number like the homonyms, never two identical-looking rows.
+    const key = entry.base.toLowerCase();
+    const list = byBase.get(key) ?? [];
     list.push(entry);
-    byBase.set(entry.base, list);
+    byBase.set(key, list);
   }
   const ordinalOf = new Map();
   for (const entries of byBase.values()) {
@@ -500,6 +529,11 @@ export function personRows(named, hidden, members) {
       listed,
       // Pressed while any of the person's identities paints: a partially
       // hidden row still shows blocks, so it reads as on until fully off.
+      // backlog:6563edf41aab (review #960 giro 1, P2): hidden-state matching
+      // stays exact — two distinct roster identities («Alice», «alice»)
+      // hide independently; the case-insensitive join above already keeps
+      // the typed spelling on the row, so the real toggle (which hides
+      // every row id) still switches the whole person off.
       active: listed && group.subjects.some((subject) => !off.has(subject)),
       color: colors.get(primary) ?? memberColorIndex(primary),
       initials: memberInitials(name ?? primary),

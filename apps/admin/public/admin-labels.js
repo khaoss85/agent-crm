@@ -404,7 +404,13 @@ export function teamPeople(roster) {
     };
   });
   const byBase = new Map();
-  for (const row of rows) byBase.set(row.base, [...(byBase.get(row.base) ?? []), row]);
+  for (const row of rows) {
+    // backlog:6563edf41aab: same name modulo case is one unreadable pair —
+    // «Daniele Pelleri» and «daniele pelleri» number like the homonyms,
+    // never two identical-looking rows.
+    const key = row.base.toLowerCase();
+    byBase.set(key, [...(byBase.get(key) ?? []), row]);
+  }
   const ordinal = new Map();
   for (const same of byBase.values()) {
     if (same.length < 2) continue;
