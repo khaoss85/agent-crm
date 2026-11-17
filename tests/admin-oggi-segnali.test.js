@@ -177,7 +177,27 @@ test('un modulo del sito senza risposta propone di rispondere sul canale giusto'
   assert.ok(emailOnly.why.includes('via email'), 'solo email: si risponde via email');
   const both = siteFormSignal(formSubmission({ id: 'form-3', replyWhatsapp: true, replyEmail: true }));
   assert.ok(both.why.includes('su WhatsApp e via email'), 'entrambi i recapiti: si risponde su entrambi');
-  assert.equal(siteFormSignal(formSubmission({ status: 'accepted' })), null);
+  // backlog:d08331558c50 (P1 rev-6865d38e): `accepted` è la richiesta ingerita
+  // con successo (messaggio inbound registrato, canali di risposta noti), non
+  // una richiesta gestita: finché il team non risponde resta un segnale.
+  const accepted = siteFormSignal(formSubmission({ status: 'accepted', conversationId: 'conv-form', messageId: 'm-form' }));
+  assert.ok(accepted, 'accepted senza risposta del team genera una riga');
+  assert.equal(accepted.record.module, 'site-form-submission');
+  assert.equal(accepted.record.id, 'form-1');
+  const answered = siteFormSignal(
+    formSubmission({ status: 'accepted', conversationId: 'conv-form', messageId: 'm-form' }),
+    {
+      messages: [{ id: 'm-form', direction: 'inbound', channel: 'website-form', conversationId: 'conv-form', occurredAt: TWO_HOURS_AGO },
+        { id: 'm-reply', direction: 'outbound', channel: 'whatsapp', conversationId: 'conv-form', occurredAt: '2026-11-16T08:00:00Z' }],
+      conversations: [{ id: 'conv-form', status: 'open' }],
+    },
+  );
+  assert.equal(answered, null, 'accepted con risposta del team non segnala più');
+  const closed = siteFormSignal(
+    formSubmission({ status: 'accepted', conversationId: 'conv-form', messageId: 'm-form' }),
+    { messages: [], conversations: [{ id: 'conv-form', status: 'closed' }] },
+  );
+  assert.equal(closed, null, 'accepted con conversazione chiusa non segnala più');
   assert.equal(siteFormSignal(formSubmission({ status: 'rejected' })), null);
   assert.ok(siteFormSignal(formSubmission({ status: 'needs-review', id: 'form-nr' })), 'needs-review aspetta ancora risposta');
   assert.equal(siteFormSignal(formSubmission({ id: '  ' })), null);
@@ -217,7 +237,7 @@ test('un segnale gestito non ricompare: record risolto, riga sparita', () => {
     appointments: [noShowAppointment({ status: 'done' })],
     messages: [inboundMessage()],
     conversations: [openConversation({ status: 'closed' })],
-    submissions: [formSubmission({ status: 'accepted' })],
+    submissions: [formSubmission({ status: 'accepted', conversationId: 'conv1' })],
     now: NOW,
   });
   assert.equal(after.length, 0, 'dopo la gestione: nessun segnale');

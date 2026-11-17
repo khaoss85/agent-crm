@@ -527,8 +527,41 @@ function appointmentPrepAction(appointment, names = {}, pendingNames = false) {
 /** Days of customer silence before Oggi proposes a follow-up. */
 export const SIGNAL_SILENCE_DAYS = 3;
 
-/** Submission states still waiting for the team's answer. */
-const OPEN_FORM_STATUSES = Object.freeze(['pending', 'needs-review']);
+/**
+ * Submission states still waiting for the team's answer. `accepted` is the
+ * successfully-ingested request (inbound message logged, reply channels
+ * known) — it waits like `pending`/`needs-review` until the team answers in
+ * its conversation. Only `rejected` (spam) never signals.
+ */
+const OPEN_FORM_STATUSES = Object.freeze(['pending', 'needs-review', 'accepted']);
+
+/**
+ * Whether the team already answered an accepted website-form request: its
+ * conversation is closed, or it holds a non-inbound message newer than the
+ * request itself (same contract as silent threads: the latest word is ours).
+ * Without a linked conversation, or without a readable request date, the
+ * request still waits — the row stays rather than hiding work.
+ * @param {Record<string, any>} submission an accepted site-form-submission row
+ * @param {Array<Record<string, any>>} messages inbox message rows
+ * @param {Array<Record<string, any>>} conversations inbox conversation rows
+ */
+function formConversationAnswered(submission, messages, conversations) {
+  const conversationId = nonEmptyText(submission?.conversationId);
+  if (!conversationId) return false;
+  const conversation = (Array.isArray(conversations) ? conversations : [])
+    .find((entry) => nonEmptyText(entry?.id) === conversationId) ?? null;
+  if (conversation != null && conversation?.status === 'closed') return true;
+  const since = Date.parse(String(submission?.occurredAt ?? ''));
+  if (!Number.isFinite(since)) return false;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message == null) continue;
+    if (nonEmptyText(message?.conversationId) !== conversationId) continue;
+    if (message?.direction === 'inbound') continue;
+    const at = Date.parse(String(message?.occurredAt ?? ''));
+    if (Number.isFinite(at) && at > since) return true;
+  }
+  return false;
+}
 
 /**
  * One signal action for an appointment the customer missed: rebook it.
@@ -640,14 +673,17 @@ export function silentThreadSignal(message, { conversation = null, now = new Dat
  * One signal action for a website-form request still waiting for the team's
  * answer: answer on the channel the visitor can read (MEM_ACC_GOAL: WhatsApp
  * when there is a phone number, email when there is only an email, both when
- * there are both). A decided submission (accepted, rejected) drops the row on
- * the next recompute.
+ * there are both). `rejected` (spam) never signals; an `accepted` request
+ * drops the row on the next recompute only when its conversation shows the
+ * team's answer (a newer non-inbound message) or is closed.
  * @param {Record<string, any>} submission a site-form-submission row
+ * @param {{ messages?: Array<Record<string, any>>, conversations?: Array<Record<string, any>> }} [context] inbox rows to tell an answered form apart
  */
-export function siteFormSignal(submission) {
+export function siteFormSignal(submission, { messages = [], conversations = [] } = {}) {
   const id = nonEmptyText(submission?.id);
   if (!id) return null;
   if (!OPEN_FORM_STATUSES.includes(submission?.status)) return null;
+  if (submission?.status === 'accepted' && formConversationAnswered(submission, messages, conversations)) return null;
   const fullName = [nonEmptyText(submission?.firstName), nonEmptyText(submission?.lastName)]
     .filter((part) => part !== null).join(' ');
   const label = fullName !== '' ? fullName
@@ -721,7 +757,7 @@ export function buildSignalActions({ appointments = [], messages = [], conversat
     if (signal) actions.push(signal);
   }
   for (const submission of Array.isArray(submissions) ? submissions : []) {
-    const signal = submission == null ? null : siteFormSignal(submission);
+    const signal = submission == null ? null : siteFormSignal(submission, { messages, conversations });
     if (signal) actions.push(signal);
   }
   return Object.freeze(actions);
