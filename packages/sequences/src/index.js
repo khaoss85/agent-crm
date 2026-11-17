@@ -14,6 +14,7 @@ import {
 // as the created `space-permission-gate@1` capability object handed to this
 // factory at the composition site.
 import {
+  addSuppression,
   advanceSequences,
   buildActivateSequenceAction,
   buildPauseSequenceAction,
@@ -23,6 +24,7 @@ import {
   computeSequenceMetrics,
   enrollSequencePerson,
   optionalSequenceLabel,
+  removeSuppression,
   requireSequenceActor,
   sameSequenceStepContent,
   sequenceKey,
@@ -59,7 +61,7 @@ export const SEQUENCES_DOMAIN = 'sequences';
 
 /** The record modules this package owns. A second claimant is a startup collision. */
 export const SEQUENCES_RESOURCES = Object.freeze([
-  'sequence', 'sequence-step', 'sequence-enrollment', 'sequence-send',
+  'sequence', 'sequence-step', 'sequence-enrollment', 'sequence-send', 'sequence-suppression',
 ]);
 
 const SEQUENCES_REQUIRES = Object.freeze([
