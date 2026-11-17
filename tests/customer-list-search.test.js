@@ -536,6 +536,9 @@ test('f6b9d189: searchMatchFields names the fields a text match sits on', () => 
     identitiesBySubject: new Map([['contact:c-both', [{ system: 'whatsapp', externalId: '+393331234567' }]]]),
   });
   assert.deepEqual(searchMatchFields(both, 'Ada 333'), ['name', 'phone'], 'text and digits blame their own fields');
+  const split = row('Ada', 'Bianchi', { email: 'rossi@example.it' });
+  assert.deepEqual(hits([split], 'Ada rossi'), ['Ada Bianchi'], 'the words span the name and the email');
+  assert.deepEqual(searchMatchFields(split, 'Ada rossi'), ['name', 'email'], 'review #985 P2: spanning words blame both fields');
   assert.deepEqual(searchMatchFields(anna, 'whatsapp'), [], 'a channel-only query matches on the channel, never on text');
   assert.deepEqual(searchMatchFields(anna, ''), [], 'no needle, no explanation');
 });

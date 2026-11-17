@@ -467,10 +467,12 @@ function searchPartsOf(row) {
  * reason — the match sat on a field the form never shows). A subset of
  * `['name', 'email', 'company', 'phone']`, frozen, in that order; empty when
  * the needle carries no text (a channel-only query matches on the channel,
- * never on a visible field). The text words keep the `searchRank` word
- * rules per field, so a word the row matches globally is always blamed on
- * at least one field; the digits keep the held-phone rule with its floor.
- * Pure, so the endpoint and the admin panel share it.
+ * never on a visible field). Every text word keeps the `searchRank` word
+ * rule and blames each field it sits in, so a word the row matches globally
+ * (even on another field than its siblings, like «Ada» on the name and
+ * «rossi» on the email) is always blamed on at least one field; the digits
+ * keep the held-phone rule with its floor. Pure, so the endpoint and the
+ * admin panel share it.
  * @param {any} row a shaped list row
  * @param {unknown} q the raw `q` query text
  */
@@ -489,7 +491,7 @@ export function searchMatchFields(row, q) {
     ];
     for (const [key, value] of fields) {
       if (typeof value !== 'string' || value === '') continue;
-      if (searchRank([value], text, '') >= 0) hits.push(key);
+      if (text.some((word) => searchRank([value], [word], '') >= 0)) hits.push(key);
     }
   }
   if (digits !== '' && digits.length >= PHONE_SEARCH_MIN_DIGITS
