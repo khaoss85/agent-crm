@@ -832,7 +832,10 @@ export function createShellView({
       menu.appendChild(pick);
     }
     const manage = el(doc, 'button', 'bo-space-manage', 'Gestisci spazi e accessi');
-    manage.addEventListener('click', () => go(SETTINGS_ROUTE));
+    // backlog:2302655b1fcf: the entry opens Spazi e accessi directly, never
+    // the settings index — the route is read from the tab it opens, not a copy.
+    const spaziAccessi = SETTINGS_AREAS.find((area) => area.id === 'spazi-accessi');
+    manage.addEventListener('click', () => go(spaziAccessi?.route ?? '#/spazi-accessi'));
     menu.appendChild(manage);
     sidebar.appendChild(menu);
 
@@ -1222,8 +1225,13 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  mount.appendChild(el(doc, 'p', 'bo-kicker', 'Backoffice'));
-  mount.appendChild(el(doc, 'h2', undefined, 'Impostazioni'));
+  // backlog:2302655b1fcf: the same header as Personalizzazione (panel-title
+  // plus subtitle), never the «Backoffice» kicker the other screens dropped.
+  mount.appendChild(el(doc, 'h2', { text: 'Impostazioni', cls: 'panel-title' }));
+  mount.appendChild(el(doc, 'p', {
+    text: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+    cls: 'muted',
+  }));
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(

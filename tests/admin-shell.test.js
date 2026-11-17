@@ -795,6 +795,27 @@ test('settings panel lists the four areas with honest availability', () => {
   assert.ok(!unknown.textContent.includes('Niente da sistemare.'));
 });
 
+test('backlog:2302655b1fcf — Impostazioni header matches Personalizzazione, no BACKOFFICE kicker', () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  renderSettingsPanel({ doc, mount, fixCount: 0, customerDataAvailable: true });
+  const titles = mount.findAll('h2');
+  assert.equal(titles.length, 1);
+  assert.equal(titles[0].textContent, 'Impostazioni');
+  assert.ok((titles[0].getAttribute('class') ?? '').split(/\s+/).includes('panel-title'), 'same title class as Personalizzazione');
+  assert.ok(!mount.textContent.includes('Backoffice'), 'no BACKOFFICE kicker');
+  const subtitles = mount.findAll('p').filter((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('muted'));
+  assert.ok(subtitles.length >= 1, 'a subtitle like Personalizzazione');
+});
+
+test('backlog:2302655b1fcf — «Gestisci spazi e accessi» opens Spazi e accessi directly', () => {
+  const { sidebar, seen } = renderShell({ items: buildShellNav({ customerDataAvailable: true }) });
+  const manage = sidebar.findAll('button').find((node) => node.textContent === 'Gestisci spazi e accessi');
+  assert.ok(manage, 'the space menu carries the entry');
+  manage.dispatch('click', {});
+  assert.deepEqual(seen.navigated, ['#/spazi-accessi']);
+});
+
 // backlog:1d33b335fba0: «Non è stato possibile leggerle (non è detto che non
 // ce ne siano)» named nothing and offered nothing. The panel says what was
 // not read and offers Riprova, which reads the count again.
