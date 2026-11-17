@@ -1,7 +1,7 @@
 // @ts-check
 
 import { elFor, UI_BUSY_LOCKED, uiBusy } from './admin-ui.js'; // BO-F6-02: the single component library.
-import { formatAmount, humanReadError, parseEuroToCents } from './admin-core.js';
+import { formatAmount, humanReadError, humanizeLabel, parseEuroToCents } from './admin-core.js';
 import { createSubmissionController } from './admin-submission.js';
 import { loadFixCount, settingsTabs } from './admin-shell.js';
 
@@ -195,7 +195,14 @@ export function createCatalogView(deps) {
     ? deps.navigate
     : (hash) => { if (globalThis.location) globalThis.location.hash = hash; };
   const SOURCE_LABELS = { manual: 'Manuale' };
-  const sourceLabel = (source) => SOURCE_LABELS[source] ?? (String(source ?? '').toLowerCase().includes('stripe') ? 'Stripe' : String(source ?? '—'));
+  // backlog:252cabdf2350: the Fonte column never shows a raw provider slug
+  // («presti-listino»): manual and Stripe keep their fixed Italian labels,
+  // every other source reads through the shared humanizeLabel, so the row
+  // pill and the Fonte menu agree on the same readable name («Presti
+  // listino»). Option values stay the raw names `listProducts` filters by.
+  const sourceLabel = (source) => SOURCE_LABELS[source] ?? (String(source ?? '').toLowerCase().includes('stripe')
+    ? 'Stripe'
+    : (humanizeLabel(String(source ?? '')) || '—'));
   const INTERVAL_LABELS = { day: 'giorno', week: 'settimana', month: 'mese', year: 'anno' };
   // Keys are the contract's PRICING_MODELS (packages/core/src/money.js); flat_fee and per_unit need no marker.
   const PRICING_MODEL_LABELS = { graduated: 'a scaglioni', volume: 'a volume' };
