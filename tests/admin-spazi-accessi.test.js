@@ -39,6 +39,7 @@ import {
   SPACE_AI_PERMISSION_DEFAULTS,
 } from '../packages/space-permissions/src/index.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
+import { spaceMenuItems } from '../apps/admin/public/admin-shell.js';
 
 const flush = async (rounds = 12) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
@@ -184,6 +185,31 @@ test('space cards name the operator role, hostile names stay text', () => {
   assert.equal(spaceRoleLabel('observer'), 'Osservatore');
   assert.equal(spaceRoleLabel('sconosciuto'), 'sconosciuto');
   assert.equal(spaceRoleLabel(null), 'non disponibile');
+});
+
+test('space cards wear the menu badge: one function decides sigla and color', () => {
+  // backlog:56c9ec170eaa: stessa sigla e stesso colore del menu «Cambia spazio».
+  const spaces = [
+    { id: 'spazio-1', name: 'Presti Group' },
+    { id: 'spazio-2', name: 'Prova Validazione B1' },
+  ];
+  const cards = buildSpaziCards({ spaces, activeSpaceId: 'spazio-1', role: 'owner' });
+  const menu = spaceMenuItems(spaces, 'spazio-1');
+  assert.deepEqual(cards.map((card) => card.initials), menu.map((row) => row.initials));
+  assert.deepEqual(cards.map((card) => card.badgeClass), menu.map((row) => row.badgeClass));
+  assert.ok(cards.every((card) => /^bo-space-badge--p\d+$/.test(card.badgeClass)), 'every card carries a palette class');
+});
+
+test('space cards paint the palette badge, never the black initials', async () => {
+  const spaces = [{ id: SPACE, name: 'Negozio', initials: 'NE' }];
+  const { mount, view: v } = view({ client: stubClient({ members: [] }), spaces });
+  await v.render();
+  await flush();
+  const badge = mount.findAll('span')
+    .find((node) => (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-space-badge'));
+  assert.ok(badge, 'the card wears the menu badge');
+  assert.equal(badge.textContent, 'NE');
+  assert.match(badge.getAttribute('class') ?? '', /bo-space-badge--p\d+/, 'the badge carries the palette color');
 });
 
 test('effective switches default on except send-without-approval, other spaces never leak in', () => {

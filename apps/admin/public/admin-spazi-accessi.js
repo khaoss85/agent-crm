@@ -45,7 +45,7 @@ import { readProfile } from './admin-profilo.js';
 import { humanReadError, humanWriteError } from './admin-core.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { CONNECTOR_BADGES, CONNECTOR_CATALOG } from './admin-connectors.js';
-import { loadFixCount, settingsTabs } from './admin-shell.js';
+import { loadFixCount, settingsTabs, spaceMenuItems } from './admin-shell.js';
 import { loadSpaceAgents, renderTeamAgentRows } from './admin-agenti.js';
 import { subjectText, teamPeople } from './admin-labels.js';
 
@@ -255,13 +255,21 @@ export function teamChannelTiles(connectors) {
 /**
  * One space card: identity from the shell space, the operator's role beside
  * it, and whether this is the space being worked in.
+ *
+ * backlog:56c9ec170eaa: the badge sigla and color are the menu's own —
+ * `spaceMenuItems` (admin-shell.js) decides them for both views, so the
+ * card can never read «PR» black while the menu reads another sigla.
  * @param {{spaces?: Array<{id?: unknown, name?: unknown, initials?: unknown}>, activeSpaceId?: unknown, role?: unknown}} input
  */
 export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null } = {}) {
   const list = Array.isArray(spaces) ? spaces : [];
-  return list
-    .filter((space) => space && typeof space === 'object' && typeof space.id === 'string' && space.id !== '')
-    .map((space) => ({
+  const valid = list
+    .filter((space) => space && typeof space === 'object' && typeof space.id === 'string' && space.id !== '');
+  const shared = new Map(spaceMenuItems(valid, activeSpaceId).map((entry) => [entry.id, entry]));
+  return valid
+    .map((space) => {
+      const badge = shared.get(space.id) ?? { initials: '·', badgeClass: '' };
+      return {
       id: space.id,
       name: typeof space.name === 'string' && space.name !== '' ? space.name : space.id,
       // Prototype 08 prints a line under the name («Interior design ·
@@ -271,11 +279,13 @@ export function buildSpaziCards({ spaces = [], activeSpaceId = null, role = null
         && /** @type {any} */ (space).description.trim() !== ''
         ? /** @type {any} */ (space).description.trim()
         : null,
-      initials: typeof space.initials === 'string' && space.initials !== '' ? space.initials : '·',
+      initials: badge.initials,
+      badgeClass: badge.badgeClass,
       role: spaceRoleLabel(role),
       roleKnown: typeof role === 'string' && role !== '',
       active: space.id === activeSpaceId,
-    }));
+      };
+    });
 }
 
 /**
@@ -989,7 +999,7 @@ export function createSpaziAccessiView(deps) {
     for (const card of cards) {
       const cell = el(doc, 'div', { cls: 'bo-spazi-card' });
       const head = el(doc, 'div', { cls: 'bo-spazi-head' });
-      head.appendChild(el(doc, 'span', { text: card.initials, cls: 'bo-spazi-initials' }));
+      head.appendChild(el(doc, 'span', { text: card.initials, cls: `bo-space-badge ${card.badgeClass}` }));
       const names = el(doc, 'div', { cls: 'bo-spazi-names' });
       names.appendChild(el(doc, 'div', { text: card.name, cls: 'bo-spazi-name' }));
       if (card.description !== null) {

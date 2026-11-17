@@ -1312,6 +1312,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin-top: 26px; }
 .bo-spazi-card { padding: 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
 .bo-spazi-initials { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
+/* backlog:56c9ec170eaa: the card wears the menu's own badge (same sigla and
+ * palette class from spaceMenuItems), only larger for the card head. */
+.bo-spazi-head .bo-space-badge { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
 .bo-spazi-here { align-self: flex-start; padding: 5px 10px; border-radius: 99px; background: var(--accent-soft); }
 .bo-spazi-card:has(.bo-spazi-here) { border: 1.5px solid var(--accent); }
 .bo-spazi-panels { gap: 18px; margin-top: 26px; }
