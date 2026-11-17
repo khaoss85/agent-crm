@@ -170,7 +170,10 @@ test('cancel cancels the named booking through the operation with the actor (bac
     const call = app.calls.find((entry) => entry.method === 'cancelAppointmentBooking');
     assert.ok(call, 'the cancel operation runs');
     assert.equal(call.actor.id, 'op-1');
-    assert.deepEqual(call.input, { id: 'b1', reason: 'Annullato dal calendario' });
+    // backlog:9aa5c073: the server adds its own viewer (never from the
+    // caller), so a private booking cancels only for its creator and the
+    // administrators.
+    assert.deepEqual(call.input, { id: 'b1', reason: 'Annullato dal calendario', viewer: { actorId: 'op-1', isAdmin: false } });
     const body = await response.json();
     assert.equal(body.cancelled, true);
     assert.equal(body.appointment.status, 'cancelled');
