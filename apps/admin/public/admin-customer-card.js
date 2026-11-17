@@ -594,14 +594,27 @@ export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
  * @returns {Promise<any>}
  */
 export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
-  const sleep = typeof waitFn === 'function' ? waitFn : (wms) => new Promise((resolve) => {
-    const timer = setTimeout(resolve, wms);
+  if (typeof waitFn === 'function') {
+    const timeout = Promise.resolve(waitFn(ms)).then(() => {
+      throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
+    });
+    return Promise.race([promise, timeout]);
+  }
+  // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
+  // leak one 60s timer per fast run — the losing timeout was never cleared.
+  // The guard below clears it as soon as the wrapped promise settles.
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
+    }, ms);
     if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
   });
-  const timeout = Promise.resolve(sleep(ms)).then(() => {
-    throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
-  });
-  return Promise.race([promise, timeout]);
+  const guarded = Promise.resolve(promise).then(
+    (value) => { if (timer !== null) clearTimeout(timer); return value; },
+    (error) => { if (timer !== null) clearTimeout(timer); throw error; },
+  );
+  return Promise.race([guarded, timeout]);
 }
 /** The Italian line for a run the timeout above refused. @param {any} error */
 const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
@@ -3773,6 +3786,13 @@ export function createCustomerCardView(deps) {
           toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
           return uiBusy(refresh, 'Aggiorno…', async () => {
             busy = true;
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+            // without messages flies under the same single-flight guard as
+            // the extract run — otherwise a repaint in flight lets two
+            // reload()s race and lands the first answer in a detached box.
+            const painted = lastShown;
+            const flight = {};
+            if (runKey !== null) enrichmentRuns.set(runKey, flight);
             try {
               let fresh;
               try {
@@ -3780,6 +3800,9 @@ export function createCustomerCardView(deps) {
               } catch (error) {
                 if (isExtractionTimeout(error)) {
                   toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+                  }
                 } else {
                   toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
                 }
@@ -3787,11 +3810,16 @@ export function createCustomerCardView(deps) {
               }
               const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
               const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-              while (box.firstChild) box.removeChild(box.firstChild);
-              enriched(box, fresh, reload, null, ctx, null);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              } else {
+                while (box.firstChild) box.removeChild(box.firstChild);
+                enriched(box, fresh, reload, null, ctx, null);
+              }
               toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
             } finally {
               busy = false;
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
             }
           });
         }
@@ -3845,9 +3873,21 @@ export function createCustomerCardView(deps) {
           // line — never a silent old screen after a happened run.
           let fresh;
           try {
-            fresh = await reload();
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3848): the re-read
+            // after a landed run flies under the same 60s deadline as the
+            // extract — otherwise a hanging GET holds the flight forever and
+            // every later «Aggiorna» no-ops with no retry line.
+            fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
-            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
