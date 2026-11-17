@@ -1457,9 +1457,10 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
     const name = (subjectKey ? nonEmptyText(names?.[subjectKey]) : null)
       ?? realLabel(conversation?.subjectLabel)
       ?? realLabel(message.subjectLabel)
-      // A notification names its sender like Clienti does — the brand of
-      // its domain («Namecheap»), never the bare address (backlog:bab63e32acdb,
-      // verification 12/11): its profile name is never read.
+      // A notification without a customer subject names its sender like
+      // Clienti does — the brand of its domain («Namecheap»), never the
+      // bare address (backlog:bab63e32acdb, verification 12/11); with a
+      // subject the profile name above already won (backlog:971b3e0e).
       ?? (machine ? labelFromEmail(senderAddress(handle)) : null)
       ?? handle
       ?? 'Contatto senza nome';
@@ -1468,8 +1469,9 @@ export function buildInbox({ messages = [], conversations = [], now = new Date()
       at,
       channel,
       subjectKey,
-      // Only the waiting rows read profile names (readInboxNames): a
-      // notification keeps its stored label, never a grey bar for good.
+      // Waiting rows and notifications with a subject read profile names
+      // (readInboxNames, readNotificationNames — backlog:971b3e0e); a
+      // notification still never waits in grey for its name.
       namePending: !machine && pendingNames === true && subjectKey !== null
         && !(names !== null && typeof names === 'object' && Object.hasOwn(names, subjectKey)),
       // backlog:0f78353438c5: le righe Da rispondere mostrano le
@@ -1782,18 +1784,15 @@ async function readSpaceConnections(client, space) {
 }
 
 /**
- * The customer name of every shown «Da rispondere» row (production 07/11:
- * the channel syncs store no subject label, so every row read «Cliente»).
- * One read-only profile per shown subject — at most the inbox limit —
- * settled together; a refused or unknown profile leaves the row on its
- * stored label or sender handle, never an error on Oggi.
+ * One read-only profile per subject — settled together; a refused or
+ * unknown profile leaves the row on its stored label, brand or sender
+ * handle, never an error on Oggi. The one name rule every screen reads
+ * (`nameFromProfile`, the same function Clienti reads).
  * @param {{ request: (path: string) => Promise<any> }} client
- * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @param {Array<string>} keys `resource:id` subjects to name
  * @returns {Promise<Record<string, string>>}
  */
-export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
-  const { rows } = buildInbox({ messages, conversations, now, ownAddresses });
-  const keys = [...new Set(rows.map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+async function readProfileNames(client, keys) {
   /** @type {Record<string, string>} */
   const names = {};
   const settled = await Promise.allSettled(keys.map(async (key) => {
@@ -1807,6 +1806,43 @@ export async function readInboxNames(client, messages, conversations, now, { own
     if (result.status === 'fulfilled' && result.value.name) names[result.value.key] = result.value.name;
   }
   return names;
+}
+
+/**
+ * The customer name of every shown inbox row — «Da rispondere» and
+ * «Notifiche automatiche» (production 07/11: the channel syncs store no
+ * subject label, so every row read «Cliente»; backlog:971b3e0e: a
+ * notification with a customer subject read the brand of their domain
+ * while Clienti showed their profile name). One read-only profile per
+ * shown subject — at most twice the inbox limit — settled together; a
+ * refused or unknown profile leaves the row on its stored label, brand
+ * or sender handle, never an error on Oggi.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readInboxNames(client, messages, conversations, now, { ownAddresses = [] } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses });
+  const keys = [...new Set([...built.rows, ...built.notifications.rows]
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
+}
+
+/**
+ * The customer name of every shown «Notifiche automatiche» row with a
+ * subject (backlog:971b3e0e): the branch the server «Da rispondere» view
+ * names itself, so it reads only what the view cannot name. Same function,
+ * same fail-soft rule as `readInboxNames`; a notification still never
+ * waits in grey for its name.
+ * @param {{ request: (path: string) => Promise<any> }} client
+ * @param {Array<any>} messages @param {Array<any>} conversations @param {Date} now
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readNotificationNames(client, messages, conversations, now, { ownAddresses = [], correspondents = null } = {}) {
+  const built = buildInbox({ messages, conversations, now, ownAddresses, correspondents });
+  const keys = [...new Set(built.notifications.rows
+    .map((row) => row.subjectKey).filter((key) => typeof key === 'string'))];
+  return readProfileNames(client, keys);
 }
 
 /** Profile reads for appointment names, at most: the agenda never has more on one screen. */
@@ -2066,14 +2102,42 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   // a slow view never holds the agenda names or the actions back.
   outcome.inboxNamesPending = true;
   let repliesSettled = false;
+  // backlog:971b3e0e (review Codex P2 on df720f0d): «Da rispondere» paints
+  // as soon as its own data is in — the notification profile names repaint
+  // after, without holding the ready rows or their count back.
+  let namesPublished = false;
+  const named = () => {
+    if (typeof onNames !== 'function') return;
+    try {
+      onNames({ ...outcome, pending: false, briefPending: true });
+    } catch (error) {
+      noteReadFailure('paint', error);
+    }
+    namesPublished = true;
+  };
   const repliesBranch = repliesRead.then(async (replies) => {
     outcome.replies = replies;
     outcome.repliesPending = false;
-    outcome.inboxNames = outcome.inboxAvailable && replies === null
-      ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
-      : {};
+    // The ready rows and their count paint now, even while a notification
+    // profile read is still flying.
+    if (namesPublished) named();
+    // backlog:971b3e0e: «Notifiche automatiche» always comes from the
+    // local messages read, so its subjects need profile names on both
+    // branches — the server view names «Da rispondere» itself, never the
+    // notifications. The server branch reads notification subjects only,
+    // with the same scan-wide base the render decides them from.
+    outcome.inboxNames = !outcome.inboxAvailable
+      ? {}
+      : replies === null
+        ? await readInboxNames(client, outcome.inboxMessages, outcome.inboxConversations, now, { ownAddresses: ownMailboxes(outcome.profile, outcome.connections) })
+        : await readNotificationNames(client, outcome.inboxMessages, outcome.inboxConversations, now, {
+          ownAddresses: ownMailboxes(outcome.profile, outcome.connections),
+          correspondents: replies.correspondents ?? null,
+        });
     outcome.inboxNamesPending = false;
     repliesSettled = true;
+    // The notification names fill in after, in place.
+    if (namesPublished) named();
   });
   // Voce 785aeb28bd18: the roster already rides the first wave beside the
   // profile (see above) — joining it here only waits for what is still
@@ -2085,15 +2149,8 @@ export async function loadOggiData(client, now = new Date(), { onEssentials = nu
   outcome.appointmentNames = appointmentNames;
   outcome.members = members;
   // backlog:bd5e84545021: the names are in — the actions wake up now; only
-  // the call recap and «Da rispondere» may still be reading.
-  const named = () => {
-    if (typeof onNames !== 'function') return;
-    try {
-      onNames({ ...outcome, pending: false, briefPending: true });
-    } catch (error) {
-      noteReadFailure('paint', error);
-    }
-  };
+  // the call recap and the notification names may still be reading (their
+  // branches repaint in place through named, backlog:971b3e0e).
   named();
   const answeredLate = !repliesSettled;
   await repliesBranch;

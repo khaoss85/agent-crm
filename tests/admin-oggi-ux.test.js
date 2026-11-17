@@ -346,7 +346,7 @@ test('bab63e32acdb: receipts and no-reply notices leave Da rispondere for a clos
   assert.equal(toggled, false);
 });
 
-test('bab63e32acdb: the open group stays open when the day repaints, and its rows never read profile names', async () => {
+test('971b3e0e: the open group stays open when the day repaints, and a notification with a subject reads its profile', async () => {
   const notice = {
     id: 'm-2', conversationId: 'c2', direction: 'inbound', channel: 'email', body: 'Nuovo commento',
     occurredAt: '2026-10-19T06:30:00.000Z', ...host, subjectId: 'docs', remoteHandle: 'comments-noreply@docs.google.com', subjectLabel: 'Documenti Google',
@@ -357,7 +357,12 @@ test('bab63e32acdb: the open group stays open when the day repaints, and its row
   const mount = createMount();
   const view = createOggiView({ doc, mount, client, navigate: () => {}, setTimer: () => null, clearTimer: () => {} });
   await view.render({ spaceName: 'Spazio', links: [], now: NOW });
-  assert.ok(!client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'no profile read for a notification');
+  // backlog:971b3e0e changes the bab63e32acdb rule on purpose: a
+  // notification with a customer subject reads its profile with the same
+  // function Clienti reads, so the row shows the profile name. (The
+  // fixture profile read refuses, so the row keeps its stored label here;
+  // the name itself is pinned in admin-oggi-inbox-names.test.js.)
+  assert.ok(client.calls.some((call) => call.path.includes('/profile/contact/docs')), 'the notification subject reads its profile like Clienti');
   const toggle = () => mount.querySelector('button[data-action="inbox-notifications"]');
   assert.equal(toggle().getAttribute('aria-expanded'), 'false');
   toggle().dispatch('click');
