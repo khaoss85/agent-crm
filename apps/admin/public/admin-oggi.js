@@ -2669,9 +2669,21 @@ export function renderOggi({
       inbox.appendChild(line);
     }
     // Backlog 803d127c4458: past the messages page the count above
-    // undercounts — the cut is disclosed, never silent.
+    // undercounts — the cut is disclosed, never silent, with the way to
+    // see the rest (Clienti › Tutti, like the other inbox notes above).
     if (home.inbox.partial === true) {
-      inbox.appendChild(el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci).`));
+      const note = el(doc, 'p', 'bo-muted', `L'elenco dei messaggi è parziale (oltre ${OGGI_READ_LIMIT} voci). `);
+      if (typeof events.openClientiView === 'function') {
+        const all = el(doc, 'a', 'bo-oggi-more', 'Vedi tutti in Clienti →');
+        all.setAttribute('href', clientiViewHash('tutti'));
+        all.setAttribute('data-action', 'inbox-all-messages');
+        all.addEventListener('click', (event) => {
+          if (event && typeof event.preventDefault === 'function') event.preventDefault();
+          events.openClientiView('tutti');
+        });
+        note.appendChild(all);
+      }
+      inbox.appendChild(note);
     }
     // backlog:bab63e32acdb: receipts and no-reply notices sit apart, closed
     // by default, with no «Rispondi» — like Gmail's Aggiornamenti.
@@ -3152,7 +3164,11 @@ export function createOggiView(deps) {
     const inbox = last.repliesPending === true
       ? { available: true, pending: true, total: 0, rows: [], notifications }
       : last.replies != null
-        ? { ...serverInbox, notifications }
+        // Backlog 803d127c4458: the server view names «Da rispondere» but
+        // never reads the messages page — its cut still hides rows (the
+        // notifications group reads from that page), so the local capped
+        // flag rides along instead of dropping in silence.
+        ? { ...serverInbox, partial: serverInbox.partial === true || local?.partial === true, notifications }
         : local;
     renderOggi({
       doc,
