@@ -180,6 +180,31 @@ export const CONNECTOR_BADGES = Object.freeze({
   'site-form': Object.freeze({ tile: 'WEB', tint: 'ui-chip-web' }),
 });
 
+// Direction from the channel matrix of packages/channels/README.md (BO-F1-01):
+// the five channels that send through the outbox, and the three catalog
+// channels that are inbound-only by contract (CHANNEL_SEND_UNSUPPORTED).
+// `sms` has no dedicated adapter in packages/channels, so its direction is
+// undeclared here — the detail says so instead of guessing.
+export const DIRECTION_BY_CHANNEL = Object.freeze({
+  whatsapp: 'in-out',
+  instagram: 'in-out',
+  telegram: 'in-out',
+  facebook: 'in-out',
+  email: 'in-out',
+  tiktok: 'in-only',
+  voice: 'in-only',
+  'site-form': 'in-only',
+});
+
+/**
+ * @param {string} channel
+ * @returns {'in-out' | 'in-only' | null} null when the matrix declares none.
+ */
+export function directionOf(channel) {
+  const direction = /** @type {Record<string, string>} */ (DIRECTION_BY_CHANNEL)[channel];
+  return direction === 'in-out' || direction === 'in-only' ? direction : null;
+}
+
 /**
  * Adapters of the live schema serving one channel.
  * @param {string} channel
