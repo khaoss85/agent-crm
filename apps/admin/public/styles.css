@@ -1651,6 +1651,15 @@ select.bo-spazi-input { flex: none; }
  * block; short blocks read on one dotted line; no line ever paints half-cut. */
 .cal-grid .cal-event { align-content: start; }
 .cal-grid .cal-event .cal-compact { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:667f1f1c: below 60 min badges ride the painted line (one row),
+ * never a row of their own that the block cannot fit whole. */
+.cal-grid .cal-event.is-short, .cal-grid .cal-event.is-medium { white-space: nowrap; text-overflow: ellipsis; }
+.cal-grid .cal-event.is-short .cal-compact { display: inline; }
+.cal-grid .cal-event .cal-line-badges { display: inline; margin-left: 4px; white-space: nowrap; }
+.cal-grid .cal-event .cal-line-badges > span + span { margin-left: 4px; }
+/* The cancelled badge shrinks to the line height: the full badge would push
+ * the title out of a 45-min block. */
+.cal-grid .cal-event .cal-line-badges .badge { padding: 1px 4px; font-size: 9px; }
 .cal-grid .cal-event.is-medium strong { display: block; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; overflow-wrap: anywhere; }
 .cal-m0 { background: var(--data-soft); color: var(--ink); }
 .cal-m1 { background: var(--human-soft); color: var(--ink); }

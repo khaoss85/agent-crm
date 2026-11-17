@@ -1458,9 +1458,10 @@ test('the time grid shows five work days against the 09:00–18:00 axis', async 
   const barba = blocks.find((node) => node.textContent.includes('11:00'));
   assert.ok(barba, 'the barba block paints with its Rome time');
   assert.ok(barba.getAttribute('style').includes('grid-row: 9 / span 2'), `barba covers exactly its half hour: ${barba.getAttribute('style')}`);
-  // Colour and initials come from the opaque member id, never a name.
+  // Colour comes from the opaque member id, never a name; the initials dot
+  // paints only where it fits whole (backlog:667f1f1c: 60+ min).
   assert.match(taglio.getAttribute('class'), /cal-m[0-4]/, 'the block carries its member tint');
-  assert.ok(taglio.textContent.includes('MA'), 'the block carries member initials');
+  assert.equal(taglio.findAll('span').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('cal-avatar')).length, 0, 'no half-cut initials dot on a 30-min block');
   assert.ok(!taglio.textContent.includes('marco'), 'the member id is not printed in full');
 });
 

@@ -3364,46 +3364,42 @@ export function createCalendarioView(deps) {
     });
     const time = `${romeTime(row.startsAt) ?? '?'}–${romeTime(row.endsAt) ?? '?'}`;
     const origin = originOf(row);
-    if (durationMin < 45) {
-      // backlog:667f1f1c: a short block reads on one line, «Titolo, 12:00», cut with dots.
-      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
-      // The origin badge stays readable on the single line when the foot
-      // below stays hidden (15-min blocks), so nothing paints half-cut.
-      // At 30+ min the foot carries avatar and badges.
-      if (durationMin < 30) {
-        if (origin === 'whatsapp') item.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-        else if (origin === 'google') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-        else if (origin === 'link') item.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-        if (cancelled) item.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
-      }
-    } else {
-      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
-      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
-    }
-    const foot = el(doc, 'span', { className: 'cal-day-foot' });
-    // Initials decorate (the tint already encodes the member); the WA badge
-    // stays readable because it names the booking origin.
-    foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+    // backlog:667f1f1c: below 60 min no row paints under the title rows —
+    // the verifier saw the initials dot half-cut in a 43px block. Badges
+    // (origin, cancelled) ride the line that already paints; the foot with
+    // the initials dot paints only where it fits whole (60+ min).
+    const badgeNodes = [];
     // backlog:29bb3f2c0d64: the channel pill of the prototype block — WA
     // keeps its badge, a Google-imported event and an online-link booking
     // carry their own short pill; a booking made here carries none, like
     // the prototype's non-WA blocks.
-    if (origin === 'whatsapp') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
-    } else if (origin === 'google') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
-    } else if (origin === 'link') {
-      foot.appendChild(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
-    }
+    if (origin === 'whatsapp') badgeNodes.push(el(doc, 'span', { className: 'cal-wa', text: 'WA' }));
+    else if (origin === 'google') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-google', text: '↔ Google', attrs: { title: 'Da Google Calendar' } }));
+    else if (origin === 'link') badgeNodes.push(el(doc, 'span', { className: 'cal-pill cal-pill-link', text: 'Link', attrs: { title: 'Prenotato con il link online' } }));
     // A cancelled booking still reads as cancelled: the tint alone must
     // never pass a dead booking as held.
-    if (cancelled) {
-      foot.appendChild(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    if (cancelled) badgeNodes.push(el(doc, 'span', { className: 'badge', text: statusWord(status) }));
+    const lineBadges = () => {
+      const wrap = el(doc, 'span', { className: 'cal-line-badges' });
+      for (const badge of badgeNodes) wrap.appendChild(badge);
+      return wrap;
+    };
+    if (durationMin < 45) {
+      // A short block reads on one line, «Titolo, 12:00», cut with dots.
+      item.appendChild(el(doc, 'span', { className: 'cal-compact', text: `${titleOf(row)}, ${romeTime(row.startsAt) ?? '?'}` }));
+      if (badgeNodes.length > 0) item.appendChild(lineBadges());
+    } else {
+      item.appendChild(el(doc, 'span', { className: 'cal-time', text: time }));
+      if (durationMin < 60 && badgeNodes.length > 0) item.appendChild(lineBadges());
+      item.appendChild(el(doc, 'strong', { text: titleOf(row) }));
     }
-    // backlog:667f1f1c: the foot (avatar, badges) only fits whole when the
-    // block has room — 15-min blocks already carry origin and status on
-    // their single line, so the foot never paints half-cut.
-    if (durationMin >= 30) item.appendChild(foot);
+    if (durationMin >= 60) {
+      const foot = el(doc, 'span', { className: 'cal-day-foot' });
+      // Initials decorate (the tint already encodes the member).
+      foot.appendChild(el(doc, 'span', { className: 'cal-avatar', text: memberInitials(memberName ?? row?.teamMemberId), attrs: { 'aria-hidden': 'true' } }));
+      if (badgeNodes.length > 0) foot.appendChild(lineBadges());
+      item.appendChild(foot);
+    }
     if (movable) {
       // The bottom edge stretches the booking (backlog:3d0fbe7dc8d1): a
       // span, never a button inside the event button. Dragging it changes
