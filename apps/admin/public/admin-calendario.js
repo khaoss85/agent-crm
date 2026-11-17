@@ -1752,6 +1752,10 @@ export function createCalendarioView(deps) {
       );
       if (token !== renderToken) return;
       state.week = week;
+      // backlog:134f3ed7 — a reload that does not carry the just-booked id
+      // yet (read lag) still paints its block: the confirmed row rides the
+      // fresh week, so the pending handshake below selects it.
+      carryBookedRow();
       state.weekError = null;
       state.unavailable = false;
       // backlog:bd5e84545021: the event Oggi asked for opens its detail
@@ -4348,7 +4352,23 @@ export function createCalendarioView(deps) {
         parseMemberFilter(state.memberFilter),
         state.members,
       );
-      fillManual(ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft);
+      let fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+      // backlog:134f3ed7 — a day-only draft left Inizio/Fine empty («--:--»):
+      // every opening proposes a time, so the first free step of the drafted
+      // day rides into the form — a real free slot, never an invented
+      // midnight. Without a free step the hours stay empty and the note says
+      // why («Nessuno slot libero quel giorno»).
+      if (draftDayOnly(fill)) {
+        const key = draftDayKey(fill);
+        const first = key
+          ? state.proposals.find((slot) => romeDayKey(slot?.startsAt) === key && romeTime(slot?.startsAt) && romeTime(slot?.endsAt))
+          : null;
+        if (first) {
+          state.draft = { ...state.draft, startsAt: first.startsAt, endsAt: first.endsAt };
+          fill = ids.length === 1 ? { ...state.draft, teamMemberId: ids[0] } : state.draft;
+        }
+      }
+      fillManual(fill);
     }
   }
 
@@ -4670,6 +4690,35 @@ export function createCalendarioView(deps) {
    * the new event once it paints.
    * @param {any} appointment
    */
+  /**
+   * backlog:134f3ed7 — the just-booked row rides the painted week: the new
+   * block shows on the next paint, even before the reload lands or when the
+   * reloaded week does not carry the id yet. Only the booked day inside the
+   * painted week and its existing member group, replaced by id — never an
+   * invented row, never another member's lane.
+   */
+  function carryBookedRow() {
+    const booked = state.confirmed;
+    const id = typeof booked?.id === 'string' && booked.id !== '' ? booked.id : null;
+    const member = typeof booked?.teamMemberId === 'string' && booked.teamMemberId !== '' ? booked.teamMemberId : null;
+    if (id === null || member === null) return;
+    if (!state.week || !Array.isArray(state.week.members)) return;
+    const day = romeDayKey(booked?.startsAt);
+    if (!day || !state.weekKeys.includes(day)) return;
+    const group = state.week.members.find((entry) => entry?.teamMemberId === member);
+    if (!group || !Array.isArray(group.appointments)) return;
+    const at = group.appointments.findIndex((row) => String(row?.id ?? '') === id);
+    // Never mutate the loaded week in place (tests share the stub object):
+    // rebuild the group, so only the painted state changes.
+    const appointments = at >= 0
+      ? group.appointments.map((row, index) => (index === at ? booked : row))
+      : [...group.appointments, booked];
+    state.week = {
+      ...state.week,
+      members: state.week.members.map((entry) => (entry === group ? { ...entry, appointments } : entry)),
+    };
+  }
+
   function markBooked(appointment) {
     state.confirmed = appointment ?? null;
     state.selection = null;
@@ -4701,12 +4750,28 @@ export function createCalendarioView(deps) {
       state.weekKeys = romeWeekKeys(new Date(`${day}T12:00:00Z`));
       state.week = null;
     }
+    // backlog:134f3ed7 — the new block reads highlighted on the next paint:
+    // the selection names it now and its row rides the painted week, so the
+    // grid shows it before the reload lands. The reload reconciles.
+    if (id !== null) {
+      state.selectedId = id;
+      carryBookedRow();
+    }
   }
 
   /** Reload the week after a booking, so the new event paints on the grid. */
-  function reloadAfterBooking() {
+  async function reloadAfterBooking() {
+    if (!state.confirmed) return;
     const members = parseMemberFilter(state.memberFilter);
-    if (members.length > 0 && state.confirmed) void loadWeek(members);
+    if (members.length > 0) {
+      void loadWeek(members);
+      return;
+    }
+    // backlog:134f3ed7 — the filter may read empty (roster unreadable, the
+    // operator cleared it): the booked member still scopes the reload, so
+    // the new block paints and highlights instead of never reloading.
+    if (state.pendingEventMember !== null) void loadWeek([state.pendingEventMember]);
+    else renderAll();
   }
 
   /**
