@@ -27,11 +27,13 @@ import { CLIENTI_IMPORT_ROUTE } from './admin-clienti.js';
 import { ACTIVE_SPACE_KEY, settingsTabs } from './admin-shell.js';
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import {
+  CHANNEL_STATE_LABELS,
   channelConnectRoute,
+  channelDirectionLine,
+  channelMark,
   channelState,
   countedChannel,
   NINE_CHANNELS,
-  channelConnectionCount,
   mergeProfileConnections,
 } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
@@ -43,11 +45,17 @@ export const SYNC_ROUTE = '#/stato-sync';
  * Health verdicts the activity payload carries, in display order of worry.
  * @param {unknown} health
  */
-const SYNC_MARKS = Object.freeze({ whatsapp: 'WA', instagram: 'IG', facebook: 'FB', tiktok: 'TT', email: '@', gmail: '@', phone: 'TEL', voice: 'TEL', web: 'WEB', form: 'WEB', calendar: 'CAL', google_calendar: 'CAL', stripe: 'S' });
-/** The prototype's channel tile mark, from a channel id or its label. */
+/**
+ * The tile mark of a table row: the one mark of admin-channels-count.js
+ * (`channelMark`, backlog:6d0df351) — the same mark Connettori paints.
+ * Stored spellings the count does not alias (`phone`, `web`, `form`)
+ * read as their channel, as before.
+ */
 function syncMark(value) {
-  const key = String(value ?? '').toLowerCase().replace(/\s+/g, '_').split(':')[0];
-  return SYNC_MARKS[key] ?? (String(value ?? '·').slice(0, 2).toUpperCase() || '·');
+  const id = countedChannel(value) || value;
+  if (id === 'phone') return channelMark('voice');
+  if (id === 'web' || id === 'form') return channelMark('site-form');
+  return channelMark(id);
 }
 
 export function healthTone(health) {
@@ -516,7 +524,7 @@ export function withProfileConnections(activity, profile = null) {
  * connect it (backlog:cf365ada15b9). A catalogued channel opens its guided
  * flow; Google Calendar opens Profilo when the profile offers the Google
  * connector (that is where its Collega lives); Stripe has no connect
- * screen, so it reads `non collegato` with no Collega to nowhere.
+ * screen, so it reads `Non ancora disponibile` with no Collega to nowhere.
  * @param {string} channel
  * @param {unknown} [profile]
  * @param {unknown} [adapters] the schema's composed channel adapters, null when unread
@@ -678,7 +686,9 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       channel,
       label: channelLabel(channel),
       mark: syncMark(channel),
-      direction: directionLabel(list[0]?.direction ?? null),
+      // The fixed line of admin-channels-count.js (backlog:6d0df351),
+      // the same line Connettori paints — never the payload's wording.
+      direction: channelDirectionLine(channel),
       present: true,
       connected: list.some((entry) => entry.status === 'active'),
       received: agg.received,
@@ -693,10 +703,11 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
   // The catalog channels outside the fixed nine (Telegram, SMS) read here
   // too, with the same state Connettori shows: an unlinked Telegram no
   // longer hides while Connettori invites it. Like the Stripe row, a
-  // channel nothing here can connect reads `non collegato` with no Collega;
-  // its Collega appears through the same shared state as every other row.
-  // These rows never widen the «<n> di 9 collegati» count (review #680
-  // P2-3): only a linked outsider does.
+  // channel nothing here can connect reads `Non ancora disponibile` with
+  // no Collega; its Collega appears through the same shared state as
+  // every other row. These rows never widen the shared count's universe
+  // (review #680 P2-3): only a linked outsider does — but the card headline
+  // counts the rows it shows (backlog:6d0df351).
   for (const entry of CONNECTOR_CATALOG) {
     const channel = entry != null ? entry.channel : '';
     if (typeof channel !== 'string' || channel === '') continue;
@@ -706,7 +717,7 @@ export function syncChannelTable(activity, nowMs = Date.now(), { profile = null,
       channel,
       label: channelLabel(channel),
       mark: syncMark(channel),
-      direction: directionLabel(null),
+      direction: channelDirectionLine(channel),
       present: false,
       connected: false,
       received: 0,
@@ -1270,29 +1281,27 @@ export function createSyncView(deps) {
     }
   }
 
-  // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows with
-  // the mark, the name plus the fixed direction line, `agg. …`, `<n> eventi
-  // ricevuti` (cumulative — the payload has no daily counter, P2 Codex su
-  // #415) and the pill — `Collega` where the row can be connected, an honest
-  // `non collegato` with no button for a row nothing here connects (Stripe,
-  // Google Calendar without the profile's Google connector, C19). No
-  // per-row pull: the prototype pulls globally from the hero, and the
+  // The prototype's `Canali` card (BO-F6-16, fetta 2): nine fixed rows plus
+  // the catalog outsiders (Telegram, SMS) with the mark, the name plus the
+  // fixed direction line, `agg. …`, `<n> eventi ricevuti` (cumulative — the
+  // payload has no daily counter, P2 Codex su #415) and the pill — `Collega`
+  // where the row can be connected, an honest `Non ancora disponibile`
+  // with no button for a row nothing here connects (Stripe, Google
+  // Calendar without the profile's Google connector, backlog:6d0df351).
+  // No per-row pull: the prototype pulls globally from the hero, and the
   // per-row buttons would be a structural difference. No account column:
   // the prototype names the channel, never the binding handle.
   function renderTable(box, activity) {
     const rows = syncChannelTable(activity, Date.now(), { profile: state.profile, adapters: state.adapters });
-    // One count for Oggi and Stato sync (backlog:cf365ada15b9): the shared
-    // channelConnectionCount over the same rows, profile links included.
-    // A linked channel outside the fixed nine (SMS, Telegram) is a row of
-    // the table, so it counts and so does its place — «1 di 10» (review
-    // #647 P2); a row that is not active (suspended, pending) keeps its
-    // pill but is not «collegato».
-    // The spec's «<n> di 9 collegati» (C16/C27): the nine rows, Stripe
-    // included, plus a linked channel outside the nine (review #647).
-    const count = channelConnectionCount(entriesOf(activity));
+    // The headline counts the rows the table shows (backlog:6d0df351):
+    // the nine fixed rows plus the catalog outsiders (Telegram, SMS) the
+    // table lists below them. A linked outsider counts and so does its
+    // place — «1 di 10» (review #647 P2); a row that is not active
+    // (suspended, pending) keeps its pill but is not «collegato».
+    const shownConnected = rows.filter((row) => row.connected).length;
     const cardHead = el(doc, 'div', 'bo-sync-cardhead');
     cardHead.appendChild(el(doc, 'h3', undefined, 'Canali'));
-    cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${count.connected} di ${count.total} collegati`));
+    cardHead.appendChild(el(doc, 'p', 'bo-sync-count', `${shownConnected} di ${rows.length} collegati`));
     box.appendChild(cardHead);
     const wrap = el(doc, 'div', 'bo-sync-tablewrap');
     const table = doc.createElement('table');
@@ -1336,8 +1345,8 @@ export function createSyncView(deps) {
         // A row connects where the product connects it (backlog:cf365ada15b9):
         // the guided flow for a catalogued channel, Profilo for Google
         // Calendar when the profile offers it. Only a row nothing here can
-        // connect (Stripe) reads `non collegato` — never a `Collega` to
-        // "Connettore sconosciuto" (P2 Codex su #415).
+        // connect (Stripe) reads the shared `Non ancora disponibile` —
+        // never a `Collega` to "Connettore sconosciuto" (P2 Codex su #415).
         const route = typeof row.connectRoute === 'string' ? row.connectRoute : null;
         if (!readOnly() && route !== null) {
           // The green Collega of every other screen (backlog:e381c48581fa),
@@ -1350,10 +1359,11 @@ export function createSyncView(deps) {
           });
           stateCell.appendChild(link);
         } else {
-          // C19 has only `non collegato` for an unlinked row: a row nothing
-          // here can connect (Stripe) says that, with no Collega it could
-          // not keep — never the off-spec «Non disponibile».
-          stateCell.appendChild(uiChannelState(doc, { text: 'non collegato', tone: 'muted', extra: 'bo-sync-muted' }));
+          // Backlog 6d0df351 (supervisore 17/11): a row nothing here can
+          // connect (Stripe) says the shared `Non ancora disponibile`,
+          // the same words Connettori paints — with no Collega it could
+          // not keep.
+          stateCell.appendChild(uiChannelState(doc, { text: CHANNEL_STATE_LABELS['non-disponibile'].text, tone: CHANNEL_STATE_LABELS['non-disponibile'].tone, extra: 'bo-sync-muted' }));
         }
       } else {
         // backlog:8618ad3f72db: the shared channel state, its tone mapped
