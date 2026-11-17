@@ -536,6 +536,9 @@ test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 a fast run on the default clock
     await byAction(mount, 'refresh-enrichment').listeners.click[0]();
     await flush();
     assert.equal(client.writes.length, 1, 'the run happened on the default clock too');
+    // The view's default wait fires through the injectable clock: its
+    // leftover 60s waits are unref'd and never hold the loop (the direct
+    // withExtractionTimeout clock above is the one that clears).
     const holding = created.filter(({ handle, ms }) => ms === 60000
       && (handle === null || typeof handle !== 'object' || typeof handle.hasRef !== 'function' || handle.hasRef()));
     assert.equal(holding.length, 0, 'no ref’d 60s timer survives a fast run');

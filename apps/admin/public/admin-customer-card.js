@@ -603,12 +603,14 @@ export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_M
   // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
   // leak one 60s timer per fast run — the losing timeout was never cleared.
   // The guard below clears it as soon as the wrapped promise settles.
+  // No unref: an unref'd short timer lets the event loop drain before it
+  // fires (CI: 'Promise resolution is still pending but the event loop has
+  // already resolved'). Fast runs clear the timer below, so no 60s hang.
   let timer = null;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
     }, ms);
-    if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
   });
   const guarded = Promise.resolve(promise).then(
     (value) => { if (timer !== null) clearTimeout(timer); return value; },
