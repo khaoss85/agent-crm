@@ -317,6 +317,34 @@ test('scan: a write or a wait through an object or class method is seen', () => 
   assert.deepEqual(writeButtonsWithoutWait(viaAssigned), []);
 });
 
+// backlog:ceebc2bbd68a (review Muse #974, P2): same-named methods of
+// different objects stay apart — the wait in `other.start()` must not cover
+// `first.start()`, which writes with no guard.
+test('scan: the wait of another object’s same-named method does not cover this press', () => {
+  const mixed = `
+    const first = {
+      async start() { await client.request('/x', { method: 'POST' }); },
+    };
+    const other = {
+      start() { uiHold(go, 'Salvo…'); },
+    };
+    go.addEventListener('click', () => { void first.start(); });`;
+  const rows = writeButtonsWithoutWait(mixed);
+  assert.deepEqual(rows.map((row) => row.button), ['go']);
+  assert.deepEqual(rows[0].chain, ['start']);
+});
+
+// backlog:ceebc2bbd68a (review Muse #974, P2): a visit past BUSY_DEPTH must
+// not prune a shorter valid path — the depth is part of the visited key.
+test('scan: a longer path past the wait depth does not hide a shorter covered one', () => {
+  const depth = `
+    function submit() { mid(); h(); }
+    function mid() { h(); }
+    function h() { go.setAttribute('aria-busy', 'true'); }
+    go.addEventListener('click', async () => { submit(); await client.request('/z', { method: 'POST' }); });`;
+  assert.deepEqual(writeButtonsWithoutWait(depth), []);
+});
+
 test('scan: comments never cover, double quotes and parenthesised parameters are read', () => {
   const commented = `
     go.addEventListener('click', async () => {
