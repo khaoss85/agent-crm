@@ -67,3 +67,21 @@ test('3f3c143b seguito: a shared mailbox or a homonym name never picks a person'
   ];
   assert.equal(personOf('Marco Rossi', homonyms), null, 'no misattribution on a homonym name');
 });
+
+test('3f3c143b seguito (review Codex su #999 P2): uniqueness across all member identities', () => {
+  // Alice holds two mailboxes, Bruno shares one of them: the shared
+  // mailbox is ambiguous even though no single row shows both.
+  const roster = [
+    { subject: 'alice-a', displayName: 'Alice', email: 'alice@example.com', operatorAccountId: 'op-alice' },
+    { subject: 'alice-b', displayName: 'Alice', email: 'info@example.com', operatorAccountId: 'op-alice' },
+    { subject: 'bruno', displayName: 'Bruno', email: 'info@example.com' },
+  ];
+  assert.equal(personOf('info@example.com', roster), null, 'shared across two people: nobody');
+  assert.equal(
+    auditActorLabel({ actorId: 'info@example.com' }, [], roster),
+    'info@example.com',
+    'the honest mailbox form stays',
+  );
+  // Alice's own mailbox still names her.
+  assert.equal(personOf('alice@example.com', roster)?.name, 'Alice');
+});

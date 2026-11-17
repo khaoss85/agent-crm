@@ -441,15 +441,42 @@ export function personOf(id, rosterOrPeople) {
   // backlog:3f3c143b (seguito di #918): an audit may record another
   // identifier of the same person — their mailbox or display name — while
   // the roster holds the opaque subject. The same resolution function
-  // matches the person's own mailbox or profile name, but only when a
-  // single row claims it: a shared mailbox or a homonym name never picks a
-  // person (agent-crm#644/#742).
+  // matches every identity the person's members carry, but only when a
+  // single person claims it: a shared mailbox or a homonym name never picks
+  // a person (agent-crm#644/#742; review Codex su #999: teamPeople keeps
+  // the first mailbox and the preferred name only, so the row's `email`
+  // and `name` alone cannot prove uniqueness).
   const folded = wanted.toLowerCase();
-  const byMail = people.filter((row) => typeof row.email === 'string' && row.email.toLowerCase() === folded);
-  if (byMail.length === 1) return byMail[0];
-  const byName = people.filter((row) => typeof row.name === 'string' && row.name.toLowerCase() === folded);
-  if (byName.length === 1) return byName[0];
+  const claimed = people.filter((row) => identitiesOf(row).has(folded));
+  if (claimed.length === 1) return claimed[0];
   return null;
+}
+
+/**
+ * backlog:3f3c143b (seguito di #918): every identifier one person row
+ * claims — each member's real mailbox and display name, plus the row's own
+ * email and profile name (hand-built rows carry no members). Lower-cased
+ * and trimmed for the lookup; technical mailboxes and placeholder words
+ * never count as a person's name.
+ * @param {any} row one `teamPeople` row
+ * @returns {Set<string>}
+ */
+function identitiesOf(row) {
+  const out = new Set();
+  const add = (value) => {
+    if (typeof value !== 'string') return;
+    const text = value.trim().toLowerCase();
+    if (text !== '' && !NAME_PLACEHOLDERS.has(text)) out.add(text);
+  };
+  for (const member of Array.isArray(row?.members) ? row.members : []) {
+    if (member === null || typeof member !== 'object') continue;
+    const mail = memberText(member.email);
+    if (mail !== null) out.add(mail.toLowerCase());
+    add(member.displayName);
+  }
+  add(row?.email);
+  add(row?.name);
+  return out;
 }
 
 /**
