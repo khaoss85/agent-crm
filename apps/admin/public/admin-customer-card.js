@@ -1242,7 +1242,13 @@ export function createCustomerCardView(deps) {
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
-    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    : (ms) => new Promise((resolve) => {
+      // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the extraction
+      // deadline below outlives a fast run — unref'd so the leftover 60s
+      // never holds the loop (the race already ignored its late refusal).
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
   // load backstop never sits among the screen's pauses above. Unref'd
   // where the host allows it, so an idle process never waits on it.

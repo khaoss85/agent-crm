@@ -453,7 +453,10 @@ test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 no-messages re-read flies singl
       if (path.startsWith('/api/customer-data/enriched/')) {
         enrichedReads += 1;
         if (enrichedReads === 1) return ENRICHED;
-        return new Promise((resolve) => { pending.push(resolve); });
+        // Only the first re-read hangs (a deferred the test releases); the
+        // repaint's own read answers at once so the repaint itself lands.
+        if (enrichedReads === 2) return new Promise((resolve) => { pending.push(resolve); });
+        return ENRICHED_AFTER;
       }
       if (path === '/api/schema') return { pipelines: [] };
       if (path === '/api/spine/memberships') return { items: [] };
@@ -479,9 +482,10 @@ test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 no-messages re-read flies singl
   assert.equal(enrichedReads, 2, 'the first «Aggiorna» starts the re-read');
   await view.renderCard('contact', 'c1');
   await flush();
+  assert.equal(enrichedReads, 3, 'the repaint re-reads once for its own paint');
   await byAction(mount, 'refresh-enrichment').listeners.click[0]();
   await flush();
-  assert.equal(enrichedReads, 2, 'the repaint starts no second re-read: still the in-flight one');
+  assert.equal(enrichedReads, 3, 'the repaint starts no second re-read: still the in-flight one');
   pending.forEach((resolve) => resolve(ENRICHED_AFTER));
   releaseFirst();
   await running;
@@ -514,6 +518,29 @@ test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 fast run clears its default 60s
   } finally {
     globalThis.setTimeout = realSetTimeout;
     globalThis.clearTimeout = realClearTimeout;
+  }
+});
+
+test('e5e3e886 rev-agent-crm-989-12ce3848de6a P2 a fast run on the default clock holds no 60s timer', async () => {
+  const created = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...rest) => {
+    const handle = realSetTimeout(fn, ms, ...rest);
+    created.push({ handle, ms });
+    return handle;
+  };
+  try {
+    // No wait injector: the view runs on its default clock.
+    const client = fakeClient();
+    const { mount } = await open(client);
+    await byAction(mount, 'refresh-enrichment').listeners.click[0]();
+    await flush();
+    assert.equal(client.writes.length, 1, 'the run happened on the default clock too');
+    const holding = created.filter(({ handle, ms }) => ms === 60000
+      && (handle === null || typeof handle !== 'object' || typeof handle.hasRef !== 'function' || handle.hasRef()));
+    assert.equal(holding.length, 0, 'no ref’d 60s timer survives a fast run');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
   }
 });
 
