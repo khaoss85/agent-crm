@@ -1679,7 +1679,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function header(panel, card, resource, id) {
+  function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
     // NOT rendered: no record holds it yet (the contact record has no city,
@@ -1687,6 +1687,11 @@ export function createCustomerCardView(deps) {
     // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
     // the origin is the earliest-observed identity the card reports; city
     // and referente have no record yet, so those segments are left out.
+    // Voce 714433c2 (correction liveprobe-20261113, riga 2026-11-07.md:73):
+    // the Cliente/Contatto pill stays a derived indicator (customer-status.js,
+    // shared with the list: the two views cannot disagree), never a menu —
+    // but it now carries its Italian reason as a tooltip, so the derivation
+    // is observable where the verifier looked for the menu.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -1701,7 +1706,10 @@ export function createCustomerCardView(deps) {
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
-    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const badge = el('span', 'bo-scheda-badge', statusLabel(card?.status?.value));
+    const badgeReason = statusMicrocopy(card, profile);
+    if (badgeReason !== null) badge.setAttribute('title', badgeReason);
+    meta.appendChild(badge);
     // C3, as the prototype reads it: `<città> · via <canale> · la segue
     // <referente>`. Only what a record holds is shown: a missing segment is
     // left out, never written as `Da raccogliere` three times in a row
@@ -6682,7 +6690,7 @@ export function createCustomerCardView(deps) {
       }
       panel.appendChild(head);
     } else {
-      header(panel, card, resource, id);
+      header(panel, card, resource, id, profile);
     }
     const grid = el('div', 'bo-scheda-grid');
     // Dan 06/11: the side columns stay put while the conversation scrolls.
