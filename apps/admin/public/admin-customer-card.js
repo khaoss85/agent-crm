@@ -1911,23 +1911,29 @@ export function createCustomerCardView(deps) {
     // Voce 2f2d22f2: the prototype names its channels — «WhatsApp» and
     // «Email» open the same composer with their channel preselected
     // (backlog:e9b4fc2f: no mailto: anywhere, Invia sends through the
-    // outbox worker). A channel tile stays honest: it opens the composer
-    // even when its own channel is off, and the composer says so there.
-    const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
-    if (writable.length === 0) {
+    // outbox worker).
+    // backlog:9b28b3bc6003: each channel tile needs its own recipient — a
+    // customer with an email but no phone reads Email only, never
+    // WhatsApp, and vice versa. «Chiama» stays always (Dan 11/11: with no
+    // number it opens the number window instead of calling).
+    const channels = composerChannelsFor(card, null);
+    let shownChannels = 0;
+    for (const channel of ['whatsapp', 'email']) {
+      const entry = channels.find((row) => row.channel === channel);
+      if (entry?.recipient === null || entry?.recipient === undefined) continue;
+      const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+      const channelTile = tile(label, 'messaggio');
+      channelTile.setAttribute('type', 'button');
+      channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
+      channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
+      channelTile.addEventListener('click', () => {
+        openComposer(card, navCtx, channel);
+      });
+      row.appendChild(channelTile);
+      shownChannels += 1;
+    }
+    if (shownChannels === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
-    } else {
-      for (const channel of ['whatsapp', 'email']) {
-        const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
-        const channelTile = tile(label, 'messaggio');
-        channelTile.setAttribute('type', 'button');
-        channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
-        channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
-        channelTile.addEventListener('click', () => {
-          openComposer(card, navCtx, channel);
-        });
-        row.appendChild(channelTile);
-      }
     }
   /**
    * «Chiama» without a number, or with several (Dan 11/11): the number
@@ -6777,7 +6783,12 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    // backlog:9b28b3bc6003: the offer section hides itself when the customer
+    // has none, so the skeleton only covers the unknown — while the profile
+    // is still in flight. The pipelines only name the stage (the line falls
+    // back to the core stage without them), so a slow schema read never
+    // paints an «Offerta» skeleton over a customer with no offer.
+    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — a grey skeleton while the services read is in flight, never
