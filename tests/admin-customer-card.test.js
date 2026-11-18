@@ -6838,6 +6838,85 @@ test('2c1c0e149cf9 seguito 17/11: Offerta resta visibile con la sidebar aperta, 
   assert.ok(suggested.textContent.includes('✦ suggeriti'), 'the AI-suggested step is marked');
 });
 
+// backlog:0d68c387 verifier-back (ritorno 2, 18/11): fissato oggi per domani e
+// annullato oggi devono stare insieme sotto il giorno dell'evento, non
+// divisi tra giorno dell'appuntamento e giorno dell'annullamento. Repro:
+// rosso sul codice prima della cura (fissato a startsAt), verde dopo
+// (fissato a bookedAt).
+test('0d68c387 verifier-back: fissato oggi per domani e annullato oggi restano insieme sotto oggi', async () => {
+  const base = new Date();
+  base.setUTCHours(12, 0, 0, 0);
+  const bookedAt = new Date(base.getTime() - 2 * 3600e3).toISOString();
+  const decidedAt = new Date(base.getTime() - 3600e3).toISOString();
+  const startsAt = new Date(base.getTime() + 24 * 3600e3).toISOString();
+  const endsAt = new Date(base.getTime() + 25 * 3600e3).toISOString();
+  const mount = await renderCard(stubClient({
+    services: [
+      { serviceKey: 'lezione-prova', name: 'Lezione di prova', priceCents: 1500, currency: 'EUR' },
+    ],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'cancelled', startsAt, endsAt,
+            serviceKey: 'lezione-prova', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+            cancelReason: 'Il cliente ha disdetto', decidedAt, bookedAt,
+          },
+        ],
+      },
+    },
+  }));
+  const timelineEl = mount.findAll('div').find((node) => String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-timeline'));
+  assert.ok(timelineEl, 'the cronologia paints');
+  const kids = timelineEl.childNodes;
+  let day = null;
+  let bookedDay = null;
+  let cancelledDay = null;
+  let bookedIdx = -1;
+  let cancelledIdx = -1;
+  kids.forEach((node, idx) => {
+    if (node.tagName === 'H5') day = node.textContent;
+    const cls = String(node.getAttribute?.('class') ?? '');
+    const entry = node.getAttribute?.('data-entry') ?? '';
+    if (entry === 'appointment-booked:b0') { bookedDay = day; bookedIdx = idx; }
+    if (entry === 'appointment-cancelled:b0') { cancelledDay = day; cancelledIdx = idx; }
+    void cls;
+  });
+  assert.ok(bookedIdx !== -1 && cancelledIdx !== -1, 'both rows paint');
+  assert.equal(bookedDay, cancelledDay, 'fissato and annullato share the event day');
+  assert.equal(Math.abs(bookedIdx - cancelledIdx), 1, 'the pair stays adjacent');
+});
+
+// backlog:0d68c387 review Codex P2 su c4f2faa: il fallback maiuscolo vale solo
+// per le sigle vere («PT»), mai per le parole senza vocali («my», «by»).
+test('0d68c387: ordinary vowel-less words stay sentence-case in the fallback', async () => {
+  const mount = await renderCard(stubClient({
+    services: [],
+    timeline: {
+      ...TIMELINE,
+      appointments: {
+        available: true,
+        count: 1,
+        truncated: false,
+        items: [
+          {
+            id: 'b0', status: 'booked', startsAt: '2099-11-12T10:00:00.000Z', endsAt: '2099-11-12T10:45:00.000Z',
+            serviceKey: 'my-lesson', teamMemberId: 'coach-guido', priceCents: 1500, currency: 'EUR', notes: null,
+          },
+        ],
+      },
+    },
+  }));
+  const booked = mount.findAll('div').filter((node) => (node.getAttribute('class') ?? '').split(' ').includes('bo-scheda-entry-booked'));
+  assert.equal(booked.length, 1, 'the booking still has its row');
+  assert.ok(booked[0].textContent.includes('Appuntamento fissato · My lesson ·'), booked[0].textContent);
+  assert.ok(!booked[0].textContent.includes('MY lesson'), 'never the uppercased word');
+});
+
 // backlog:a5fb07706bff verifier-back su 59c2c14 (EVIDENCE_LINE_NOT_PASS 2026-11-17):
 // la riga Email di Fio Neri leggeva «→ in uscita» con Gmail collegato anche
 // quando la stessa casella aveva messaggi in entrata. Repro: rosso sul codice
