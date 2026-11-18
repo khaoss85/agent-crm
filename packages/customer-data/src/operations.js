@@ -2,6 +2,7 @@
 
 import { AppError, ValidationError, normalizeActor } from '../../core/index.js';
 import { serializeCorrespondents, teamCorrespondents } from '../../core/sender-kind.js';
+import { findStage, isOpenOfferStage } from '../../core/src/pipeline-registry.js';
 import { createBulkRunner } from './bulk.js';
 import { createCleanupProposals } from './cleanup.js';
 import { createErasureOperations, isErased, readErasedSubjects } from './erasure.js';
@@ -57,7 +58,7 @@ const SUBJECT_PHONE_RUN_ID = 'subject-phone';
  * voce by the owner: this PR keeps only the read of observed identities.
  */
 
-export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null }) {
+export function createCustomerDataOperations({ database, modules, events, config, core, policy, names, followUpProvider = null, interactions = null, pipelines = null }) {
   if (!database || !modules || !events) {
     throw new ValidationError('customer-data operations need database, modules and events');
   }
@@ -387,7 +388,7 @@ export function createCustomerDataOperations({ database, modules, events, config
      * @param {any} request
      */
     async listCustomerRecords(request) {
-      return listCustomerRecords({ modules, core, names, interactions }, request);
+      return listCustomerRecords({ modules, core, names, interactions, pipelines }, request);
     },
 
     /**
@@ -822,7 +823,7 @@ function summarizeSectionRows(read, rows) {
  *   unavailable with its reason — never an empty claim).
  * Writes nothing.
  */
-export async function listCustomerRecords({ modules, core, names, interactions = null }, request) {
+export async function listCustomerRecords({ modules, core, names, interactions = null, pipelines = null }, request) {
   void core;
   const query = parseCustomerListQuery(request);
   const contactsSvc = optional(modules, 'contact');
@@ -1304,6 +1305,13 @@ export async function listCustomerRecords({ modules, core, names, interactions =
   // 503): every table below is bucketed once by customer key, so each
   // subject gathers only its own candidates instead of scanning every
   // table once per subject. The deciding predicate is unchanged.
+  // backlog:1adf95307b31: the composed pipeline for opportunities, read
+  // once — the shared closed/won rule with Reporting resolves a row's
+  // pipeline stage through its type (Pagato is won). Null without a
+  // composed pipeline: the canonical stages decide.
+  const opportunityPipeline = typeof pipelines?.forModule === 'function'
+    ? pipelines.forModule('opportunity')
+    : null;
   const opportunityIndex = indexRowsByCustomer(opportunities.rows);
   const orderIndex = indexRowsByCustomer(evidenceReads.orders.rows);
   const contractIndex = indexRowsByCustomer(evidenceReads.contracts.rows);
@@ -1369,7 +1377,18 @@ export async function listCustomerRecords({ modules, core, names, interactions =
     // lost never count. A customer with only won offers (or no open offer at
     // all) reads «—», never «0 €». Mixed currencies never sum into one naked
     // number: each currency keeps its own subtotal with its own code.
-    const openOffers = myOffers.filter((row) => row?.stage !== 'won' && row?.stage !== 'lost');
+    // The open rule is the shared one with Reporting
+    // (packages/core/src/pipeline-registry.js): a row moved to Pagato keeps
+    // the canonical stage but names the paid pipeline stage, and Pagato is
+    // won — so a pipeline-stage row on the composed pipeline reads through
+    // its type, anything else through the canonical stage.
+    const openOffers = myOffers.filter((row) => {
+      const key = typeof row?.pipelineStage === 'string' && row.pipelineStage !== '' ? row.pipelineStage : null;
+      if (key !== null && opportunityPipeline !== null && findStage(opportunityPipeline, key) !== null) {
+        return isOpenOfferStage(opportunityPipeline, key);
+      }
+      return isOpenOfferStage(null, row?.stage);
+    });
     const openValue = openOffers
       .reduce((sum, row) => sum + (Number(row?.valueCents ?? 0) || 0), 0);
     const totalsByCurrency = new Map();

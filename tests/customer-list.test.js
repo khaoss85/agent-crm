@@ -486,6 +486,54 @@ test('backlog:1adf95307b31: solo vinte o nessuna aperta legge null, valute miste
   assert.equal(leo.offerParts, null);
 });
 
+test('backlog:1adf95307b31: un\u2019offerta in Pagato non conta come aperta', async () => {
+  // Supervisor Mac 17/11: a single offer moved to Pagato still summed 20 €
+  // in the open value — move-stage sets closedAt but leaves the canonical
+  // stage on qualification, and the list excluded only the won/lost keys
+  // while Reporting already counts Pagato among the won. One shared
+  // closed/won rule now decides in both places: Pagato is won.
+  const SALES_LIKE = {
+    name: 'accordo-sales',
+    module: 'opportunity',
+    defaultStage: 'richiesta-info',
+    stages: [
+      { key: 'richiesta-info', type: 'open', order: 10 },
+      { key: 'prova', type: 'open', order: 20 },
+      { key: 'proposta', type: 'open', order: 30 },
+      { key: 'pagato', type: 'paid', order: 40 },
+      { key: 'perso', type: 'lost', order: 50 },
+    ],
+  };
+  const contacts = [
+    { id: 'c1', companyId: 'co1', firstName: 'Ada', lastName: 'Rossi', email: 'ada@palestra-uno.example' },
+  ];
+  const companies = [{ id: 'co1', name: 'Palestra Uno', domain: 'palestra-uno.example' }];
+  const modules = fakeModules({
+    contacts,
+    companies,
+    opportunities: [
+      {
+        id: 'op-paid', companyId: 'co1', contactId: 'c1', valueCents: 2000, currency: 'EUR',
+        stage: 'qualification', pipelineKey: 'accordo-sales', pipelineStage: 'pagato',
+        closedAt: '2026-11-17T08:00:00.000Z',
+      },
+    ],
+  });
+  const page = await listCustomerRecords(
+    {
+      modules,
+      core: {},
+      names: { identity: 'external-identity' },
+      pipelines: { forModule: (name) => (name === 'opportunity' ? SALES_LIKE : null) },
+    },
+    { vista: 'tutti', sort: 'name', pageSize: '10' },
+  );
+  const ada = page.items.find((item) => item.id === 'c1');
+  assert.equal(ada.offerValueCents, null, 'Pagato e vinta: nessun valore aperto');
+  assert.equal(ada.offerCurrency, null);
+  assert.equal(ada.offerParts, null);
+});
+
 test('backlog:0acf5809: a company row sums the contact offers and the company offers', async () => {
   // The wide rule, mirror of 5c2f8bc67859: a company row (no contact of its
   // own) counts every open opportunity filed on the company, whether the

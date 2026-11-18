@@ -514,7 +514,7 @@ export function createCustomerDataPackage(options = {}) {
           const operations = createCustomerDataOperations({
             database: runtime.database, modules: runtime.modules, events: runtime.events,
             config: runtime.config, core: runtime.core, policy, names,
-            interactions: readState,
+            interactions: readState, pipelines: runtime.pipelines ?? null,
           });
           return (request) => operations.listCustomerRecords(request);
         },
