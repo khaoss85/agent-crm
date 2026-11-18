@@ -380,6 +380,11 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-edit-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 12px 14px; background: var(--paper); border-radius: 12px; }
 .bo-offer .offer-edit-form .field-row { display: flex; flex-direction: column; gap: 4px; }
 .bo-offer .offer-edit-form label { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+/* backlog:18cdf78c: the edit error keeps its own full-width line above, so it
+   never pushes Salva/Annulla onto a second line; the two buttons share one
+   actions row and stay together on theirs. */
+.bo-offer .offer-edit-form > .field-error { flex-basis: 100%; }
+.bo-offer .offer-edit-form .offer-edit-actions { display: flex; align-items: center; gap: 10px; }
 .bo-offer .offer-quotes, .bo-offer .offer-history { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; padding: 18px 22px; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
