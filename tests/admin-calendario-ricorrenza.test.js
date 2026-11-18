@@ -94,7 +94,9 @@ async function openCalendar(client = null) {
   const mount = createMount();
   const used = client ?? stubClient();
   const view = createCalendarioView({
-    searchDelayMs: 0, doc, mount, client: used, now: () => new Date('2026-11-16T07:00:00Z'),
+    // 18:30 di Roma: la griglia di oggi è piena, la proposta è domani
+    // 2026-11-17 (martedì) — le etichette sotto lo provano.
+    searchDelayMs: 0, doc, mount, client: used, now: () => new Date('2026-11-16T17:30:00Z'),
   });
   await view.render();
   await settle();
