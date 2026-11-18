@@ -28,12 +28,15 @@
 //   and refuses on drift, so no action ever runs on stale data;
 // - labels: CONNECTOR_CATALOG from admin-connectors.js for the channel
 //   invite — one Italian label list, not two;
+// - channel identity: countedChannel, mergeProfileConnections and
+//   channelConnectionCount from admin-channels-count.js — Oggi and Stato
+//   sync count the connected channels from one base, never two;
 // - the backoffice tokens and rows of styles.css (bo-*), single column under
 //   700px like every other backoffice screen.
 
 import { CONNECTOR_CATALOG, matchAdapters } from './admin-connectors.js';
 import { customerInitials } from './admin-core.js';
-import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, mergeProfileConnections } from './admin-channels-count.js';
+import { NINE_CHANNEL_IDS, channelConnectRoute, channelConnectionCount, channelState, countedChannel, mergeProfileConnections } from './admin-channels-count.js';
 import { bindAdminMutations } from './admin-submission.js';
 import { isNotificationMessage, memberLabel, memberText, nameFromProfile, plural, readableName } from './admin-labels.js';
 import { labelFromEmail, reviveCorrespondents, senderAddress, teamCorrespondents, teamWroteTo } from './admin-sender-kind.js';
@@ -1708,12 +1711,15 @@ export function countConnectedNine(connections = [], profile = null) {
  */
 export function missingLeadChannels(connections = [], profile = null, adapters = null) {
   const rows = Array.isArray(connections) ? connections : [];
+  // Same base as the shared count: profile links merged, spellings read
+  // through the shared countedChannel — a stored `gmail` row hides Email
+  // here just like it counts as connected in the strip.
   const active = new Set(
-    rows
-      .filter((row) => row != null && row.status === 'active' && typeof row.channel === 'string')
-      .map((row) => row.channel),
+    mergeProfileConnections(rows, profile)
+      .filter((row) => row != null && row.status === 'active')
+      .map((row) => countedChannel(row?.channel))
+      .filter((channel) => channel !== ''),
   );
-  for (const channel of googleNineChannels(profile)) active.add(channel);
   const guided = CONNECTOR_CATALOG.map((entry) => entry?.channel);
   return CONNECTOR_CATALOG
     .filter((entry) => entry != null && !active.has(entry.channel))
