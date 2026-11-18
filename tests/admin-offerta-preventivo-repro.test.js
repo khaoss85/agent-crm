@@ -145,7 +145,7 @@ test('a2ea75f705fd repro: with a quote already there, the main action opens it',
   await flushAll();
   const open = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
   assert.ok(open, 'the open action is there');
-  assert.equal(open.getAttribute('href'), '#/quotes/q-new', 'it opens the newest quote');
+  assert.equal(open.getAttribute('href'), '#/quotes/q-new/offerta/off1', 'it opens the newest quote');
   assert.match(String(open.getAttribute('class') ?? ''), /primary/, 'opening is the main action');
   const create = mount.findAll('button').find((node) => node.getAttribute('data-action') === 'offer-create-quote');
   assert.ok(create, 'a new quote stays possible');

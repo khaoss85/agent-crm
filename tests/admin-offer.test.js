@@ -176,7 +176,7 @@ test('the detail shows who, stage, value and facts, quotes with lines, and histo
   assert.ok(!/\d{4}-\d{2}-\d{2}T/.test(text), 'no raw ISO timestamp');
   assert.ok(!/\b[A-Z]{3,}_[A-Z_]+\b/.test(text), 'no technical code');
   // The quote opens in the quote page, never inline.
-  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1');
+  const link = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q1/offerta/off1');
   assert.ok(link, 'the quote links to its page');
   assert.equal(link.textContent, 'Apri il preventivo', 'the link says where it goes');
   // Linked collections are narrowed server-side, never a filtered global page.
@@ -796,7 +796,7 @@ test('169cd4bc988c: Crea preventivo opens a quote on the offer and goes where it
   assert.equal(writes.length, 1, 'a double click opens one quote');
   assert.equal(writes[0].path, '/api/modules/opportunity/records/off1/actions/create-quote');
   assert.deepEqual(writes[0].body, { priceBookId: 'pb1' });
-  assert.deepEqual(went, ['#/quotes/q9']);
+  assert.deepEqual(went, ['#/quotes/q9/offerta/off1']);
 });
 
 test('169cd4bc988c: Crea preventivo retries on the same key, offers a menu for several books, and says when none exists', async () => {
@@ -810,7 +810,7 @@ test('169cd4bc988c: Crea preventivo retries on the same key, offers a menu for s
   const keys = retry.client.writes().map((call) => call.key);
   assert.equal(keys.length, 2);
   assert.equal(keys[0], keys[1], 'the retry never opens a second quote');
-  assert.deepEqual(retry.went, ['#/quotes/q9']);
+  assert.deepEqual(retry.went, ['#/quotes/q9/offerta/off1']);
 
   const books = [
     { id: 'pb-usd', name: 'Listino US', currency: 'USD', active: true },
@@ -963,7 +963,7 @@ test('a2ea75f705fd: with a quote already there, the main action opens it; a new 
   await flushAll();
   const open = mount.findAll('a').find((node) => node.getAttribute('data-action') === 'offer-open-quote');
   assert.ok(open, 'the open action is there');
-  assert.equal(open.getAttribute('href'), '#/quotes/q-new', 'it opens the newest quote');
+  assert.equal(open.getAttribute('href'), '#/quotes/q-new/offerta/off1', 'it opens the newest quote');
   assert.match(open.getAttribute('class'), /ui-btn-primary/, 'it is the main action');
   const create = button(mount, 'offer-create-quote');
   assert.equal(create.textContent, 'Nuovo preventivo');
