@@ -2636,6 +2636,83 @@ test('57994a8c7287: loadOggiData keeps the in-flight peak within the pilot limit
   }
 });
 
+// Voce 57994a8c7287 (ritorno verifica 18/11: con i DATI VERI il primo carico
+// di Oggi tocca un picco di 8 letture in volo contro il limite 6 — si
+// aggiungono le letture del cliente del prossimo appuntamento e quelle dei
+// nomi, che con i dati del seme non ci sono). La riproduzione: un giorno con
+// otto appuntamenti di clienti distinti da nominare e quattro notifiche
+// automatiche con soggetto da nominare; il picco delle letture in volo,
+// dipendenti comprese, resta dentro il limite del pilota.
+test('57994a8c7287: dependent reads share the one in-flight cap (real-data peak)', async () => {
+  const appointments = Array.from({ length: 8 }, (_, index) => ({
+    id: `appt-real-${index + 1}`,
+    status: 'booked',
+    subjectResource: 'lead',
+    subjectId: `lead-real-${index + 1}`,
+    subjectOwner: 'host',
+    subjectLabel: `Cliente ${index + 1}`,
+    startsAt: `2026-10-19T${String(8 + index).padStart(2, '0')}:00:00.000Z`,
+  }));
+  const messages = [1, 2, 3, 4].map((n) => ({
+    id: `msg-auto-${n}`,
+    channel: 'email',
+    direction: 'inbound',
+    conversationId: `conv-auto-${n}`,
+    remoteHandle: `notifiche@cliente${n}.it`,
+    subjectResource: 'contact',
+    subjectId: `c-real-${n}`,
+    subjectLabel: `Cliente ${n}`,
+    occurredAt: '2026-10-18T15:00:00.000Z',
+    body: 'La ricevuta del pagamento.',
+  }));
+  const conversations = [1, 2, 3, 4].map((n) => ({ id: `conv-auto-${n}`, status: 'open' }));
+  let inFlight = 0;
+  let peakInFlight = 0;
+  const tick = () => new Promise((resolve) => { setTimeout(resolve, 0); });
+  const client = {
+    request: async (path, options = {}) => {
+      enforceAdminWriteGate(path, options);
+      inFlight += 1;
+      if (inFlight > peakInFlight) peakInFlight = inFlight;
+      try {
+        await tick();
+        if (path === '/api/schema') {
+          return {
+            domains: {
+              work: {},
+              appointments: {},
+              channels: {},
+              interactions: {},
+              'customer-data': {},
+              'site-forms': {},
+            },
+          };
+        }
+        if (path === '/api/profile') return { member: { email: 'op@palestra-esempio.it' } };
+        if (path === '/api/spine/memberships') return { items: [] };
+        if (path.startsWith('/api/customer-data/customers?')) {
+          return { items: [], total: 0, totalIsExact: true, views: [] };
+        }
+        if (path.startsWith('/api/customer-data/profile/')) {
+          const id = decodeURIComponent(path.split('/').pop() ?? '');
+          return { identity: { contact: { firstName: 'Cliente', lastName: id } } };
+        }
+        if (path.startsWith('/api/modules/appointment/records')) return { items: appointments };
+        if (path.startsWith('/api/modules/interaction-message/records')) return { items: messages };
+        if (path.startsWith('/api/modules/conversation/records')) return { items: conversations };
+        if (path.startsWith('/api/modules/')) return { items: [] };
+        throw new Error(`unexpected read: ${path}`);
+      } finally {
+        inFlight -= 1;
+      }
+    },
+  };
+  const data = await loadOggiData(client, OGGI_NOW, { spaceId: 'spazio-test' });
+  assert.ok(data.appointmentsAvailable, 'essentials still load');
+  assert.equal(Object.keys(data.appointmentNames).length, 8, 'every real appointment customer is named');
+  assert.ok(peakInFlight <= 6, `the in-flight peak stays within the pilot limit, dependents included (peak ${peakInFlight})`);
+});
+
 // Voce 57994a8c7287: con lo schema rifiutato non parte nessun'altra
 // lettura — nessun profilo, nessun membro, nessuna vista resta in volo
 // dietro il ritorno d'errore.
