@@ -91,11 +91,14 @@ const CALENDAR_STATUS_LABELS = Object.freeze({ booked: 'prenotato', confirmed: '
  * «no signed business found in the composed packages (orders: not readable
  * here; …)»). The tooltip says in plain Italian why the customer is in
  * that state; an unknown state carries no tooltip rather than a raw
- * diagnostic.
+ * diagnostic. The Contatto wording stays honest when the evidence is not
+ * all readable («…so this is not a claim none exist»): «finora non
+ * risultano» claims no definitive absence (ritorno 1, verifier-back
+ * 2026-11-17).
  */
 const STATO_TOOLTIPS = Object.freeze({
   cliente: 'È un cliente perché ha almeno un acquisto confermato.',
-  contatto: 'È un contatto perché non ha ancora acquisti confermati.',
+  contatto: 'È un contatto perché finora non risultano acquisti confermati.',
 });
 
 /** Plain-Italian tooltip for a customer state, or null when unknown. */

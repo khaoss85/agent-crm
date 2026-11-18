@@ -3,13 +3,14 @@
 import { elFor, uiAddOption, uiBusy, uiIcon, uiMarkBusy, uiSkeleton } from './admin-ui.js'; // BO-F6-02: the single component library.
 import { apiErrorToFormErrors, customerInitials, formatAmount, humanReadError, humanWriteError, isNotComposedFailure, pendingRequestId, readBackPending } from './admin-core.js';
 import { channelState, countedChannel } from './admin-channels-count.js';
-import { matchConnections } from './admin-connectors.js';
+import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
+import { openSchedaWindow } from './admin-scheda-window.js';
 import { cleanMessageBody, cleanPreviewText, decodeHtmlEntities, isPlaceholderBody, messagePreview } from './admin-message-preview.js';
 import { createStageConfirm, readStageConfirm, showStageConfirm, stageNeedsConfirm } from './admin-pipeline.js';
 import { ASSISTANT_STATUS_PATH, assistantStatusCode } from './admin-assistant.js';
@@ -464,15 +465,25 @@ const PHONE_LIKE_SYSTEMS = Object.freeze(['whatsapp', 'sms', 'voice', 'phone', '
  * count — the section names the shortfall instead.
  * @param {any} timeline the read-customer-timeline answer
  */
+/**
+ * Voce a5fb0770 (review #966): the handle half of an identity key — the same
+ * normalization the row merge and the direction union share, so one mailbox
+ * under two spellings keys alike and two mailboxes never do. Email
+ * lowercases, phone-like systems strip separators, the rest compare raw.
+ * @param {string} system the lowercase identity system
+ * @param {unknown} handle the remote handle or external id
+ */
+function normalizeIdentityHandle(system, handle) {
+  const value = String(handle ?? '');
+  if (PHONE_LIKE_SYSTEMS.includes(system)) return value.replace(/[ .\-()/]/g, '');
+  if (system === 'email' || system === 'gmail' || system === 'outlook') return value.toLowerCase();
+  return value;
+}
+
 export function mergeLinkedIdentities(timeline) {
   const rows = [];
   const seen = new Set();
-  const dedupeKey = (system, externalId) => {
-    const value = String(externalId);
-    if (PHONE_LIKE_SYSTEMS.includes(system)) return `${system}|${value.replace(/[ .\-()/]/g, '')}`;
-    if (system === 'email' || system === 'gmail' || system === 'outlook') return `${system}|${value.toLowerCase()}`;
-    return `${system}|${value}`;
-  };
+  const dedupeKey = (system, externalId) => `${system}|${normalizeIdentityHandle(system, externalId)}`;
   const push = (system, externalId) => {
     const key = dedupeKey(system, externalId);
     if (seen.has(key)) return;
@@ -572,6 +583,45 @@ const isEnrichmentAiUnavailable = (error) => error !== null && typeof error === 
   && (/** @type {any} */ (error).code === 'ENRICHMENT_AI_UNAVAILABLE'
     || /** @type {any} */ (error).status === 503);
 
+export const ENRICHMENT_EXTRACT_TIMEOUT_MS = 60000;
+/**
+ * Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): «Estraggo…» never
+ * spins without end — a run that answers nothing within the timeout refuses
+ * with the retry code instead of hanging the section. The caller names the
+ * wait in Italian («Non ha risposto in tempo: riprova.»). The clock is the
+ * view's injectable `wait` seam, so tests fire it without real time.
+ * @param {Promise<any>} promise @param {number} [ms] @param {(wms: number) => Promise<any>} [waitFn]
+ * @returns {Promise<any>}
+ */
+export function withExtractionTimeout(promise, ms = ENRICHMENT_EXTRACT_TIMEOUT_MS, waitFn = null) {
+  if (typeof waitFn === 'function') {
+    const timeout = Promise.resolve(waitFn(ms)).then(() => {
+      throw Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' });
+    });
+    return Promise.race([promise, timeout]);
+  }
+  // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the default clock used to
+  // leak one 60s timer per fast run — the losing timeout was never cleared.
+  // The guard below clears it as soon as the wrapped promise settles.
+  // No unref: an unref'd short timer lets the event loop drain before it
+  // fires (CI: 'Promise resolution is still pending but the event loop has
+  // already resolved'). Fast runs clear the timer below, so no 60s hang.
+  let timer = null;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(Object.assign(new Error('extraction timed out'), { code: 'ENRICHMENT_EXTRACT_TIMEOUT' }));
+    }, ms);
+  });
+  const guarded = Promise.resolve(promise).then(
+    (value) => { if (timer !== null) clearTimeout(timer); return value; },
+    (error) => { if (timer !== null) clearTimeout(timer); throw error; },
+  );
+  return Promise.race([guarded, timeout]);
+}
+/** The Italian line for a run the timeout above refused. @param {any} error */
+const isExtractionTimeout = (error) => error !== null && typeof error === 'object'
+  && /** @type {any} */ (error).code === 'ENRICHMENT_EXTRACT_TIMEOUT';
+
 /**
  * Dan 11/11: the numbers «Chiama» can offer — the one held on the card,
  * the phone-bearing identities the profile holds beside the record, and the
@@ -626,6 +676,59 @@ export function unreadInboundAt(item) {
 
 /** Timeline page size (Dan 06/11): the newest 20, then «Mostra precedenti». */
 const TIMELINE_PAGE = 20;
+
+/**
+ * The open «Chiama dal CRM» panel, if any (voce 14d999de): one live view at
+ * a time, like the calendar popover — set while the panel is painted,
+ * cleared when it closes or the view routes away. A click outside the panel
+ * closes it; Escape and Chiudi come from the shared window frame.
+ * @type {{ shut: () => void, gone: () => boolean } | null}
+ */
+let openCallPanelHandle = null;
+
+/** The document the single outside-click closer for «Chiama dal CRM» is installed on, if any. */
+let callOutsideInstalledOn = null;
+
+/**
+ * True when the click landed inside the «Chiama dal CRM» panel or on its
+ * opener tile. Matched by attribute, never by node identity: a click that
+ * repaints the view leaves its target in the detached old tree, which still
+ * carries the same markers.
+ * @param {any} target
+ */
+function insideCallPanel(target) {
+  let node = target ?? null;
+  while (node) {
+    const read = typeof node.getAttribute === 'function' ? (name) => node.getAttribute(name) : () => null;
+    if (read('data-call') === 'open' || read('data-action') === 'call-customer') return true;
+    node = node.parentNode ?? null;
+  }
+  return false;
+}
+
+/**
+ * Install once per document: a click outside the open «Chiama dal CRM»
+ * panel closes it. The containment walk uses parentNode, so the
+ * dependency-free fake DOM used by the unit tests behaves like a real
+ * Element. Documents without addEventListener (the fake document) skip the
+ * closer; Escape and Chiudi still work there.
+ * @param {any} doc
+ */
+function installCallOutsideCloser(doc) {
+  if (callOutsideInstalledOn === doc || typeof doc?.addEventListener !== 'function') return;
+  callOutsideInstalledOn = doc;
+  doc.addEventListener('click', (event) => {
+    const current = openCallPanelHandle;
+    if (!current) return;
+    if (current.gone()) {
+      if (openCallPanelHandle === current) openCallPanelHandle = null;
+      return;
+    }
+    if (insideCallPanel(event?.target)) return;
+    openCallPanelHandle = null;
+    current.shut();
+  });
+}
 /** What a passage reads when neither its text nor its subject says anything. */
 export const PASSAGE_NO_TEXT = '(nessun testo)';
 
@@ -792,8 +895,48 @@ export function shownCompanyName(card) {
   // (review #739 giro 3): the same rule as customer-data
   // `isPlaceholderCompanyName`, through the browser twin.
   if (readableName(name.replace(/\([^)]*\)/g, ' ')) === null) return null;
-  return name;
+  // The display name, not the stored one (backlog:088b639d96a2): the same
+  // rule as customer-data `companyDisplayName`. A documentation domain
+  // (`esempio.invalid`) is no company; co-brands read by their own brand;
+  // bare domains read united.
+  let shown = name;
+  // A pipe inside parentheses belongs to the qualifier, never a co-brand
+  // cut (review rev-agent-crm-955-d7262d39): the scheda keeps the same rule
+  // as customer-data `companyDisplayName`.
+  const pipe = pipeOutsideParens(shown);
+  if (pipe >= 0) shown = shown.slice(0, pipe).trim();
+  if (shown === '') return null;
+  if (!/\s/.test(shown) && BARE_COMPANY_DOMAIN.test(shown)) {
+    const top = shown.slice(shown.lastIndexOf('.') + 1);
+    if (/^(?:example|invalid|localhost|test)$/i.test(top)) return null;
+    if (top.length >= 2) shown = shown.toLowerCase();
+  }
+  return shown;
 }
+
+/**
+ * The first pipe outside parentheses (the customer-data `pipeOutsideParens`
+ * rule, restated: the bundle cannot import a package).
+ * @param {string} text
+ */
+function pipeOutsideParens(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      if (depth > 0) depth--;
+    } else if (ch === '|' && depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * A bare domain name with no spaces (the customer-data `companyDisplayName`
+ * rule, restated: the bundle cannot import a package). The last label needs
+ * at least two characters, so an abbreviation like `S.p.A` never counts.
+ */
+const BARE_COMPANY_DOMAIN = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/;
 
 /**
  * backlog:2a214b66fe12 — the write applied to what the scheda shows, so
@@ -1101,7 +1244,13 @@ export function createCustomerCardView(deps) {
   // run the wait loop without real time.
   const wait = typeof deps.wait === 'function'
     ? deps.wait
-    : (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+    : (ms) => new Promise((resolve) => {
+      // Review rev-agent-crm-989-12ce3848de6a P2 (:596): the extraction
+      // deadline below outlives a fast run — unref'd so the leftover 60s
+      // never holds the loop (the race already ignored its late refusal).
+      const timer = setTimeout(resolve, ms);
+      if (timer && typeof timer === 'object' && typeof timer.unref === 'function') timer.unref();
+    });
   // The first-wave read budget (voce 4cd1bbb646d0): its own clock, so the
   // load backstop never sits among the screen's pauses above. Unref'd
   // where the host allows it, so an idle process never waits on it.
@@ -1575,7 +1724,7 @@ export function createCustomerCardView(deps) {
   }
 
 
-  function header(panel, card, resource, id) {
+  function header(panel, card, resource, id, profile = null) {
     // BO-F6-09 fetta 2a: ghost back button, avatar with initials, H1 name
     // and the stato pill. The meta line (città · provenienza · referente) is
     // NOT rendered: no record holds it yet (the contact record has no city,
@@ -1583,6 +1732,11 @@ export function createCustomerCardView(deps) {
     // never an invented meta. Fetta C3 (backlog:f84626a0) renders it now:
     // the origin is the earliest-observed identity the card reports; city
     // and referente have no record yet, so those segments are left out.
+    // Voce 714433c2 (correction liveprobe-20261113, riga 2026-11-07.md:73):
+    // the Cliente/Contatto pill stays a derived indicator (customer-status.js,
+    // shared with the list: the two views cannot disagree), never a menu —
+    // but it now carries its Italian reason as a tooltip, so the derivation
+    // is observable where the verifier looked for the menu.
     void resource;
     void id;
     const back = el('button', 'bo-scheda-back', '← Clienti');
@@ -1597,7 +1751,10 @@ export function createCustomerCardView(deps) {
     const titles = el('div', 'bo-scheda-titles');
     titles.appendChild(el('h1', 'bo-scheda-name', card?.name ?? 'Scheda cliente'));
     const meta = el('div', 'bo-scheda-meta');
-    meta.appendChild(el('span', 'bo-scheda-badge', statusLabel(card?.status?.value)));
+    const badge = el('span', 'bo-scheda-badge', statusLabel(card?.status?.value));
+    const badgeReason = statusMicrocopy(card, profile);
+    if (badgeReason !== null) badge.setAttribute('title', badgeReason);
+    meta.appendChild(badge);
     // C3, as the prototype reads it: `<città> · via <canale> · la segue
     // <referente>`. Only what a record holds is shown: a missing segment is
     // left out, never written as `Da raccogliere` three times in a row
@@ -1807,23 +1964,29 @@ export function createCustomerCardView(deps) {
     // Voce 2f2d22f2: the prototype names its channels — «WhatsApp» and
     // «Email» open the same composer with their channel preselected
     // (backlog:e9b4fc2f: no mailto: anywhere, Invia sends through the
-    // outbox worker). A channel tile stays honest: it opens the composer
-    // even when its own channel is off, and the composer says so there.
-    const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
-    if (writable.length === 0) {
+    // outbox worker).
+    // backlog:9b28b3bc6003: each channel tile needs its own recipient — a
+    // customer with an email but no phone reads Email only, never
+    // WhatsApp, and vice versa. «Chiama» stays always (Dan 11/11: with no
+    // number it opens the number window instead of calling).
+    const channels = composerChannelsFor(card, null);
+    let shownChannels = 0;
+    for (const channel of ['whatsapp', 'email']) {
+      const entry = channels.find((row) => row.channel === channel);
+      if (entry?.recipient === null || entry?.recipient === undefined) continue;
+      const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+      const channelTile = tile(label, 'messaggio');
+      channelTile.setAttribute('type', 'button');
+      channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
+      channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
+      channelTile.addEventListener('click', () => {
+        openComposer(card, navCtx, channel);
+      });
+      row.appendChild(channelTile);
+      shownChannels += 1;
+    }
+    if (shownChannels === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
-    } else {
-      for (const channel of ['whatsapp', 'email']) {
-        const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
-        const channelTile = tile(label, 'messaggio');
-        channelTile.setAttribute('type', 'button');
-        channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
-        channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
-        channelTile.addEventListener('click', () => {
-          openComposer(card, navCtx, channel);
-        });
-        row.appendChild(channelTile);
-      }
     }
   /**
    * «Chiama» without a number, or with several (Dan 11/11): the number
@@ -1893,30 +2056,39 @@ export function createCustomerCardView(deps) {
   // failed (404 not composed or any other error).
   const appendDeviceDialFallback = (into, dialPhone) => {
     const dialable = dialPhone.replaceAll(/[^\d+]/g, '');
-    into.appendChild(link(
+    const dial = link(
       `tel:${dialable === '' ? dialPhone : dialable}`,
-      `Chiama ${dialPhone} (tel:)`, 'call-fallback'));
+      `Chiama ${dialPhone} (tel:)`, 'call-fallback');
+    // Voce 14d999de: a /bo link, never the browser-default blue underline.
+    dial.setAttribute('class', 'bo-call-fallback');
+    into.appendChild(dial);
   };
   function openCallPanel(box, card, navCtx, phone) {
-    const old = box.querySelector('div[data-call="open"]');
-    if (old) {
-      while (old.firstChild) old.removeChild(old.firstChild);
-    }
-    const panel = old ?? el('div', 'bo-scheda-composer');
-    panel.setAttribute('data-call', 'open');
-    if (!old) box.appendChild(panel);
-    panel.appendChild(el('h4', undefined, 'Chiama dal CRM'));
+    // Voce 14d999de: the shared scheda window frame — the same dark head
+    // (purpose, customer, Riduci, Chiudi) as «Scrivi» and the number window —
+    // so the panel reads as /bo and Escape/Chiudi close it. A click outside
+    // closes it too, through the document closer below.
+    installCallOutsideCloser(doc);
+    const win = openSchedaWindow({
+      doc, host: box, attr: 'data-call', action: 'call',
+      title: 'Chiama dal CRM',
+      customer: typeof card?.name === 'string' ? card.name : null,
+    });
+    if (openCallPanelHandle && !openCallPanelHandle.gone()) openCallPanelHandle.shut();
+    openCallPanelHandle = win;
+    const { body } = win;
     const spaceId = activeSpaceId();
     if (spaceId === null) {
-      panel.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
-      appendDeviceDialFallback(panel, phone);
+      body.appendChild(el('p', 'bo-muted', 'Scegli uno spazio per chiamare dal CRM.'));
+      appendDeviceDialFallback(body, phone);
       return;
     }
     const wait = el('p', 'bo-muted', 'Controllo il connettore voce…');
-    panel.appendChild(wait);
+    body.appendChild(wait);
     client.request(`/api/connectors?spaceId=${encodeURIComponent(spaceId)}`).then(
       (sync) => {
-        panel.removeChild(wait);
+        if (win.gone()) return;
+        body.removeChild(wait);
         const entries = Array.isArray(sync?.connectors) ? sync.connectors : [];
         // The same gate the calls route enforces: active AND a non-empty
       // connectionKey. An entry without a key would be refused 409
@@ -1927,21 +2099,22 @@ export function createCustomerCardView(deps) {
         .find((entry) => entry.status === 'active'
           && typeof entry.connectionKey === 'string' && entry.connectionKey !== '') ?? null;
         if (voice === null) {
-          panel.appendChild(el('p', 'bo-muted',
+          body.appendChild(el('p', 'bo-muted',
             'Nessun connettore voce collegato: la chiamata parte dal telefono del computer.'));
-          appendDeviceDialFallback(panel, phone);
+          appendDeviceDialFallback(body, phone);
           return;
         }
-        buildCallForm(panel, navCtx, spaceId, phone);
+        buildCallForm(body, navCtx, spaceId, phone);
       },
       (error) => {
-        panel.removeChild(wait);
-        panel.appendChild(el('p', 'bo-muted',
+        if (win.gone()) return;
+        body.removeChild(wait);
+        body.appendChild(el('p', 'bo-muted',
           'La chiamata dal CRM non è disponibile qui: chiama dal telefono.'));
-        panel.appendChild(el('p', 'field-error', humanReadError(error, {
+        body.appendChild(el('p', 'field-error', humanReadError(error, {
           failed: 'Il connettore voce non si è potuto leggere. Riprova più tardi.',
         })));
-        appendDeviceDialFallback(panel, phone);
+        appendDeviceDialFallback(body, phone);
       },
     );
   }
@@ -3124,8 +3297,31 @@ export function createCustomerCardView(deps) {
         : (merged.complete === true
           ? `${count} ${count === 1 ? 'canale' : 'canali'}`
           : `${count} ${count === 1 ? 'canale' : 'canali'} (elenco parziale)`)));
-    const directions = observedDirections(timeline);
-    /** @type {Array<{ node: any, system: string, both: boolean }>} */
+    // Voce a5fb0770: alias spellings share one mailbox — Gmail, Email and
+    // Outlook read the union of their passages, Messenger the Facebook one —
+    // so an Email row never reads «→ in uscita» alone while arrivals sit
+    // under another spelling. Review #966: the union is keyed by counted
+    // channel plus normalized handle, never by counted channel alone —
+    // inbound on one mailbox plus outbound on another read ↔ on both rows
+    // otherwise. Entries without a usable handle feed the handle-less bucket
+    // their handle-less row reads.
+    const directions = new Map();
+    for (const entry of (Array.isArray(timeline?.entries?.items) ? timeline.entries.items : [])) {
+      const system = String(entry?.channel ?? '').toLowerCase();
+      if (system === '') continue;
+      const direction = String(entry?.direction ?? '');
+      if (direction !== 'inbound' && direction !== 'outbound') continue;
+      const counted = cardCountedChannel(system);
+      const remote = typeof entry?.remoteHandle === 'string' && entry.remoteHandle.trim() !== ''
+        && !isUuid(entry.remoteHandle) ? normalizeIdentityHandle(system, entry.remoteHandle) : '';
+      const key = `${counted}|${remote}`;
+      const union = directions.get(key) ?? { in: false, out: false };
+      if (direction === 'inbound') union.in = true;
+      else union.out = true;
+      directions.set(key, union);
+    }
+    const partial = merged.complete !== true ? ' (elenco parziale)' : '';
+    /** @type {Array<{ node: any, counted: string, both: boolean, traffic: string }>} */
     const syncLines = [];
     for (const row of merged.rows) {
       const { system } = row;
@@ -3139,37 +3335,55 @@ export function createCustomerCardView(deps) {
         : ` ${channelLabel(system)} · ${row.externalId}`));
       // Voce 59def6cb805d (C10): the prototype's sync line, from what the
       // passages on this channel prove — both directions seen reads
-      // «↔ sincronizzato», received only «← in entrata», sent only
+      // «↔ in entrata e in uscita», received only «← in entrata», sent only
       // «→ in uscita». A channel with no directed passage says nothing.
       // Review #650 (P2): the directions come from the entries page, so on
       // a truncated read a single direction is not exhaustive — the other
       // may sit on a later page. Both seen is proven either way; one seen
       // names the partial list, the same honesty standard as the count.
-      const seen = directions.get(system);
-      const partial = merged.complete !== true ? ' (elenco parziale)' : '';
-      // backlog:e381c48581fa: both directions seen prove traffic, not a
-      // sync. «↔ sincronizzato» needs the channel linked in the space (the
-      // shared `channelState`); until that is known the line says what was
-      // seen, and a channel known unlinked says so.
-      const sync = seen?.in && seen?.out ? '↔ in entrata e in uscita'
-        : seen?.in ? `← in entrata${partial}` : seen?.out ? `→ in uscita${partial}` : null;
-      if (sync) {
-        const node = el('span', 'bo-scheda-identity-sync', sync);
+      // Voce a5fb0770: an in-only channel never reads outbound — the cap
+      // comes from the shared matrix (`directionOf` in admin-connectors.js),
+      // never from a hardcoded channel name, so a future in-only channel is
+      // capped too. Voice keeps its outbound: operator calls («Chiama») are
+      // real outbound traffic, and the tests fix it (59def6cb805d C10 phone
+      // row plus the voice/site-form tests below).
+      const counted = cardCountedChannel(system);
+      const key = row.externalId == null
+        ? `${counted}|`
+        : `${counted}|${normalizeIdentityHandle(system, row.externalId)}`;
+      const seen = directions.get(key) ?? { in: false, out: false };
+      const inbound = seen.in === true;
+      const outbound = seen.out === true && !(directionOf(counted) === 'in-only' && counted !== 'voice');
+      const traffic = inbound && outbound ? '↔ in entrata e in uscita'
+        : inbound ? `← in entrata${partial}` : outbound ? `→ in uscita${partial}` : null;
+      if (traffic !== null) {
+        // Voce a5fb0770: the channel state arrives after the paint
+        // (/api/connectors is the last read). Until it lands the line is a
+        // placeholder, never a claim the state then corrects: the final
+        // text lands once, traffic then linked or unlinked.
+        // backlog:e381c48581fa: both directions seen prove traffic, not a
+        // sync. «↔ sincronizzato» needs the channel linked in the space (the
+        // shared `channelState`); a channel known unlinked says so.
+        const node = el('span', 'bo-scheda-identity-sync', '…');
         line.appendChild(node);
-        syncLines.push({ node, system, both: Boolean(seen?.in && seen?.out) });
+        syncLines.push({ node, counted, both: inbound && outbound, traffic });
       }
       box.appendChild(line);
     }
     if (syncLines.length > 0) {
       void readSpaceChannels().then((space) => {
-        if (space === null) return;
         for (const entry of syncLines) {
-          const linked = channelState(cardCountedChannel(entry.system), space).state === 'collegato';
+          if (space === null) {
+            entry.node.textContent = entry.traffic;
+            continue;
+          }
+          const linked = channelState(entry.counted, space).state === 'collegato';
           if (linked && entry.both) entry.node.textContent = '↔ sincronizzato';
           // «non collegato» only when known (review #819 P2): with the
           // profile unread a Profilo link cannot be ruled out, so the line
           // keeps the traffic it saw and claims nothing more.
-          else if (!linked && space.profileRead) entry.node.textContent = `${entry.node.textContent} · canale non collegato`;
+          else if (!linked && space.profileRead) entry.node.textContent = `${entry.traffic} · canale non collegato`;
+          else entry.node.textContent = entry.traffic;
         }
       });
     }
@@ -3555,7 +3769,10 @@ export function createCustomerCardView(deps) {
     // Backlog e5e3e886 (supera C13): the ghost `Aggiorna` button STARTS one
     // extraction run — a POST the network shows — instead of re-reading the
     // same GET. While the run is in flight the section reads `Estraggo…`;
-    // when it lands the section re-reads the facts and lists the stored
+    // a run that answers nothing refuses in time with the retry line, never
+    // a wait without end. With no messages the button says so at once under
+    // `Aggiorno…` and sends nothing — never `Estraggo…`. When the run lands
+    // the section re-reads the facts and lists the stored
     // proposals beside them, each with its source. Without an AI adapter on
     // this deployment the run refuses before doing anything and the button
     // says the AI is off — `Nessun dato nuovo` now means the run happened
@@ -3580,8 +3797,55 @@ export function createCustomerCardView(deps) {
       refresh.setAttribute('type', 'button');
       refresh.setAttribute('data-action', 'refresh-enrichment');
       let busy = false;
-      refresh.addEventListener('click', () => uiBusy(refresh, 'Estraggo…', async () => {
-        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return;
+      refresh.addEventListener('click', () => {
+        if (busy || (runKey !== null && enrichmentRuns.has(runKey))) return undefined;
+        // Backlog e5e3e886, seguito 17/11: with no messages there is nothing
+        // to extract — the button says so at once and sends nothing, never
+        // «Estraggo…», and never spins without end. The re-read below is the
+        // arbitrato #853 P1 (voce b9f6a2b58e00): unchanged facts still read
+        // «Nessun dato nuovo», changed facts «Dati aggiornati».
+        if (extractionSourcesFromTimeline(sourcesOf).length === 0) {
+          toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
+          return uiBusy(refresh, 'Aggiorno…', async () => {
+            busy = true;
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3772): the re-read
+            // without messages flies under the same single-flight guard as
+            // the extract run — otherwise a repaint in flight lets two
+            // reload()s race and lands the first answer in a detached box.
+            const painted = lastShown;
+            const flight = {};
+            if (runKey !== null) enrichmentRuns.set(runKey, flight);
+            try {
+              let fresh;
+              try {
+                fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
+              } catch (error) {
+                if (isExtractionTimeout(error)) {
+                  toast('Non ha risposto in tempo: riprova.', true);
+                  if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                    paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+                  }
+                } else {
+                  toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+                }
+                return;
+              }
+              const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
+              const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              } else {
+                while (box.firstChild) box.removeChild(box.firstChild);
+                enriched(box, fresh, reload, null, ctx, null);
+              }
+              toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
+            } finally {
+              busy = false;
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+            }
+          });
+        }
+        return uiBusy(refresh, 'Estraggo…', async () => {
         busy = true;
         // The paint this click was painted on: landing anywhere else means
         // a repaint detached this box while the run flew.
@@ -3596,35 +3860,28 @@ export function createCustomerCardView(deps) {
         };
         try {
           const sources = extractionSourcesFromTimeline(sourcesOf);
-          if (sources.length === 0) {
-            // Backlog e5e3e886, arbitrato #853 P1: with zero messages the
-            // run cannot start, but the button still re-reads the facts
-            // like main (voce b9f6a2b58e00) instead of leaving the old
-            // rows on screen — then it says where the AI starts from.
-            let fresh;
-            try {
-              fresh = await reload();
-            } catch (error) {
-              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
-              return;
-            }
-            const before = JSON.stringify([enrichment?.optedOut ?? null, enrichment?.items ?? null]);
-            const after = JSON.stringify([fresh?.optedOut ?? null, fresh?.items ?? null]);
-            while (box.firstChild) box.removeChild(box.firstChild);
-            enriched(box, fresh, reload, null, ctx, null);
-            toast(before === after ? 'Nessun dato nuovo' : 'Dati aggiornati');
-            toast('Non ci sono messaggi da cui estrarre: l\u2019AI parte dai messaggi del cliente.', true);
-            return;
-          }
           const status = el('p', 'bo-scheda-extracting', 'Estraggo…');
           status.setAttribute('role', 'status');
           box.appendChild(status);
           let answer;
           try {
-            answer = await extract(sources);
+            // Backlog e5e3e886, seguito 17/11 (ANSWER 14/11 punto 2): a run
+            // that answers nothing refuses in time with the retry line —
+            // «Estraggo…» never spins without end.
+            answer = await withExtractionTimeout(extract(sources), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
             if (isEnrichmentAiUnavailable(error)) {
               toast('L\u2019AI non \u00e8 attiva in questo spazio: accendila prima di riprovare \u00abAggiorna\u00bb.', true);
+            } else if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              // Review #989 (P2): a repaint may have detached this box while
+              // the run flew, and its replacement shows the flying
+              // «Estraggo…». The flight is over: release it before the
+              // repaint below, or the new paint shows it again.
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
             } else {
               toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
             }
@@ -3638,9 +3895,21 @@ export function createCustomerCardView(deps) {
           // line — never a silent old screen after a happened run.
           let fresh;
           try {
-            fresh = await reload();
+            // Review rev-agent-crm-989-12ce3848de6a P2 (:3848): the re-read
+            // after a landed run flies under the same 60s deadline as the
+            // extract — otherwise a hanging GET holds the flight forever and
+            // every later «Aggiorna» no-ops with no retry line.
+            fresh = await withExtractionTimeout(reload(), ENRICHMENT_EXTRACT_TIMEOUT_MS, wait);
           } catch (error) {
-            toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            if (isExtractionTimeout(error)) {
+              toast('Non ha risposto in tempo: riprova.', true);
+              if (runKey !== null && enrichmentRuns.get(runKey) === flight) enrichmentRuns.delete(runKey);
+              if (runKey !== null && lastShown !== null && lastShown !== painted && lastShown.key === runKey) {
+                paint(lastShown.key, lastShown.resource, lastShown.id, lastShown.loaded);
+              }
+            } else {
+              toast(humanReadError(error, { failed: 'Qualcosa non ha funzionato. Riprova tra poco.' }), true);
+            }
             return;
           }
           const freshProposals = Array.isArray(answer?.proposals) ? answer.proposals : [];
@@ -3675,7 +3944,8 @@ export function createCustomerCardView(deps) {
         } finally {
           release();
         }
-      }));
+        });
+      });
       box.appendChild(refresh);
       if (runKey !== null && enrichmentRuns.has(runKey)) {
         // A run this button did not start is still flying (a repaint
@@ -4059,7 +4329,7 @@ export function createCustomerCardView(deps) {
       if (who === null || who === '—') return;
       offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
     };
-    /** @type {'none' | 'pending' | 'done' | 'failed'} */
+    /** @type {'none' | 'pending' | 'stale' | 'done' | 'failed'} */
     let historyState = profilePending ? 'pending' : 'none';
     if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
@@ -4067,9 +4337,31 @@ export function createCustomerCardView(deps) {
         applyHistory(settled);
         historyState = 'done';
       } else {
-        historyState = 'pending';
+        // backlog:fb35de38db49: while the fresh history is in flight (a
+        // «Cambia stato» dropped the live caches), draw the rows already
+        // shown instead of hiding them — the repaint must not jump.
+        const kept = historyKept.get(historyId);
+        if (kept !== undefined) {
+          applyHistory(kept);
+          historyState = 'stale';
+        } else {
+          historyState = 'pending';
+        }
       }
     }
+    // backlog:fb35de38db49: the newest-first order of «Tutti», shared by
+    // the paint and by the history landing — the fresh moves join the rows
+    // already shown instead of pushing them out of the page.
+    const orderedRows = () => {
+      // The offers' creation waits for their moves: one step, never two.
+      const events = channelFilter === 'all' && historyState !== 'pending' ? [...offerEvents, ...stageEvents] : [];
+      const filtered = [...entries, ...events].filter((item) => {
+        if (channelFilter === 'all') return true;
+        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
+        return String(item?.channel ?? '') === channelFilter;
+      });
+      return [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+    };
     const drawList = () => {
       while (list.firstChild) list.removeChild(list.firstChild);
       const movesPending = channelFilter === 'all' && historyState === 'pending';
@@ -4084,20 +4376,13 @@ export function createCustomerCardView(deps) {
       } else if (channelFilter === 'all' && historyState === 'failed') {
         list.appendChild(el('p', 'bo-muted', 'Cambi di stato non leggibili: riprova più tardi.'));
       }
-      // The offers' creation waits for their moves: one step, never two.
-      const events = channelFilter === 'all' && historyState !== 'pending' ? [...offerEvents, ...stageEvents] : [];
       // Voce 714433c2: operator notes are channel-less, so they read under
       // `Tutti` only — a channel filter shows that channel's passages alone.
       // Dan 06/11: newest first, a page at a time — 42 e-mails used to make
       // a 5.600px page. «Mostra precedenti» opens the next page below.
-      const filtered = [...entries, ...events].filter((item) => {
-        if (channelFilter === 'all') return true;
-        if (channelFilter === 'note') return item?.entry === 'note' && (noteAuthorFilter === null || noteAuthor(item) === noteAuthorFilter);
-        return String(item?.channel ?? '') === channelFilter;
-      });
-      const ordered = [...filtered].sort((a, b) => (Date.parse(String(b?.occurredAt ?? '')) || 0) - (Date.parse(String(a?.occurredAt ?? '')) || 0));
+      const ordered = orderedRows();
       const visible = ordered.slice(0, timelineShown);
-      if (filtered.length === 0) {
+      if (ordered.length === 0) {
         // Voce 59def6cb805d (C27): the exact empty state of the prototype,
         // never a technical sentence.
         if (channelFilter === 'note') {
@@ -4385,13 +4670,38 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (historyState === 'pending' && !profilePending) {
+    if ((historyState === 'pending' || historyState === 'stale') && !profilePending) {
       void readHistory(historyId).then((answer) => {
+        // backlog:fb35de38db49: the rows already on screen stay — the page
+        // grows so the fresh moves join them instead of pushing shown notes
+        // out (at open the history lands after the notes).
+        const shown = new Set(
+          Array.from(list.childNodes ?? [])
+            .map((row) => row?.getAttribute?.('data-entry'))
+            .filter((id) => typeof id === 'string' && id !== ''),
+        );
         historyState = 'done';
         applyHistory(answer);
+        // Review #1027 (P2): a history that lands after the operator opened
+        // another customer paints a detached list — it must not grow the
+        // shared page, or the new customer's next repaint shows extra rows
+        // nobody asked for.
+        if (shown.size > 0 && mount.contains(list)) {
+          const order = orderedRows();
+          const at = new Map(order.map((item, index) => [String(item?.id ?? ''), index]));
+          let need = timelineShown;
+          for (const id of shown) {
+            const found = at.get(id);
+            if (found !== undefined) need = Math.max(need, found + 1);
+          }
+          timelineShown = need;
+        }
         drawList();
       }, () => {
-        historyState = 'failed';
+        // backlog:fb35de38db49: a failed refresh keeps the rows already
+        // shown (the shared read still logs its cause through «Storia
+        // stati»); only a history never read says it is unreadable.
+        if (historyState !== 'stale') historyState = 'failed';
         drawList();
       });
     }
@@ -4748,11 +5058,12 @@ export function createCustomerCardView(deps) {
 
   // Voce 2c1c0e149cf9: the still-open work tasks for the recap panel's
   // PROSSIME AZIONI — the same server list, never an optimistic copy. Null
-  // when the package is not composed.
+  // when the package is not composed. A cancelled step is not a next
+  // action (seguito 17/11: it read as to-do in the block).
   const openTasksOf = (profile) => {
     if (profile?.workTasks?.available !== true) return null;
     const items = Array.isArray(profile.workTasks.items) ? profile.workTasks.items : [];
-    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed');
+    return items.filter((item) => item?.status !== 'done' && item?.status !== 'completed' && item?.status !== 'cancelled');
   };
   // Voce 2c1c0e149cf9: an agent-opened task is an AI suggestion — the
   // prototype's «✦ suggeriti» mark, read from the record's openedByType
@@ -4889,14 +5200,22 @@ export function createCustomerCardView(deps) {
     const amount = Number.isSafeInteger(first?.amountCents) && first.amountCents > 0
       && typeof first?.currency === 'string' && first.currency !== ''
       ? el('p', 'bo-scheda-offer-amount', formatAmount(first.amountCents, first.currency)) : null;
+    // backlog:1e07362849db: the figure reads with its label — a quote row
+    // shows the quote total («preventivo», «preventivo in bozza» for a
+    // draft), an offer row the offer value («valore dell’offerta», like the
+    // offer page hero): never two bare figures that read as the same.
+    const amountNote = amount === null ? null : el('p', 'bo-scheda-offer-amount-note',
+      fromQuote ? (first?.status === 'draft' ? 'preventivo in bozza' : 'preventivo') : 'valore dell’offerta');
     if (offerHref === null) {
       box.appendChild(line);
       if (amount) box.appendChild(amount);
+      if (amountNote) box.appendChild(amountNote);
     } else {
       const link = el('a', 'bo-scheda-offer-link');
       link.setAttribute('href', offerHref);
       link.appendChild(line);
       if (amount) link.appendChild(amount);
+      if (amountNote) link.appendChild(amountNote);
       box.appendChild(link);
     }
     // Voce 714433c2: «Cambia stato» — the stato shown above changes from a
@@ -5200,13 +5519,18 @@ export function createCustomerCardView(deps) {
       : null;
     const companyName = typeof profile?.identity?.company?.name === 'string'
       && profile.identity.company.name !== '' ? profile.identity.company.name : null;
-    box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
+    const title = el('p', 'bo-scheda-offer-history-title', 'Storia stati');
+    box.appendChild(title);
     const loading = el('p', 'bo-muted', 'Caricamento…');
     // backlog:947260f9f036: a history already read fills at once on a repaint.
     const settled = historySettled.get(targetId);
-    if (settled === undefined) box.appendChild(loading);
+    // backlog:fb35de38db49: while the fresh history is in flight, the rows
+    // already shown stay — the fill below replaces them when it lands.
+    const kept = settled === undefined ? historyKept.get(targetId) : undefined;
+    if (settled === undefined && kept === undefined) box.appendChild(loading);
     const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
+      while (title.nextSibling) box.removeChild(title.nextSibling);
       const rows = [];
       for (const entry of Array.isArray(items) ? items : []) {
         const move = stageMoveOf(entry);
@@ -5240,7 +5564,8 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
-    if (settled !== undefined) {
+    if (kept !== undefined) fill(kept.items, kept.people);
+    else if (settled !== undefined) {
       fill(settled.items, settled.people);
       return;
     }
@@ -5603,10 +5928,10 @@ export function createCustomerCardView(deps) {
    * switch one body across Chiamate, Messaggi and Appuntamenti; PROSSIME
    * AZIONI lists the open server tasks, the only copy on the scheda. A failed
    * read fails its vista (or the azioni block) like the card it replaces,
-   * never vanishing as empty. DECISION (to be confirmed): the panel always
-   * paints with honest vista states; only an empty azioni list hides its own
-   * block — the review left the empty state undecided, and hiding the whole
-   * panel would drop the failure contract.
+   * never vanishing as empty. DECISION (supervisore 17/11, verifier back su
+   * 84ebe9e5 AC-3): the block always paints — with no open step it keeps its
+   * title and an honest empty state, never hiding; only an uncomposed
+   * package (null) hides the block, like every uncomposed section.
    */
   function recapPanel(box, parts) {
     const { card, calls, callsError, timeline, timelineError, profile, profileError, serviceNames, servicesReady = true, stepCtx } = parts;
@@ -5649,8 +5974,14 @@ export function createCustomerCardView(deps) {
       readError(box, profileError, 'Le prossime azioni non si sono potute leggere. Riprova più tardi.');
       return true;
     }
-    if (tasks === null || tasks.length === 0) return true;
+    if (tasks === null) return true;
     box.appendChild(el('p', 'bo-scheda-recap-actions-title', 'Prossime azioni'));
+    // Seguito 17/11: with no open step the block stays with an honest empty
+    // state — the prototype holds PROSSIME AZIONI, never a missing block.
+    if (tasks.length === 0) {
+      box.appendChild(el('p', 'bo-muted', 'Nessuna azione aperta.'));
+      return true;
+    }
     for (const task of tasks.slice(0, 5)) box.appendChild(stepRow(task, stepCtx));
     return true;
   }
@@ -5739,6 +6070,7 @@ export function createCustomerCardView(deps) {
     const startSeq = { ...partSeq };
     historyReads.clear();
     historySettled.clear();
+    historyKept.clear();
     rosterRead = null;
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
@@ -5936,6 +6268,14 @@ export function createCustomerCardView(deps) {
    */
   const historySettled = new Map();
   /**
+   * backlog:fb35de38db49: the last settled answer by offer id, kept after a
+   * write drops the live caches so a repaint (a «Cambia stato» re-read)
+   * draws the rows already shown until the fresh answer lands, instead of a
+   * gap. Cleared with the live caches on a full read.
+   * @type {Map<string, any>}
+   */
+  const historyKept = new Map();
+  /**
    * The offer's stage history with the roster that names its actors —
    * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
    * a repaint after a note or a Dettagli save reuses it; a full re-read or a
@@ -5950,7 +6290,11 @@ export function createCustomerCardView(deps) {
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
       const mine = read;
-      void read.then((answer) => { if (historyReads.get(targetId) === mine) historySettled.set(targetId, answer); }, () => {});
+      void read.then((answer) => {
+        if (historyReads.get(targetId) !== mine) return;
+        historySettled.set(targetId, answer);
+        historyKept.set(targetId, answer);
+      }, () => {});
       historyReads.set(targetId, read);
       // A failed read is not kept: the next paint asks again (after the
       // sections of a first read have landed, backlog:1a96094db71d).
@@ -6326,9 +6670,14 @@ export function createCustomerCardView(deps) {
   }
   /** The roster name of a team subject, or null. @param {string} id */
   function rosterName(id) {
-    // The same person lookup as «Storia stati» (subject or person key).
+    // The same person lookup as «Storia stati» (subject or person key),
+    // reading the author's profile word like cronologia/«Creata da» do
+    // (backlog:3f3c143b seguito): never the Team ordinal («daniele
+    // pelleri (2)»), never «dal team». A writer nobody names still reads
+    // unnamed («Nota · 10:00»).
     const person = rosterPeople === null ? null : personOf(id, rosterPeople);
-    return person !== null && typeof person.name === 'string' && person.name.trim() !== '' ? person.label : null;
+    const name = person !== null ? authorName(person) : null;
+    return typeof name === 'string' && name.trim() !== '' ? name : null;
   }
   /** Who wrote a note or a message: the roster name, else the readable handle, else null. @param {unknown} id */
   function writerName(id) {
@@ -6520,7 +6869,7 @@ export function createCustomerCardView(deps) {
       }
       panel.appendChild(head);
     } else {
-      header(panel, card, resource, id);
+      header(panel, card, resource, id, profile);
     }
     const grid = el('div', 'bo-scheda-grid');
     // Dan 06/11: the side columns stay put while the conversation scrolls.
@@ -6591,7 +6940,12 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    // backlog:9b28b3bc6003: the offer section hides itself when the customer
+    // has none, so the skeleton only covers the unknown — while the profile
+    // is still in flight. The pipelines only name the stage (the line falls
+    // back to the core stage without them), so a slow schema read never
+    // paints an «Offerta» skeleton over a customer with no offer.
+    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — a grey skeleton while the services read is in flight, never

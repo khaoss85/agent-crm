@@ -163,7 +163,7 @@ test('review #690 (P2): picking a customer ends the search, no read lands after 
   t.mock.timers.tick(SEARCH_DEBOUNCE_MS * 2);
   await flush();
   assert.equal(client.searches.length, 1, 'no search starts after the choice');
-  assert.ok(mount.findAll('p').some((node) => node.textContent === 'Cliente: Ada Rossi'), 'the pick stands');
+  assert.ok(mount.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick' && node.textContent === 'Ada Rossi'), 'the pick stands');
   // «Cambia cliente» resets with nothing pending either.
   const change = mount.findAll('button').find((node) => node.textContent === 'Cambia cliente');
   change.dispatch('click');

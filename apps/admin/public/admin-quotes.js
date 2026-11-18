@@ -243,6 +243,23 @@ export function createQuoteView(deps) {
   }
 
   /**
+   * backlog:d56122ee2844: one parent's rows, read server-side by their indexed
+   * key — the same fetchLinked the offer page uses (backlog:d8175e1c3495),
+   * reused here instead of a second mechanism. The detail painted whole tables
+   * (up to LIST_LIMIT rows each) and filtered them in the browser, so every
+   * paint and every post-write re-read waited for scans it never showed.
+   * The client-side predicate stays on top: the server narrows the page, the
+   * page still decides what it shows.
+   */
+  async function fetchLinked(module, field, id) {
+    const result = await client.request(
+      `/api/modules/${module}/records?limit=${LIST_LIMIT}&filter.${field}=${encodeURIComponent(String(id))}`,
+    );
+    const rows = Array.isArray(result?.items) ? result.items : [];
+    return { rows, truncated: rows.length >= LIST_LIMIT };
+  }
+
+  /**
    * Voce cf340b571e98: «← <name>» back to the scheda the offer tile links
    * from. Resolved quote → opportunity → contact (else company), reading the
    * same contact/company name the scheda header shows. Best-effort: any
@@ -334,13 +351,16 @@ export function createQuoteView(deps) {
       ? `Mostro solo i primi ${LIST_LIMIT} preventivi.`
       : `${quotes.rows.length} preventiv${quotes.rows.length === 1 ? 'o' : 'i'}.`;
 
-    // Voce 47b89e19: quotes are created from their offer page («Crea
+    // Voce 47b89e19: quotes are created from their offer page («Nuovo
     // preventivo» there, backlog 169cd4bc988c) — never by typing an id
     // here. No manual id field on this screen.
     const page = el('div', 'bo-offer');
     const panel = el('section', 'offer-quotes');
     panel.appendChild(el('h3', undefined, 'Tutti i preventivi'));
-    panel.appendChild(el('p', 'bo-muted', 'I preventivi si creano dall’offerta: apri l’offerta e premi «Crea preventivo».'));
+    // backlog:3234cc917e0a: the screen names the same button the offer page
+    // shows («Nuovo preventivo», the canonical create name in admin-labels),
+    // never a different one.
+    panel.appendChild(el('p', 'bo-muted', 'I preventivi si creano dall’offerta: apri l’offerta e premi «Nuovo preventivo».'));
     if (offerNames === null) {
       panel.appendChild(el('p', 'bo-muted', 'Offerte collegate non leggibili adesso: righe, stato e importo restano.'));
     }
@@ -462,17 +482,28 @@ export function createQuoteView(deps) {
       quoteRead.catch(() => {});
       schema = await schemaRead;
       quote = await quoteRead;
+      // No price book on the quote means no offer can belong to it: the read
+      // is skipped instead of sending the server a filter it cannot mean.
+      const bookRead = typeof quote.priceBookId === 'string' && quote.priceBookId !== ''
+        ? fetchLinked('offer', 'priceBookId', quote.priceBookId)
+        : Promise.resolve({ rows: [], truncated: false });
       const restRead = Promise.all([
-        fetchRows('quote-line', (line) => line.quoteId === quote.id && line.removed === false),
-        fetchRows('offer', (offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true),
-        fetchRows('quote-version', (version) => version.quoteId === quote.id),
+        fetchLinked('quote-line', 'quoteId', quote.id),
+        bookRead,
+        fetchLinked('quote-version', 'quoteId', quote.id),
         resolveCardBackLink(quote),
       ]);
       restRead.catch(() => {});
       const [lineAnswer, entryAnswer, versionAnswer, backLink] = await restRead;
-      lines = lineAnswer.rows.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-      entries = entryAnswer.rows;
-      versions = versionAnswer.rows.sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      // The server narrowed the page; the predicates stay as a second layer.
+      lines = lineAnswer.rows
+        .filter((line) => line.quoteId === quote.id && line.removed === false)
+        .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+      entries = entryAnswer.rows
+        .filter((offer) => offer.priceBookId === quote.priceBookId && offer.active === true && offer.quoteEligible === true);
+      versions = versionAnswer.rows
+        .filter((version) => version.quoteId === quote.id)
+        .sort((a, b) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
       backLinkResolved = backLink;
     } catch (error) {
       if (token !== renderToken) return;
@@ -529,14 +560,21 @@ export function createQuoteView(deps) {
       ? `${customerName} — ${opportunityName}`
       : (customerName ?? opportunityName);
     if (titleName !== null) heading.textContent = `Preventivo · ${titleName}`;
+    // backlog:3234cc917e0a: the quote list is one link away — off the
+    // offer through this detail, through the router like every other
+    // screen link (see linkTo). It paints before the status so the way
+    // back, the offer and the list read as one row of exits.
+    const listLink = linkTo('#/quotes', 'Tutti i preventivi', 'quote-list-link');
+    listLink.setAttribute('data-action', 'quote-open-list');
+    mount.removeChild(status);
     if (back !== null || offer !== null) {
       mount.removeChild(heading);
-      mount.removeChild(status);
       if (back !== null) mount.appendChild(back);
       mount.appendChild(heading);
       if (offer !== null) mount.appendChild(offer);
-      mount.appendChild(status);
     }
+    mount.appendChild(listLink);
+    mount.appendChild(status);
 
     // Design (Dan 06/11): the quote reads as a small, tidy document — the
     // issuing space, who it is for, what it includes and what it costs — with
@@ -895,11 +933,31 @@ export function createQuoteView(deps) {
     let orders;
     let orderTotals;
     try {
-      envelopes = (await fetchRows('signature-envelope', (row) => row.quoteId === quote.id)).rows;
-      signers = (await fetchRows('signature-signer')).rows;
-      artifacts = (await fetchRows('signed-artifact', (row) => row.quoteId === quote.id)).rows;
-      orders = (await fetchRows('order', (row) => row.quoteId === quote.id)).rows;
-      orderTotals = (await fetchRows('order-total')).rows;
+      // backlog:d56122ee2844: the evidence reads leave together, index-backed
+      // (fetchLinked, like the offer page) — never five serial whole-table
+      // scans. Signers and order totals follow only when there is something
+      // to hang them on: without an envelope the request form below needs no
+      // other read. Predicates stay as a second layer on each narrowed page.
+      const [envelopeAnswer, artifactAnswer, orderAnswer] = await Promise.all([
+        fetchLinked('signature-envelope', 'quoteId', quote.id),
+        fetchLinked('signed-artifact', 'quoteId', quote.id),
+        fetchLinked('order', 'quoteId', quote.id),
+      ]);
+      envelopes = envelopeAnswer.rows.filter((row) => row.quoteId === quote.id);
+      artifacts = artifactAnswer.rows.filter((row) => row.quoteId === quote.id);
+      orders = orderAnswer.rows.filter((row) => row.quoteId === quote.id);
+      const filled = envelopes[0] ?? null;
+      if (filled === null) {
+        signers = [];
+        orderTotals = [];
+      } else {
+        const signerRead = fetchLinked('signature-signer', 'envelopeId', filled.id);
+        const totalReads = Promise.all(orders.map((row) => fetchLinked('order-total', 'orderId', row.id)));
+        const [signerAnswer, totalAnswers] = await Promise.all([signerRead, totalReads]);
+        signers = signerAnswer.rows.filter((row) => row.envelopeId === filled.id);
+        orderTotals = totalAnswers.flatMap((answer, index) =>
+          answer.rows.filter((row) => row.orderId === orders[index].id));
+      }
     } catch (error) {
       panel.appendChild(el('p', 'field-error', humanReadError(error, { failed: 'Stato della firma non leggibile. Riprova più tardi.' })));
       return;

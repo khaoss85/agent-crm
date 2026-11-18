@@ -23,6 +23,7 @@ import {
   SYNC_ROUTE,
   cataloguedChannel,
   channelLabel,
+  channelSynced,
   createSyncView,
   directionLabel,
   feedClockTime,
@@ -879,9 +880,10 @@ test('the table renders nine rows with the count, agg and pills', async () => {
   await view.render();
   await flush();
   const text = mount.textContent;
-  // The spec count: «di 9», like the nine rows (C16).
-  assert.ok(text.includes('2 di 9 collegati'), 'the card counts the nine');
-  for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe', 'Telegram']) {
+  // Backlog 6d0df351: the headline counts the rows the table shows — the
+  // nine plus the catalog outsiders (Telegram, SMS).
+  assert.ok(text.includes('2 di 11 collegati'), 'the card counts the rows it shows');
+  for (const name of ['WhatsApp', 'Instagram', 'Facebook', 'TikTok', 'Email', 'Telefono', 'Form sito', 'Google Calendar', 'Stripe', 'Telegram', 'SMS']) {
     assert.ok(text.includes(name), `the table names ${name}`);
   }
   assert.ok(text.includes('↔ bidirezionale'));
@@ -900,22 +902,23 @@ test('the table renders nine rows with the count, agg and pills', async () => {
     '#/connettori/email', '#/connettori/facebook', '#/connettori/site-form',
     '#/connettori/sms', '#/connettori/telegram', '#/connettori/tiktok', '#/connettori/voice',
   ]);
-  assert.ok(!text.includes('Non disponibile'), 'C19: an unlinked row says non collegato');
+  assert.ok(!text.includes('non collegato'), 'backlog 6d0df351: never «non collegato» in the table');
+  assert.ok(text.includes('Non ancora disponibile'), 'an unlinked row reads like Connettori');
   // No per-row pull: the table carries no sync-now buttons.
   assert.equal(mount.findAll('button').filter((node) => node.getAttribute('data-action') === 'sync-now').length, 0);
 });
 
-test('the empty space still lists nine connectable rows', async () => {
+test('the empty space still lists eleven rows (nine plus Telegram and SMS)', async () => {
   const { mount, view } = renderView({
     client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }) },
   });
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('0 di 9 collegati'));
+  assert.ok(text.includes('0 di 11 collegati'), 'the count uses the rows shown');
   assert.equal(mount.findAll('a').filter((node) => node.textContent === 'Collega').length, 9);
-  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'non collegato').length, 2,
-    'Google Calendar and Stripe, which nothing here connects without the profile, read non collegato');
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non ancora disponibile').length, 2,
+    'Google Calendar and Stripe, which nothing here connects without the profile, read Non ancora disponibile');
 });
 
 test('a failed read offers Riprova and retries on click', async () => {
@@ -1100,7 +1103,7 @@ test('an uncomposed candidates module stays silent with zero cards', async () =>
 });
 
 // Voce 3a3e6eaf: honest headline. With no channel linked the screen never
-// claims all is synced next to «0 di 9 collegati»: it names the state and
+// claims all is synced next to «0 di 11 collegati»: it names the state and
 // offers Collega where the global pull would be.
 const NOTHING_LINKED = { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }) };
 
@@ -1110,7 +1113,7 @@ test('3a3e6eaf: nothing linked says so, offers Collega and never claims all sync
   await flush();
   const text = mount.textContent;
   assert.ok(text.includes('Nessun canale collegato'), 'the headline names the state');
-  assert.ok(text.includes('0 di 9 collegati'), 'the count stays');
+  assert.ok(text.includes('0 di 11 collegati'), 'the count uses the rows shown');
   assert.ok(!text.includes('Tutto sincronizzato'), 'never all synced with nothing linked');
   assert.ok(!text.includes('Sincronizza ora'), 'no pull with nothing to pull');
   const connect = mount.findAll('a').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-connect'));
@@ -1123,7 +1126,7 @@ test('3a3e6eaf: nothing linked says so, offers Collega and never claims all sync
   assert.equal(rows.length, 11);
   for (const row of rows) {
     assert.equal(row.getAttribute('class'), 'bo-sync-row-off', 'an unlinked row reads dimmed');
-    assert.ok(/Collega|non collegato/.test(row.textContent), row.textContent);
+    assert.ok(/Collega|Non ancora disponibile/.test(row.textContent), row.textContent);
   }
 });
 
@@ -1174,7 +1177,7 @@ for (const channel of ['sms', 'telegram']) {
     assert.ok(count, 'the card shows a count');
     assert.equal(Number(count[1]) > 0, indicator.tone !== 'empty',
       `hero «${indicator.title}» and «${count[0]}» tell the same story`);
-    assert.equal(count[0], '1 di 10 collegati', 'the extra linked row counts, and so does its place');
+    assert.equal(count[0], '1 di 11 collegati', 'the extra linked row counts, and so does its place');
     assert.ok(!text.includes('Nessun canale collegato'), 'a linked row is never «nessun canale»');
   });
 }
@@ -1189,7 +1192,7 @@ test('3a3e6eaf C15-C16: all clear hides the section, the count sits beside Canal
   const head = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'bo-sync-cardhead'
     && node.textContent.startsWith('Canali'));
   assert.ok(head, 'Canali has a card head');
-  assert.equal(head.childNodes[1].textContent, '1 di 9 collegati', 'the count sits in the head row');
+  assert.equal(head.childNodes[1].textContent, '1 di 11 collegati', 'the count sits in the head row');
 });
 
 test('3a3e6eaf C18-C20: a linked row shows agg., events and a coloured pill; no English, no ids', async () => {
@@ -1216,7 +1219,7 @@ test('3a3e6eaf C18-C26: the stylesheet shows the update column and stacks rows o
   const { readFileSync } = await import('node:fs');
   const css = readFileSync(new URL('../apps/admin/public/styles.css', import.meta.url), 'utf8');
   assert.ok(!/\.bo-sync-channels \.bo-sync-table td:nth-child\(2\) \{ position: absolute;/.test(css),
-    'the update column (agg. / non collegato) is never clipped away');
+    'the update column (agg. / —) is never clipped away');
   // backlog:8618ad3f72db: the sync pills wear the shared channel-state tones.
   for (const tone of ['ok', 'warn', 'data', 'human', 'muted']) {
     assert.ok(css.includes(`.ui-channel-state-${tone} {`), `the ${tone} channel state is coloured`);
@@ -1250,7 +1253,7 @@ test('cf365ada15b9: Stato sync counts the profile links like Oggi does', async (
   await flush();
   const count = /(\d+) di (\d+) collegati/.exec(mount.textContent);
   assert.ok(count, 'the card shows a count');
-  assert.equal(count[0], '2 di 9 collegati', 'Gmail and Calendar count on Stato sync too');
+  assert.equal(count[0], '2 di 11 collegati', 'Gmail and Calendar count on Stato sync too');
   assert.equal(Number(count[1]), countConnectedNine([], GOOGLE_PROFILE), 'the same number Oggi prints');
   assert.ok(!mount.textContent.includes('Nessun canale collegato'), 'the hero agrees with the count');
 });
@@ -1277,14 +1280,14 @@ test('cf365ada15b9: Google Calendar offers Collega on Profilo when the product c
   assert.equal(collega.find((node) => node.getAttribute('data-channel') === 'stripe'), undefined, 'Stripe has no connect screen');
   const stripeRow = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
   assert.equal(stripeRow.findAll('a').length, 0, 'Stripe offers no Collega');
-  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'non collegato').length, 1, 'only Stripe reads non collegato in the state cell');
-  // backlog:8618ad3f72db: an unlinked row says «non collegato» once at most
-  // (never also in the update column), its state is the shared channel
+  assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non ancora disponibile').length, 1, 'only Stripe reads Non ancora disponibile in the state cell');
+  // backlog:6d0df351: an unlinked row says «Non ancora disponibile» once at
+  // most (never also in the update column), its state is the shared channel
   // state and its Collega the shared green button — never an underlined pill.
   for (const row of mount.findAll('tr').slice(1)) {
-    assert.ok((row.textContent.match(/non collegato/g) ?? []).length <= 1, `said once: ${row.textContent}`);
+    assert.ok((row.textContent.match(/Non ancora disponibile/g) ?? []).length <= 1, `said once: ${row.textContent}`);
   }
-  assert.match(stripeRow.findAll('span').find((node) => node.textContent === 'non collegato').getAttribute('class'), /\bui-channel-state\b/);
+  assert.match(stripeRow.findAll('span').find((node) => node.textContent === 'Non ancora disponibile').getAttribute('class'), /\bui-channel-state\b/);
   for (const link of collega) assert.match(link.getAttribute('class') ?? '', /\bui-connect\b/, 'the shared Collega');
   assert.equal(syncConnectRoute('calendar', null), null, 'without the profile there is nothing to offer');
   assert.equal(syncConnectRoute('whatsapp', null), '#/connettori/whatsapp');
@@ -1320,7 +1323,7 @@ test('#680 P2-1: profile links counted as connected wait for the first event', a
   });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('2 di 9 collegati'));
+  assert.ok(mount.textContent.includes('2 di 11 collegati'));
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.deepEqual(pills.map((node) => node.textContent), ['in attesa del primo evento', 'in attesa del primo evento'], 'quiet Email and Google Calendar wait');
 });
@@ -1335,7 +1338,7 @@ test('#680 P2-2: a suspended row alone is not connected — table, hero and coun
   const { mount, view } = renderView({ client: { activity: only } });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('0 di 9 collegati'));
+  assert.ok(mount.textContent.includes('0 di 11 collegati'), 'the count uses the rows shown');
   assert.ok(!mount.textContent.includes('Tutto sincronizzato'), 'the hero agrees with the count');
   const pills = mount.findAll('span').filter((node) => (node.getAttribute('class') ?? '').includes('bo-sync-pill'));
   assert.equal(pills.length, 1, 'the suspended row keeps its pill');
@@ -1352,7 +1355,7 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   // backlog:e381c48581fa: waiting is not a fix — grey «In attesa del primo
   // evento», never the yellow «Quasi tutto sincronizzato» over «Niente da
   // sistemare».
-  assert.equal(syncIndicator(quiet, NOW).title, 'In attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
+  assert.equal(syncIndicator(quiet, NOW).title, 'WhatsApp in attesa del primo evento', 'a waiting row is not «Tutto sincronizzato»');
   assert.equal(syncIndicator(quiet, NOW).tone, 'wait');
   // C10: the subtitle keeps the prototype pattern «<aggiornamento> · <n> eventi … in tutto».
   assert.match(syncIndicator(quiet, NOW).detail, / · 0 eventi ricevuti in tutto\.$/);
@@ -1371,6 +1374,62 @@ test('1a3a0ba236c0 C18: a quiet linked row waits for the first event', async () 
   assert.ok(mount.textContent.includes('Un canale va controllato'));
 });
 
+// backlog:9790f4df7a93: one synced rule for both views — linked AND a
+// first event received. A linked binding with zero events is never synced.
+test('9790f4df7a93: channelSynced needs a linked binding and a first event', () => {
+  assert.equal(channelSynced({ linked: true, received: 3, lastAt: '2026-10-25T11:30:00.000Z' }), true);
+  assert.equal(channelSynced({ linked: true, received: 1, lastAt: null }), true, 'a counted event is enough');
+  assert.equal(channelSynced({ linked: true, received: 0, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'an update instant alone is never enough (Mac 18/11: «aggiornato 1 min fa» with zero events)');
+  // The reported bug: linked WhatsApp, «0 eventi» — no view may call it synced.
+  assert.equal(channelSynced({ linked: true, received: 0, lastAt: null }), false);
+  assert.equal(channelSynced({ linked: false, received: 10, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'traffic without a link is not synced');
+  assert.equal(channelSynced(), false);
+  assert.equal(channelSynced(null), false);
+  assert.equal(channelSynced({ linked: 'yes', received: 5, lastAt: '2026-10-25T11:30:00.000Z' }), false, 'linked is a boolean, never a truthy word');
+  assert.equal(channelSynced({ linked: true, received: -2, lastAt: null }), false);
+  assert.equal(channelSynced({ linked: true, received: 2.5, lastAt: null }), false, 'counts are whole events');
+  // The Stato sync side already reads the shared rule through the pill.
+  const quiet = activityOf({ connections: [entryOf({ health: 'idle', inbox: inboxOf({ received: 0, lastReceivedAt: null }) })], lastActivityAt: null });
+  const row = syncChannelTable(quiet).find((entry) => entry.channel === 'whatsapp');
+  assert.equal(row.connected, true);
+  assert.equal(channelSynced({ linked: row.connected, received: row.received, lastAt: row.lastAt }), false);
+  assert.deepEqual(row.pill, { text: 'in attesa del primo evento', tone: 'attesa' });
+  assert.ok(!syncIndicator(quiet, NOW).title.includes('sincronizzato') || syncIndicator(quiet, NOW).title.includes('attesa'),
+    'no synced headline on zero events');
+});
+
+// backlog:9790f4df7a93 (supervisore 18/11, prova del Mac sul live): NON
+// PASSA — Google Calendar dello spazio di test dice «0 eventi ricevuti ·
+// Attivo» e l'Email di Presti lo stesso: basta un «aggiornato 1 min fa»
+// per dire sincronizzato con zero eventi. Repro: un istante di
+// aggiornamento recente (arrivo contato a zero, invio fallito recente,
+// giro attività recente) non basta mai — pill e hero restano in attesa.
+// Rosso sul codice prima della cura, verde dopo.
+test('9790f4df7a93: zero events with a fresh update never reads synced', () => {
+  // Un arrivo recente contato a zero: il contatore è stato azzerato ma
+  // l'istante è rimasto — mai «Attivo».
+  const zeroCounted = activityOf({
+    connections: [entryOf({ channel: 'calendar', connectionKey: 'cal-1', health: 'ok', inbox: inboxOf({ received: 0, lastReceivedAt: '2026-10-25T11:59:00.000Z' }) })],
+    lastActivityAt: '2026-10-25T11:59:00.000Z',
+  });
+  const zeroRow = syncChannelTable(zeroCounted, NOW).find((entry) => entry.channel === 'calendar');
+  assert.equal(zeroRow.connected, true);
+  assert.equal(zeroRow.received, 0);
+  assert.deepEqual(zeroRow.pill, { text: 'in attesa del primo evento', tone: 'attesa' }, 'a fresh instant with zero events waits');
+  assert.equal(syncIndicator(zeroCounted, NOW).title, 'Google Calendar in attesa del primo evento');
+  assert.ok(!syncIndicator(zeroCounted, NOW).title.includes('sincronizzato'), 'no synced headline on zero events');
+  // Un invio fallito recente non è un evento ricevuto — mai «Attivo».
+  const failedOnly = activityOf({
+    connections: [entryOf({ channel: 'email', connectionKey: 'mail-1', health: 'ok', inbox: inboxOf({ received: 0, lastReceivedAt: null }), outbox: { openDeadLetters: 0, lastFailedAt: '2026-10-25T11:59:00.000Z' } })],
+    lastActivityAt: '2026-10-25T11:59:00.000Z',
+  });
+  const failedRow = syncChannelTable(failedOnly, NOW).find((entry) => entry.channel === 'email');
+  assert.deepEqual(failedRow.pill, { text: 'in attesa del primo evento', tone: 'attesa' }, 'a recent failed send is not a received event');
+  assert.ok(!syncIndicator(failedOnly, NOW).title.includes('sincronizzato'), 'no synced headline on a failed send alone');
+  // Il dettaglio resta onesto: dice quando ha aggiornato e che gli eventi sono zero.
+  assert.match(syncIndicator(zeroCounted, NOW).detail, /Ultimo aggiornamento 1 min fa · 0 eventi ricevuti in tutto\./);
+});
+
 // backlog:e381c48581fa (giro UX 11/11, punto 32): Stato sync read «Quasi
 // tutto sincronizzato» with a yellow dot and «Niente da sistemare» together,
 // and its Collega was dark grey (it looked disabled) where Profilo's is green.
@@ -1380,7 +1439,7 @@ test('e381c48581fa: a waiting space never pairs a yellow hero with «Niente da s
   await view.render();
   await flush();
   const text = mount.textContent;
-  assert.ok(text.includes('In attesa del primo evento'));
+  assert.ok(text.includes('in attesa del primo evento'));
   assert.ok(!text.includes('Quasi tutto sincronizzato'), 'nothing to fix: not the yellow headline');
   assert.ok(text.includes('Niente da sistemare'));
   const dot = mount.findAll('span').find((node) => (node.getAttribute('class') ?? '').includes('bo-sync-hero-dot'));
@@ -1410,17 +1469,17 @@ test('3a3e6eaf C11: with nothing to pull the hero shows no Sincronizza ora', asy
   assert.equal(live.getAttribute('disabled'), null);
 });
 
-// Production 08/11 after #687 (3a3e6eaff1c5 / 9c7d1477a8d4): the spec wants
-// «<n> di 9 collegati» like the nine rows (C16/C20/C27), the C20 pills, the
-// singular «1 evento», and no 12 s wait on «Carico Stato sync…».
-test('3a3e6eaf C16/C27: the count is always «di 9», Stripe included', async () => {
+// Backlog 6d0df351 (supervisore 17/11): the headline counts the rows the
+// table shows (nine plus Telegram and SMS), the C20 pills, the singular
+// «1 evento», and no 12 s wait on «Carico Stato sync…».
+test('3a3e6eaf C16/C27: the count uses the rows shown, Stripe included', async () => {
   const { mount, view } = renderView({ client: { activity: activityOf({ connections: [], feed: [], lastActivityAt: null }) } });
   await view.render();
   await flush();
-  assert.ok(mount.textContent.includes('0 di 9 collegati'), 'nine fixed rows, nine in the count');
+  assert.ok(mount.textContent.includes('0 di 11 collegati'), 'nine fixed rows plus Telegram and SMS in the count');
 });
 
-test('3a3e6eaf C19/C20: connected rows read only the spec pills, unconnected rows «non collegato»', async () => {
+test('3a3e6eaf C19/C20: connected rows read only the spec pills, unconnected rows «Non ancora disponibile»', async () => {
   const activity = activityOf({
     connections: [
       entryOf({ connectionKey: 'wa', health: 'idle', inbox: null }),
@@ -1435,7 +1494,7 @@ test('3a3e6eaf C19/C20: connected rows read only the spec pills, unconnected row
   for (const pill of pills) assert.ok(['Attivo', 'Permesso in scadenza', 'Importazione', 'Da sistemare', 'in attesa del primo evento'].includes(pill.textContent));
   assert.equal(mount.findAll('span').filter((node) => node.textContent === 'Non disponibile').length, 0, 'no «Non disponibile» outside the spec');
   const stripe = mount.findAll('tr').find((row) => row.textContent.includes('Stripe'));
-  assert.ok(stripe.textContent.includes('non collegato'), 'Stripe reads non collegato');
+  assert.ok(stripe.textContent.includes('Non ancora disponibile'), 'Stripe reads Non ancora disponibile');
   assert.equal(stripe.findAll('a').length, 0, 'and offers no Collega it cannot keep');
 });
 
@@ -1472,10 +1531,10 @@ test('3a3e6eaf: Stato sync starts its reads together and paints with schema and 
   await flush();
   assert.ok(started.includes('/api/profile'), 'the profile read started without waiting');
   assert.ok(started.some((path) => path.startsWith('/api/modules/duplicate-candidate')), 'the candidates read started too');
-  assert.ok(mount.textContent.includes('1 di 9 collegati'), 'the screen paints before the slow reads answer');
+  assert.ok(mount.textContent.includes('1 di 11 collegati'), 'the screen paints before the slow reads answer');
   for (const release of held.splice(0)) release();
   await done;
-  assert.ok(mount.textContent.includes('1 di 9 collegati'));
+  assert.ok(mount.textContent.includes('1 di 11 collegati'));
 });
 
 // Review #692 P2: «Attivo» only on an active binding. A suspended, pending

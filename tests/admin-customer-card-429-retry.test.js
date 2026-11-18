@@ -102,7 +102,7 @@ test('apiFailure names a codeless 429 TOO_MANY_REQUESTS, and keeps the other def
   assert.equal(apiFailure(429, undefined).status, 429);
   assert.equal(apiFailure(429, { error: { code: 'BO_X', message: 'x' } }).code, 'BO_X');
   assert.equal(apiFailure(502, undefined).code, 'UNKNOWN');
-  assert.equal(apiFailure(502, undefined).message, 'Request failed (502)');
+  assert.equal(apiFailure(502, undefined).message, 'Il servizio si sta riavviando, riprova tra poco.');
 });
 
 test('3a9bee845cc4: one 429 logs once per failed request, every failed section offers Riprova in Italian', async () => {

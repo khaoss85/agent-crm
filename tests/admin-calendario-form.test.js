@@ -191,11 +191,12 @@ test('form: Esc closes it and drops the typed values — the next opening propos
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30–10:00 here, now is 2026-10-21); the typed values never survive.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
-  assert.equal(byName(mount, 'end').value, '10:00', 'the next opening proposes 10:00');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00–09:30 here: now is 2026-10-21T06:00Z, 08:00 in
+  // Rome, before the grid opens); the typed values never survive.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
+  assert.equal(byName(mount, 'end').value, '09:30', 'the next opening proposes 09:30');
   for (const name of ['price', 'notes']) {
     assert.equal(byName(mount, name).value, '', `${name} starts empty`);
   }
@@ -213,10 +214,10 @@ test('form: × closes it and drops the typed day too, and focus goes back to «N
   const toggle = mount.findAll('button').find((node) => node.textContent.startsWith('Nuovo appuntamento'));
   assert.equal(toggle.__focused, true, 'focus back on the button that opened it');
   openManual(mount);
-  // backlog:134f3ed7 — every opening proposes a day and a time (tomorrow
-  // 09:30 here); the typed 2026-10-23 never survives.
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
-  assert.equal(byName(mount, 'start').value, '09:30', 'the next opening proposes 09:30');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — every opening proposes a day
+  // and a time (today 09:00 here); the typed 2026-10-23 never survives.
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
+  assert.equal(byName(mount, 'start').value, '09:00', 'the next opening proposes the first slot of today');
 });
 
 test('form: a slot picked on the grid seats the same form beside it; Esc drops the slot too', async () => {
@@ -234,10 +235,11 @@ test('form: a slot picked on the grid seats the same form beside it; Esc drops t
   pop.dispatch('keydown', { key: 'Escape' });
   assert.equal(mount.findAll('div').find((node) => node.getAttribute('data-role') === 'slot-pick'), undefined, 'the pick leaves the grid');
   openManual(mount);
-  // backlog:134f3ed7 — the old 11:00 slot never comes back; the manual
-  // opening proposes tomorrow 09:30 instead of an empty form.
-  assert.equal(byName(mount, 'start').value, '09:30', 'the old slot never comes back');
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  // backlog:134f3ed7 + backlog:8f10bea47ac8 — the old 11:00 slot never
+  // comes back; the manual opening proposes today 09:00 instead of an
+  // empty form.
+  assert.equal(byName(mount, 'start').value, '09:00', 'the old slot never comes back');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
 });
 
 // backlog:3582d91635cb: homonyms in the customer suggestions read apart.
@@ -267,7 +269,7 @@ test('form: two customers with the same name show a partial email or phone, a si
   assert.ok(!labels.some((text) => text.includes('ada.rossi@') || text.includes('3331234567')), 'never the whole address or number');
   // The pick still books the customer by id, with the bare name.
   results.findAll('button').find((node) => node.textContent.endsWith('tel. …4567')).dispatch('click');
-  assert.ok(mount.findAll('p').some((node) => node.textContent === 'Cliente: Ada Rossi'), 'the pick names the customer');
+  assert.ok(mount.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick' && node.textContent === 'Ada Rossi'), 'the pick names the customer');
 });
 
 test('form: customerHint prefers a partial email, then the phone, then the company', () => {
@@ -280,7 +282,7 @@ test('form: customerHint prefers a partial email, then the phone, then the compa
 
 // backlog:134f3ed7 (review giro 1 P2): closeManual() dropped the typed
 // values but kept the typed marks, so the reopened form read its proposed
-// date (tomorrow) as «written» and raised «Hai del testo non salvato».
+// date (today 2026-10-21 now) as «written» and raised «Hai del testo non salvato».
 test('form: a date typed then dropped by Esc is not unsaved text on reopen', async () => {
   const { hasUnsavedWork, resetVersionWatchState } = await import('../apps/admin/public/admin-version.js');
   resetVersionWatchState();
@@ -293,7 +295,7 @@ test('form: a date typed then dropped by Esc is not unsaved text on reopen', asy
   formPops(mount)[0].dispatch('keydown', { key: 'Escape' });
   assert.equal(isOpen(formPops(mount)[0]), false, 'Esc closes the form');
   openManual(mount);
-  assert.equal(byName(mount, 'date').value, '2026-10-22', 'the next opening proposes tomorrow');
+  assert.equal(byName(mount, 'date').value, '2026-10-21', 'the next opening proposes today');
   assert.equal(hasUnsavedWork(emptyPage), false, 'the proposed date is nobody’s unsaved text');
   resetVersionWatchState();
 });
@@ -362,4 +364,32 @@ test('form: customerHint keeps the short prefix when only the domain tells homon
   const second = { name: 'Mario Rossi', email: 'mario@other.com' };
   assert.equal(customerHint(first, [first, second]), 'ma…@example.com');
   assert.equal(customerHint(second, [first, second]), 'ma…@other.com');
+});
+
+// backlog:b0788e62ace6: the «Cliente» label stays once a customer is picked.
+test('form: the picked customer keeps its «Cliente» label, the search field too', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const storage = new Map();
+  const store = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) };
+  store.setItem('accordo.bo.customer-pick.appointment', JSON.stringify({ resource: 'contact', id: 'c1', name: 'Guido Presti' }));
+  const view = createCalendarioView({
+    searchDelayMs: 0, doc, mount, client: stubClient(), storage: store, now: () => new Date('2026-10-21T06:00:00Z'),
+  });
+  await view.render();
+  await settle();
+  const field = mount.findAll('div').find((node) => node.getAttribute('data-role') === 'customer-field');
+  assert.ok(field, 'the picked customer sits in a labelled field');
+  assert.equal(field.getAttribute('role'), 'group');
+  const label = field.findAll('span').find((node) => node.getAttribute('id') === field.getAttribute('aria-labelledby'));
+  assert.equal(label?.textContent, 'Cliente', 'the group is named «Cliente»');
+  assert.equal(field.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick')?.textContent, 'Guido Presti');
+  assert.ok(field.findAll('button').some((node) => node.textContent === 'Cambia cliente'), '«Cambia cliente» sits in the same field');
+  // «Cambia cliente» brings back the search field, still labelled.
+  field.findAll('button').find((node) => node.textContent === 'Cambia cliente').dispatch('click');
+  await settle();
+  const search = byName(mount, 'customerSearch');
+  let node = search;
+  while (node && node.tagName !== 'LABEL') node = node.parentNode;
+  assert.equal(node?.findAll('span').find((span) => (span.getAttribute('class') ?? '').includes('cal-field-label'))?.textContent, 'Cliente');
 });

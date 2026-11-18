@@ -1642,7 +1642,7 @@ test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw serve
     String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-pill'));
   assert.equal(pills.length, 2, 'both rows render their Stato pill');
   const byText = (text) => pills.find((node) => node.textContent === text);
-  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché finora non risultano acquisti confermati.');
   assert.equal(byText('Cliente')?.getAttribute('title'), 'È un cliente perché ha almeno un acquisto confermato.');
   for (const pill of pills) {
     const title = String(pill.getAttribute('title') ?? '');
@@ -1651,9 +1651,50 @@ test('7471d0bd718f: the Stato pill tooltip is plain Italian, never the raw serve
     }
   }
   assert.ok(!mount.textContent.includes('no signed business found'), 'the raw server reason never renders as text');
-  assert.equal(statoTooltip('contatto'), 'È un contatto perché non ha ancora acquisti confermati.');
+  assert.equal(statoTooltip('contatto'), 'È un contatto perché finora non risultano acquisti confermati.');
   assert.equal(statoTooltip('cliente'), 'È un cliente perché ha almeno un acquisto confermato.');
   assert.equal(statoTooltip('sconosciuto'), null, 'an unknown state carries no tooltip instead of a raw diagnostic');
+});
+
+// backlog:7471d0bd718f (ritorno 1, verifier-back 2026-11-17): the Contatto
+// tooltip must stay honest when the server itself says the evidence is not
+// all readable («…so this is not a claim none exist»). Stating a definitive
+// absence then contradicts the verdict; the tooltip says «finora non
+// risultano» instead. RED on the pre-cure wording, GREEN after it.
+test('7471d0bd718f-r1: il tooltip Contatto non afferma assenze definitive con prove illeggibili', async () => {
+  const uncertain = {
+    ...ROW_ANNA,
+    status: {
+      value: 'contatto',
+      reason: 'no signed business found in the composed packages (orders: not readable here; contracts: none on record; subscriptions: partially readable) — the evidence packages are not all readable here, so this is not a claim none exist',
+    },
+  };
+  const proven = {
+    ...ROW_MARCO,
+    status: {
+      value: 'cliente',
+      reason: 'signed business on record: orders',
+    },
+  };
+  const client = stubClient();
+  client.request = async () => ({
+    customerListContract: 1, items: [uncertain, proven], total: 2, page: 1, pageSize: 10, pages: 1,
+    totalIsExact: true, ...MENUS,
+  });
+  const { mount } = await render(client);
+  const pills = mount.findAll('span').filter((node) =>
+    String(node.getAttribute('class') ?? '').split(/\s+/).includes('bo-clienti-pill'));
+  const byText = (text) => pills.find((node) => node.textContent === text);
+  assert.equal(byText('Contatto')?.getAttribute('title'), 'È un contatto perché finora non risultano acquisti confermati.');
+  assert.equal(byText('Cliente')?.getAttribute('title'), 'È un cliente perché ha almeno un acquisto confermato.');
+  for (const pill of pills) {
+    const title = String(pill.getAttribute('title') ?? '');
+    for (const leaked of ['package', 'orders', 'contracts', 'subscriptions', 'signed business', 'readable', 'record']) {
+      assert.ok(!title.toLowerCase().includes(leaked), `no package name or diagnostic leaks into «${title}»`);
+    }
+  }
+  assert.ok(!mount.textContent.includes('no signed business found'), 'the raw server reason never renders as text');
+  assert.ok(!mount.textContent.includes('signed business on record'), 'the cliente reason never renders as text');
 });
 
 test('backlog:2262771da550: system mailboxes never paint, the row calendar state reads', async () => {

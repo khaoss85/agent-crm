@@ -4,6 +4,8 @@ import test from 'node:test';
 import { enforceAdminWriteGate } from './helpers/admin-strict-client.js';
 import assert from 'node:assert/strict';
 import {
+  assignMemberColors,
+  CAL_MEMBER_TINTS,
   catalogBookingServices,
   readBookingServices,
   readBookingServicesDetailed,
@@ -38,6 +40,7 @@ import {
   romeWeekKeys,
   serviceKeyFor,
   serviceLabel,
+  wakeSearchText,
   slugifyServiceKey,
   slotInGrid,
   statusWord,
@@ -46,7 +49,7 @@ import {
   weekLabel,
   weekWindow,
 } from '../apps/admin/public/admin-calendario.js';
-import { parseModuleRoute } from '../apps/admin/public/admin-core.js';
+import { parseModuleRoute, WAKE_WAIT_TEXT } from '../apps/admin/public/admin-core.js';
 import { hasUnsavedWork, resetVersionWatchState } from '../apps/admin/public/admin-version.js';
 import { parseCustomerListQuery } from '../packages/customer-data/src/customers.js';
 import { createFakeDocument, createMount } from './helpers/fake-dom.js';
@@ -684,6 +687,120 @@ test('a failed search says so in plain words, never a code', async () => {
   assert.ok(!notes.some((text) => text.includes('backend down')), 'no raw error leaks to the operator');
 });
 
+// backlog:0ffb1dd0 — the same booking reads «Servizio · Cliente» in the
+// week block and in the detail card: one titleOf behind both paints.
+test('the same booking reads «Servizio · Cliente» in the block and in the detail card', async () => {
+  const week = {
+    from: '2026-10-19T00:00:00.000Z',
+    to: '2026-10-26T00:00:00.000Z',
+    members: [{
+      teamMemberId: 'marco',
+      appointments: [
+        {
+          id: 'short-1', status: 'booked',
+          startsAt: '2026-10-22T16:00:00.000Z', endsAt: '2026-10-22T16:30:00.000Z',
+          serviceKey: 'taglio', teamMemberId: 'marco', priceCents: 4500, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:short:c1',
+          subject: { resource: 'contact', id: 'c1', owner: 'host', ownerPackage: null, label: 'Ada' },
+        },
+        {
+          id: 'long-1', status: 'booked',
+          startsAt: '2026-10-22T14:00:00.000Z', endsAt: '2026-10-22T15:00:00.000Z',
+          serviceKey: 'colore', teamMemberId: 'marco', priceCents: 6000, currency: 'EUR', notes: null,
+          sourceKey: 'calendario:marco:long:c9',
+          subject: { resource: 'contact', id: 'c9', owner: 'host', ownerPackage: null, label: 'Bea' },
+        },
+      ],
+    }],
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ week }), now: () => new Date('2026-10-23T06:00:00Z') });
+  await view.render();
+  const filter = mount.findAll('input').find((node) => node.getAttribute('name') === 'members');
+  filter.value = 'marco';
+  clickButton(mount, 'Mostra settimana');
+  for (let round = 0; round < 4; round += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const detailTitle = () => mount.findAll('div')
+    .find((node) => node.getAttribute('data-role') === 'event-detail')
+    ?.findAll('h2')
+    .find((node) => (node.getAttribute('class') ?? '').includes('cal-detail-title'))
+    ?.textContent;
+  // The 30-min block reads one compact line «Titolo, ora»; the 60-min
+  // block reads the title in its strong: same «Servizio · Cliente» both.
+  assert.ok(texts(mount, 'span').includes('Taglio · Ada, 18:00'), 'the short block keeps the title before the time');
+  assert.ok(texts(mount, 'strong').includes('Colore · Bea'), 'the long block titles «Servizio · Cliente»');
+  mount.findAll('button').find((node) => /Taglio · Ada/.test(node.textContent)).dispatch('click');
+  assert.ok(detailTitle()?.includes('Taglio · Ada'), 'the card titles the same booking the same way');
+  mount.findAll('button').find((node) => node.getAttribute('aria-label') === 'Chiudi').dispatch('click');
+  mount.findAll('button').find((node) => /Colore · Bea/.test(node.textContent)).dispatch('click');
+  assert.ok(detailTitle()?.includes('Colore · Bea'), 'the card titles the long booking the same way too');
+});
+
+// backlog:0ffb1dd0 — only failures the shell retries as a POST name the
+// wait (review khaoss85/agent-crm#956: the phrase answer is a POST, so a
+// bare 503, a gateway 502/504 UNKNOWN or a network fault keeps the generic
+// sentence, like the shell that neither retries nor toasts them).
+test('wakeSearchText names the wait only for waking failures', () => {
+  assert.equal(wakeSearchText(Object.assign(new Error('avvio'), { status: 503, code: 'WORKSPACE_STARTING' })), WAKE_WAIT_TEXT);
+  assert.equal(wakeSearchText(Object.assign(new Error('down'), { status: 503, code: 'UNKNOWN' })), null, 'a bare 503 POST earns no retry');
+  assert.equal(wakeSearchText(new TypeError('Failed to fetch')), null, 'a network fault on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('gw'), { status: 502, code: 'UNKNOWN' })), null, 'a gateway 502 on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('gw'), { status: 504, code: 'UNKNOWN' })), null, 'a gateway 504 on a POST earns no retry');
+  assert.equal(wakeSearchText(Object.assign(new Error('app'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' })), null, 'a named 503 keeps its own sentence');
+  assert.equal(wakeSearchText(Object.assign(new Error('bridge'), { status: 503, code: 'BO_BRIDGE_NOT_CONFIGURED' })), null, 'an unconfigured bridge is a state, not a wake');
+  assert.equal(wakeSearchText(new Error('backend down')), null, 'a named failure keeps the generic sentence');
+  assert.equal(wakeSearchText(Object.assign(new Error('bad'), { status: 400 })), null);
+});
+
+// backlog:0ffb1dd0 — during the server wake-up the search says the true
+// reason (the service is starting, retry soon), never «Ricerca non riuscita».
+test('a search during the server wake-up names the wait, never «Ricerca non riuscita»', async () => {
+  for (const fail of [
+    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'WORKSPACE_STARTING' }),
+    Object.assign(new Error('bridge down'), { status: 503, code: 'BRIDGE_UNREACHABLE' }),
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failPhraseWith: fail }), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    for (let round = 0; round < 7; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const notes = texts(mount, 'p');
+    assert.ok(notes.includes(WAKE_WAIT_TEXT), `the waking search names the wait (${fail?.code ?? fail?.name})`);
+    assert.ok(!notes.some((text) => text.includes('Ricerca non riuscita')), 'never the generic failure while waking');
+  }
+});
+
+// backlog:0ffb1dd0 — a bare 503 on the phrase POST is not a waking host
+// (review khaoss85/agent-crm#956): the card keeps the honest generic
+// failure, it never names the wait the shell did not announce.
+test('a bare 503 search keeps the generic failure, never the wait', async () => {
+  for (const fail of [
+    Object.assign(new Error('Service Unavailable'), { status: 503, code: 'UNKNOWN' }),
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('app down'), { status: 503, code: 'OPERATION_APP_UNAVAILABLE' }),
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient({ failPhraseWith: fail }), now: () => new Date('2026-10-23T06:00:00Z') });
+    await view.render();
+    mount.querySelector('textarea[name="phrase"]').value = 'trova 30 minuti con marco';
+    clickButton(mount, 'Trova slot liberi');
+    for (let round = 0; round < 7; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const notes = texts(mount, 'p');
+    assert.ok(notes.includes('Ricerca non riuscita. Riprova più tardi.'), `the non-waking search fails honestly (${fail?.code ?? fail?.name})`);
+    assert.ok(!notes.some((text) => text.includes('sta avviando')), 'never the wait without a starting signal');
+  }
+});
+
 test('a failed Conferma names the manual form, never a code', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
@@ -894,7 +1011,7 @@ test('unsubmitted manual edits survive a week reload', async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the pick survives the reload');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Bo'), 'the pick survives the reload');
   assert.equal(client.calls.filter((call) => call.path === '/api/appointments/propose').length, 1);
 });
 
@@ -1139,13 +1256,13 @@ test('picking a customer names them and «Cambia cliente» searches again', asyn
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
   await pickCustomerByName(mount, 'Ada');
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Ada'), 'the pick names the customer');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Ada'), 'the pick names the customer');
   assert.equal(mount.querySelector('input[name="customerSearch"]'), null, 'no search field over a pick');
   clickButton(mount, 'Cambia cliente');
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(mount.querySelector('input[name="customerSearch"]'), 'the search returns after «Cambia cliente»');
   await pickCustomerByName(mount, 'Bo');
-  assert.ok(texts(mount, 'p').some((text) => text === 'Cliente: Bo'), 'the second pick wins');
+  assert.ok(texts(mount, 'p').some((text) => text === 'Bo'), 'the second pick wins');
 });
 
 // BO-F6-11 fetta 2 (specs/calendario.md C1): fixed page chrome.
@@ -1519,6 +1636,66 @@ test('memberColorIndex and memberInitials never print a name', () => {
   assert.equal(memberInitials('marco'), 'MA');
   assert.equal(memberInitials('sara'), 'SA');
   assert.equal(memberInitials(null), '··');
+});
+
+// backlog:bffe778332e6 — khaoss85 and daniele pelleri hash to the same tint,
+// so the hash alone paints two people the same: the assignment keeps them
+// distinct while the palette has room, and stays put across reloads.
+test('assignMemberColors keeps one tint per person while the palette lasts', () => {
+  assert.equal(memberColorIndex('khaoss85'), memberColorIndex('daniele pelleri'), 'repro: the hash collides');
+  const colors = assignMemberColors(['khaoss85', 'daniele pelleri']);
+  assert.notEqual(colors.get('khaoss85'), colors.get('daniele pelleri'), 'two people, two tints');
+  const five = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco', 'sara', 'luca']);
+  assert.equal(new Set(five.values()).size, 5, 'five people fill the palette with no repeat');
+  for (const color of five.values()) {
+    assert.ok(color >= 0 && color < CAL_MEMBER_TINTS, 'every tint is a painted palette entry');
+  }
+});
+
+// backlog:bffe778332e6 — the assignment is stable: reloads and roster order
+// never repaint anyone, and a lone person keeps its hashed tint.
+test('assignMemberColors is stable across reloads and roster order', () => {
+  const first = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco']);
+  const again = assignMemberColors(['khaoss85', 'daniele pelleri', 'marco']);
+  assert.deepEqual([...first], [...again], 'the same space paints the same tints');
+  const shuffled = assignMemberColors(['marco', 'daniele pelleri', 'khaoss85']);
+  for (const [id, color] of first) {
+    assert.equal(shuffled.get(id), color, 'roster order never repaints anyone');
+  }
+  assert.equal(assignMemberColors(['marco']).get('marco'), memberColorIndex('marco'), 'a lone person keeps its tint');
+});
+
+// backlog:bffe778332e6 — past the palette size tints wrap, still
+// deterministically: reloads never repaint anyone.
+test('assignMemberColors wraps deterministically past the palette', () => {
+  const ids = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  const first = assignMemberColors(ids);
+  const again = assignMemberColors([...ids].reverse());
+  for (const [id, color] of first) {
+    assert.equal(again.get(id), color, 'wrapping stays put across reloads');
+  }
+  for (const color of first.values()) {
+    assert.ok(color >= 0 && color < CAL_MEMBER_TINTS, 'wrapped tints stay on the palette');
+  }
+});
+
+// backlog:bffe778332e6 — toggles and blocks read the same row colour, so
+// two colliding people get two distinct toggles.
+test('personRows and teamRows paint distinct toggles for colliding people', () => {
+  const people = teamRows(['khaoss85', 'daniele pelleri'], []);
+  assert.notEqual(people[0].color, people[1].color, 'the two toggles differ');
+  const members = [
+    { subject: 'github|khaoss85', role: 'member', displayName: 'khaoss85' },
+    { subject: 'google|daniele', role: 'member', displayName: 'daniele pelleri' },
+  ];
+  const rows = personRows(['github|khaoss85', 'google|daniele'], [], members);
+  assert.equal(rows.length, 2, 'two humans, two rows');
+  assert.notEqual(rows[0].color, rows[1].color, 'the two rows differ');
+  assert.deepEqual(
+    personRows(['github|khaoss85', 'google|daniele'], [], members).map((row) => row.color),
+    rows.map((row) => row.color),
+    'the rows repaint the same on reload',
+  );
 });
 
 // BO-F6-11 fetta 5 (specs/calendario.md C7), popover Dan 11/11: the linked
@@ -3112,8 +3289,8 @@ test('a stashed appointment pick opens the manual form with the customer', async
   const mount = createMount();
   const view = createCalendarioView({ searchDelayMs: 0, doc, mount, client: stubClient(), storage, now: () => new Date('2026-10-23T06:00:00Z') });
   await view.render();
-  assert.ok(mount.textContent.includes('Cliente: Guido Presti'),
-    'the manual form starts with the picked customer named');
+  const picked = mount.findAll('p').find((node) => node.getAttribute('data-role') === 'customer-pick');
+  assert.equal(picked?.textContent, 'Guido Presti', 'the manual form starts with the picked customer named');
   assert.equal(storage.getItem('accordo.bo.customer-pick.appointment'), null,
     'the pick is read once, never kept');
   // Without a pick the form stays closed with the name search, never a ghost.
@@ -3123,7 +3300,8 @@ test('a stashed appointment pick opens the manual form with the customer', async
     now: () => new Date('2026-10-23T06:00:00Z'),
   });
   await plainView.render();
-  assert.ok(!plain.textContent.includes('Cliente: Guido Presti'), 'no pick, no named customer');
+  assert.ok(!plain.findAll('p').some((node) => node.getAttribute('data-role') === 'customer-pick'), 'no pick, no named customer');
+  assert.ok(!plain.textContent.includes('Guido Presti'), 'no pick, no named customer');
 });
 
 // Supervisor design pass (Dan 03/11): press-and-drag on an empty part of a
@@ -4519,8 +4697,9 @@ for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
 }
 
 // j) «trova 45 minuti con Daniele giovedì» drafted «12 nov 00:00–00:30»
-// and the slots started on Monday.
-test('a day-only phrase searches that day for the stated minutes and never paints 00:00', async () => {
+// and the slots started on Monday. backlog:134f3ed7: a day-only draft with
+// free steps proposes the first one (never «--:--», never 00:00).
+test('a day-only phrase proposes the first free step and never paints 00:00', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -4541,14 +4720,14 @@ test('a day-only phrase searches that day for the stated minutes and never paint
   assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search starts on the named day');
   assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and ends with it');
   const draftLine = mount.querySelector('.cal-draft').textContent;
-  assert.ok(draftLine.includes('gio 22 ott · orario da scegliere · 45 minuti'), draftLine);
+  assert.ok(draftLine.includes('22 ott 10:00–10:45'), `the card proposes the first free step: ${draftLine}`);
   assert.ok(!mount.querySelector('.cal-rail').textContent.includes('00:00'), 'no midnight hour anywhere in the rail');
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
   assert.deepEqual(rows, ['gio 22 ott · 10:00–10:45'], 'only the named day is proposed');
   const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
   assert.equal(field('date').value, '2026-10-22', 'the day prefills');
-  assert.equal(field('start').value, '', 'the hour stays to choose');
-  assert.equal(field('end').value, '', 'the end stays to choose');
+  assert.equal(field('start').value, '10:00', 'the first free step fills Inizio, never --:--');
+  assert.equal(field('end').value, '10:45', 'the first free step fills Fine');
 });
 
 test('draft helpers: a midnight start is a day, not a time', () => {

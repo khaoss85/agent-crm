@@ -11,8 +11,8 @@ import { EXPORT_MAX_ROWS } from './export.js';
 import { ERASURE_INVENTORY, ERASURE_REASONS } from './erasure.js';
 import { IMPORT_MAPPING, MAX_ROWS, mappingFingerprint } from './import.js';
 import {
-  applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, listCustomFieldDefs,
-  parseCustomerPhrase, readCustomFieldValues, setCustomFieldValue,
+  applyCustomerPhrase, customerPhraseAiAvailable, defineCustomField, fillAiFieldValues, listCustomFieldDefs,
+  parseCustomerPhrase, proposeFieldFromQuestion, readCustomFieldValues, setCustomFieldValue,
 } from './custom-fields.js';
 import { createContactEnrichment } from './enrichment.js';
 import { EXTRACTION_SOURCE_KINDS, createEnrichmentExtraction } from './extraction.js';
@@ -85,6 +85,18 @@ function callablePhraseAdapter(candidate) {
   return typeof candidate?.extractCustomer === 'function' ? candidate : null;
 }
 
+function callableFieldAdapter(candidate) {
+  return typeof candidate?.extractField === 'function' ? candidate : null;
+}
+
+function callableFieldValueAdapter(candidate) {
+  return typeof candidate?.extractFieldValue === 'function' ? candidate : null;
+}
+
+function callableSpendGuard(candidate) {
+  return typeof candidate === 'function' ? candidate : null;
+}
+
 /**
  * @param {{
  *   matchPolicy?: any,
@@ -155,7 +167,9 @@ export function createCustomerDataPackage(options = {}) {
     // all-or-nothing contract in the metadata. The pilot registers each
     // surface's fingerprint; a changed surface takes a new version, never the
     // old one. Version 5: the erasure reason is a code from a closed list.
-    version: 5,
+    // Version 6 (backlog:c6c56dad): AI field proposal and fill joined the
+    // declared surface (propose-field-from-question, fill-ai-field-values).
+    version: 6,
     label: 'Customer Data Foundation',
     description:
       'Governed customer identity, import provenance and data quality: bounded imports with per-row receipts, external '
@@ -593,14 +607,14 @@ export function createCustomerDataPackage(options = {}) {
         appMethod: 'defineCustomField',
         label: 'Add one space-wide custom field',
         description:
-          'Define one operator-decided customer property («+ Aggiungi campo»: label, one of testo/numero/data/si-no/scelta). '
+          'Define one operator-decided customer property («+ Aggiungi campo»: label, one of testo/numero/data/si-no/scelta/punteggio). '
           + 'Space-wide: the field reads on every scheda, in the list filters and in the list columns. '
           + 'Idempotent on the identical definition; a divergent definition behind the same key refuses 409. '
           + 'A human decision: the actor must be a user.',
         input: [
           { name: 'label', type: 'string', hint: 'The label the operator reads, e.g. "Amico".' },
           { name: 'key', type: 'string', hint: 'Optional slug; derived from the label when absent.' },
-          { name: 'type', type: 'string', hint: 'One of testo, numero, data, si-no, scelta.' },
+          { name: 'type', type: 'string', hint: 'One of testo, numero, data, si-no, scelta, punteggio.' },
           { name: 'options', type: 'json', hint: 'JSON array of options, scelta only.' },
         ],
         create(runtime) {
@@ -714,6 +728,46 @@ export function createCustomerDataPackage(options = {}) {
           return (request) => customerPhraseAiAvailable({ phraseLlm: phraseAdapter ?? callablePhraseAdapter(request?.adapter) });
         },
       },
+      {
+        operationContract: 1,
+        name: 'propose-field-from-question',
+        appMethod: 'proposeFieldFromQuestion',
+        label: 'Propose one space field from a question',
+        description:
+          'One plain-words question to one field proposal (key, label: testo/si-no/punteggio). Writes nothing; '
+          + 'the operator confirms via defineCustomField. Without an extractField adapter refuses CUSTOMER_FIELD_AI_UNAVAILABLE.',
+        input: [
+          { name: 'question', type: 'string', hint: 'The plain-words question, e.g. "usano già un gestionale?".' },
+          { name: 'adapter', type: 'json', hint: 'Caller-built extractField adapter for in-process calls (tests): only a callable counts.' },
+        ],
+        create() {
+          return (request) => proposeFieldFromQuestion({ adapter: callableFieldAdapter(request?.adapter) }, request);
+        },
+      },
+      {
+        operationContract: 1,
+        name: 'fill-ai-field-values',
+        appMethod: 'fillAiFieldValues',
+        label: 'Fill AI fields of one customer from sources',
+        description:
+          'Fill one customer AI fields (testo, si-no, punteggio) from linked sources, no human hand. '
+          + 'Every value carries its source; sourceless proposals are skipped, never invented. '
+          + 'Spend cap checked before the AI runs: over cap nothing stored, AI never called.',
+        input: [
+          { name: 'resource', type: 'string', hint: 'The record kind: "contact" or "company".' },
+          { name: 'id', type: 'string', hint: 'The record id.' },
+          { name: 'fields', type: 'json', hint: 'Fields to fill: [{ key, question }].' },
+          { name: 'sources', type: 'json', hint: 'Linked sources read: [{ kind, text, detail? }].' },
+          { name: 'adapter', type: 'json', hint: 'Caller-built extractFieldValue adapter for in-process calls (tests): only a callable counts.' },
+          { name: 'spendGuard', type: 'json', hint: 'Optional spend-cap guard for in-process calls (tests): only a callable counts. Absent means allowed.' },
+        ],
+        create(runtime) {
+          return (request) => fillAiFieldValues(
+            { modules: runtime.modules, names },
+            { ...request, adapter: callableFieldValueAdapter(request?.adapter), spendGuard: callableSpendGuard(request?.spendGuard) },
+          );
+        },
+      },
     ],
 
     /**
@@ -766,7 +820,9 @@ export function createCustomerDataPackage(options = {}) {
           },
         },
         customFields: {
-          types: ['testo', 'numero', 'data', 'si-no', 'scelta'],
+          types: ['testo', 'numero', 'data', 'si-no', 'scelta', 'punteggio'],
+          aiFillable: ['testo', 'si-no', 'punteggio'],
+          aiFill: 'from one plain-words question a field is proposed (never stored), and new customers are filled without a human hand inside the spend cap — every AI value carrying its source, a missing source leaving the field empty',
           spaceWide: 'one definition serves every scheda, every list filter and every list column',
           unknownRefuses: 'a value without a definition refuses CUSTOM_FIELD_UNKNOWN: the framework never invents a field from a value',
           edit: 'setting the same field again rewrites the single row: a reload reads the edit, the list never doubles the customer',
