@@ -68,16 +68,16 @@ const WEEKDAYS = Object.freeze([
   { names: ['sabato'], day: 6 },
 ]);
 
-/** @param {string} folded a folded sentence @param {Date} now */
-function resolveDueAt(folded, now) {
-  const base = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), DUE_HOUR_UTC, 0, 0, 0));
+/** @param {string} folded a folded sentence @param {Date} anchor the source row's date */
+function resolveDueAt(folded, anchor) {
+  const base = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate(), DUE_HOUR_UTC, 0, 0, 0));
   if (/(^|\W)domani(\W|$)/.test(folded)) {
     return new Date(base.getTime() + 24 * 60 * 60 * 1000).toISOString();
   }
   for (const { names, day } of WEEKDAYS) {
     for (const name of names) {
       if (!new RegExp(`(^|\\W)${name}(\\W|$)`).test(folded)) continue;
-      const ahead = (day - now.getUTCDay() + 7) % 7;
+      const ahead = (day - anchor.getUTCDay() + 7) % 7;
       // «giovedì prossimo»: the one after the nearest, never the nearest.
       const extra = /(^|\W)prossim[oaie](\W|$)/.test(folded) ? 7 : 0;
       return new Date(base.getTime() + (ahead + extra) * 24 * 60 * 60 * 1000).toISOString();
@@ -147,12 +147,14 @@ function boundedKey(value, field) {
  * contribute nothing, never a crash — same contract as the advisor
  * signals. A note is always the team's words; a message is the team's
  * only when its direction is `outbound`, the customer's only when it is
- * `inbound`.
- * @param {{ messages?: Array<Record<string, any>>, notes?: Array<Record<string, any>>, now?: Date }} [input]
+ * `inbound`. Relative deadlines («domani», «giovedì») anchor to the
+ * source row's own date, never to the extraction run: re-reading the
+ * same rows tomorrow keeps the original deadline instead of postponing
+ * it (review #1019 giro 1).
+ * @param {{ messages?: Array<Record<string, any>>, notes?: Array<Record<string, any>> }} [input]
  */
-export function extractCommitments({ messages = [], notes = [], now = new Date() } = {}) {
+export function extractCommitments({ messages = [], notes = [] } = {}) {
   const found = [];
-  const at = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
   for (const message of Array.isArray(messages) ? messages : []) {
     if (message == null) continue;
     const id = cleanLine(message?.id);
@@ -164,12 +166,13 @@ export function extractCommitments({ messages = [], notes = [], now = new Date()
     if (signals === null) continue;
     const quote = firstCommitmentSentence(message?.body ?? message?.text, signals);
     if (quote === null) continue;
+    const anchor = new Date(occurredAt);
     const folded = ` ${foldCommitment(quote)} `.replace(/\s+/g, ' ');
     found.push(Object.freeze({
       key: `commit:message:${id}`,
       kind: direction === 'outbound' ? COMMITMENT_KINDS.TEAM_PROMISE : COMMITMENT_KINDS.CUSTOMER_REQUEST,
       quote,
-      dueAt: resolveDueAt(folded, at),
+      dueAt: resolveDueAt(folded, anchor),
       dueLabel: resolveDueLabel(folded),
       occurredAt: new Date(occurredAt).toISOString(),
       thread: commitmentThreadKey(message),
@@ -188,12 +191,13 @@ export function extractCommitments({ messages = [], notes = [], now = new Date()
     if (id === '' || !Number.isFinite(occurredAt)) continue;
     const quote = firstCommitmentSentence(note?.body ?? note?.text, TEAM_PROMISE_SIGNALS);
     if (quote === null) continue;
+    const anchor = new Date(occurredAt);
     const folded = ` ${foldCommitment(quote)} `.replace(/\s+/g, ' ');
     found.push(Object.freeze({
       key: `commit:note:${id}`,
       kind: COMMITMENT_KINDS.TEAM_PROMISE,
       quote,
-      dueAt: resolveDueAt(folded, at),
+      dueAt: resolveDueAt(folded, anchor),
       dueLabel: resolveDueLabel(folded),
       occurredAt: new Date(occurredAt).toISOString(),
       thread: commitmentThreadKey(note),

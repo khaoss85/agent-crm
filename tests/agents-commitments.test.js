@@ -17,10 +17,11 @@ import {
  * nothing yield nothing; a later team message on the same thread closes
  * the proposal at recalculation; «Ignora» never resurfaces. No LLM, no
  * network — the functions are synchronous by construction, so with the
- * AI off the run is identical.
+ * AI off the run is identical. Relative deadlines anchor to the source
+ * row's own date (review #1019 giro 1): re-reading the same rows
+ * tomorrow keeps the original deadline.
  */
 
-const NOW = new Date('2026-11-16T09:00:00Z'); // a Monday
 const TOMORROW_9AM = '2026-11-17T09:00:00.000Z';
 const THURSDAY_9AM = '2026-11-19T09:00:00.000Z';
 
@@ -65,7 +66,7 @@ function teamNote(overrides = {}) {
 }
 
 test('a team message promising a send yields a proposal with the quoted phrase and tomorrow', () => {
-  const found = extractCommitments({ messages: [teamMessage()], now: NOW });
+  const found = extractCommitments({ messages: [teamMessage()] });
   assert.equal(found.length, 1);
   const [proposal] = found;
   assert.equal(proposal.kind, COMMITMENT_KINDS.TEAM_PROMISE);
@@ -76,7 +77,7 @@ test('a team message promising a send yields a proposal with the quoted phrase a
 });
 
 test('a note setting a callback yields a proposal due Thursday linked to the note customer', () => {
-  const found = extractCommitments({ notes: [teamNote()], now: NOW });
+  const found = extractCommitments({ notes: [teamNote()] });
   assert.equal(found.length, 1);
   const [proposal] = found;
   assert.equal(proposal.kind, COMMITMENT_KINDS.TEAM_PROMISE);
@@ -87,11 +88,21 @@ test('a note setting a callback yields a proposal due Thursday linked to the not
 });
 
 test('an unanswered customer request yields a proposal for the team', () => {
-  const found = extractCommitments({ messages: [customerMessage()], now: NOW });
+  const found = extractCommitments({ messages: [customerMessage()] });
   assert.equal(found.length, 1);
   const [proposal] = found;
   assert.equal(proposal.kind, COMMITMENT_KINDS.CUSTOMER_REQUEST);
   assert.ok(proposal.quote.includes('mandami il preventivo'));
+});
+
+test('re-reading the same rows later keeps the original deadline', () => {
+  // The source rows say Monday: «domani» stays Tuesday no matter when
+  // the run re-reads them — the deadline never slides forward.
+  const first = extractCommitments({ messages: [teamMessage()], notes: [teamNote()] });
+  const second = extractCommitments({ messages: [teamMessage()], notes: [teamNote()] });
+  assert.equal(first[0].dueAt, TOMORROW_9AM);
+  assert.equal(second[0].dueAt, first[0].dueAt);
+  assert.equal(second[1].dueAt, THURSDAY_9AM);
 });
 
 test('phrases that promise nothing yield nothing, including past-tense receipts', () => {
@@ -103,15 +114,15 @@ test('phrases that promise nothing yield nothing, including past-tense receipts'
     'Abbiamo inviato tutto la settimana scorsa',
   ];
   for (const body of bodies) {
-    const team = extractCommitments({ messages: [teamMessage({ id: `t-${body.length}`, body })], now: NOW });
+    const team = extractCommitments({ messages: [teamMessage({ id: `t-${body.length}`, body })] });
     assert.equal(team.length, 0, `team promises nothing: ${body}`);
-    const customer = extractCommitments({ messages: [customerMessage({ id: `c-${body.length}`, body })], now: NOW });
+    const customer = extractCommitments({ messages: [customerMessage({ id: `c-${body.length}`, body })] });
     assert.equal(customer.length, 0, `customer requests nothing: ${body}`);
   }
 });
 
 test('a later team message on the same thread closes the proposal at recalculation', () => {
-  const open = extractCommitments({ messages: [teamMessage()], now: NOW });
+  const open = extractCommitments({ messages: [teamMessage()] });
   assert.equal(open.length, 1);
   const later = teamMessage({ id: 'm-team-2', body: 'Ecco il listino in allegato', occurredAt: '2026-11-16T10:00:00Z' });
   const recalculated = recalcCommitments({ commitments: open, messages: [teamMessage(), later] });
@@ -121,7 +132,7 @@ test('a later team message on the same thread closes the proposal at recalculati
 });
 
 test('a customer request answered by the team closes too; a team message elsewhere does not', () => {
-  const open = extractCommitments({ messages: [customerMessage()], now: NOW });
+  const open = extractCommitments({ messages: [customerMessage()] });
   assert.equal(open.length, 1);
   const answer = teamMessage({ id: 'm-team-2', body: 'Certo, te lo mando subito', occurredAt: '2026-11-16T10:00:00Z' });
   const answered = recalcCommitments({ commitments: open, messages: [customerMessage(), answer] });
@@ -136,7 +147,7 @@ test('a customer request answered by the team closes too; a team message elsewhe
 });
 
 test('«Ignora» records a dismissal with its reason and the proposal never returns', () => {
-  const open = extractCommitments({ messages: [teamMessage()], now: NOW });
+  const open = extractCommitments({ messages: [teamMessage()] });
   const dismissed = recordCommitmentDismissal({}, open[0].key, 'Il cliente ha già il listino');
   const recalculated = recalcCommitments({ commitments: open, messages: [teamMessage()], dismissed });
   assert.equal(recalculated.open.length, 0);
@@ -149,7 +160,6 @@ test('malformed rows contribute nothing and never crash', () => {
   const found = extractCommitments({
     messages: [null, {}, { id: 'x' }, { id: 'y', direction: 'sideways', body: 'ti mando tutto domani' }],
     notes: [null, { id: 'z' }],
-    now: NOW,
   });
   assert.equal(found.length, 0);
   const recalculated = recalcCommitments({ commitments: [null, {}], messages: null, dismissed: null });
@@ -158,7 +168,7 @@ test('malformed rows contribute nothing and never crash', () => {
 });
 
 test('extraction and re-checking are synchronous: no async seam, no LLM call possible', () => {
-  const extracted = extractCommitments({ messages: [teamMessage()], now: NOW });
+  const extracted = extractCommitments({ messages: [teamMessage()] });
   assert.ok(!(extracted instanceof Promise));
   const recalculated = recalcCommitments({ commitments: [...extracted], messages: [] });
   assert.ok(!(recalculated instanceof Promise));
