@@ -33,7 +33,7 @@ import { CONNECTOR_CATALOG, matchAdapters, matchConnections } from './admin-conn
 import { humanReadError } from './admin-core.js';
 import { plural } from './admin-labels.js';
 import { readProfile } from './admin-profilo.js';
-import { loadFixCount, settingsTabs } from './admin-shell.js';
+import { loadFixCount, paintSettingsHead, settingsTabs } from './admin-shell.js';
 
 /** The three tabs, in prototype order (spec C7): Skill AI, Connettori, Pacchetti. */
 export const PERSONALIZZAZIONE_TABS = Object.freeze(['skill', 'connettori', 'pacchetti']);
@@ -656,11 +656,12 @@ export function createPersonalizzazioneView(deps) {
   }
 
   function renderHeader(box) {
-    box.appendChild(el(doc, 'h2', { text: 'Personalizzazione', cls: 'panel-title' }));
-    box.appendChild(el(doc, 'p', {
-      text: 'Skill, connettori e pacchetti di questo spazio. La Prova mostra dati veri senza scrivere nulla.',
-      cls: 'muted',
-    }));
+    // backlog:2302655b1fcf: the same header component the Impostazioni index
+    // paints (paintSettingsHead), never a local copy of it.
+    paintSettingsHead(doc, box, {
+      title: 'Personalizzazione',
+      subtitle: 'Skill, connettori e pacchetti di questo spazio. La Prova mostra dati veri senza scrivere nulla.',
+    });
   }
 
   function renderTabs(box) {

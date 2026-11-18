@@ -5439,6 +5439,45 @@ test('59def6cb805d review: an opportunity without quotes paints its server amoun
   assert.ok(link.findAll('p').some((node) => node.getAttribute('class') === 'bo-scheda-offer-amount'), 'the amount rides inside the link');
 });
 
+test('backlog:1e07362849db: the scheda labels whose figure it shows when quote total and offer value differ', async () => {
+  const mount = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{
+          id: 'q1', status: 'draft', name: 'Preventivo 10 ingressi',
+          opportunityId: 'o1', opportunityName: 'Pacchetto 10 ingressi',
+          amountCents: 1500, currency: 'EUR',
+        }],
+      },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const amount = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount');
+  assert.ok(amount, 'the quote total paints');
+  assert.equal(amount.textContent, '15 €');
+  const note = mount.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(note, 'the figure carries its label');
+  assert.equal(note.textContent, 'preventivo in bozza');
+  const offer = await renderCard(stubClient({
+    profile: {
+      ...PROFILE,
+      quotes: { available: true, count: 0, countIsComplete: true, truncated: false, items: [] },
+      opportunities: {
+        available: true, count: 1, countIsComplete: true, truncated: false,
+        items: [{ id: 'o1', status: 'open', name: 'Pacchetto 10 ingressi', amountCents: 100, currency: 'EUR' }],
+      },
+    },
+  }));
+  const offerNote = offer.findAll('p').find((node) => node.getAttribute('class') === 'bo-scheda-offer-amount-note');
+  assert.ok(offerNote, 'the offer value paints labelled too');
+  assert.equal(offerNote.textContent, 'valore dell’offerta');
+});
+
 test('backlog:c51dca86dc66: the next appointment reads the contact name like Oggi, then day and hours (C26)', async () => {
   const mount = await renderCard(stubClient());
   const card = mount.findAll('section').find((node) => String(node.getAttribute('class') ?? '').includes('bo-scheda-card-appt'));
@@ -6101,13 +6140,14 @@ test('608aa14d554c + backlog:1a96094db71d: a scheda opened from a direct link sh
   assert.ok(panel, 'the structure is painted at once, not a blank mount');
   assert.equal(panel.getAttribute('aria-busy'), 'true');
   assert.ok(mount.querySelector('.bo-scheda-grid'), 'the three columns are there from the start');
-  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Prossimo appuntamento']) {
+  for (const title of ['Azioni rapide', 'Dettagli', 'Tutti i contatti', '✦ Recap', 'Offerta', 'Prossimo appuntamento']) {
     assert.ok(isSkeleton(sectionTitled(mount, title)), `«${title}» waits as a skeleton`);
   }
-  // Backlog 4cfa30c164ca: no phantom «Offerta» skeleton — the section may
-  // hide itself once read, so nothing paints for it while the profile is
-  // out (like the custom fields).
-  assert.equal(sectionTitled(mount, 'Offerta'), undefined, 'no Offerta box while the profile is out');
+  // Backlog 4cfa30c164ca + 9b28b3bc6003 (main, #992): the «Offerta»
+  // skeleton covers only the unknown — while the profile is still in
+  // flight. The phantom was a skeleton held by the slow schema read after
+  // the profile was already known empty; that case paints nothing (see
+  // tests/admin-customer-card-offerta-scheletro-4cfa30c164ca.test.js).
   assert.ok(mount.findAll('span').some((node) => node.getAttribute('data-skeleton') === 'true'), 'grey bars');
   assert.ok(!mount.textContent.includes('Carico la scheda'), 'no lone loading line');
   await new Promise((resolve) => setImmediate(resolve));

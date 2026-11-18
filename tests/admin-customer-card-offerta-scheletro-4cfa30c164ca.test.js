@@ -2,17 +2,22 @@
 
 /**
  * Backlog 4cfa30c164ca (verifica Mac 13/11 20:49Z, pilota 925e6dd con
- * agent-crm ae930cf, punto 1): lo scheletro della scheda cliente mostra il
- * riquadro «OFFERTA» che poi sparisce a dati caricati e fa saltare la
- * colonna destra.
+ * agent-crm ae930cf, punto 1): lo scheletro della scheda cliente mostrava
+ * il riquadro «OFFERTA» che poi spariva a dati caricati e faceva saltare
+ * la colonna destra.
  *
- * Repro del NON PASSA del verificatore (17/11, testa 85976a6): mentre il
- * profilo è in attesa, paint dipinge lo scheletro
- * `bo-scheda-card-offer` con titolo «Offerta»; a profilo arrivato, con
- * zero offerte, `offer()` torna false e la sezione sparisce — il riquadro
- * era un fantasma. Come i custom fields (backlog:434cc39a), la sezione che
- * può nascondersi da sola non ha scheletro: niente in attesa, niente a
- * lettura vuota.
+ * Repro del NON PASSA del verificatore (17/11, testa 85976a6): a profilo
+ * letto e senza offerte, mentre resta in volo la sola lettura dello
+ * schema, la card mostrava lo scheletro `bo-scheda-card-offer`. Rosso sul
+ * codice di prima (1 riquadro fantasma a profilo noto), verde dopo.
+ *
+ * Contratto deciso (main, backlog:9b28b3bc6003, #992 — questa PR lo
+ * adotta dopo il merge di main, al posto del blank di c4e8586e): lo
+ * scheletro copre solo l'ignoto, mentre il profilo è in volo. A profilo
+ * noto e vuoto, anche con lo schema ancora in volo, niente scheletro e
+ * niente riquadro. Il segnaposto a profilo in volo risponde anche alla
+ * review P2 su c4e8586e: per chi ha offerte resta un placeholder, mai un
+ * salto dal vuoto.
  */
 
 import test from 'node:test';
@@ -31,7 +36,7 @@ const CARD = {
   socials: [],
   status: { value: 'contatto', reason: 'no signed business on record' },
   activePackage: {
-    available: true, count: 0, countIsComplete: true, countNote: null, truncated: false,
+    available: true, count: 0, countIsComplete: true, truncated: false,
     active: [], items: [], reason: null,
   },
   notes: { available: false, items: null, reason: 'no notes composed' },
@@ -107,7 +112,7 @@ const flush = async (rounds = 10) => {
   for (let i = 0; i < rounds; i += 1) await new Promise((resolve) => { setImmediate(resolve); });
 };
 
-/** Card e timeline subito, profilo trattenuto: la strada dello scheletro fantasma. */
+/** Card, timeline, profilo e schema trattenuti: la strada del fantasma. */
 function deferredClient() {
   const gates = new Map();
   const gate = (name) => {
@@ -126,9 +131,9 @@ function deferredClient() {
       if (path.startsWith('/api/customer-hub/card/')) return gate('card').promise;
       if (path.startsWith('/api/customer-hub/timeline/')) return gate('timeline').promise;
       if (path.startsWith('/api/customer-data/profile/')) return gate('profile').promise;
+      if (path === '/api/schema') return gate('schema').promise;
       if (path.startsWith('/api/customer-data/enriched/')) return { customerEnrichmentContract: 1, subject: { resource: 'contact', id: 'c-ada' }, linked: false, optedOut: null, items: [] };
       if (path.startsWith('/api/customer-data/fields')) return path.includes('/values') ? { values: [] } : { definitions: [] };
-      if (path === '/api/schema') return { pipelines: [] };
       if (path.startsWith('/api/audit')) return { items: [] };
       if (path === '/api/spine/memberships') return { items: [] };
       if (path === '/api/spine/context') return { actor: { id: 'u-me' } };
@@ -142,8 +147,9 @@ function deferredClient() {
 const offerBoxes = (mount) => mount.findAll('section').filter((node) => (
   (node.getAttribute('class') ?? '').split(/\s+/).includes('bo-scheda-card-offer')
 ));
+const isSkeleton = (box) => box?.getAttribute('data-loading') === 'true';
 
-test('4cfa30c164ca: nessun riquadro «Offerta» mentre il profilo è in attesa, nessuno a profilo vuoto', async () => {
+test('4cfa30c164ca: a profilo noto e vuoto, nessuno scheletro Offerta mentre resta in volo solo lo schema', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = deferredClient();
@@ -154,14 +160,21 @@ test('4cfa30c164ca: nessun riquadro «Offerta» mentre il profilo è in attesa, 
   client.gates.get('timeline').release.resolve(TIMELINE);
   await flush();
   assert.ok(mount.textContent.includes('Ada Rossi'), 'il nome dipinge prima del profilo');
-  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta in attesa del profilo (mai un fantasma)');
+  // A profilo ignoto lo scheletro copre l'ignoto (contratto 9b28b3bc6003).
+  assert.equal(offerBoxes(mount).length, 1, 'un segnaposto Offerta mentre il profilo è in volo');
+  assert.ok(isSkeleton(offerBoxes(mount)[0]), 'il segnaposto è uno scheletro, non un riquadro');
+  // Il profilo arriva, vuoto; lo schema resta in volo: il NON PASSA.
   client.gates.get('profile').release.resolve(EMPTY_PROFILE);
+  await flush(5);
+  assert.ok(client.gates.has('schema'), 'lo schema è stato chiesto ed è ancora in volo');
+  assert.equal(offerBoxes(mount).length, 0, 'nessun fantasma Offerta a profilo noto e vuoto');
+  client.gates.get('schema').release.resolve({ pipelines: [] });
   await shown;
   await flush(3);
   assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta per chi non ha offerte');
 });
 
-test('4cfa30c164ca: con un\u2019offerta vera la riga dipinge a profilo arrivato', async () => {
+test('4cfa30c164ca: con un’offerta vera il segnaposto diventa il riquadro a profilo arrivato', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = deferredClient();
@@ -171,11 +184,10 @@ test('4cfa30c164ca: con un\u2019offerta vera la riga dipinge a profilo arrivato'
   client.gates.get('card').release.resolve(CARD);
   client.gates.get('timeline').release.resolve(TIMELINE);
   await flush();
-  // Backlog 4cfa30c164ca (review P2 testa c4e8586e): scelta esplicita e
-  // misurabile — niente in attesa anche quando l'offerta arrivera: per chi
-  // ha offerte il riquadro appare a lettura arrivata (normale comparsa
-  // progressiva), mai un fantasma che sparisce per chi non ne ha.
-  assert.equal(offerBoxes(mount).length, 0, 'nessun riquadro Offerta in attesa anche con offerta futura');
+  // Risposta P2 su c4e8586e, misurabile: a profilo in volo c'è il
+  // segnaposto anche quando l'offerta arriverà, mai il vuoto.
+  assert.equal(offerBoxes(mount).length, 1, 'segnaposto Offerta in attesa anche con offerta futura');
+  assert.ok(isSkeleton(offerBoxes(mount)[0]), 'il segnaposto è uno scheletro');
   client.gates.get('profile').release.resolve({
     ...EMPTY_PROFILE,
     opportunities: {
@@ -183,8 +195,10 @@ test('4cfa30c164ca: con un\u2019offerta vera la riga dipinge a profilo arrivato'
       items: [{ id: 'o1', status: 'proposal', stage: 'proposal', name: 'Pacchetto sede' }],
     },
   });
+  client.gates.get('schema').release.resolve({ pipelines: [] });
   await shown;
   await flush(3);
-  assert.equal(offerBoxes(mount).length, 1, 'l\u2019offerta vera dipinge il suo riquadro');
-  assert.ok(offerBoxes(mount)[0].textContent.includes('Pacchetto sede'), 'il riquadro nomina l\u2019offerta');
+  assert.equal(offerBoxes(mount).length, 1, 'l’offerta vera dipinge il suo riquadro');
+  assert.ok(!isSkeleton(offerBoxes(mount)[0]), 'a lettura arrivata non è più uno scheletro');
+  assert.ok(offerBoxes(mount)[0].textContent.includes('Pacchetto sede'), 'il riquadro nomina l’offerta');
 });

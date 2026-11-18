@@ -380,6 +380,11 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-edit-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 12px 14px; background: var(--paper); border-radius: 12px; }
 .bo-offer .offer-edit-form .field-row { display: flex; flex-direction: column; gap: 4px; }
 .bo-offer .offer-edit-form label { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+/* backlog:18cdf78c: the edit error keeps its own full-width line above, so it
+   never pushes Salva/Annulla onto a second line; the two buttons share one
+   actions row and stay together on theirs. */
+.bo-offer .offer-edit-form > .field-error { flex-basis: 100%; }
+.bo-offer .offer-edit-form .offer-edit-actions { display: flex; align-items: center; gap: 10px; }
 .bo-offer .offer-quotes, .bo-offer .offer-history { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; padding: 18px 22px; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
@@ -588,7 +593,10 @@ button[aria-busy="true"] { opacity: .6; }
   font-weight: 600; text-align: left;
 }
 .bo-space-pick:hover, .bo-add-option:hover, .bo-space-manage:hover { background: var(--surface-soft); }
-.bo-space-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:09644bb7e7e9: menu names read in full (they wrap onto more
+ * lines) instead of cutting at «Prova Valid…»; the pick keeps its title
+ * with the whole name for one-hover certainty. */
+.bo-space-pick-name { flex: 1; min-width: 0; overflow: visible; white-space: normal; }
 .bo-space-key { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .bo-space-check { color: var(--accent); font-weight: 800; }
 .bo-space-manage { color: var(--accent); }
@@ -627,6 +635,12 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
 .bo-count.is-empty,
 .bo-badge.is-empty {
   visibility: hidden;
+}
+/* backlog:09644bb7e7e9: the neutral trailing slot for voices without a
+ * live badge — same 20px box as the pills, hidden but laid out, so every
+ * menu row measures the same as the badged ones. */
+.bo-pill-slot {
+  min-width: 20px; height: 20px; visibility: hidden;
 }
 .bo-add { margin-top: 6px; }
 .bo-add-button {
