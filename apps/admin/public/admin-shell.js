@@ -1298,6 +1298,21 @@ export function renderUnknownRoute({ doc, mount }) {
 export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose da sistemare (problemi nei dati e schede doppie): potrebbero essercene.';
 
 /**
+ * Backlog 2302655b1fcf: the settings header both the Impostazioni index and
+ * Personalizzazione paint — one component (h2.panel-title plus its
+ * subtitle), so the two pages keep the same title, subtitle and hero size.
+ * The 46px hero size comes from the `.panel.personalizzazione` ancestor both
+ * pages paint around it (styles.css), never from a copied rule.
+ * @param {any} doc
+ * @param {any} box the panel the header opens
+ * @param {{ title?: string, subtitle?: string }} [options]
+ */
+export function paintSettingsHead(doc, box, { title = '', subtitle = '' } = {}) {
+  box.appendChild(el(doc, 'h2', { text: title, cls: 'panel-title' }));
+  box.appendChild(el(doc, 'p', { text: subtitle, cls: 'muted' }));
+}
+
+/**
  * Render the Impostazioni screen: the four areas from the prototype. Areas
  * backed by an existing view link there; the rest name the story that
  * delivers them (BO-F0-03 owns the tabs). The Stato sync row carries the
@@ -1307,13 +1322,17 @@ export const SETTINGS_FIX_UNREAD_MESSAGE = 'Non sono riuscito a leggere le cose 
  */
 export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = () => {}, customerDataAvailable = false, onRetry = null } = {}) {
   while (mount.firstChild) mount.removeChild(mount.firstChild);
-  // backlog:2302655b1fcf: the same header as Personalizzazione (panel-title
-  // plus subtitle), never the «Backoffice» kicker the other screens dropped.
-  mount.appendChild(el(doc, 'h2', { text: 'Impostazioni', cls: 'panel-title' }));
-  mount.appendChild(el(doc, 'p', {
-    text: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
-    cls: 'muted',
-  }));
+  // backlog:2302655b1fcf: the index paints the same chrome as every other
+  // settings screen — the IMPOSTAZIONI tab row (no tab underlined: the index
+  // is none of the areas) above the shared header component, never the
+  // «Backoffice» kicker the other screens dropped.
+  mount.appendChild(settingsTabs(doc, { activeId: null, fixCount, navigate }));
+  const panel = el(doc, 'div', { cls: 'panel personalizzazione' });
+  mount.appendChild(panel);
+  paintSettingsHead(doc, panel, {
+    title: 'Impostazioni',
+    subtitle: 'Personalizzazione, catalogo, sincronizzazioni, spazi e profilo di questo spazio.',
+  });
   const unknown = fixCount === null || fixCount === undefined;
   const badgeText = unknown ? '' : settingsBadge(fixCount);
   const summary = el(
@@ -1328,7 +1347,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
         ? 'Niente da sistemare.'
         : `${badgeText} cose da sistemare (vedi Stato sync).`,
   );
-  mount.appendChild(summary);
+  panel.appendChild(summary);
   if (unknown && typeof onRetry === 'function') {
     summary.setAttribute('role', 'status');
     const retry = el(doc, 'button', 'ui-btn ui-btn-secondary ui-btn-small bo-settings-retry', 'Riprova');
@@ -1353,12 +1372,15 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
           count = null;
         }
         // The operator may have left meanwhile: repaint only the panel
-        // still on screen, never over the screen just opened.
-        if (!Array.from(mount.childNodes ?? []).includes(summary)) return;
+        // still on screen, never over the screen just opened. Both links
+        // of the chain must hold: the summary in its panel and the panel
+        // in the mount (clearing the mount detaches the panel but leaves
+        // the summary inside it).
+        if (summary.parentNode !== panel || panel.parentNode !== mount) return;
         renderSettingsPanel({ doc, mount, fixCount: count, navigate, customerDataAvailable: available, onRetry });
       });
     });
-    mount.appendChild(retry);
+    panel.appendChild(retry);
   }
   const list = el(doc, 'div', 'bo-settings');
   for (const area of SETTINGS_AREAS) {
@@ -1388,7 +1410,7 @@ export function renderSettingsPanel({ doc, mount, fixCount = null, navigate = ()
     }
     list.appendChild(row);
   }
-  mount.appendChild(list);
+  panel.appendChild(list);
 }
 
 /**

@@ -1670,3 +1670,38 @@ test('0bbd62834c5a: a product with several offers names each price; a single off
   const rule = /\.catalog-offer-named \.catalog-offer-name\s*\{([^}]*)\}/.exec(css);
   assert.ok(rule && /position:\s*static/.test(rule[1]) && /clip:\s*auto/.test(rule[1]), 'the offer name is visible, not screen-reader only');
 });
+
+test('backlog:252cabdf2350: the Fonte column names the listino, never its slug', async () => {
+  const importedOffer = structuredClone(MANUAL_TABLE.products[0].offers[0]);
+  importedOffer.offerId = 'o9';
+  const table = {
+    products: [
+      {
+        productId: 'p9',
+        sku: 'PRESTI-9',
+        name: 'Ingresso singolo',
+        description: 'Listino importato.',
+        category: 'ingressi',
+        source: 'presti-listino',
+        priceReadOnly: true,
+        active: true,
+        version: 1,
+        offers: [importedOffer],
+      },
+    ],
+    summary: { manual: 0, byProvider: { 'presti-listino': 1 }, stripeConnected: false },
+  };
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const view = createCatalogView({ doc, mount, client: stubClient({ tables: { '': table } }) });
+  await view.renderTable({});
+
+  const text = mount.textContent;
+  assert.ok(!text.includes('presti-listino'), 'no raw provider slug anywhere on screen');
+  assert.ok(text.includes('Presti listino'), 'the Fonte column names the listino in readable form');
+  const menu = findSourceMenu(mount);
+  assert.ok(menu, 'the Fonte menu renders');
+  const labels = menu.findAll('option').map((node) => node.textContent);
+  assert.ok(labels.includes('Presti listino'), 'the Fonte menu offers the readable name');
+  assert.ok(!labels.some((label) => label.includes('presti-listino')), 'the Fonte menu shows no slug');
+});

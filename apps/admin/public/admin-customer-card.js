@@ -1964,23 +1964,29 @@ export function createCustomerCardView(deps) {
     // Voce 2f2d22f2: the prototype names its channels — «WhatsApp» and
     // «Email» open the same composer with their channel preselected
     // (backlog:e9b4fc2f: no mailto: anywhere, Invia sends through the
-    // outbox worker). A channel tile stays honest: it opens the composer
-    // even when its own channel is off, and the composer says so there.
-    const writable = composerChannelsFor(card, null).filter((entry) => entry.recipient !== null);
-    if (writable.length === 0) {
+    // outbox worker).
+    // backlog:9b28b3bc6003: each channel tile needs its own recipient — a
+    // customer with an email but no phone reads Email only, never
+    // WhatsApp, and vice versa. «Chiama» stays always (Dan 11/11: with no
+    // number it opens the number window instead of calling).
+    const channels = composerChannelsFor(card, null);
+    let shownChannels = 0;
+    for (const channel of ['whatsapp', 'email']) {
+      const entry = channels.find((row) => row.channel === channel);
+      if (entry?.recipient === null || entry?.recipient === undefined) continue;
+      const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
+      const channelTile = tile(label, 'messaggio');
+      channelTile.setAttribute('type', 'button');
+      channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
+      channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
+      channelTile.addEventListener('click', () => {
+        openComposer(card, navCtx, channel);
+      });
+      row.appendChild(channelTile);
+      shownChannels += 1;
+    }
+    if (shownChannels === 0) {
       row.appendChild(el('span', 'bo-scheda-disabled', 'Nessun canale scrivibile'));
-    } else {
-      for (const channel of ['whatsapp', 'email']) {
-        const label = channel === 'whatsapp' ? 'WhatsApp' : 'Email';
-        const channelTile = tile(label, 'messaggio');
-        channelTile.setAttribute('type', 'button');
-        channelTile.setAttribute('data-action', channel === 'whatsapp' ? 'compose-whatsapp' : 'compose-email');
-        channelTile.setAttribute('title', `Scrivi al cliente su ${label}`);
-        channelTile.addEventListener('click', () => {
-          openComposer(card, navCtx, channel);
-        });
-        row.appendChild(channelTile);
-      }
     }
   /**
    * «Chiama» without a number, or with several (Dan 11/11): the number
@@ -4323,7 +4329,7 @@ export function createCustomerCardView(deps) {
       if (who === null || who === '—') return;
       offerEvents = offerEvents.map((event) => (event.id === `offerta:${historyId}` ? { ...event, who } : event));
     };
-    /** @type {'none' | 'pending' | 'done' | 'failed'} */
+    /** @type {'none' | 'pending' | 'stale' | 'done' | 'failed'} */
     let historyState = profilePending ? 'pending' : 'none';
     if (!profilePending && typeof historyId === 'string' && historyId !== '') {
       const settled = historySettled.get(historyId);
@@ -4331,7 +4337,16 @@ export function createCustomerCardView(deps) {
         applyHistory(settled);
         historyState = 'done';
       } else {
-        historyState = 'pending';
+        // backlog:fb35de38db49: while the fresh history is in flight (a
+        // «Cambia stato» dropped the live caches), draw the rows already
+        // shown instead of hiding them — the repaint must not jump.
+        const kept = historyKept.get(historyId);
+        if (kept !== undefined) {
+          applyHistory(kept);
+          historyState = 'stale';
+        } else {
+          historyState = 'pending';
+        }
       }
     }
     const drawList = () => {
@@ -4649,13 +4664,16 @@ export function createCustomerCardView(deps) {
     box.appendChild(chips);
     drawList();
     box.appendChild(list);
-    if (historyState === 'pending' && !profilePending) {
+    if ((historyState === 'pending' || historyState === 'stale') && !profilePending) {
       void readHistory(historyId).then((answer) => {
         historyState = 'done';
         applyHistory(answer);
         drawList();
       }, () => {
-        historyState = 'failed';
+        // backlog:fb35de38db49: a failed refresh keeps the rows already
+        // shown (the shared read still logs its cause through «Storia
+        // stati»); only a history never read says it is unreadable.
+        if (historyState !== 'stale') historyState = 'failed';
         drawList();
       });
     }
@@ -5473,13 +5491,18 @@ export function createCustomerCardView(deps) {
       : null;
     const companyName = typeof profile?.identity?.company?.name === 'string'
       && profile.identity.company.name !== '' ? profile.identity.company.name : null;
-    box.appendChild(el('p', 'bo-scheda-offer-history-title', 'Storia stati'));
+    const title = el('p', 'bo-scheda-offer-history-title', 'Storia stati');
+    box.appendChild(title);
     const loading = el('p', 'bo-muted', 'Caricamento…');
     // backlog:947260f9f036: a history already read fills at once on a repaint.
     const settled = historySettled.get(targetId);
-    if (settled === undefined) box.appendChild(loading);
+    // backlog:fb35de38db49: while the fresh history is in flight, the rows
+    // already shown stay — the fill below replaces them when it lands.
+    const kept = settled === undefined ? historyKept.get(targetId) : undefined;
+    if (settled === undefined && kept === undefined) box.appendChild(loading);
     const fill = (items, people = []) => {
       if (loading.parentNode) loading.parentNode.removeChild(loading);
+      while (title.nextSibling) box.removeChild(title.nextSibling);
       const rows = [];
       for (const entry of Array.isArray(items) ? items : []) {
         const move = stageMoveOf(entry);
@@ -5513,7 +5536,8 @@ export function createCustomerCardView(deps) {
     // sanitized cause (P1 on this PR: an unavailable roster must stay
     // distinguishable from an empty one) and leaves the record names only,
     // never a new failure line.
-    if (settled !== undefined) {
+    if (kept !== undefined) fill(kept.items, kept.people);
+    else if (settled !== undefined) {
       fill(settled.items, settled.people);
       return;
     }
@@ -6018,6 +6042,7 @@ export function createCustomerCardView(deps) {
     const startSeq = { ...partSeq };
     historyReads.clear();
     historySettled.clear();
+    historyKept.clear();
     rosterRead = null;
     // Who the operator is, asked again with every full read (review Muse
     // #867): the id belongs to the space, which may have changed.
@@ -6215,6 +6240,14 @@ export function createCustomerCardView(deps) {
    */
   const historySettled = new Map();
   /**
+   * backlog:fb35de38db49: the last settled answer by offer id, kept after a
+   * write drops the live caches so a repaint (a «Cambia stato» re-read)
+   * draws the rows already shown until the fresh answer lands, instead of a
+   * gap. Cleared with the live caches on a full read.
+   * @type {Map<string, any>}
+   */
+  const historyKept = new Map();
+  /**
    * The offer's stage history with the roster that names its actors —
    * «Storia stati» and the cronologia share one read (backlog:2a214b66fe12:
    * a repaint after a note or a Dettagli save reuses it; a full re-read or a
@@ -6229,7 +6262,11 @@ export function createCustomerCardView(deps) {
       // a row they made «Storia stati» and the cronologia the last to land.
       read = Promise.all([readRoster(), client.request(auditPath)]).then(([people, answer]) => ({ items: answer?.items, people }));
       const mine = read;
-      void read.then((answer) => { if (historyReads.get(targetId) === mine) historySettled.set(targetId, answer); }, () => {});
+      void read.then((answer) => {
+        if (historyReads.get(targetId) !== mine) return;
+        historySettled.set(targetId, answer);
+        historyKept.set(targetId, answer);
+      }, () => {});
       historyReads.set(targetId, read);
       // A failed read is not kept: the next paint asks again (after the
       // sections of a first read have landed, backlog:1a96094db71d).
@@ -6875,7 +6912,12 @@ export function createCustomerCardView(deps) {
     // Voce 2c1c0e149cf9 (design check 14/11): no separate «Prossimi passi»
     // card — the prototype holds those rows once, as the recap's PROSSIME
     // AZIONI above (docs/backoffice/verifica-2026-10-29/CONFRONTO.md:25).
-    if (waits('profile', 'pipelines')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
+    // backlog:9b28b3bc6003: the offer section hides itself when the customer
+    // has none, so the skeleton only covers the unknown — while the profile
+    // is still in flight. The pipelines only name the stage (the line falls
+    // back to the core stage without them), so a slow schema read never
+    // paints an «Offerta» skeleton over a customer with no offer.
+    if (waits('profile')) skeleton(right, 'bo-scheda-card-offer', 'Offerta');
     else section(right, 'bo-scheda-card-offer', offer, profile, { resource, id }, profileError, pipelines);
     // backlog:26afd13657c5: like the cronologia rows, the card waits for the
     // listino — a grey skeleton while the services read is in flight, never
