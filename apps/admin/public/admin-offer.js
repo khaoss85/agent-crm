@@ -517,7 +517,8 @@ export function createOfferDetail(deps) {
       ]);
       quotes = quotesAnswer;
       // backlog:ea616e16ebac: the head opens the newest quote with the
-      // main action («Apri il preventivo», painted with the price books),
+      // main action («Apri il preventivo», painted with the page — never
+      // waiting for the price books, which only gate «Crea preventivo»),
       // so that card paints no second link for the same page — one
       // visible action per quote. Without the commercial block the head
       // paints no action, and every card keeps its own link.
@@ -624,6 +625,14 @@ export function createOfferDetail(deps) {
     const quotesHead = el('div', 'offer-quotes-head');
     quotesHead.appendChild(el('h3', undefined, quotes.rows.length > 1 ? `Preventivi · ${quotes.rows.length}` : 'Preventivo'));
     quotesPanel.appendChild(quotesHead);
+    // Review Muse #992 (P2): the newest quote stays reachable while the
+    // price books are still reading — its head action paints with the
+    // page, and the books fill only «Crea preventivo» afterwards.
+    const newestFirst = latestQuote(quotes.rows);
+    if (Boolean(commercialBlock(schema)) && newestFirst !== null) {
+      quotesHead.appendChild(openQuoteLink(newestFirst));
+      quotesHead.setAttribute('data-open-painted', 'true');
+    }
     // backlog:96c7b56001ba: «Ancora nessun preventivo» and «Crea preventivo»
     // arrive together; while the price books read, their place is grey.
     const emptyLine = quotes.rows.length === 0 ? el('p', 'empty', 'Ancora nessun preventivo per questa offerta.') : null;
@@ -987,9 +996,16 @@ export function createOfferDetail(deps) {
   function paintCreateQuote(head, panel, record, token, existing = null, answer = { books: null, error: null }) {
     const line = el('p', 'bo-muted offer-quote-create-line', '');
     line.setAttribute('role', 'status');
+    // Review Muse #992 (P2): the head action already paints with the page
+    // — never a second «Apri il preventivo» for the same quote.
+    const paintHeadOpen = (parent) => {
+      if (existing === null || head.getAttribute?.('data-open-painted') === 'true') return;
+      parent.appendChild(openQuoteLink(existing));
+      head.setAttribute('data-open-painted', 'true');
+    };
     if (answer.books === null) {
       if (answer.error) logReadFailure('price-books', answer.error);
-      if (existing !== null) head.appendChild(openQuoteLink(existing));
+      paintHeadOpen(head);
       line.textContent = 'Listini non leggibili: crea il preventivo più tardi.';
       panel.appendChild(line);
       return;
@@ -999,7 +1015,7 @@ export function createOfferDetail(deps) {
       .sort((a, b) => Number(b.currency === record.currency) - Number(a.currency === record.currency));
     if (books.length === 0) {
       if (existing !== null) {
-        head.appendChild(openQuoteLink(existing));
+        paintHeadOpen(head);
         return;
       }
       line.textContent = 'Per creare un preventivo serve un listino attivo nel Catalogo.';
@@ -1022,7 +1038,7 @@ export function createOfferDetail(deps) {
     }
     // backlog:a2ea75f705fd: with a quote already there, the main action
     // opens it; a new quote stays possible, as the quiet second choice.
-    if (existing !== null) bar.appendChild(openQuoteLink(existing));
+    if (existing !== null) paintHeadOpen(bar);
     const create = el('button', existing !== null ? 'secondary' : 'primary', existing !== null ? 'Nuovo preventivo' : 'Crea preventivo');
     create.setAttribute('type', 'button');
     create.setAttribute('data-action', 'offer-create-quote');

@@ -115,6 +115,34 @@ test('ea616e16ebac: with two quotes every quote stays reachable exactly once', a
   );
 });
 
+test('review-992-P2: the newest quote stays reachable while the price books are slow', async () => {
+  let releaseBooks;
+  const booksGate = new Promise((resolve) => { releaseBooks = resolve; });
+  const client = stubClient({ quotes: [quoteRow('q-new', '2026-11-10T00:00:00.000Z')] });
+  const slow = {
+    request(path, options = {}) {
+      if (path.startsWith('/api/modules/price-book/records')) return booksGate.then(() => ({ items: [{ id: 'pb1', name: 'Listino', currency: 'EUR', active: true }] }));
+      return client.request(path, options);
+    },
+  };
+  const mount = createMount();
+  const view = createOfferDetail({ doc: createFakeDocument(), mount, client: slow });
+  const rendering = view.renderOfferDetail('off1');
+  await flushAll(25);
+  assert.equal(countOpen(mount), 1, 'one «Apri il preventivo» before the books land');
+  const early = mount.findAll('a').find((node) => node.getAttribute('href') === '#/quotes/q-new');
+  assert.equal(early?.textContent, 'Apri il preventivo', 'the newest quote is already openable');
+  releaseBooks();
+  await rendering;
+  await flushAll();
+  assert.equal(countOpen(mount), 1, 'still one «Apri il preventivo» after the books land');
+  assert.equal(
+    mount.findAll('a').filter((node) => node.getAttribute('href') === '#/quotes/q-new').length,
+    1,
+    'the newest quote is linked once',
+  );
+});
+
 test('ea616e16ebac: without the commercial block the card keeps its link', async () => {
   const { commercial, ...schemaWithoutCommercial } = SCHEMA;
   void commercial;
