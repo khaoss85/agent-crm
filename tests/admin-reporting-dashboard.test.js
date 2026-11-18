@@ -785,15 +785,16 @@ test('48993bed7294: offers without a referente read «Senza referente», never �
     '1 primo contatto da un canale nelle 4 settimane dal 26 ott al 22 nov · ogni cliente conta una volta, nel canale del primo contatto');
 });
 
-// backlog:ed6bae5e5c0d (verifica Mac 17/11: la colonna «PREVENTIVI» della
-// tabella Team conta le offerte aperte ma non lo dice): l'intestazione
-// nomina ciò che conta davvero, e la riga mostra vinte e tasso del periodo.
-test('ed6bae5e5c0d: the team column reads «Preventivi aperti», won and rate stay period-based', async () => {
+// backlog:ed6bae5e5c0d (verifica indipendente 18/11: la colonna conta le
+// offerte aperte ma le chiama preventivi): l'intestazione dice «Offerte
+// aperte», ciò che conta davvero, e la riga mostra vinte e tasso del periodo.
+test('ed6bae5e5c0d: the team column reads «Offerte aperte», won and rate stay period-based', async () => {
   const { mount, view } = harness();
   await view.renderReporting();
   const heads = mount.findAll('th').map((node) => node.textContent);
-  assert.ok(heads.includes('Preventivi aperti'), `the column names what it counts, got: ${heads.join(' | ')}`);
+  assert.ok(heads.includes('Offerte aperte'), `the column names what it counts, got: ${heads.join(' | ')}`);
   assert.ok(!heads.includes('Preventivi'), 'no bare «Preventivi» header stays ambiguous');
+  assert.ok(!heads.includes('Preventivi aperti'), 'open offers are not called preventivi');
   const cells = mount.findAll('td').map((node) => node.textContent);
   // MODEL: alice 2 open, 1 won (9000 minor = 90 €) and 1 lost in the period → 50%.
   assert.ok(cells.includes('2'), 'alice open count renders');

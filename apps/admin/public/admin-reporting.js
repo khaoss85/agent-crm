@@ -797,8 +797,8 @@ export function createReportingView(deps) {
     const thead = el(doc, 'thead');
     const headRow = el(doc, 'tr');
     // backlog:ed6bae5e5c0d: the column counts open offers, so the header
-    // names them — a bare «Preventivi» hid what it counted.
-    for (const head of ['Persona', 'Preventivi aperti', 'Valore aperto', 'Vinte', 'Tasso']) {
+    // calls them that — «Preventivi aperti» named something else.
+    for (const head of ['Persona', 'Offerte aperte', 'Valore aperto', 'Vinte', 'Tasso']) {
       headRow.appendChild(el(doc, 'th', { text: head }));
     }
     thead.appendChild(headRow);
