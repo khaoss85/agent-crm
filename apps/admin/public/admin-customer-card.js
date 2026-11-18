@@ -6,7 +6,7 @@ import { channelState, countedChannel } from './admin-channels-count.js';
 import { directionOf, matchConnections } from './admin-connectors.js';
 import { readProfile } from './admin-profilo.js';
 import { bindAdminMutations } from './admin-submission.js';
-import { SYNC_LABELS, auditActorLabel, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
+import { SYNC_LABELS, auditActorLabel, authorName, offerCreatorLabel, OFFER_AUDIT_LIMIT, isTechnicalMemberText, italianDateTime, offerStageLabel, offerStateLabel, personOf, plural, readableName, stageMoveLabels, stageMoveOf, teamPeople, upperFirst } from './admin-labels.js';
 import { openOfferPanel, offerShareMessage, offerShareUrl } from './admin-offer-panel.js';
 import { openAppointmentPanel } from './admin-appointment-panel.js';
 import { knownNumbers, openCallNumberPanel } from './admin-call-number.js';
@@ -6597,9 +6597,14 @@ export function createCustomerCardView(deps) {
   }
   /** The roster name of a team subject, or null. @param {string} id */
   function rosterName(id) {
-    // The same person lookup as «Storia stati» (subject or person key).
+    // The same person lookup as «Storia stati» (subject or person key),
+    // reading the author's profile word like cronologia/«Creata da» do
+    // (backlog:3f3c143b seguito): never the Team ordinal («daniele
+    // pelleri (2)»), never «dal team». A writer nobody names still reads
+    // unnamed («Nota · 10:00»).
     const person = rosterPeople === null ? null : personOf(id, rosterPeople);
-    return person !== null && typeof person.name === 'string' && person.name.trim() !== '' ? person.label : null;
+    const name = person !== null ? authorName(person) : null;
+    return typeof name === 'string' && name.trim() !== '' ? name : null;
   }
   /** Who wrote a note or a message: the roster name, else the readable handle, else null. @param {unknown} id */
   function writerName(id) {
