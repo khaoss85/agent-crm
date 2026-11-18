@@ -4697,8 +4697,9 @@ for (const code of ['LLM_SPACE_DISABLED', 'LLM_SECRET_UNAVAILABLE']) {
 }
 
 // j) «trova 45 minuti con Daniele giovedì» drafted «12 nov 00:00–00:30»
-// and the slots started on Monday.
-test('a day-only phrase searches that day for the stated minutes and never paints 00:00', async () => {
+// and the slots started on Monday. backlog:134f3ed7: a day-only draft with
+// free steps proposes the first one (never «--:--», never 00:00).
+test('a day-only phrase proposes the first free step and never paints 00:00', async () => {
   const doc = createFakeDocument();
   const mount = createMount();
   const client = stubClient({
@@ -4719,14 +4720,14 @@ test('a day-only phrase searches that day for the stated minutes and never paint
   assert.ok(suggest.path.includes('from=2026-10-21T22'), 'the search starts on the named day');
   assert.ok(suggest.path.includes('to=2026-10-23T02'), 'and ends with it');
   const draftLine = mount.querySelector('.cal-draft').textContent;
-  assert.ok(draftLine.includes('gio 22 ott · orario da scegliere · 45 minuti'), draftLine);
+  assert.ok(draftLine.includes('22 ott 10:00–10:45'), `the card proposes the first free step: ${draftLine}`);
   assert.ok(!mount.querySelector('.cal-rail').textContent.includes('00:00'), 'no midnight hour anywhere in the rail');
   const rows = mount.querySelector('.cal-slots').findAll('span').map((node) => node.textContent);
   assert.deepEqual(rows, ['gio 22 ott · 10:00–10:45'], 'only the named day is proposed');
   const field = (name) => mount.findAll('input').find((node) => node.getAttribute('name') === name);
   assert.equal(field('date').value, '2026-10-22', 'the day prefills');
-  assert.equal(field('start').value, '', 'the hour stays to choose');
-  assert.equal(field('end').value, '', 'the end stays to choose');
+  assert.equal(field('start').value, '10:00', 'the first free step fills Inizio, never --:--');
+  assert.equal(field('end').value, '10:45', 'the first free step fills Fine');
 });
 
 test('draft helpers: a midnight start is a day, not a time', () => {
