@@ -164,6 +164,7 @@ const RECORDED = Object.freeze({
   "sequence-enrollment": { revision: 1, sqlite: "4dfd25d0c93ca746d8f0f9ea73bf3b9c2c3aafe9b7401792c96d49da94c9eb52", pg: "a4ff3fcd81bbb655c6523660c73f0eecac1eb3e5ed674ce5bc7caf8ec22127af" },
   "sequence-send": { revision: 2, sqlite: "7c4b1ea326859205b2e607271895c0d23243f1221de09edf6c34efcf717745f0", pg: "dda2b67accae58bcd442fdc191375d33a66b3dd7a6cc41cd5d4dfd7b9b8ffae0" },
   "sequence-step": { revision: 2, sqlite: "52be5a22b82f58b0b855c47610453d72eb0644d1f146faa1d47828ea061dc4a0", pg: "12e56eab9922f1f0a4106fd58304d5fb8983b842c8a012bbd1ffca7cd7655dca" },
+  "sequence-suppression": { revision: 1, sqlite: "aa760337741ec298fa7219981dc8045a11f60c64d9298c2f6bbadd4740958c84", pg: "e75bf232f6a652b73664a363c073bc6290ed416639474d979f0cf0ef6a084218" },
   "signature-envelope": { revision: 1, sqlite: "84d400da668cae77625402587f9245fad5b8ac6b564dc034b10cfb2aa92907e9", pg: "f4e1259bbad33558d355ad222e8b7c0933beceac181bb483861ec22b07a119a4" },
   "signature-event": { revision: 1, sqlite: "5f5d56085ee6eec180b3edc21327ade5ac740f39a50bab1919392d4ed8f01b7c", pg: "24dd6e519d6d37806c6148f85c7ae3faf45bbeb5cae2f094957078dd767b115d" },
   "signature-signer": { revision: 1, sqlite: "1439411f7959944f71aa922fcd940eaa96155e9b7bb605b7a0357b1d80e16c6b", pg: "09ad61239484100d37ea3bdb223c3ca5c4092aaf5999c8ca960105d27095bbcf" },

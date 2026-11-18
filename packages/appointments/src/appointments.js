@@ -1544,13 +1544,19 @@ export async function rescheduleAppointment(context, request) {
  * double click, or a cancel racing another cancel never errors on the
  * winner's row.
  *
- * Google Calendar follows calendar-sync's rule «cancellation wins»: when
+ * Google Calendar follows calendar-sync's rule «cancellation wins». When
  * the request names `calendar` (and the `spaceId` the push is gated on),
  * the linked Google event is cancelled through the injected
  * `calendarSync.pushAppointment` handle after the commit, exactly like the
  * reschedule path — validated before any write, answered as data (`push` /
- * `pushError`), never a throw past the commit. Without `calendar` the next
- * two-way sync converges the linked event the same way.
+ * `pushError`), never a throw past the commit. Without `calendar` the
+ * cancel carries its own convergence (backlog:27923678): the appointment's
+ * sync link names the calendar, resolved server-side through
+ * `calendarSync.readAppointmentDetail` after the commit, and the linked
+ * Google event is cancelled through the same push handle with the request's
+ * `spaceId` when given. Without a link (a booking made here, never synced)
+ * nothing is pushed; a push the link cannot reach rides as data
+ * (`pushError`), never a throw past the commit.
  */
 export async function cancelAppointment(context, request) {
   const names = resolvedNames(context.moduleNames);
@@ -1567,6 +1573,7 @@ export async function cancelAppointment(context, request) {
     });
   }
   const reason = safeText(record.reason, 'reason', MAX_REASON);
+  const calendarSync = context?.calendarSync ?? null;
   let calendarId = null;
   let spaceId = null;
   let calendarPush = null;
@@ -1576,7 +1583,6 @@ export async function cancelAppointment(context, request) {
     }
     spaceId = record.spaceId;
     calendarId = safeText(record.calendar.calendarId, 'calendar.calendarId', MAX_ID);
-    const calendarSync = context?.calendarSync ?? null;
     if (!calendarSync || typeof calendarSync.pushAppointment !== 'function') {
       throw new AppError(
         'The cancellation names a calendar but the appointments package is composed without a calendar-sync push handle, '
@@ -1644,6 +1650,34 @@ export async function cancelAppointment(context, request) {
       const code = typeof error?.code === 'string' && error.code !== ''
         ? error.code
         : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      pushError = Object.freeze({ code });
+    }
+  } else if (typeof calendarSync?.readAppointmentDetail === 'function'
+    && typeof calendarSync?.pushAppointment === 'function') {
+    // backlog:27923678 — no calendar named: the appointment's own sync
+    // link names it. Resolved server-side after the commit, never from
+    // caller input, so a forged calendarId cannot steer the push; the
+    // grant gate inside the push still enforces the owning space. A link
+    // the push cannot reach rides as data, never a throw past the commit.
+    try {
+      const detail = await calendarSync.readAppointmentDetail({ id: appointment.id, actor: who });
+      const linked = detail?.sync?.calendarId;
+      if (typeof linked === 'string' && linked.trim() !== '') {
+        const autoSpace = typeof record.spaceId === 'string' && record.spaceId.trim() !== ''
+          ? record.spaceId
+          : undefined;
+        push = await calendarSync.pushAppointment(linked, appointment.sourceKey, { spaceId: autoSpace, actor: who });
+      }
+    } catch (error) {
+      const code = typeof error?.code === 'string' && error.code !== ''
+        ? error.code
+        : 'APPOINTMENTS_CALENDAR_PUSH_FAILED';
+      // The cancellation stands and the cause rides as data, so name it here:
+      // space and code only, never the appointment, the actor or the reason.
+      console.error(
+        `[accordo] appointments cancel auto-push detail unreadable: code=${code} `
+        + `spaceId=${typeof record.spaceId === 'string' && record.spaceId.trim() !== '' ? record.spaceId : 'none'}`,
+      );
       pushError = Object.freeze({ code });
     }
   }
@@ -2989,8 +3023,10 @@ function openPhraseLlm(llmCapability, runtime) {
  * @param {any} [permissionGate] an already-opened space-permission-gate@1 handle (tests; wins over the handover)
  * @param {any} [llm] the composed llm package definition (handover, optional)
  * @param {any} [phraseLlm] an already-opened llm-complete@1 handle (tests; wins over the handover)
- * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?}` (per opener; optional):
- *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path
+ * @param {any} [calendarSync] a calendar-sync handle `{pushAppointment, listOwnerBlocks?, readAppointmentDetail?}` (per opener; optional):
+ *   the push writes confirmed events, the owner-block feed is the ONLY source of owner holds on every path,
+ *   and the detail read lets a cancellation auto-push through its own sync link (backlog:27923678) when the
+ *   request names no calendar
  */
 export function createAppointmentBookCapability({ moduleNames, provider, followUps, templateSendProvider, templateSend, spacePermissions, permissionGate, llm, phraseLlm, calendarSync } = {}) {
   const names = resolvedNames(moduleNames);

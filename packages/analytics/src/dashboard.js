@@ -704,11 +704,14 @@ export function buildDashboardModel(results, bundleRows, query, nowIso, channelO
         text: `${candidate.owner} tiene ${formatMinor(candidate.openMinor, query.currency)} aperti con il tasso più basso (${candidate.winRateDisplay}): propone di spostare i lead con la data già passata a ${recipient.owner}.`,
       });
     }
-    if (lost.count > 0 && closed > 0 && lost.count / closed >= 0.3) {
+    // backlog:ed6bae5e5c0d: the phrase and the team table read the same
+    // window — closed in the period (won + lost of the month), never the
+    // lifetime totals the table does not show.
+    if (lostInPeriod.count > 0 && periodDecided > 0 && lostInPeriod.count / periodDecided >= 0.3) {
       insights.push({
         id: 'lost-rate',
         // backlog:48993bed7294: «1 preventivo perso», never «1 preventivi persi».
-        text: `${plural(lost.count, 'preventivo perso', 'preventivi persi')} su ${plural(closed, 'chiuso', 'chiusi')} (${Math.round((lost.count / closed) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
+        text: `${plural(lostInPeriod.count, 'preventivo perso', 'preventivi persi')} su ${plural(periodDecided, 'chiuso', 'chiusi')} (${Math.round((lostInPeriod.count / periodDecided) * 100)}%): rileggi i motivi prima di spingere le trattative.`,
       });
     }
     if (staleOpen.count > 0) {

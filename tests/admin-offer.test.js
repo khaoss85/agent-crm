@@ -422,6 +422,71 @@ test('the edit validates before writing and keeps the form on a refused save', a
   assert.ok(mount.textContent.includes('Maria'), 'the detail still shows the stored referente');
 });
 
+test('a refused Salva names the true reason, never «Riprova più tardi» (backlog:18cdf78c)', async () => {
+  for (const [failPatch, expected] of [
+    [{ message: 'Dati non validi', status: 400, code: 'VALIDATION_ERROR' }, 'Alcuni dati non sono validi'],
+    [{ message: 'Offerta non trovata', status: 404, code: 'NOT_FOUND' }, 'Offerta non trovata, ricarica'],
+  ]) {
+    const doc = createFakeDocument();
+    const mount = createMount();
+    const client = stubClient({ quotes: [], audit: [], failPatch });
+    const view = createOfferDetail({ doc, mount, client });
+    await view.renderOfferDetail('off1');
+    const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+    wrap.__edit();
+    const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+    form.__editInputs.value.value = '200.00';
+    form.__editInputs.owner.value = 'guido';
+    await form.__save({ preventDefault() {} });
+    assert.ok(!form.__editError.textContent.includes('Riprova più tardi'),
+      `a ${failPatch.code} refusal never reads «Riprova più tardi»: ${form.__editError.textContent}`);
+    assert.ok(form.__editError.textContent.includes(expected),
+      `a ${failPatch.code} refusal names why: ${form.__editError.textContent}`);
+  }
+});
+
+test('a negative Valore says it cannot be negative, never «obbligatorio» (backlog:18cdf78c)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ quotes: [], audit: [] });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = '-5';
+  form.__editInputs.owner.value = 'guido';
+  await form.__save({ preventDefault() {} });
+  assert.equal(client.calls.filter((call) => call.method === 'PATCH').length, 0, 'no PATCH on a negative valore');
+  assert.ok(form.__editError.textContent.includes('negativo'),
+    `a negative valore names why: ${form.__editError.textContent}`);
+});
+
+test('the edit error keeps Salva and Annulla on their own row, the message outside it (backlog:18cdf78c)', async () => {
+  const doc = createFakeDocument();
+  const mount = createMount();
+  const client = stubClient({ quotes: [], audit: [] });
+  const view = createOfferDetail({ doc, mount, client });
+  await view.renderOfferDetail('off1');
+
+  const wrap = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  wrap.__edit();
+  const form = mount.findAll('div').find((node) => (node.getAttribute('class') ?? '') === 'offer-edit');
+  form.__editInputs.value.value = 'not-a-number';
+  form.__editInputs.owner.value = 'guido';
+  await form.__save({ preventDefault() {} });
+  assert.ok(form.__editError.textContent.length > 0, 'the error is shown');
+  const saveButton = form.findAll('button').find((node) => node.textContent === 'Salva');
+  const cancelButton = form.findAll('button').find((node) => node.textContent === 'Annulla');
+  assert.ok(saveButton && cancelButton, 'both buttons paint');
+  assert.equal(saveButton.parentNode, cancelButton.parentNode, 'Salva and Annulla share one row');
+  assert.ok((saveButton.parentNode.getAttribute('class') ?? '').split(/\s+/).includes('offer-edit-actions'),
+    'the buttons sit in their own actions row');
+  assert.notEqual(saveButton.parentNode, form.__editError.parentNode,
+    'the message stays outside the buttons row');
+});
+
 test('offer routes parse canonically; hostile routes are invalid', async () => {
   assert.deepEqual(parseModuleRoute('#/offerte/off1'), { view: 'offer-detail', offerId: 'off1' });
   // backlog:96c7b56001ba: opened from a scheda, the route names it.

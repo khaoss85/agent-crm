@@ -380,6 +380,11 @@ button[aria-busy="true"] { opacity: .6; }
 .bo-offer .offer-edit-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; padding: 12px 14px; background: var(--paper); border-radius: 12px; }
 .bo-offer .offer-edit-form .field-row { display: flex; flex-direction: column; gap: 4px; }
 .bo-offer .offer-edit-form label { font-size: 11.5px; font-weight: 600; color: var(--muted); }
+/* backlog:18cdf78c: the edit error keeps its own full-width line above, so it
+   never pushes Salva/Annulla onto a second line; the two buttons share one
+   actions row and stay together on theirs. */
+.bo-offer .offer-edit-form > .field-error { flex-basis: 100%; }
+.bo-offer .offer-edit-form .offer-edit-actions { display: flex; align-items: center; gap: 10px; }
 .bo-offer .offer-quotes, .bo-offer .offer-history { background: var(--surface); border: 1px solid var(--line-soft); border-radius: 18px; padding: 18px 22px; }
 .bo-offer .offer-quotes h3, .bo-offer .offer-history h3 { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .bo-offer .offer-quote { padding: 12px 0 4px; border-top: 1px solid var(--line-faint); }
@@ -588,7 +593,10 @@ button[aria-busy="true"] { opacity: .6; }
   font-weight: 600; text-align: left;
 }
 .bo-space-pick:hover, .bo-add-option:hover, .bo-space-manage:hover { background: var(--surface-soft); }
-.bo-space-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* backlog:09644bb7e7e9: menu names read in full (they wrap onto more
+ * lines) instead of cutting at «Prova Valid…»; the pick keeps its title
+ * with the whole name for one-hover certainty. */
+.bo-space-pick-name { flex: 1; min-width: 0; overflow: visible; white-space: normal; }
 .bo-space-key { font-family: var(--mono); font-size: 10px; color: var(--dim); }
 .bo-space-check { color: var(--accent); font-weight: 800; }
 .bo-space-manage { color: var(--accent); }
@@ -620,6 +628,19 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
   min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px;
   display: grid; place-items: center; font-size: 11px; font-weight: 700;
   background: var(--surface-soft); color: var(--muted);
+}
+/* backlog:b76770f82fe9: the pill's room stays reserved while its count is
+ * unknown (hidden, never removed), so the rows below never move when the
+ * number lights up next to Clienti or Impostazioni. */
+.bo-count.is-empty,
+.bo-badge.is-empty {
+  visibility: hidden;
+}
+/* backlog:09644bb7e7e9: the neutral trailing slot for voices without a
+ * live badge — same 20px box as the pills, hidden but laid out, so every
+ * menu row measures the same as the badged ones. */
+.bo-pill-slot {
+  min-width: 20px; height: 20px; visibility: hidden;
 }
 .bo-add { margin-top: 6px; }
 .bo-add-button {
@@ -721,14 +742,25 @@ a.bo-nav-item.active:hover { background: var(--ink); color: var(--paper); }
     box-shadow: var(--shadow-pop), 0 0 0 100vmax rgba(23, 25, 18, 0.22);
   }
   body.bo-scroll-lock { overflow: hidden; }
-  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 14px 12px 0; }
-  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; font-size: 14px; font-weight: 750; }
+  .bo-topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; margin: 0 -12px; padding: 8px 12px 8px; }
+  /* backlog:dd6a01de569b: the AI bar touched the bar's bottom edge (0px) —
+   * the 8px bottom inset is its margin, funded by the top inset (14→8) and
+   * the tighter space row, so the 120px phone budget still holds. */
+  .bo-topbar .bo-phonebar-space { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; font-size: 14px; font-weight: 750; }
   .bo-topbar .bo-phonebar-space .bo-space-badge { width: 28px; height: 28px; font-size: 11px; }
   .bo-topbar .bo-phonebar-space .bo-space-name { font-size: 14px; line-height: 1.2; }
   .bo-topbar .bo-phonebar-space .bo-space-role { font-size: 12px; line-height: 1.2; }
   .bo-crumb, .bo-ai { grid-column: 1 / -1; }
   .bo-ai { flex: none; margin-left: 0; height: 36px; }
   .bo-crumb { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+  /* backlog:dd6a01de569b: on a phone the bar above already names the space,
+   * so the path keeps the screen only; and ⌘K needs a keyboard — without
+   * one the hint only eats bar room. Both stay on desktop. */
+  .bo-crumb .bo-crumb-space { display: none; }
+  .bo-ai .bo-ai-key { display: none; }
+  /* backlog:dd6a01de569b: once the page slides under the sticky bar, an
+   * edge — shadow only, never a border, so the 120px budget cannot move. */
+  .bo-topbar.bo-topbar-scrolled { box-shadow: var(--shadow-pop); }
   .bo-main > .bo-topbar + * { margin-top: 2px; }
   .bo-topbar .bo-menu-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border-radius: 10px; font-size: 20px; line-height: 1; }
 }
@@ -831,6 +863,22 @@ button.bo-scheda-ask-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-actions .bo-scheda-tile-ai:hover { border-color: var(--agent-ink); }
 .bo-scheda-offerwrap { position: relative; display: flex; }
 .bo-scheda-offerwrap > .bo-scheda-tile { flex: 1 1 auto; width: 100%; }
+/* Voce 2c1c0e149cf9 (seguito 17/11, verifier back su 84ebe9e5 AC-2): the
+ * shared add menu is right-aligned (right:0) and 290px wide, so in the
+ * scheda's narrow left column it runs left under the app sidebar (voices at
+ * x=156 with the sidebar at x=264, unreadable and untappable). Here the menu
+ * opens right of its tile, inside the visible area, and paints above the
+ * sidebar (which sits at z-index 40). Small screens keep the static flow. */
+.bo-scheda-offerwrap > .ui-add-menu { left: 0; right: auto; max-width: min(78vw, 320px); z-index: 50; }
+/* Voce 2c1c0e149cf9 (review P2 su 0429edd6: left:0/right:auto da solo non
+ * basta — .bo-scheda-col-side ha overflow-y:auto al desktop, e per le regole
+ * CSS overflow-x diventa auto e ritaglia il menu comunque). Al desktop la
+ * colonna resta sticky ma non è più un contenitore di scorrimento: il menu
+ * dipinge sopra la sidebar (z-index 50 > 40). Sotto i 1280px vale già la
+ * regola overflow:visible della media query max-width:1279px. */
+@media (min-width: 1280px) {
+  .bo-scheda-col-side { max-height: none; overflow: visible; }
+}
 /* Voce 2c1c0e149cf9: the prototype's violet «✦ Recap per» panel — the same
  * agent tokens as the summary card, with the «Vista per» tabs and the
  * PROSSIME AZIONI rows. */
@@ -1294,6 +1342,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin-top: 26px; }
 .bo-spazi-card { padding: 18px; border-radius: 16px; border: 1px solid var(--line-soft); background: var(--surface); display: flex; flex-direction: column; gap: 14px; }
 .bo-spazi-initials { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
+/* backlog:56c9ec170eaa: the card wears the menu's own badge (same sigla and
+ * palette class from spaceMenuItems), only larger for the card head. */
+.bo-spazi-head .bo-space-badge { width: 42px; height: 42px; border-radius: 12px; font-size: 15px; }
 .bo-spazi-here { align-self: flex-start; padding: 5px 10px; border-radius: 99px; background: var(--accent-soft); }
 .bo-spazi-card:has(.bo-spazi-here) { border: 1.5px solid var(--accent); }
 .bo-spazi-panels { gap: 18px; margin-top: 26px; }
@@ -1326,6 +1377,9 @@ select.bo-spazi-input { flex: none; }
 .bo-spazi-you strong { color: var(--ink); font-weight: 700; }
 .bo-spazi-foot .bo-spazi-here { align-self: center; }
 .bo-spazi-open.ui-btn { padding: 7px 14px; }
+/* backlog:2de01913d276: the «Riprova» after a failed role/team read — small,
+   inline, never pushing the card foot. */
+.bo-spazi-retry.ui-btn { padding: 6px 12px; margin-left: 8px; }
 .bo-spazi-adder { border: 1px dashed var(--line-dashed); background: transparent; justify-content: center; align-items: center; min-height: 150px; }
 .bo-spazi-adder .bo-spazi-quiet.ui-btn { height: auto; padding: 10px 14px; font-size: 15px; font-weight: 700; color: var(--muted); }
 .bo-spazi-adder .ui-add-menu { align-self: stretch; }
@@ -1427,8 +1481,9 @@ select.bo-spazi-input { flex: none; }
 /*
  * Customer list (BO-F1-05): quick views, search, grouped filters with the AI
  * entry point, removable chips, sorting, configurable columns and server
- * pagination with ellipses. Cards stack in one column, so the list is fluid
- * under 700px once the toolbar and the pager wrap instead of overflowing.
+ * pagination with ellipses. Under 700px the rows read as one-column cards
+ * (head hidden, each fact with its own label), so the list never scrolls
+ * sideways on a 390px phone.
  */
 .bo-clienti { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
 .bo-clienti-title { margin: 0; font-size: clamp(32px, 4vw, 46px); line-height: 1; letter-spacing: -.03em; font-weight: 700; }
@@ -1519,6 +1574,19 @@ select.bo-spazi-input { flex: none; }
   .bo-clienti-search { flex: none; height: 48px; }
   .bo-clienti-menu { position: static; margin-top: 8px; max-width: none; box-shadow: none; }
   .bo-clienti-pager { row-gap: 8px; }
+  /* backlog:92d9c5456ca6: on a phone the list reads as cards, never as the
+   * 760px table with an inner sideways scroll. The head hides (every fact
+   * carries its own label, revealed below), the inline desktop floor and
+   * tracks give way (`!important` beats the inline style, like the stacked
+   * calendar week), and every filter, sort, column, search and pager control
+   * stays the same DOM with the same actions. */
+  .bo-clienti-table { overflow-x: visible; padding: 12px; }
+  .bo-clienti-thead { display: none; }
+  .bo-clienti-list { gap: 12px; }
+  .bo-clienti-row { grid-template-columns: minmax(0, 1fr) !important; min-width: 0 !important; gap: 10px; align-items: start; padding: 14px 16px; border: 1px solid var(--line-faint); border-radius: 14px; background: var(--paper); }
+  .bo-clienti-chevron { display: none; }
+  .bo-clienti-fact { overflow: visible; overflow-wrap: anywhere; }
+  .bo-clienti-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; white-space: normal; display: block; margin: 0 0 2px; font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
 }
 
 /* Team calendar (BO-F3 \"07 Calendario\"): the week grid, the phrase draft,
@@ -1708,6 +1776,9 @@ select.bo-spazi-input { flex: none; }
 .cal-form .cal-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 90px; min-width: 0; }
 .cal-form .cal-field-wide { flex-basis: 100%; }
 .cal-field-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+/* backlog:b0788e62ace6: the picked customer under its «Cliente» label. */
+.cal-customer-picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cal-customer-picked p { margin: 0; font-size: 14px; font-weight: 700; color: var(--ink); min-width: 0; overflow-wrap: anywhere; }
 .cal-pop .cal-manual .cal-field input, .cal-pop .cal-manual .cal-field .ui-select { width: 100%; }
 @media (max-width: 720px) { .cal-pop { position: fixed; left: 8px !important; right: 8px; bottom: 8px; top: auto !important; width: auto; max-width: none; } }
 .cal-now { position: absolute; left: 0; right: 0; height: 2px; background: var(--danger); }
@@ -2659,6 +2730,9 @@ a.ui-connect, a.ui-connect:hover { text-decoration: none; }
 .bo-scheda-composer-channel:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bo-composer-off { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
 .bo-composer-off a { color: var(--accent); font-weight: 600; }
+/* Voce 14d999de: the device-dial fallback in «Chiama dal CRM» reads as a /bo
+   link (accent, semibold), never the browser-default blue underline. */
+.bo-call-fallback { color: var(--accent); font-weight: 600; }
 .bo-composer-row { display: flex; align-items: baseline; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line-faint); font-size: 14px; min-width: 0; }
 .bo-composer-row[data-empty="true"] { display: none; }
 .bo-composer-label { flex: 0 0 22px; color: var(--muted); font-size: 13px; }

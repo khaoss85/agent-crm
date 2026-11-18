@@ -1000,22 +1000,42 @@ export function customerDataDeferredLine(deferred) {
 export { IMMUTABLE_FIELDS };
 
 /**
+ * What the operator reads when the service is restarting under a request
+ * (backlog:7d4e99ef43d5, production 17/11: a codeless 503 on «Aggiorna»
+ * read «Request failed (503)», in English): Italian, a wait with a retry,
+ * never the raw text.
+ */
+export const SERVICE_RESTARTING_TEXT = 'Il servizio si sta riavviando, riprova tra poco.';
+
+/**
  * The error a failed API answer throws, built from its status and parsed
  * payload (`{ error: { code, message, details } }`). A 504 BO_SEND_PENDING
  * names the queued request beside the error (`requestId`, `claimId` at the
  * top level, the pilot's send route shape): both travel on the error so the
- * composer reads the same request back instead of sending again. Kept pure
- * and here, not in the shell bootstrap, so the mapping is tested.
+ * composer reads the same request back instead of sending again. A 502/503/
+ * 504 the gateway answered alone (no body, no server code: the app never
+ * spoke) is a service restarting, not a refusal — the message says so in
+ * Italian, so no screen can print «Request failed». A verdict the server
+ * really named (a code, a message) keeps its technical shape: the owning
+ * view maps it to its own sentence. Kept pure and here, not in the shell
+ * bootstrap, so the mapping is tested.
  * @param {number} status
  * @param {any} payload the parsed JSON body, or null/undefined
  */
 export function apiFailure(status, payload) {
-  const error = new Error(payload?.error?.message || `Request failed (${status})`);
+  const code = payload?.error?.code ?? (status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN');
+  const serverMessage = payload?.error?.message;
+  const message = typeof serverMessage === 'string' && serverMessage !== ''
+    ? serverMessage
+    : ((status === 502 || status === 503 || status === 504) && GATEWAY_CODES.has(code)
+      ? SERVICE_RESTARTING_TEXT
+      : `Request failed (${status})`);
+  const error = new Error(message);
   Object.assign(error, {
     status,
     // backlog:3a9bee845cc4: a 429 without a body code is still a rate limit —
     // the log names TOO_MANY_REQUESTS instead of UNKNOWN.
-    code: payload?.error?.code ?? (status === 429 ? 'TOO_MANY_REQUESTS' : 'UNKNOWN'),
+    code,
     details: payload?.error?.details ?? null,
   });
   if (typeof payload?.requestId === 'string' && payload.requestId !== '') Object.assign(error, { requestId: payload.requestId });

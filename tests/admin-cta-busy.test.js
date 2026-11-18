@@ -200,13 +200,15 @@ test('Crea campo reads «Creo…» while it posts and «Crea campo» after a ref
 const ADMIN_PUBLIC = join(dirname(fileURLToPath(import.meta.url)), '..', 'apps', 'admin', 'public');
 
 /**
- * Write buttons the scan cannot judge, checked by hand: mostly views that
- * rebuild the pressed button from their own state while the write runs (or
- * show it through an object method), plus two Annulla whose only write is
- * the background mark-read of the card they re-read. Key `file#button` → how many such handlers the
- * file has, and where the wait is painted. The counts are exact: a new
- * handler fails here, and one that moves to uiBusy/uiHold asks to shrink
- * the list.
+ * Write buttons the scan cannot judge, checked by hand: views that rebuild
+ * the pressed button from their own state while the write runs, waits
+ * painted straight onto the button (off with «…» but no helper), plus two
+ * Annulla whose only write is the background mark-read of the card they
+ * re-read. A wait painted through an object or class method is seen by the
+ * scan (backlog:ceebc2bbd68a), so those buttons left this list. Key
+ * `file#button` → how many such handlers the file has, and where the wait
+ * is painted. The counts are exact: a new handler fails here, and one that
+ * moves to uiBusy/uiHold asks to shrink the list.
  */
 const HAND_CHECKED = new Map([
   ['admin-agenti.js#once', [1, 'Affida reads «Invio…» from draft.busy at render']],
@@ -225,10 +227,6 @@ const HAND_CHECKED = new Map([
   ['admin-offer-panel.js#go', [1, 'Compila reads «Compilo…» and is off inside fill()']],
   ['admin-personalizzazione.js#toggle', [1, 'Disattiva reads «Disattivo…» via uiMarkBusy (busyOn) at render']],
   ['admin-personalizzazione.js#add', [1, 'Attiva reads «Attivo…» via uiMarkBusy (busyOn) at render']],
-  ['admin-pipeline.js#moveButton', [1, 'the card and Sposta go aria-busy through cardView.start (markCardBusy)']],
-  ['admin-pipeline.js#confirmYes', [1, 'the card goes aria-busy and Conferma off through cardView.start (markCardBusy)']],
-  ['admin-pipeline.js#go', [1, 'the panel Sposta goes aria-busy through drawer.moveView.start (lockControls)']],
-  ['admin-pipeline.js#confirmPanel.yes', [1, 'the panel goes aria-busy through drawer.moveView.start (lockControls)']],
   ['admin-sequenze.js#create', [1, 'Crea la sequenza reads «Creo…» via uiMarkBusy from form.busy']],
   ['admin-sequenze.js#confirm', [1, 'Crea la sequenza (AI) reads «Creo…» via uiMarkBusy from panelState.busy']],
   ['admin-spazi-accessi.js#yes', [2, 'Conferma rimozione/interruttore read «Rimuovo…»/«Salvo…» via uiMarkBusy (busyOn)']],
@@ -291,6 +289,60 @@ test('scan: a write in a .then, a forEach or an IIFE of the press is still the p
     each.addEventListener('click', () => { rows.forEach((row) => { void client.request('/r', { method: 'DELETE' }); }); });
     iife.addEventListener('click', () => { (async () => { await client.request('/i', { method: 'PATCH' }); })(); });`;
   assert.deepEqual(writeButtonsWithoutWait(continuation).map((row) => row.button), ['save', 'each', 'iife']);
+});
+
+// backlog:ceebc2bbd68a: a write reached through an object or class method
+// is still the press, and a wait painted through one covers it.
+test('scan: a write or a wait through an object or class method is seen', () => {
+  const viaObject = `
+    const view = {
+      async save() { await client.request('/x', { method: 'POST' }); },
+    };
+    go.addEventListener('click', () => { void view.save(); });`;
+  assert.deepEqual(writeButtonsWithoutWait(viaObject).map((row) => row.button), ['go']);
+  const viaClass = `
+    class Editor {
+      async save() { await client.request('/y', { method: 'PUT' }); }
+    }
+    const editor = new Editor();
+    keep.addEventListener('click', () => { void editor.save(); });`;
+  assert.deepEqual(writeButtonsWithoutWait(viaClass).map((row) => row.button), ['keep']);
+  const viaAssigned = `
+    const drawer = {};
+    drawer.moveView = {
+      start() { lockControls(true); },
+    };
+    function lockControls(on) { go.setAttribute('aria-busy', on ? 'true' : 'false'); }
+    go.addEventListener('click', async () => { drawer.moveView.start(); await client.request('/z', { method: 'POST' }); });`;
+  assert.deepEqual(writeButtonsWithoutWait(viaAssigned), []);
+});
+
+// backlog:ceebc2bbd68a (review Muse #974, P2): same-named methods of
+// different objects stay apart — the wait in `other.start()` must not cover
+// `first.start()`, which writes with no guard.
+test('scan: the wait of another object’s same-named method does not cover this press', () => {
+  const mixed = `
+    const first = {
+      async start() { await client.request('/x', { method: 'POST' }); },
+    };
+    const other = {
+      start() { uiHold(go, 'Salvo…'); },
+    };
+    go.addEventListener('click', () => { void first.start(); });`;
+  const rows = writeButtonsWithoutWait(mixed);
+  assert.deepEqual(rows.map((row) => row.button), ['go']);
+  assert.deepEqual(rows[0].chain, ['start']);
+});
+
+// backlog:ceebc2bbd68a (review Muse #974, P2): a visit past BUSY_DEPTH must
+// not prune a shorter valid path — the depth is part of the visited key.
+test('scan: a longer path past the wait depth does not hide a shorter covered one', () => {
+  const depth = `
+    function submit() { mid(); h(); }
+    function mid() { h(); }
+    function h() { go.setAttribute('aria-busy', 'true'); }
+    go.addEventListener('click', async () => { submit(); await client.request('/z', { method: 'POST' }); });`;
+  assert.deepEqual(writeButtonsWithoutWait(depth), []);
 });
 
 test('scan: comments never cover, double quotes and parenthesised parameters are read', () => {
