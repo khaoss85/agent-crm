@@ -489,6 +489,30 @@ export function buildRouter(app) {
   const maskAppointmentRowFor = (viewer, row) => (
     viewerSeesFull(viewer, row) ? row : projectMaskedWeekRow(row)
   );
+  // The masked «Occupato» projection (projectMaskedWeekRow) keeps only the
+  // slot and the hold: id, status, startsAt, endsAt, teamMemberId,
+  // visibility. Of those, only id, status, startsAt and teamMemberId are
+  // index-backed list filters; every other filterable field (subjectResource,
+  // subjectId, serviceKey, sourceKey, sourcePackage) names a value the
+  // masked row strips. A caller who is not an administrator must not filter
+  // on one: the pre-mask WHERE would oracle a private row by 1-vs-0 rows
+  // (backlog:9aa5c073). Refused 400 before the read runs — the same refusal
+  // whether or not a matching private row exists, so the error answers
+  // nothing by itself. Administrators read everything whole, so their
+  // filters stay untouched.
+  const APPOINTMENT_MASKED_SAFE_FILTERS = new Set(['id', 'status', 'startsAt', 'teamMemberId']);
+  const refuseMaskedAppointmentFilter = (viewer, where) => {
+    if (viewer?.isAdmin === true) return;
+    const refused = Object.keys(where ?? {}).filter((field) => !APPOINTMENT_MASKED_SAFE_FILTERS.has(field));
+    if (refused.length > 0) {
+      throw new ValidationError(
+        `filter.${refused[0]} is not filterable on private bookings for this caller: `
+        + 'it names a value the masked «Occupato» row strips. '
+        + 'Administrators may filter it; anyone else reads the team week or the customer history instead.',
+        { field: refused[0] },
+      );
+    }
+  };
   const refuseUnlessAppointmentVisible = (viewer, row) => {
     if (viewerSeesFull(viewer, row)) return row;
     throw new ForbiddenError('only its creator and the administrators may change a private booking', {
@@ -1739,15 +1763,22 @@ export function buildRouter(app) {
   router.add('GET', '/api/modules/:module/records', async ({ params, searchParams, actor, identity, organizationId }) => {
     await gate(app, identity, organizationId, 'records.read');
     const module = requireCapability(resolveGeneratedModule(app, params.module), 'list');
-    const items = await module.service.list({
-      limit: strictLimit(searchParams),
-      where: strictCollectionFilter(searchParams, module),
-    });
     // A private booking (backlog:9aa5c073) reads as «Occupato» here too —
     // never the customer, the service or the notes — for anyone but its
-    // creator and the administrators.
-    if (params.module !== APPOINTMENT_MODULE_NAME) return { items };
+    // creator and the administrators. The viewer resolves BEFORE the
+    // filtered read: a filter on a stripped field, applied first and masked
+    // second, would oracle the hidden value by 1-vs-0 rows.
+    if (params.module !== APPOINTMENT_MODULE_NAME) {
+      const items = await module.service.list({
+        limit: strictLimit(searchParams),
+        where: strictCollectionFilter(searchParams, module),
+      });
+      return { items };
+    }
     const viewer = await resolveAppointmentViewer(app, { actor, identity, organizationId });
+    const where = strictCollectionFilter(searchParams, module);
+    refuseMaskedAppointmentFilter(viewer, where);
+    const items = await module.service.list({ limit: strictLimit(searchParams), where });
     return { items: items.map((row) => maskAppointmentRowFor(viewer, row)) };
   });
   router.add('POST', '/api/modules/:module/records', async ({ params, body, actor, identity, organizationId, headers }) => {
