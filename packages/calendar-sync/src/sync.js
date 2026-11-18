@@ -1531,6 +1531,46 @@ export function createCalendarSyncOperations(options = {}) {
      * appointment to detail — it already surfaces through the pull entries
      * and `pendingConflicts`, never here.
      */
+    /**
+     * The series link probe for scoped appointment writes
+     * (backlog:6acf0a73bfc3): read-only, never a provider call. A missing
+     * space refuses before any lookup — a foreign or absent space never
+     * reads the series as never-exported, so the grid cannot mutate alone
+     * while Google keeps the linked master. No link reads `{ linked: false }`;
+     * a link resolves the grant for the caller's space first (a foreign
+     * space answers `CALENDAR_GRANT_UNKNOWN`, a revoked grant answers
+     * `CALENDAR_GRANT_REVOKED`), so the answer never depends on the named
+     * key. Deployments with no bound grant resolve globally, as on main.
+     */
+    async seriesScopeLink(headSourceKey, { spaceId } = {}) {
+      if (typeof spaceId !== 'string' || spaceId.trim() === '') {
+        throw new ValidationError('spaceId is required: a scoped series probe is gated on the space switch', { field: 'spaceId' });
+      }
+      if (typeof headSourceKey !== 'string' || headSourceKey === '') {
+        throw new ValidationError('seriesScopeLink needs a head sourceKey', { field: 'headSourceKey' });
+      }
+      const link = await findLinkBySource(headSourceKey);
+      if (!link) return { linked: false };
+      await requireLiveGrant(link.calendarId, spaceId);
+      return { linked: true, calendarId: link.calendarId };
+    },
+
+    /**
+     * The BO-F3-01 event detail ("07 Calendario"): one appointment row with
+     * its origin and its sync state. Origin is the stored source package —
+     * `calendar-sync` rows were imported from Google, every other source
+     * package booked locally — never caller text, never a re-derived guess
+     * from the key shape. Sync state is the link row joined on the
+     * appointment's own source key: the calendar and Google event it tracks,
+     * whether a remote change is still pending, and the operator-facing
+     * conflict note, if any. A row with no link was never synced
+     * (`sync: null`): local-only, not unsynced. A purely local read: no
+     * provider call, no grant needed, so the detail renders while the grant
+     * is revoked. Exactly one of `id` / `sourceKey` names the row; an
+     * orphan link (a conflict kept pending before any row existed) has no
+     * appointment to detail — it already surfaces through the pull entries
+     * and `pendingConflicts`, never here.
+     */
     async readAppointmentDetail({ id, sourceKey, actor } = {}) {
       const named = [id, sourceKey].filter((value) => value !== undefined && value !== null);
       if (named.length !== 1) {
